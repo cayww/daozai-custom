@@ -19,3 +19,6 @@ Thumbs.db
 # Python 缓存（补丁脚本）
 __pycache__/
 *.pyc
+
+# 上游官方源码快照（重放校验用，不入库）
+dz-phone.tar.gz
