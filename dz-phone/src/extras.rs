@@ -243,6 +243,8 @@ impl App {
         // 通知仅保存在本次运行的内存中。
         if a.source==AlertSource::Internal {self.history.push_front(a.clone());}
         self.history.truncate(50);
+        // 勿扰：只记账、不打扰。横幅、铃铛、系统通知都不出现，验证码例外（用户要的就是那串数字）。
+        if self.muted() && a.status.is_none() && crate::otp::extract("",&a.body,&[]).is_none() { return; }
         if self.settings.notifications {
             if system && a.source==AlertSource::Internal {
                 self.pending
@@ -322,14 +324,63 @@ impl App {
         self.phone_last=Some(now);
         let Some(prev)=prev else{return;};
         if !self.settings.notifications{return;}
+        let low=self.settings.low_battery_threshold();
         let (title,body)=match (prev,now) {
             (Some(_),None)=>("手机已断开".to_string(),"电量信息已收起".to_string()),
             (None,Some(level))=>(format!("手机已连接 {level}%"),"手机连接已恢复".to_string()),
-            (Some(old),Some(level)) if old>20&&level<=20=>(format!("手机电量偏低 {level}%"),"记得给手机充电".to_string()),
+            (Some(old),Some(level)) if low.is_some_and(|t|old>t&&level<=t)=>(format!("手机电量偏低 {level}%"),format!("低于 {}%，记得给手机充电",low.unwrap_or(20))),
             (Some(old),Some(100)) if old<100=>(format!("手机已充满{}",if charging{"（充电中）"}else{""}),"可以拔掉充电器了".to_string()),
             _=>return,
         };
         self.alert(title,body,usize::MAX,false);
+    }
+
+    /// 本机电量的低电 / 充满提示，阈值与手机共用「低电提醒」设置。
+    /// 首轮只记录不提示，避免每次启动都弹一条。
+    pub(crate) fn pc_events(&mut self,now:Option<u8>,charging:bool){
+        let prev=self.pc_last;
+        self.pc_last=Some(now);
+        let Some(prev)=prev else{return;};
+        if !self.settings.notifications{return;}
+        let Some(low)=self.settings.low_battery_threshold() else{return;};
+        let (title,body)=match (prev,now) {
+            (Some(old),Some(level)) if old>low&&level<=low=>(format!("本机电量偏低 {level}%"),if charging{"已接电源，正在充电".to_string()}else{format!("低于 {low}%，建议接上电源")}),
+            (Some(old),Some(100)) if old<100&&charging=>("本机已充满 100%".to_string(),"可以拔掉充电器了".to_string()),
+            _=>return,
+        };
+        self.alert(title,body,usize::MAX,false);
+    }
+
+    /// 勿扰是否生效（按 app 时间比较，重启后自动失效）。
+    pub(crate) fn muted(&self)->bool{self.quiet_until>self.t}
+
+    /// 文本是否命中通知关键词表（大小写不敏感）。
+    pub(crate) fn keyword_hit(&self,text:&str)->bool{
+        if text.is_empty(){return false;}
+        let lower=text.to_lowercase();
+        self.settings.keywords().iter().any(|word|lower.contains(&word.to_lowercase()))
+    }
+
+    /// 勿扰开关：`minutes = 0` 关闭。只在本次运行内有效，重启后恢复关闭。
+    pub(crate) fn set_quiet(&mut self,minutes:u32){
+        self.settings.quiet_minutes=minutes;
+        self.settings.save();
+        self.quiet_until=if minutes==0 {0.0} else {self.t+minutes as f64*60.0};
+        self.say(if minutes==0 {"勿扰已关闭".to_string()} else {format!("勿扰 {minutes} 分钟")});
+    }
+
+    /// 状态总线触发的番茄钟开关：`on = false` 只是暂停，不重置这一轮。
+    pub(crate) fn set_focus_running(&mut self,on:bool){
+        if on {
+            if self.pomo.running {return;}
+            self.pomo.phase=crate::app::Phase::Focus;
+            self.pomo.remaining=self.phase_secs(crate::app::Phase::Focus);
+            self.pomo.running=true;
+            self.say("已开始专注");
+        } else if self.pomo.running {
+            self.pomo.running=false;
+            self.say("已暂停专注");
+        }
     }
 
     pub fn receive_notification(&mut self, app:String, id:String, body:String){
@@ -345,13 +396,16 @@ impl App {
         if self.history.iter().any(|a|format!("{} · {}",a.title,a.body)==body){return;}
         if !self.notification_apps.observe(&id,&app) || !self.settings.notifications{return;}
         if id=="QQ"{self.mark_messenger(crate::app::Messenger::Qq,0,0);}
-        self.notification_bell_at=self.t;
         // 验证码只有几分钟有效，铃铛多留一会儿，避免鼠标来不及移上去；
         // 「重复查看」开启时普通通知也保留更久，方便多次悬停。
         let otp_bell=phone && !body.is_empty() && crate::otp::extract("",&body,&[]).is_some();
         // 测试构建保持官方 4.5 秒，避免时长类断言失效。
         let keep_bell=if cfg!(test) {4.5} else if otp_bell {90.0} else if self.settings.notice_keep {60.0} else {4.5};
-        self.notification_bell_until=self.t+keep_bell;
+        // 勿扰期间不闪铃铛（横幅同样被 enqueue_alert 拦下），验证码仍照常提醒。
+        if !self.muted() || otp_bell {
+            self.notification_bell_at=self.t;
+            self.notification_bell_until=self.t+keep_bell;
+        }
         // 「手机 · 」前缀用来和岛仔自带 IMAP 邮件的「新邮件」提醒区分开。
         let title=if let Some((label,_))=&phone_info {format!("手机 · {label}")}else{app.chars().filter(|c|!c.is_control()).take(80).collect()};
         // 10 秒窗口内同一 App 的多条消息合并计数，配合 enqueue_alert 的替换去重防刷屏。
@@ -482,18 +536,39 @@ fn phone_icon(c:&Card,title:&str,icons:&mut std::collections::HashMap<String,egu
     true
 }
 
-/// 状态总线的点击动作白名单：只认这三类，不执行任意命令。
-fn status_action(spec:&str)->Option<(&'static str,Cmd)>{
+/// 状态总线点击后的动作：要么交给外壳执行，要么由岛仔自己处理。
+pub(crate) enum StatusAct {
+    Shell(Cmd),
+    /// 开始 / 暂停番茄专注。
+    Focus(bool),
+    /// 勿扰 N 分钟（0 = 关闭）。
+    Quiet(u32),
+    /// 跳到第 N 页（0 音乐 … 7 设置）。
+    Page(usize),
+}
+
+/// 状态总线的点击动作白名单：`copy:` / `url:` / `file:` 交给外壳，
+/// `action:` 只认下表里的几个词——脚本能指挥岛仔，但指挥不了整台电脑。
+fn status_action(spec:&str)->Option<(&'static str,StatusAct)>{
+    use StatusAct::*;
     if let Some(text)=spec.strip_prefix("copy:") {
-        if !text.is_empty(){return Some(("复制",Cmd::Copy(text.to_string())));}
+        if !text.is_empty(){return Some(("复制",Shell(Cmd::Copy(text.to_string()))));}
     }
     if let Some(url)=spec.strip_prefix("url:") {
-        if url.starts_with("https://")||url.starts_with("http://"){return Some(("打开",Cmd::OpenUrl(url.to_string())));}
+        if url.starts_with("https://")||url.starts_with("http://"){return Some(("打开",Shell(Cmd::OpenUrl(url.to_string()))));}
     }
     if let Some(file)=spec.strip_prefix("file:") {
-        if !file.is_empty(){return Some(("打开",Cmd::Open(std::path::PathBuf::from(file))));}
+        if !file.is_empty(){return Some(("打开",Shell(Cmd::Open(std::path::PathBuf::from(file)))));}
     }
-    None
+    let action=spec.strip_prefix("action:")?.trim();
+    match action {
+        "focus_start"=>Some(("开始专注",Focus(true))),
+        "focus_stop"=>Some(("结束专注",Focus(false))),
+        "quiet30"=>Some(("勿扰 30 分",Quiet(30))),
+        "quiet60"=>Some(("勿扰 60 分",Quiet(60))),
+        "quiet_off"=>Some(("关闭勿扰",Quiet(0))),
+        _=>action.strip_prefix("page:").and_then(|n|n.trim().parse::<usize>().ok()).filter(|n|*n<8).map(|n|("打开",Page(n))),
+    }
 }
 pub(crate) fn status_color(name:&str)->Color32{
     match name.trim().to_ascii_lowercase().as_str(){
@@ -508,6 +583,11 @@ pub(crate) fn status_color(name:&str)->Color32{
 impl App {
     pub(crate) fn draw_notice(&mut self, c:&Card,panel:Rect,a:&Alert,_cmds:&mut Vec<Cmd>){
         let nc=c.clipped(0.0,0.0,panel.width(),panel.height());
+        // 关键词高亮：命中词表时在卡片最左侧亮一条琥珀色竖条。
+        // 只加一条竖条，不动文字和任何控件的位置，布局与测试友好的部分保持原样。
+        if a.status.is_none() && (self.keyword_hit(&a.title) || self.keyword_hit(&a.body)) {
+            nc.fill(2.5,10.0,2.5,24.0,1.25,Color32::from_rgb(239,159,39));
+        }
         if let Some(source)=a.messenger(){
             messenger_icon(&nc,22.0,22.0,source);
             nc.circle(31.0,14.0,2.6,Color32::from_rgb(255,72,72));
@@ -529,8 +609,15 @@ impl App {
                     nc.fill(16.0,37.0,198.0,2.0,1.0,Color32::from_gray(60));
                     nc.fill(16.0,37.0,198.0*p,2.0,1.0,tone);
                 }
-                if let Some((label,cmd))=status_action(&st.click) {
-                    if notice_button(&nc,160.0,12.0,60.0,label,"status-action"){_cmds.push(cmd);}
+                if let Some((label,act))=status_action(&st.click) {
+                    if notice_button(&nc,160.0,12.0,60.0,label,"status-action"){
+                        match act {
+                            StatusAct::Shell(cmd)=>_cmds.push(cmd),
+                            StatusAct::Focus(on)=>self.set_focus_running(on),
+                            StatusAct::Quiet(minutes)=>self.set_quiet(minutes),
+                            StatusAct::Page(page)=>self.show_page(page),
+                        }
+                    }
                 }
                 if notice_button(&nc,226.0,12.0,60.0,"关闭","external-dismiss"){
                     self.notice=None;
@@ -1622,6 +1709,35 @@ impl App {
                             setting_row(ui,"蓝牙通知","设备连接与断开提醒；关闭后停止蓝牙监听",&mut self.settings.bluetooth_notifications);
                             ui.separator();
                             setting_row(ui,"提醒总开关","关闭后饮水、专注、待办、微信和 QQ 提醒都不显示",&mut self.settings.notifications);
+                            ui.separator();
+                            settings_control_row(ui,"低电提醒",SETTINGS_LABEL_W,|ui|{
+                                let mut value=self.settings.battery_alert;
+                                ui.horizontal(|ui|{
+                                    if settings_segmented(ui,&mut value,&[(0,"关"),(10,"10%"),(20,"20%"),(30,"30%")],44.0){
+                                        self.settings.battery_alert=value;
+                                    }
+                                }).response
+                            });
+                            settings_hint(ui,"跨过阈值只提醒一次，手机与本机共用；充满时也会提示。");
+                            ui.separator();
+                            // 勿扰：选时长立即生效，到点自动关闭；重启后恢复关闭。
+                            let mut quiet=if self.quiet_until>self.t {self.settings.quiet_minutes.max(30)} else {0};
+                            let mut quiet_pick=None;
+                            settings_control_row(ui,"勿扰",SETTINGS_LABEL_W,|ui|{
+                                ui.horizontal(|ui|{
+                                    if settings_segmented(ui,&mut quiet,&[(0,"关"),(30,"30 分"),(60,"60 分"),(120,"2 小时")],48.0){
+                                        quiet_pick=Some(quiet);
+                                    }
+                                }).response
+                            });
+                            if let Some(minutes)=quiet_pick {self.set_quiet(minutes);}
+                            settings_hint(ui,"勿扰期间不弹横幅、不闪铃铛；验证码仍会提醒。");
+                            ui.separator();
+                            let mut keywords_on=!self.settings.notice_keywords.trim().is_empty();
+                            setting_row(ui,"通知关键词高亮","命中关键词时卡片左侧亮起琥珀色竖条；词表改 settings.txt 的 notice_keywords",&mut keywords_on);
+                            if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
+                                self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
+                            }
                         });
                         // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
                         let master=self.settings.notifications;

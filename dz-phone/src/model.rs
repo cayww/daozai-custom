@@ -246,11 +246,19 @@ pub struct Settings {
     pub calendar_auto_sync: bool,
     /// 记录最近复制的文字（最近记录与固定条目均在本机保存）。
     pub clipboard_history: bool,
+    /// 低电提醒阈值（百分比，0 = 关闭）。手机与本机共用，跨越阈值只提醒一次。
+    pub battery_alert: u32,
+    /// 通知关键词高亮：逗号分隔，命中时卡片左侧亮一条琥珀色竖条；空 = 关闭。
+    pub notice_keywords: String,
+    /// 勿扰时长（分钟，0 = 关闭）。只在本次运行内生效，重启后恢复为关闭。
+    pub quiet_minutes: u32,
+    /// 邮件面板上次选择的收件账号（空 = 全部账号），重启后沿用。
+    pub mail_filter: String,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, mail_filter: String::new() }
     }
 }
 
@@ -263,6 +271,16 @@ impl Settings {
     /// 水平位置，-1..=1。
     pub fn island_offset_ratio(&self) -> f32 {
         self.island_offset.clamp(-ISLAND_OFFSET_MAX, ISLAND_OFFSET_MAX) as f32 / ISLAND_OFFSET_MAX as f32
+    }
+
+    /// 低电提醒阈值；`None` 表示关闭提醒。
+    pub fn low_battery_threshold(&self) -> Option<u8> {
+        (self.battery_alert > 0).then(|| self.battery_alert.min(99) as u8)
+    }
+
+    /// 通知关键词表（已去掉空白项）。空表示不启用高亮。
+    pub fn keywords(&self) -> Vec<&str> {
+        self.notice_keywords.split([',','，']).map(str::trim).filter(|word|!word.is_empty()).collect()
     }
 
     pub fn clock_text(&self, clock: &str) -> String {
@@ -350,6 +368,10 @@ impl Settings {
                 "calendar_prompt" => s.calendar_prompt = v != "0",
                 "calendar_auto_sync" => s.calendar_auto_sync = v != "0",
                 "clipboard_history" => s.clipboard_history = v != "0",
+                "battery_alert" => s.battery_alert = match v.parse::<u32>().unwrap_or(20) { 0 => 0, 10 => 10, 30 => 30, _ => 20 },
+                "notice_keywords" => s.notice_keywords = v.trim().to_string(),
+                "quiet_minutes" => s.quiet_minutes = match v.parse::<u32>().unwrap_or(0) { 30 => 30, 60 => 60, 120 => 120, _ => 0 },
+                "mail_filter" => s.mail_filter = v.trim().to_string(),
                 _ => {}
             }
         }
@@ -413,6 +435,10 @@ impl Settings {
                 ("calendar_prompt".into(), (self.calendar_prompt as u8).to_string()),
                 ("calendar_auto_sync".into(), (self.calendar_auto_sync as u8).to_string()),
                 ("clipboard_history".into(), (self.clipboard_history as u8).to_string()),
+                ("battery_alert".into(), self.battery_alert.to_string()),
+                ("notice_keywords".into(), self.notice_keywords.clone()),
+                ("quiet_minutes".into(), self.quiet_minutes.to_string()),
+                ("mail_filter".into(), self.mail_filter.clone()),
             ],
         );
     }

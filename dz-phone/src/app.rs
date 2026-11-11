@@ -678,6 +678,11 @@ pub struct App {
     pub clipboard: crate::clipboard::Shared,
     pub(crate) clip_first: usize,
     pub(crate) clip_confirm_clear: Option<f64>,
+    /// 剪贴板搜索词；非空时列表只显示命中的记录。
+    pub(crate) clip_query: String,
+    pub(crate) clip_search_focus: bool,
+    /// 搜索输入框是否展开（面板表头平时只放一个「搜索」按钮）。
+    pub(crate) clip_search_open: bool,
 
     // 饮水
     pub(crate) water_ring: Spring,
@@ -742,6 +747,10 @@ pub struct App {
     pub(crate) phone_apps:crate::model::PhoneApps,
     /// 上次看到的手机电量（None=尚未初始化，用于断开/重连/低电/充满提示）。
     pub(crate) phone_last:Option<Option<u8>>,
+    /// 上次看到的本机电量，用于本机低电 / 充满提示。
+    pub(crate) pc_last:Option<Option<u8>>,
+    /// 勿扰截止时刻（app 时间）；> t 期间不弹提示、不闪铃铛，验证码除外。
+    pub(crate) quiet_until:f64,
     /// 状态总线当前存活的状态，用于常驻区并排显示。
     pub(crate) status_live:Vec<crate::island_status::Status>,
     /// 未接来电累计（点「未接来电」提示的关闭按钮清零）。
@@ -816,6 +825,8 @@ impl App {
             s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
         });
         let settings = model::Settings::load();
+        // 邮件面板上次选的账号：结构体里 `settings` 会被 move，先取出来。
+        let saved_mail_filter = settings.mail_filter.clone();
         let clipboard_on = settings.clipboard_history;
         let (bw, bh) = if settings.minimal { (BAR_W_MIN, BAR_H_MIN) } else { (BAR_W, BAR_H) };
         let focus_seconds=settings.focus_minutes as f32*60.0;
@@ -857,6 +868,9 @@ impl App {
             clipboard: crate::clipboard::Shared::new(clipboard_on),
             clip_first: 0,
             clip_confirm_clear: None,
+            clip_query: String::new(),
+            clip_search_focus: false,
+            clip_search_open: false,
             water_ring: Spring::new(0.0, 120.0, 0.9),
             water_ml: 0.0,
             water_view: 0,
@@ -884,7 +898,7 @@ impl App {
             media_anchor: (String::new(), 0.0, 0.0, false),
             media: NowPlaying::default(),
             music_artwork: None,
-            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), phone_last:None, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), phone_last:None, pc_last:None, quiet_until:0.0, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
             listener_status: "尚未连接".into(),
             notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
@@ -903,7 +917,12 @@ impl App {
             volume_a: 0.0,
             bt_shown: Vec::new(),
             bt_initialized: false,
-            mail: MailState { accounts: mail::load_accounts(), ..Default::default() },
+            mail: {
+                // 邮件面板记住上次选的账号：State 有私有字段，只能先默认构造再赋值。
+                let mut manage = crate::mail_manage_ui::State::default();
+                if !saved_mail_filter.is_empty() { manage.account_filter = Some(saved_mail_filter); }
+                MailState { accounts: mail::load_accounts(), manage, ..Default::default() }
+            },
             calendar: CalendarState::load(),
             quota: crate::quota_ui::State::load(),
             updates: Default::default(),
@@ -1159,7 +1178,7 @@ impl App {
         if self.mail.open_uid.as_ref().is_some_and(|(email,_)|!active(&email.to_ascii_lowercase())){self.mail.open_uid=None;self.mail.manage.auto_read=None;}
         self.mail.manage.identities.retain(|_,old|accounts.contains(old));
         self.mail.manage.pending.retain(|email|accounts.iter().any(|a|mail::key(a)==*email));
-        if self.mail.manage.account_filter.as_ref().is_some_and(|f|!accounts.iter().any(|a|a.email.eq_ignore_ascii_case(f))){self.mail.manage.account_filter=None;self.mail.manage.account_menu=false;}
+        if self.mail.manage.account_filter.as_ref().is_some_and(|f|!accounts.iter().any(|a|a.email.eq_ignore_ascii_case(f))){self.mail.manage.account_filter=None;self.mail.manage.account_menu=false;if !self.settings.mail_filter.is_empty(){self.settings.mail_filter.clear();self.settings.save();}}
         self.mail.manage.next_refresh=0.0;
         mail::save_accounts(accounts);
         self.pending.push(Cmd::MailSync);
@@ -1400,7 +1419,8 @@ impl App {
     }
 
     pub fn is_editing(&self) -> bool {
-        self.adding || self.editing.is_some() || self.todo_choosing || self.task_dialog.is_some() || self.calendar.draft.is_some() || self.focus_editing
+        // 剪贴板搜索也属于「正在输入」：窗口被激活时要保持展开，否则光标一闪就收起来了。
+        self.adding || self.editing.is_some() || self.todo_choosing || self.task_dialog.is_some() || self.calendar.draft.is_some() || self.focus_editing || self.clip_search_open
     }
 
     pub fn filter_todo_input(&mut self,input:&mut egui::RawInput) {
@@ -1712,6 +1732,9 @@ impl App {
         self.resident_power=(env.battery,env.charging);
         self.phone_resident=phone;
         if self.settings.phone_battery {self.phone_events(phone.0,phone.1);}
+        self.pc_events(env.battery,env.charging);
+        // 勿扰到点自动解除；同时把设置项归零，避免界面上还显示着「60 分钟」。
+        if self.quiet_until>0.0 && self.t>=self.quiet_until {self.quiet_until=0.0;self.settings.quiet_minutes=0;self.settings.save();}
         let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled());
         // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
         let status_width=self.status_total_width();

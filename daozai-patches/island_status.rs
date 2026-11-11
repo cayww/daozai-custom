@@ -10,7 +10,9 @@
 //!
 //! 字段：`id`（缺省用 text 当 key）、`text` 标题、`detail` 副标题、`seconds`（0 = 默认 8 秒）、
 //! `progress`（0~1，卡片底部进度条）、`color`（red/green/blue/amber/gray 白名单）、
-//! `click`（copy:文本 / url:链接 / file:路径，动作白名单，不执行任意命令）。
+//! `click`（copy:文本 / url:链接 / file:路径 / action:动作，动作白名单，不执行任意命令）、
+//! `priority`（越大越靠前，同值保持文件顺序，最多显示 3 条）、
+//! `ttl`（Unix 时间戳，到点自动撤下；0 = 不过期，适合「写完就不用再管」的脚本）。
 //! 解析失败时保持上一次的状态，避免脚本写文件写一半把岛上的状态全撤了。
 
 use serde::Deserialize;
@@ -30,6 +32,10 @@ pub struct Status {
     #[serde(default)] pub color: String,
     /// 点击动作白名单，未知值不生成按钮。
     #[serde(default)] pub click: String,
+    /// 越大越靠前；同优先级保持文件里的先后顺序。
+    #[serde(default)] pub priority: i32,
+    /// 绝对过期时间（Unix 秒）；0 = 不过期。脚本写一次即可，到点自动撤下。
+    #[serde(default)] pub ttl: f64,
 }
 
 impl Status {
@@ -60,12 +66,21 @@ impl Reader {
 
 /// 解析成功才更新 seen；半写的 JSON 不会误撤下状态。
 fn parse(raw: &str, seen: &mut HashSet<String>) -> Option<(Vec<Status>, Vec<String>)> {
-    let list: Vec<Status> = serde_json::from_str(raw).ok()?;
+    let mut list: Vec<Status> = serde_json::from_str(raw).ok()?;
+    // ttl 到点的条目当它不存在：脚本写一次、到点自动撤下，不用再起个定时器去删。
+    let now = now_secs();
+    list.retain(|status| status.ttl <= 0.0 || status.ttl > now);
+    // 高优先级排前面；sort_by 是稳定排序，同优先级仍按文件里的先后顺序。
+    list.sort_by(|a,b| b.priority.cmp(&a.priority));
     let live: HashSet<String> = list.iter().map(Status::key).collect();
     let gone: Vec<String> = seen.iter().filter(|k| !live.contains(*k)).cloned().collect();
     seen.clear();
     seen.extend(live);
     Some((list, gone))
+}
+
+fn now_secs() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_secs_f64()).unwrap_or(0.0)
 }
 
 fn clear_seen(seen: &mut HashSet<String>) -> Vec<String> {
@@ -137,5 +152,26 @@ mod tests {
         assert!(seen.contains("下载中"));
         let (_, gone) = parse(r#"[{"text":"下载完成"}]"#, &mut seen).unwrap();
         assert_eq!(gone, vec!["下载中"]);
+    }
+
+    #[test]
+    fn 高优先级排在前面且同优先级保持文件顺序() {
+        let mut seen = HashSet::new();
+        let (list, _) = parse(r#"[{"id":"a","text":"A"},{"id":"b","text":"B","priority":5},{"id":"c","text":"C","priority":5}]"#, &mut seen).unwrap();
+        let ids: Vec<&str> = list.iter().map(|s|s.id.as_str()).collect();
+        assert_eq!(ids, vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn ttl_到点的状态自动撤下() {
+        let mut seen = HashSet::new();
+        let now = now_secs();
+        let raw = format!(r#"[{{"id":"live","text":"在用","ttl":{}}},{{"id":"dead","text":"过期","ttl":{}}}]"#, now + 60.0, now - 1.0);
+        let (list, _) = parse(&raw, &mut seen).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "live");
+        // ttl 缺省 = 不过期，老脚本不写这个字段也照常显示。
+        let (kept, _) = parse(r#"[{"id":"legacy","text":"老脚本"}]"#, &mut seen).unwrap();
+        assert_eq!(kept.len(), 1);
     }
 }
