@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-28"
+PATCH_ID = "custom-30"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -3526,6 +3526,256 @@ fn ignored_mail_event_hides_stops_reminders_persists_and_restores() {
     }
 
 }
+'''),
+
+    # custom-28：A 组功能集：通知/邮件/剪贴板/状态总线
+    ("src/system.rs",
+     '''    ("com.alipay.iphoneclient","支付宝"),
+    ("com.google.Gmail","Gmail"),
+];
+/// 手机连接 Toast 的正文首段通常是来源 App 名（真实通知只报主 AUMID `!App`）。
+/// 名单放在 `%APPDATA%\\Daozai\\phone-apps.json`，加新 App 不用改代码重编译。
+/// 返回 (标签, 是否允许上岛)；None = 无法识别，由调用方按「连接」放行。
+pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String,bool)> {
+    let head=body.split('·').next().unwrap_or("").trim();
+    if head.is_empty() || head.chars().count()>12 {return None;}
+    apps.lookup(head)
+}
+
+pub(crate) fn phone_channel(id:&str)->bool {
+''',
+     '''    ("com.alipay.iphoneclient","支付宝"),
+    ("com.google.Gmail","Gmail"),
+];
+/// 手机连接 Toast 的来源判定。
+///
+/// WinRT 只报主 AUMID（`!App`），拿不到通道信息，所以只能看正文：
+/// 正文格式是「来源 · 内容…」，但短信用**手机号**当来源（`+8610… · 【xx】验证码…`），
+/// 电话是「号码 · 传入呼叫 / 未接来电」，普通 App 才是「微信 · 张三 · 内容」。
+///
+/// 判定顺序：名单命中 → 来电标记 → 短信特征 → 用首段当标签兜底。
+/// 名单放在 `%APPDATA%\\Daozai\\phone-apps.json`，加新 App 不用改代码重编译。
+/// 返回 (标签, 是否允许上岛)；None = 无法识别，由调用方按「连接」放行。
+pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String,bool)> {
+    let head=body.split('·').next().unwrap_or("").trim();
+    if head.is_empty() {return None;}
+    // 1. 名单优先：微信 / QQ / 支付宝 / Gmail 等。
+    if let Some(hit)=apps.lookup(head){return Some(hit);}
+    // 2. 来电：号码当来源，正文带这两个词。
+    if body.contains("传入呼叫")||body.contains("未接来电"){return Some(("电话".to_string(),true));}
+    // 3. 短信：来源是手机号，或正文有【签名】/验证码字样。
+    let digits=head.chars().all(|c|c.is_ascii_digit()||matches!(c,'+'|'-'|' '|'('|')'));
+    if digits||body.contains("验证码")||body.contains('【')||body.contains("短信"){
+        return Some(("短信".to_string(),true));
+    }
+    // 4. 兜底：短名字直接当标签（例如 WorkBuddy），过长才交给调用方。
+    if head.chars().count()<=12 {return Some((head.to_string(),true));}
+    None
+}
+
+pub(crate) fn phone_channel(id:&str)->bool {
+'''),
+    ("src/system.rs",
+     '''
+#[cfg(test)]
+mod phone_channel_tests {
+    use super::{phone_channel,phone_label};
+    #[test]
+    fn 只放行手机连接白名单通道(){
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.tencent.xin"));
+''',
+     '''
+#[cfg(test)]
+mod phone_channel_tests {
+    use super::{phone_app,phone_channel,phone_label};
+    #[test]
+    fn 只放行手机连接白名单通道(){
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.tencent.xin"));
+'''),
+    ("src/system.rs",
+     '''        custom.items.push(("小红书".to_string(),"小红书".to_string(),true));
+        assert_eq!(crate::system::phone_app("小红书 · 有人回复了你",&custom),Some(("小红书".to_string(),true)));
+    }
+}
+
+fn is_wechat_toast(app:&str,id:&str)->bool{
+''',
+     '''        custom.items.push(("小红书".to_string(),"小红书".to_string(),true));
+        assert_eq!(crate::system::phone_app("小红书 · 有人回复了你",&custom),Some(("小红书".to_string(),true)));
+    }
+    #[test]
+    fn 短信与来电按正文特征识别(){
+        let apps=crate::model::PhoneApps::builtin();
+        // 短信用手机号当来源：认不出号码也要归到「短信」，不能退化成「连接」。
+        assert_eq!(phone_app("+86106826974003139 · 【清枫北京科技】您的验证码：4342，如非本人操作",&apps),Some(("短信".to_string(),true)));
+        assert_eq!(phone_app("10691234 · 您的验证码 8899",&apps),Some(("短信".to_string(),true)));
+        // 响铃与未接都先归到「电话」，再由正文区分「来电中 / 未接来电」。
+        assert_eq!(phone_app("130 8646 4686 · 传入呼叫",&apps),Some(("电话".to_string(),true)));
+        assert_eq!(phone_app("电话 · 130 8646 4686 · 未接来电",&apps),Some(("电话".to_string(),true)));
+        // 名单外的短名字直接用名字当标签。
+        assert_eq!(phone_app("WorkBuddy · 任务已完成",&apps),Some(("WorkBuddy".to_string(),true)));
+    }
+}
+
+fn is_wechat_toast(app:&str,id:&str)->bool{
+'''),
+    ("src/extras.rs",
+     '''                // 状态总线按 key 覆写：内容变了替换，不变也替换以续期，不排队。
+                _ if matches!(&a.source,AlertSource::External(id) if id.starts_with("island-status:"))=>old.source==a.source,
+                // 手机通知按来源聚合：同一 App 的新消息替换旧提示，不排队刷屏。
+                _ if a.title.starts_with("手机 · ") || a.title=="未接来电"=>old.source==a.source && old.title==a.title,
+                _=>old.source==a.source && old.title==a.title && (a.is_hud() || old.body==a.body),
+            };
+            if a.source!=AlertSource::Internal || a.title != "蓝牙设备" { self.alerts.retain(|old| !same_event(old)); }
+''',
+     '''                // 状态总线按 key 覆写：内容变了替换，不变也替换以续期，不排队。
+                _ if matches!(&a.source,AlertSource::External(id) if id.starts_with("island-status:"))=>old.source==a.source,
+                // 手机通知按来源聚合：同一 App 的新消息替换旧提示，不排队刷屏。
+                // 手机通道共用同一个来源（手机连接的 AUMID）：新短信 / 来电直接顶掉上一条，
+                // 不然来电会排在一条已经看过的短信后面。
+                _ if a.title.starts_with("手机 · ") || a.title=="未接来电" || a.title=="来电中"=>old.source==a.source,
+                _=>old.source==a.source && old.title==a.title && (a.is_hud() || old.body==a.body),
+            };
+            if a.source!=AlertSource::Internal || a.title != "蓝牙设备" { self.alerts.retain(|old| !same_event(old)); }
+'''),
+    ("src/extras.rs",
+     '''        let phone=crate::system::phone_channel(&id);
+        // 手机 App 名单是外部 JSON，改完约 1 秒内生效，不用重启岛仔。
+        if phone {self.phone_apps.reload_if_changed();}
+        if !self.settings.read_notifications || id.is_empty() || (self.settings.qq_only && id!="QQ" && !phone){return;}
+        // 真实手机连接通知只报主 AUMID，改由正文首段识别来源 App；
+        // 明确命中黑名单的静默，识别不出的按「连接」放行，避免漏掉来电等重要通知。
+        let phone_info:Option<(String,bool)>=if phone {Some(crate::system::phone_app(&body,&self.phone_apps).unwrap_or(("连接".to_string(),true)))}else{None};
+        if phone_info.as_ref().is_some_and(|(_,allow)|!allow){return;}
+        // 岛仔自己发出的系统提醒会被通知中心回传；已在历史里的同一内容不再入队，避免重复显示。
+        if self.history.iter().any(|a|format!("{} · {}",a.title,a.body)==body){return;}
+        if !self.notification_apps.observe(&id,&app) || !self.settings.notifications{return;}
+        if id=="QQ"{self.mark_messenger(crate::app::Messenger::Qq,0,0);}
+        // 验证码只有几分钟有效，铃铛多留一会儿，避免鼠标来不及移上去；
+        // 「重复查看」开启时普通通知也保留更久，方便多次悬停。
+''',
+     '''        let phone=crate::system::phone_channel(&id);
+        // 手机 App 名单是外部 JSON，改完约 1 秒内生效，不用重启岛仔。
+        if phone {self.phone_apps.reload_if_changed();}
+        // 每条通知留一行诊断，出问题能直接看出是哪一步拦下的。
+        let trace=format!("id={id} app={app} phone={} qq_only={} body={}",
+            if phone {"手机"} else {"其它"},
+            if self.settings.qq_only {"是"} else {"否"},
+            body.chars().take(60).collect::<String>());
+        if !self.settings.read_notifications || id.is_empty() || (self.settings.qq_only && id!="QQ" && !phone){
+            log_notice(&format!("DROP 未连接/非QQ  {trace}"));
+            return;
+        }
+        // 真实手机连接通知只报主 AUMID，改由正文识别来源；
+        // 明确命中黑名单的静默，识别不出的按「连接」放行，避免漏掉来电等重要通知。
+        let phone_info:Option<(String,bool)>=if phone {Some(crate::system::phone_app(&body,&self.phone_apps).unwrap_or(("连接".to_string(),true)))}else{None};
+        if phone_info.as_ref().is_some_and(|(_,allow)|!allow){
+            log_notice(&format!("DROP 名单静默    {trace}"));
+            return;
+        }
+        // 来电方（正文首段就是号码或联系人），来电中/未接来电都用它当副标题。
+        let caller=body.split('·').next().unwrap_or("").trim().to_string();
+        // 岛仔自己发出的系统提醒会被通知中心回传；已在历史里的同一内容不再入队，避免重复显示。
+        if self.history.iter().any(|a|format!("{} · {}",a.title,a.body)==body){
+            log_notice(&format!("DROP 自家回传    {trace}"));
+            return;
+        }
+        if !self.notification_apps.observe(&id,&app) || !self.settings.notifications{
+            log_notice(&format!("DROP 应用被关/总开关  {trace}"));
+            return;
+        }
+        if id=="QQ"{self.mark_messenger(crate::app::Messenger::Qq,0,0);}
+        // 验证码只有几分钟有效，铃铛多留一会儿，避免鼠标来不及移上去；
+        // 「重复查看」开启时普通通知也保留更久，方便多次悬停。
+'''),
+    ("src/extras.rs",
+     '''        // 即使全局关闭正文预览也显示一行短摘要，且不对验证码打码
+        //（后续验证码卡片会直接复用 otp::extract 的结果）。
+        let source:&str=if phone_info.is_some(){
+            body.split_once('·').map(|(_,rest)|rest.trim()).filter(|rest|!rest.is_empty()).unwrap_or(body.as_str())
+        }else{body.as_str()};
+        let body=if self.settings.notification_preview || phone {
+            let limit=if phone{80}else{300};
+            let mut text=source.chars().filter(|c|!c.is_control()).take(limit).collect::<String>();
+            if !phone {if let Some(code)=crate::otp::extract("",&text,&[]){text=crate::mail_privacy::mask(&text,&code.text);}}
+''',
+     '''        // 即使全局关闭正文预览也显示一行短摘要，且不对验证码打码
+        //（后续验证码卡片会直接复用 otp::extract 的结果）。
+        let source:&str=if phone_info.is_some(){
+            // 手机镜像通知的正文末尾常带一个多余的分隔符（`…忽略本短信! · `），顺手去掉。
+            body.split_once('·').map(|(_,rest)|rest.trim().trim_end_matches(|c:char| c=='·'||c.is_whitespace()).trim()).filter(|rest|!rest.is_empty()).unwrap_or(body.as_str())
+        }else{body.as_str()};        let body=if self.settings.notification_preview || phone {
+            let limit=if phone{80}else{300};
+            let mut text=source.chars().filter(|c|!c.is_control()).take(limit).collect::<String>();
+            if !phone {if let Some(code)=crate::otp::extract("",&text,&[]){text=crate::mail_privacy::mask(&text,&code.text);}}
+'''),
+    ("src/extras.rs",
+     '''            log_otp("phone",code.as_ref().map(|c|c.text.as_str()));
+            if let Some(code)=code {self.pending.push(Cmd::Copy(code.text));}
+        }
+        // 未接来电：提示保留 30 秒，同时点亮铃铛红点常驻，直到点关闭清除。
+        let missed=phone_info.as_ref().is_some_and(|(label,_)|label=="电话");
+        if missed {
+            self.missed_calls=self.missed_calls.saturating_add(1);
+            self.notification_bell_until=f64::MAX;
+        }
+        let (title,body,duration)=if missed {
+            ("未接来电".to_string(),format!("{} 通未接来电 · 点击关闭清除",self.missed_calls),30.0)
+        }else{(title,body,if !cfg!(test) && self.settings.notice_keep {60.0} else {4.5})};
+        self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:None},false);
+    }
+    pub(crate) fn tick_alerts(&mut self) {
+''',
+     '''            log_otp("phone",code.as_ref().map(|c|c.text.as_str()));
+            if let Some(code)=code {self.pending.push(Cmd::Copy(code.text));}
+        }
+        // 来电中 / 未接来电：标签都是「电话」，靠正文区分——
+        // 响铃是「号码 · 传入呼叫」，挂断是「电话 · 号码 · 未接来电」。
+        let ringing=phone_info.is_some()&&body.contains("传入呼叫");
+        let missed=phone_info.as_ref().is_some_and(|(label,_)|label=="电话")&&body.contains("未接来电");
+        if missed {
+            // 来电中的提示被「未接来电」取代，别让两条并存。
+            if self.notice.as_ref().is_some_and(|a|a.title=="来电中"){self.notice=None;}
+            self.missed_calls=self.missed_calls.saturating_add(1);
+            self.notification_bell_until=f64::MAX;
+        }
+        let (title,body,duration)=if ringing {
+            ("来电中".to_string(),format!("{caller} 正在呼叫"),60.0)
+        }else if missed {
+            ("未接来电".to_string(),format!("{} 通未接来电 · 点击关闭清除",self.missed_calls),30.0)
+        }else{(title,body,if !cfg!(test) && self.settings.notice_keep {60.0} else {4.5})};
+        log_notice(&format!("SHOW {title} / {body}  <- {trace}"));
+        self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:None},false);
+    }
+    pub(crate) fn tick_alerts(&mut self) {
+'''),
+    ("src/extras.rs",
+     '''    }
+}
+
+/// 邮件面板操作诊断：点击「全部已读」被拒时记录原因，便于排查按钮为什么没反应。
+pub(crate) fn log_mail(note:&str){
+    let Some(base)=std::env::var_os("APPDATA") else{return};
+''',
+     '''    }
+}
+
+/// 通知通道诊断：每条进来的通知都记一行「显示 / 被谁拦下」，排查「某类通知不上岛」用。
+pub(crate) fn log_notice(note:&str){
+    let Some(base)=std::env::var_os("APPDATA") else{return};
+    let dir=std::path::PathBuf::from(base).join("Daozai").join("diagnostics");
+    if std::fs::create_dir_all(&dir).is_err(){return;}
+    let path=dir.join("notice.log");
+    if std::fs::metadata(&path).is_ok_and(|m|m.len()>256*1024){let _=std::fs::remove_file(&path);}
+    if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(&path){
+        use std::io::Write;
+        let _=writeln!(file,"{} | {}",chrono::Local::now().format("%H:%M:%S"),note);
+    }
+}
+
+/// 邮件面板操作诊断：点击「全部已读」被拒时记录原因，便于排查按钮为什么没反应。
+pub(crate) fn log_mail(note:&str){
+    let Some(base)=std::env::var_os("APPDATA") else{return};
 '''),
 ]
 

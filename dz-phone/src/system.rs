@@ -316,13 +316,30 @@ const PHONE_CHANNELS: &[(&str,&str)] = &[
     ("com.alipay.iphoneclient","支付宝"),
     ("com.google.Gmail","Gmail"),
 ];
-/// 手机连接 Toast 的正文首段通常是来源 App 名（真实通知只报主 AUMID `!App`）。
+/// 手机连接 Toast 的来源判定。
+///
+/// WinRT 只报主 AUMID（`!App`），拿不到通道信息，所以只能看正文：
+/// 正文格式是「来源 · 内容…」，但短信用**手机号**当来源（`+8610… · 【xx】验证码…`），
+/// 电话是「号码 · 传入呼叫 / 未接来电」，普通 App 才是「微信 · 张三 · 内容」。
+///
+/// 判定顺序：名单命中 → 来电标记 → 短信特征 → 用首段当标签兜底。
 /// 名单放在 `%APPDATA%\Daozai\phone-apps.json`，加新 App 不用改代码重编译。
 /// 返回 (标签, 是否允许上岛)；None = 无法识别，由调用方按「连接」放行。
 pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String,bool)> {
     let head=body.split('·').next().unwrap_or("").trim();
-    if head.is_empty() || head.chars().count()>12 {return None;}
-    apps.lookup(head)
+    if head.is_empty() {return None;}
+    // 1. 名单优先：微信 / QQ / 支付宝 / Gmail 等。
+    if let Some(hit)=apps.lookup(head){return Some(hit);}
+    // 2. 来电：号码当来源，正文带这两个词。
+    if body.contains("传入呼叫")||body.contains("未接来电"){return Some(("电话".to_string(),true));}
+    // 3. 短信：来源是手机号，或正文有【签名】/验证码字样。
+    let digits=head.chars().all(|c|c.is_ascii_digit()||matches!(c,'+'|'-'|' '|'('|')'));
+    if digits||body.contains("验证码")||body.contains('【')||body.contains("短信"){
+        return Some(("短信".to_string(),true));
+    }
+    // 4. 兜底：短名字直接当标签（例如 WorkBuddy），过长才交给调用方。
+    if head.chars().count()<=12 {return Some((head.to_string(),true));}
+    None
 }
 
 pub(crate) fn phone_channel(id:&str)->bool {
@@ -338,7 +355,7 @@ pub(crate) fn phone_label(id:&str)->&'static str {
 
 #[cfg(test)]
 mod phone_channel_tests {
-    use super::{phone_channel,phone_label};
+    use super::{phone_app,phone_channel,phone_label};
     #[test]
     fn 只放行手机连接白名单通道(){
         assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.tencent.xin"));
@@ -364,6 +381,18 @@ mod phone_channel_tests {
         let mut custom=crate::model::PhoneApps::builtin();
         custom.items.push(("小红书".to_string(),"小红书".to_string(),true));
         assert_eq!(crate::system::phone_app("小红书 · 有人回复了你",&custom),Some(("小红书".to_string(),true)));
+    }
+    #[test]
+    fn 短信与来电按正文特征识别(){
+        let apps=crate::model::PhoneApps::builtin();
+        // 短信用手机号当来源：认不出号码也要归到「短信」，不能退化成「连接」。
+        assert_eq!(phone_app("+86106826974003139 · 【清枫北京科技】您的验证码：4342，如非本人操作",&apps),Some(("短信".to_string(),true)));
+        assert_eq!(phone_app("10691234 · 您的验证码 8899",&apps),Some(("短信".to_string(),true)));
+        // 响铃与未接都先归到「电话」，再由正文区分「来电中 / 未接来电」。
+        assert_eq!(phone_app("130 8646 4686 · 传入呼叫",&apps),Some(("电话".to_string(),true)));
+        assert_eq!(phone_app("电话 · 130 8646 4686 · 未接来电",&apps),Some(("电话".to_string(),true)));
+        // 名单外的短名字直接用名字当标签。
+        assert_eq!(phone_app("WorkBuddy · 任务已完成",&apps),Some(("WorkBuddy".to_string(),true)));
     }
 }
 
