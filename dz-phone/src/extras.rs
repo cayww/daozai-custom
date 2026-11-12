@@ -524,13 +524,15 @@ impl App {
             return;
         }
         if id=="QQ"{self.mark_messenger(crate::app::Messenger::Qq,0,0);}
-        // 验证码只有几分钟有效，铃铛多留一会儿，避免鼠标来不及移上去；
-        // 「重复查看」开启时普通通知也保留更久，方便多次悬停。
-        let otp_bell=phone && !body.is_empty() && crate::otp::extract("",&body,&[]).is_some();
+        // 验证码只有几分钟有效，铃铛多留一会儿，避免鼠标来不及移上去。
+        let has_code=!body.is_empty() && crate::otp::extract("",&body,&[]).is_some();
+        let otp_bell=phone && has_code;
+        // 停留时长：普通通知用 notice_seconds；验证码用 otp_seconds，但不短于普通通知，
+        // 且有 10 秒下限——验证码要留时间回看和点「复制」。
+        let stay=notice_duration(self.settings.notice_seconds,self.settings.otp_seconds,false);
+        let otp_stay=notice_duration(self.settings.notice_seconds,self.settings.otp_seconds,true);
         // 测试构建保持官方 4.5 秒，避免时长类断言失效。
-        // 铃铛至少和卡片一样久；验证码多留一会儿，方便回看。
-        let stay=self.settings.notice_seconds as f64;
-        let keep_bell=if cfg!(test) {4.5} else if otp_bell {stay.max(90.0)} else {stay};
+        let keep_bell=if cfg!(test) {4.5} else if has_code {otp_stay} else {stay};
         // 勿扰期间不闪铃铛（横幅同样被 enqueue_alert 拦下），验证码仍照常提醒。
         if !self.muted() || otp_bell {
             self.notification_bell_at=self.t;
@@ -578,7 +580,7 @@ impl App {
             ("来电中".to_string(),format!("{caller} 正在呼叫"),60.0)
         }else if missed {
             ("未接来电".to_string(),format!("{} 通未接来电 · 点击关闭清除",self.missed_calls),30.0)
-        }else{(title,body,if cfg!(test) {4.5} else {self.settings.notice_seconds as f64})};
+        }else{(title,body,if cfg!(test) {4.5} else if has_code {otp_stay} else {stay})};
         log_notice(&format!("SHOW {title} / {body}  <- {trace}"));
         self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:None},false);
     }
@@ -627,6 +629,26 @@ pub(crate) fn log_otp(source:&str,code:Option<&str>){
     if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(&path){
         use std::io::Write;
         let _=writeln!(file,"{} | {} | {}",chrono::Local::now().format("%H:%M:%S"),source,code.unwrap_or("-"));
+    }
+}
+
+/// 通知卡片停留秒数：验证码有 10 秒下限，且不会短于普通通知（要留时间回看和点「复制」）。
+pub(crate) fn notice_duration(notice_seconds:u32,otp_seconds:u32,has_code:bool)->f64{
+    let stay=notice_seconds as f64;
+    if has_code {(otp_seconds as f64).max(stay).max(10.0)} else {stay}
+}
+
+#[cfg(test)]
+mod notice_duration_tests {
+    use super::notice_duration;
+
+    #[test]
+    fn 验证码停留有下限且不短于普通通知() {
+        assert_eq!(notice_duration(10, 90, true), 90.0, "验证码用自己设的 90 秒");
+        assert_eq!(notice_duration(10, 20, true), 20.0);
+        assert_eq!(notice_duration(60, 20, true), 60.0, "不能比普通通知还短");
+        assert_eq!(notice_duration(10, 5, true), 10.0, "下限 10 秒");
+        assert_eq!(notice_duration(10, 90, false), 10.0, "普通通知不受验证码设置影响");
     }
 }
 
@@ -2071,7 +2093,8 @@ impl App {
                             ui.separator();
                             setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
                             setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
-                            settings_hint(ui,"通知卡片显示多久后自动收起（验证码卡片至少留 90 秒）。悬停不会打断计时，也可以随时点「关闭」。");
+                            setting_number(ui,"验证码停留",&mut self.settings.otp_seconds,10,300," 秒",1.0);
+                            settings_hint(ui,"卡片显示多久后自动收起，按秒可调。验证码卡片有 10 秒下限、且不会短于「通知停留」，留时间回看和点「复制」。");
                             ui.label(egui::RichText::new("只接收 Windows 通知中心可见的内容；应用会在收到通知后出现在下方。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             let before_apps=self.notification_apps.items.clone();
                             for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}

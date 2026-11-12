@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-34"
+PATCH_ID = "custom-35"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -5232,6 +5232,175 @@ impl Default for Settings {
                             setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
                             setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
                             settings_hint(ui,"通知卡片显示多久后自动收起（验证码卡片至少留 90 秒）。悬停不会打断计时，也可以随时点「关闭」。");
+                            ui.label(egui::RichText::new("只接收 Windows 通知中心可见的内容；应用会在收到通知后出现在下方。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            let before_apps=self.notification_apps.items.clone();
+                            for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+'''),
+
+    # custom-28：A 组功能集：通知/邮件/剪贴板/状态总线
+    ("src/model.rs",
+     '''    /// 通知保留更久，可在铃铛上重复悬停查看（关闭则 4.5 秒后消失）。
+    /// 通知停留秒数（2–120）。停得久可以慢慢看，停得短不挡视线。
+    pub notice_seconds: u32,
+    /// 旧开关，只用于兼容老的 settings.txt（读到它时折算成 notice_seconds）。
+    pub notice_keep: bool,
+    /// 收到含验证码的邮件时自动写入剪贴板。
+''',
+     '''    /// 通知保留更久，可在铃铛上重复悬停查看（关闭则 4.5 秒后消失）。
+    /// 通知停留秒数（2–120）。停得久可以慢慢看，停得短不挡视线。
+    pub notice_seconds: u32,
+    /// 验证码卡片停留秒数（10–300，且不短于通知停留）。要给回看和点「复制」留时间。
+    pub otp_seconds: u32,
+    /// 旧开关，只用于兼容老的 settings.txt（读到它时折算成 notice_seconds）。
+    pub notice_keep: bool,
+    /// 收到含验证码的邮件时自动写入剪贴板。
+'''),
+    ("src/model.rs",
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+''',
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+'''),
+    ("src/model.rs",
+     '''                "phone_battery" => s.phone_battery = v != "0",
+                "notice_keep" => {s.notice_keep = v != "0";s.notice_seconds = if s.notice_keep {10} else {4};},
+                "notice_seconds" => s.notice_seconds = v.parse::<u32>().unwrap_or(10).clamp(2,120),
+                "auto_copy_otp" => s.auto_copy_otp = v != "0",
+                "update_check" => s.update_check = v == "1",
+                "visible_pages" if (6..=8).contains(&v.len()) && v.bytes().all(|b| b==b'0' || b==b'1') => {
+''',
+     '''                "phone_battery" => s.phone_battery = v != "0",
+                "notice_keep" => {s.notice_keep = v != "0";s.notice_seconds = if s.notice_keep {10} else {4};},
+                "notice_seconds" => s.notice_seconds = v.parse::<u32>().unwrap_or(10).clamp(2,120),
+                "otp_seconds" => s.otp_seconds = v.parse::<u32>().unwrap_or(90).clamp(10,300),
+                "auto_copy_otp" => s.auto_copy_otp = v != "0",
+                "update_check" => s.update_check = v == "1",
+                "visible_pages" if (6..=8).contains(&v.len()) && v.bytes().all(|b| b==b'0' || b==b'1') => {
+'''),
+    ("src/model.rs",
+     '''                ("phone_battery".into(), (self.phone_battery as u8).to_string()),
+                ("notice_keep".into(), (self.notice_keep as u8).to_string()),
+                ("notice_seconds".into(), self.notice_seconds.to_string()),
+                ("auto_copy_otp".into(), (self.auto_copy_otp as u8).to_string()),
+                ("update_check".into(), (self.update_check as u8).to_string()),
+                ("read_notifications".into(),(self.read_notifications as u8).to_string()),
+''',
+     '''                ("phone_battery".into(), (self.phone_battery as u8).to_string()),
+                ("notice_keep".into(), (self.notice_keep as u8).to_string()),
+                ("notice_seconds".into(), self.notice_seconds.to_string()),
+                ("otp_seconds".into(), self.otp_seconds.to_string()),
+                ("auto_copy_otp".into(), (self.auto_copy_otp as u8).to_string()),
+                ("update_check".into(), (self.update_check as u8).to_string()),
+                ("read_notifications".into(),(self.read_notifications as u8).to_string()),
+'''),
+    ("src/extras.rs",
+     '''            return;
+        }
+        if id=="QQ"{self.mark_messenger(crate::app::Messenger::Qq,0,0);}
+        // 验证码只有几分钟有效，铃铛多留一会儿，避免鼠标来不及移上去；
+        // 「重复查看」开启时普通通知也保留更久，方便多次悬停。
+        let otp_bell=phone && !body.is_empty() && crate::otp::extract("",&body,&[]).is_some();
+        // 测试构建保持官方 4.5 秒，避免时长类断言失效。
+        // 铃铛至少和卡片一样久；验证码多留一会儿，方便回看。
+        let stay=self.settings.notice_seconds as f64;
+        let keep_bell=if cfg!(test) {4.5} else if otp_bell {stay.max(90.0)} else {stay};
+        // 勿扰期间不闪铃铛（横幅同样被 enqueue_alert 拦下），验证码仍照常提醒。
+        if !self.muted() || otp_bell {
+            self.notification_bell_at=self.t;
+''',
+     '''            return;
+        }
+        if id=="QQ"{self.mark_messenger(crate::app::Messenger::Qq,0,0);}
+        // 验证码只有几分钟有效，铃铛多留一会儿，避免鼠标来不及移上去。
+        let has_code=!body.is_empty() && crate::otp::extract("",&body,&[]).is_some();
+        let otp_bell=phone && has_code;
+        // 停留时长：普通通知用 notice_seconds；验证码用 otp_seconds，但不短于普通通知，
+        // 且有 10 秒下限——验证码要留时间回看和点「复制」。
+        let stay=notice_duration(self.settings.notice_seconds,self.settings.otp_seconds,false);
+        let otp_stay=notice_duration(self.settings.notice_seconds,self.settings.otp_seconds,true);
+        // 测试构建保持官方 4.5 秒，避免时长类断言失效。
+        let keep_bell=if cfg!(test) {4.5} else if has_code {otp_stay} else {stay};
+        // 勿扰期间不闪铃铛（横幅同样被 enqueue_alert 拦下），验证码仍照常提醒。
+        if !self.muted() || otp_bell {
+            self.notification_bell_at=self.t;
+'''),
+    ("src/extras.rs",
+     '''            ("来电中".to_string(),format!("{caller} 正在呼叫"),60.0)
+        }else if missed {
+            ("未接来电".to_string(),format!("{} 通未接来电 · 点击关闭清除",self.missed_calls),30.0)
+        }else{(title,body,if cfg!(test) {4.5} else {self.settings.notice_seconds as f64})};
+        log_notice(&format!("SHOW {title} / {body}  <- {trace}"));
+        self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:None},false);
+    }
+''',
+     '''            ("来电中".to_string(),format!("{caller} 正在呼叫"),60.0)
+        }else if missed {
+            ("未接来电".to_string(),format!("{} 通未接来电 · 点击关闭清除",self.missed_calls),30.0)
+        }else{(title,body,if cfg!(test) {4.5} else if has_code {otp_stay} else {stay})};
+        log_notice(&format!("SHOW {title} / {body}  <- {trace}"));
+        self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:None},false);
+    }
+'''),
+    ("src/extras.rs",
+     '''    }
+}
+
+/// 备份目录：`%APPDATA%\\Daozai\\backups`，每次备份一个时间戳子目录。
+pub(crate) fn backup_root()->Option<std::path::PathBuf>{
+    let base=std::env::var_os("APPDATA")?;
+''',
+     '''    }
+}
+
+/// 通知卡片停留秒数：验证码有 10 秒下限，且不会短于普通通知（要留时间回看和点「复制」）。
+pub(crate) fn notice_duration(notice_seconds:u32,otp_seconds:u32,has_code:bool)->f64{
+    let stay=notice_seconds as f64;
+    if has_code {(otp_seconds as f64).max(stay).max(10.0)} else {stay}
+}
+
+#[cfg(test)]
+mod notice_duration_tests {
+    use super::notice_duration;
+
+    #[test]
+    fn 验证码停留有下限且不短于普通通知() {
+        assert_eq!(notice_duration(10, 90, true), 90.0, "验证码用自己设的 90 秒");
+        assert_eq!(notice_duration(10, 20, true), 20.0);
+        assert_eq!(notice_duration(60, 20, true), 60.0, "不能比普通通知还短");
+        assert_eq!(notice_duration(10, 5, true), 10.0, "下限 10 秒");
+        assert_eq!(notice_duration(10, 90, false), 10.0, "普通通知不受验证码设置影响");
+    }
+}
+
+/// 备份目录：`%APPDATA%\\Daozai\\backups`，每次备份一个时间戳子目录。
+pub(crate) fn backup_root()->Option<std::path::PathBuf>{
+    let base=std::env::var_os("APPDATA")?;
+'''),
+    ("src/extras.rs",
+     '''                            ui.separator();
+                            setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
+                            setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
+                            settings_hint(ui,"通知卡片显示多久后自动收起（验证码卡片至少留 90 秒）。悬停不会打断计时，也可以随时点「关闭」。");
+                            ui.label(egui::RichText::new("只接收 Windows 通知中心可见的内容；应用会在收到通知后出现在下方。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            let before_apps=self.notification_apps.items.clone();
+                            for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+''',
+     '''                            ui.separator();
+                            setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
+                            setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
+                            setting_number(ui,"验证码停留",&mut self.settings.otp_seconds,10,300," 秒",1.0);
+                            settings_hint(ui,"卡片显示多久后自动收起，按秒可调。验证码卡片有 10 秒下限、且不会短于「通知停留」，留时间回看和点「复制」。");
                             ui.label(egui::RichText::new("只接收 Windows 通知中心可见的内容；应用会在收到通知后出现在下方。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             let before_apps=self.notification_apps.items.clone();
                             for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
