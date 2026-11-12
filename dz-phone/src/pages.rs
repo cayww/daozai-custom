@@ -628,6 +628,7 @@ impl App {
             resp.request_focus();
             cmds.push(Cmd::Focus);
         }
+        self.clip_typing=resp.has_focus();
         if resp.has_focus() { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
         // Esc 退出搜索：清空关键词并收起输入框。
         if resp.has_focus() && c.ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -715,13 +716,32 @@ impl App {
             c.fill(371.0, top, 2.5, track, 1.25, Color32::from_white_alpha(14));
             c.fill(371.0, y, 2.5, thumb, 1.25, Color32::from_white_alpha(70));
         }
+        // 搜索框拿到键盘焦点时：↑↓ 选行、Enter 复制。选中行始终保持在可视范围内。
+        if self.clip_search_open && self.clip_typing && !shown.is_empty() {
+            let (down, up, enter) = c.ui.ctx().input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter)));
+            if down { self.clip_sel=(self.clip_sel+1).min(n-1); }
+            if up { self.clip_sel=self.clip_sel.saturating_sub(1); }
+            self.clip_sel=self.clip_sel.min(n-1);
+            if self.clip_sel<self.clip_first { self.clip_first=self.clip_sel; }
+            if self.clip_sel>=self.clip_first+rows { self.clip_first=self.clip_sel+1-rows; }
+            if enter {
+                let text=items[shown[self.clip_sel]].text.clone();
+                #[cfg(windows)]
+                self.say(if crate::clipboard::copy_history(&text) { "已复制" } else { "复制失败，请重试" });
+                #[cfg(not(windows))]
+                _cmds.push(Cmd::Copy(text));
+            }
+        }
         let mut action: Option<(usize, u8)> = None; // 0 复制 1 固定 2 删除
         for (row, index) in shown.iter().copied().skip(self.clip_first).take(rows).enumerate() {
             let clip = &items[index];
             let y = if searching { 62.0 } else { 44.0 } + row as f32 * 22.5;
             let r = c.hit(48.0, y - 10.0, 323.0, 20.0, ("clip", index, clip.text.len(), clip.at.as_str()));
             let (h, _) = c.hover_t(&r);
-            if h > 0.01 {
+            let selected = self.clip_search_open && self.clip_typing && self.clip_first+row == self.clip_sel;
+            if selected {
+                c.fill(48.0, y - 10.0, 323.0, 20.0, 7.0, Color32::from_white_alpha(26));
+            } else if h > 0.01 {
                 c.fill(48.0, y - 10.0, 323.0, 20.0, 7.0, Color32::from_white_alpha((12.0 * h) as u8));
             }
             if clip.pinned {

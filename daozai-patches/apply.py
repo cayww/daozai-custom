@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-31"
+PATCH_ID = "custom-32"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -4034,6 +4034,546 @@ fn qq_channel_status()->String{
         baseline.previous=Some(HashMap::from([(1,first),(2,ToastVersion::new(10,None))]));
         assert!(!baseline.changed(1,first));
         assert!(baseline.changed(1,ToastVersion::new(10,Some("第二条"))));
+'''),
+
+    # custom-28：A 组功能集：通知/邮件/剪贴板/状态总线
+    ("src/model.rs",
+     '''    pub notice_keywords: String,
+    /// 勿扰时长（分钟，0 = 关闭）。只在本次运行内生效，重启后恢复为关闭。
+    pub quiet_minutes: u32,
+    /// 邮件面板上次选择的收件账号（空 = 全部账号），重启后沿用。
+    pub mail_filter: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, mail_filter: String::new() }
+    }
+}
+
+''',
+     '''    pub notice_keywords: String,
+    /// 勿扰时长（分钟，0 = 关闭）。只在本次运行内生效，重启后恢复为关闭。
+    pub quiet_minutes: u32,
+    /// 会议自动勿扰：日程开始时自动把勿扰开到会议结束。
+    pub quiet_meeting: bool,
+    /// 邮件面板上次选择的收件账号（空 = 全部账号），重启后沿用。
+    pub mail_filter: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+'''),
+    ("src/model.rs",
+     '''                "battery_alert" => s.battery_alert = match v.parse::<u32>().unwrap_or(20) { 0 => 0, 10 => 10, 30 => 30, _ => 20 },
+                "notice_keywords" => s.notice_keywords = v.trim().to_string(),
+                "quiet_minutes" => s.quiet_minutes = match v.parse::<u32>().unwrap_or(0) { 30 => 30, 60 => 60, 120 => 120, _ => 0 },
+                "mail_filter" => s.mail_filter = v.trim().to_string(),
+                _ => {}
+            }
+''',
+     '''                "battery_alert" => s.battery_alert = match v.parse::<u32>().unwrap_or(20) { 0 => 0, 10 => 10, 30 => 30, _ => 20 },
+                "notice_keywords" => s.notice_keywords = v.trim().to_string(),
+                "quiet_minutes" => s.quiet_minutes = match v.parse::<u32>().unwrap_or(0) { 30 => 30, 60 => 60, 120 => 120, _ => 0 },
+                "quiet_meeting" => s.quiet_meeting = v != "0",
+                "mail_filter" => s.mail_filter = v.trim().to_string(),
+                _ => {}
+            }
+'''),
+    ("src/model.rs",
+     '''                ("battery_alert".into(), self.battery_alert.to_string()),
+                ("notice_keywords".into(), self.notice_keywords.clone()),
+                ("quiet_minutes".into(), self.quiet_minutes.to_string()),
+                ("mail_filter".into(), self.mail_filter.clone()),
+            ],
+        );
+''',
+     '''                ("battery_alert".into(), self.battery_alert.to_string()),
+                ("notice_keywords".into(), self.notice_keywords.clone()),
+                ("quiet_minutes".into(), self.quiet_minutes.to_string()),
+                ("quiet_meeting".into(), (self.quiet_meeting as u8).to_string()),
+                ("mail_filter".into(), self.mail_filter.clone()),
+            ],
+        );
+'''),
+    ("src/app.rs",
+     '''    pub(crate) clip_search_focus: bool,
+    /// 搜索输入框是否展开（面板表头平时只放一个「搜索」按钮）。
+    pub(crate) clip_search_open: bool,
+
+    // 饮水
+    pub(crate) water_ring: Spring,
+''',
+     '''    pub(crate) clip_search_focus: bool,
+    /// 搜索输入框是否展开（面板表头平时只放一个「搜索」按钮）。
+    pub(crate) clip_search_open: bool,
+    /// 搜索框这一帧是否真的有键盘焦点（只有这时才处理 ↑↓ / Enter）。
+    pub(crate) clip_typing: bool,
+    /// 键盘选中的行（过滤后列表的下标）。
+    pub(crate) clip_sel: usize,
+
+    // 饮水
+    pub(crate) water_ring: Spring,
+'''),
+    ("src/app.rs",
+     '''    pub(crate) pc_last:Option<Option<u8>>,
+    /// 勿扰截止时刻（app 时间）；> t 期间不弹提示、不闪铃铛，验证码除外。
+    pub(crate) quiet_until:f64,
+    /// 状态总线当前存活的状态，用于常驻区并排显示。
+    pub(crate) status_live:Vec<crate::island_status::Status>,
+    /// 未接来电累计（点「未接来电」提示的关闭按钮清零）。
+''',
+     '''    pub(crate) pc_last:Option<Option<u8>>,
+    /// 勿扰截止时刻（app 时间）；> t 期间不弹提示、不闪铃铛，验证码除外。
+    pub(crate) quiet_until:f64,
+    /// 已经自动勿扰过的会议（uid|start），避免同一场会重复触发。
+    pub(crate) quiet_meeting_key:Option<String>,
+    /// 上次检查会议勿扰的时刻（每 5 秒查一次，别每帧都拼日程）。
+    pub(crate) meeting_checked_at:f64,
+    /// 「稍后提醒」队列：(到期时刻, 标题, 正文)。
+    pub(crate) snoozed:Vec<(f64,String,String)>,
+    /// 设置页的最近通知缓存：(上次读取时刻, 列表)，避免每帧读盘。
+    pub(crate) notice_cache:(f64,Vec<(String,String,String)>),
+    /// 还没凑满一分钟的专注秒数，攒够就写进 focus-stats.json。
+    pub(crate) focus_pending:f32,
+    /// 今日专注分钟数与连续天数（每分钟更新一次，别每帧读盘）。
+    pub(crate) focus_today_min:u32,
+    pub(crate) focus_streak_days:u32,
+    /// 状态总线当前存活的状态，用于常驻区并排显示。
+    pub(crate) status_live:Vec<crate::island_status::Status>,
+    /// 未接来电累计（点「未接来电」提示的关闭按钮清零）。
+'''),
+    ("src/app.rs",
+     '''            s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
+        });
+        let settings = model::Settings::load();
+        // 邮件面板上次选的账号：结构体里 `settings` 会被 move，先取出来。
+        let saved_mail_filter = settings.mail_filter.clone();
+        let clipboard_on = settings.clipboard_history;
+''',
+     '''            s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
+        });
+        let settings = model::Settings::load();
+        // 专注统计只在启动和每分钟更新，构造前先取一次。
+        let (focus_today, focus_streak)=crate::extras::focus_summary();
+        // 邮件面板上次选的账号：结构体里 `settings` 会被 move，先取出来。
+        let saved_mail_filter = settings.mail_filter.clone();
+        let clipboard_on = settings.clipboard_history;
+'''),
+    ("src/app.rs",
+     '''            clip_query: String::new(),
+            clip_search_focus: false,
+            clip_search_open: false,
+            water_ring: Spring::new(0.0, 120.0, 0.9),
+            water_ml: 0.0,
+            water_view: 0,
+''',
+     '''            clip_query: String::new(),
+            clip_search_focus: false,
+            clip_search_open: false,
+            clip_typing: false,
+            clip_sel: 0,
+            water_ring: Spring::new(0.0, 120.0, 0.9),
+            water_ml: 0.0,
+            water_view: 0,
+'''),
+    ("src/app.rs",
+     '''            media_anchor: (String::new(), 0.0, 0.0, false),
+            media: NowPlaying::default(),
+            music_artwork: None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), phone_last:None, pc_last:None, quiet_until:0.0, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            listener_status: "尚未连接".into(),
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
+''',
+     '''            media_anchor: (String::new(), 0.0, 0.0, false),
+            media: NowPlaying::default(),
+            music_artwork: None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            listener_status: "尚未连接".into(),
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
+'''),
+    ("src/app.rs",
+     '''        self.pc_events(env.battery,env.charging);
+        // 勿扰到点自动解除；同时把设置项归零，避免界面上还显示着「60 分钟」。
+        if self.quiet_until>0.0 && self.t>=self.quiet_until {self.quiet_until=0.0;self.settings.quiet_minutes=0;self.settings.save();}
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled());
+        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
+        let status_width=self.status_total_width();
+''',
+     '''        self.pc_events(env.battery,env.charging);
+        // 勿扰到点自动解除；同时把设置项归零，避免界面上还显示着「60 分钟」。
+        if self.quiet_until>0.0 && self.t>=self.quiet_until {self.quiet_until=0.0;self.settings.quiet_minutes=0;self.settings.save();}
+        if self.t-self.meeting_checked_at>5.0 {self.meeting_checked_at=self.t;self.meeting_quiet(env);}
+        self.tick_snoozed();
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled());
+        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
+        let status_width=self.status_total_width();
+'''),
+    ("src/app.rs",
+     '''            self.water_ml = self.water.drunk_ml as f32;
+            self.water_ring.snap(self.water.percent() / 100.0);
+        }
+        if self.pomo.running {
+            self.pomo.remaining -= elapsed;
+            if self.pomo.remaining <= 0.0 {
+''',
+     '''            self.water_ml = self.water.drunk_ml as f32;
+            self.water_ring.snap(self.water.percent() / 100.0);
+        }
+        // 只统计真正在跑的专注阶段：暂停不计，攒满一分钟落盘一次。
+        if self.pomo.running && self.pomo.phase==Phase::Focus {
+            self.focus_pending += elapsed as f32;
+            if self.focus_pending>=60.0 {
+                let minutes=(self.focus_pending/60.0).floor();
+                self.focus_pending-=minutes*60.0;
+                crate::extras::focus_add(minutes as u32);
+                let (today,streak)=crate::extras::focus_summary();
+                self.focus_today_min=today;
+                self.focus_streak_days=streak;
+            }
+        }
+        if self.pomo.running {
+            self.pomo.remaining -= elapsed;
+            if self.pomo.remaining <= 0.0 {
+'''),
+    ("src/extras.rs",
+     '''        // 通知仅保存在本次运行的内存中。
+        if a.source==AlertSource::Internal {self.history.push_front(a.clone());}
+        self.history.truncate(50);
+        // 勿扰：只记账、不打扰。横幅、铃铛、系统通知都不出现，验证码例外（用户要的就是那串数字）。
+        if self.muted() && a.status.is_none() && crate::otp::extract("",&a.body,&[]).is_none() { return; }
+        if self.settings.notifications {
+''',
+     '''        // 通知仅保存在本次运行的内存中。
+        if a.source==AlertSource::Internal {self.history.push_front(a.clone());}
+        self.history.truncate(50);
+        // 落盘一份历史：岛仔重启或当时没看到时，还能在设置里回查。
+        let status_bus=matches!(&a.source,AlertSource::External(id) if id.starts_with("island-status"));
+        if !status_bus {notice_history_append(&a.title,&a.body);}
+        // 勿扰：只记账、不打扰。横幅、铃铛、系统通知都不出现，验证码例外（用户要的就是那串数字）。
+        if self.muted() && a.status.is_none() && crate::otp::extract("",&a.body,&[]).is_none() { return; }
+        if self.settings.notifications {
+'''),
+    ("src/extras.rs",
+     '''        self.settings.keywords().iter().any(|word|lower.contains(&word.to_lowercase()))
+    }
+
+    /// 勿扰开关：`minutes = 0` 关闭。只在本次运行内有效，重启后恢复关闭。
+    pub(crate) fn set_quiet(&mut self,minutes:u32){
+        self.settings.quiet_minutes=minutes;
+''',
+     '''        self.settings.keywords().iter().any(|word|lower.contains(&word.to_lowercase()))
+    }
+
+    /// 会议自动勿扰：日程刚开始（90 秒内）且还没结束时把勿扰开到会议结束，最多 2 小时。
+    /// 同一场会议只触发一次，散会自动失效。
+    pub(crate) fn meeting_quiet(&mut self, env:&crate::app::Env){
+        if !self.settings.quiet_meeting || self.muted() {return;}
+        let Ok(day)=chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d") else{return};
+        let now=chrono::Local::now().timestamp();
+        let mut hit:Option<(i64,String)>=None;
+        for entry in self.calendar_entries(day) {
+            let event=entry.event;
+            if event.all_day || event.start>now || now-event.start>90 {continue;}
+            let Some(end)=event.end else{continue};
+            if end<=now {continue;}
+            hit=Some((end.min(now+7200), format!("{}|{}",event.uid,event.start)));
+        }
+        let Some((until,key))=hit else{return};
+        if self.quiet_meeting_key.as_deref()==Some(key.as_str()) {return;}
+        self.quiet_meeting_key=Some(key);
+        self.quiet_until=until as f64;
+        self.say("会议开始，自动勿扰到散会");
+    }
+
+    /// 设置页用的最近通知：2 秒缓存一次，别每帧读盘。
+    pub(crate) fn recent_notices(&mut self)->Vec<(String,String,String)>{
+        if self.notice_cache.0<=0.0 || self.t-self.notice_cache.0>2.0 {
+            self.notice_cache=(self.t.max(0.001),notice_history());
+        }
+        self.notice_cache.1.clone()
+    }
+
+    /// 把一条历史通知重新弹出来（「稍后提醒」用）。
+    pub(crate) fn replay_notice(&mut self,title:String,body:String){
+        self.enqueue_alert(Alert{source:AlertSource::External("notice-history".into()),title,body,page:usize::MAX,at:self.t,duration:if cfg!(test){4.5}else{30.0},bluetooth:None,meeting:None,status:None},false);
+    }
+
+    /// 稍后提醒：`minutes` 分钟后再弹一次。
+    pub(crate) fn snooze_notice(&mut self,minutes:f64,title:String,body:String){
+        self.snoozed.push((self.t+minutes*60.0,title,body));
+        self.say(format!("{minutes:.0} 分钟后再提醒"));
+    }
+
+    /// 到点的「稍后提醒」重新入队，一次只处理一条，避免同一帧连弹。
+    pub(crate) fn tick_snoozed(&mut self){
+        if let Some(index)=self.snoozed.iter().position(|(due,_,_)|self.t>=*due){
+            let (_,title,body)=self.snoozed.remove(index);
+            self.replay_notice(title,body);
+        }
+    }
+
+    /// 勿扰开关：`minutes = 0` 关闭。只在本次运行内有效，重启后恢复关闭。
+    pub(crate) fn set_quiet(&mut self,minutes:u32){
+        self.settings.quiet_minutes=minutes;
+'''),
+    ("src/extras.rs",
+     '''    }
+}
+
+/// 通知通道诊断：每条进来的通知都记一行「显示 / 被谁拦下」，排查「某类通知不上岛」用。
+pub(crate) fn log_notice(note:&str){
+    let Some(base)=std::env::var_os("APPDATA") else{return};
+''',
+     '''    }
+}
+
+/// 番茄统计：`%APPDATA%\\Daozai\\focus-stats.json`，只记「今天多少分钟」。
+/// 只统计真正在跑的专注阶段，暂停不计；写盘频率是每分钟一次。
+pub(crate) fn focus_stats_path()->Option<std::path::PathBuf>{
+    let base=std::env::var_os("APPDATA")?;
+    Some(std::path::PathBuf::from(base).join("Daozai").join("focus-stats.json"))
+}
+
+fn focus_days()->Vec<(String,u32)>{
+    let Some(path)=focus_stats_path() else{return Vec::new();};
+    let Ok(raw)=std::fs::read(&path) else{return Vec::new();};
+    let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Vec::new();};
+    json.get("days").and_then(|d|d.as_array()).into_iter().flatten().filter_map(|item|{
+        Some((item.get("date")?.as_str()?.to_owned(), item.get("minutes")?.as_u64()? as u32))
+    }).collect()
+}
+
+/// 今日专注分钟数与连续天数（连续天数从今天往回数，今天为 0 则从昨天算）。
+pub(crate) fn focus_summary()->(u32,u32){
+    let days=focus_days();
+    let today=chrono::Local::now().date_naive();
+    let minutes=days.iter().find(|(date,_)|date==&today.format("%Y-%m-%d").to_string()).map(|(_,m)|*m).unwrap_or(0);
+    let mut streak=0;
+    let mut cursor=today;
+    if minutes==0 {cursor=today-chrono::Duration::days(1);}
+    loop {
+        let key=cursor.format("%Y-%m-%d").to_string();
+        match days.iter().find(|(date,_)|date==&key) {
+            Some((_,m)) if *m>0 =>{streak+=1;cursor=cursor-chrono::Duration::days(1);}
+            _=>break,
+        }
+        if streak>365{break;}
+    }
+    (minutes,streak)
+}
+
+pub(crate) fn focus_add(minutes:u32){
+    if minutes==0 || cfg!(test) {return;}
+    let Some(path)=focus_stats_path() else{return;};
+    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    let today=chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let mut days=focus_days();
+    match days.iter_mut().find(|(date,_)|date==&today){
+        Some(entry)=>entry.1+=minutes,
+        None=>days.push((today,minutes)),
+    }
+    if days.len()>400 {let extra=days.len()-400;days.drain(0..extra);}
+    days.sort_by(|a,b|a.0.cmp(&b.0));
+    let json=serde_json::json!({"days":days.iter().map(|(date,m)|serde_json::json!({"date":date,"minutes":m})).collect::<Vec<_>>()});
+    if let Ok(data)=serde_json::to_vec(&json){let _=std::fs::write(&path,data);}
+}
+
+/// 通知历史（落盘，最多 100 条）：岛仔关掉之后「当时没看到的那条」还能查回来。
+/// 存 `%APPDATA%\\Daozai\\notices.json`，字段 at/title/body，新的在后面。
+pub(crate) fn notice_history_path()->Option<std::path::PathBuf>{
+    let base=std::env::var_os("APPDATA")?;
+    Some(std::path::PathBuf::from(base).join("Daozai").join("notices.json"))
+}
+
+/// 按时间顺序返回 (时间, 标题, 正文)，最新在最后。
+pub(crate) fn notice_history()->Vec<(String,String,String)>{
+    let Some(path)=notice_history_path() else{return Vec::new();};
+    let Ok(raw)=std::fs::read(&path) else{return Vec::new();};
+    let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Vec::new();};
+    json.as_array().into_iter().flatten().filter_map(|item|{
+        Some((item.get("at")?.as_str()?.to_owned(),item.get("title")?.as_str()?.to_owned(),item.get("body")?.as_str()?.to_owned()))
+    }).collect()
+}
+
+pub(crate) fn notice_history_append(title:&str,body:&str){
+    // 测试构建别往真实 APPDATA 里塞测试通知。
+    if cfg!(test) {return;}
+    let Some(path)=notice_history_path() else{return;};
+    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    let mut list=notice_history();
+    list.push((chrono::Local::now().format("%m-%d %H:%M").to_string(),title.to_string(),body.to_string()));
+    if list.len()>100{let extra=list.len()-100;list.drain(0..extra);}
+    let json:Vec<_>=list.iter().map(|(at,title,body)|serde_json::json!({"at":at,"title":title,"body":body})).collect();
+    if let Ok(data)=serde_json::to_vec(&json){let _=std::fs::write(&path,data);}
+}
+
+/// 通知通道诊断：每条进来的通知都记一行「显示 / 被谁拦下」，排查「某类通知不上岛」用。
+pub(crate) fn log_notice(note:&str){
+    let Some(base)=std::env::var_os("APPDATA") else{return};
+'''),
+    ("src/extras.rs",
+     '''                            ui.add_space(3.0);
+                            ui.small("调整后从下一阶段开始生效。");
+                        });
+                    }
+                    3=>{
+                        settings_label(ui,"喝水提醒");
+''',
+     '''                            ui.add_space(3.0);
+                            ui.small("调整后从下一阶段开始生效。");
+                        });
+                        settings_label(ui,"专注记录");
+                        settings_card(ui,|ui|{
+                            // 只读内存里的统计（每分钟更新一次），不在这里读盘。
+                            let (today,streak)=(self.focus_today_min,self.focus_streak_days);
+                            let hours=today/60;
+                            let line=if today>=60 {format!("今日 {hours} 小时 {} 分 · 连续 {streak} 天",today%60)} else {format!("今日 {today} 分 · 连续 {streak} 天")};
+                            ui.add(egui::Label::new(egui::RichText::new(line).size(12.0)).wrap());
+                            ui.add_space(3.0);
+                            ui.small("只统计真正在跑的专注阶段，暂停不计；数据在 %APPDATA%\\\\Daozai\\\\focus-stats.json。");
+                        });
+                    }
+                    3=>{
+                        settings_label(ui,"喝水提醒");
+'''),
+    ("src/extras.rs",
+     '''                            if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
+                                self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
+                            }
+                        });
+                        // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
+                        let master=self.settings.notifications;
+''',
+     '''                            if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
+                                self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
+                            }
+                            ui.separator();
+                            setting_row(ui,"会议自动勿扰","日程开始时自动勿扰到散会（最多 2 小时），散会自动解除",&mut self.settings.quiet_meeting);
+                            ui.separator();
+                            // 最近通知：落盘的 100 条里取最新 8 条，点一行复制正文，右侧「稍后」5 分钟重弹。
+                            settings_hint(ui,"最近通知 · 点击复制正文，或点「稍后」5 分钟后再提醒");
+                            let recent=self.recent_notices();
+                            let mut picked:Option<(String,String,bool)>=None;
+                            if recent.is_empty() {
+                                settings_hint(ui,"还没有记录。收到通知后会写进 notices.json，重启也能回查。");
+                            }
+                            for (at,title,body) in recent.iter().rev().take(8) {
+                                let line=format!("{at}  {title} · {}",body.chars().take(26).collect::<String>());
+                                ui.horizontal(|ui|{
+                                    let resp=ui.add(egui::Label::new(egui::RichText::new(line).size(11.5)).sense(egui::Sense::click()));
+                                    if resp.on_hover_text(body.as_str()).clicked(){picked=Some((title.clone(),body.clone(),false));}
+                                    if ui.small_button("稍后").on_hover_text("5 分钟后再提醒一次").clicked(){picked=Some((title.clone(),body.clone(),true));}
+                                });
+                            }
+                            if let Some((title,body,snooze))=picked {
+                                if snooze {self.snooze_notice(5.0,title,body);}
+                                else {self.pending.push(Cmd::Copy(body));self.say("已复制通知正文");}
+                            }
+                        });
+                        // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
+                        let master=self.settings.notifications;
+'''),
+    ("src/pages.rs",
+     '''            resp.request_focus();
+            cmds.push(Cmd::Focus);
+        }
+        if resp.has_focus() { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
+        // Esc 退出搜索：清空关键词并收起输入框。
+        if resp.has_focus() && c.ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
+''',
+     '''            resp.request_focus();
+            cmds.push(Cmd::Focus);
+        }
+        self.clip_typing=resp.has_focus();
+        if resp.has_focus() { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
+        // Esc 退出搜索：清空关键词并收起输入框。
+        if resp.has_focus() && c.ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
+'''),
+    ("src/pages.rs",
+     '''            c.fill(371.0, top, 2.5, track, 1.25, Color32::from_white_alpha(14));
+            c.fill(371.0, y, 2.5, thumb, 1.25, Color32::from_white_alpha(70));
+        }
+        let mut action: Option<(usize, u8)> = None; // 0 复制 1 固定 2 删除
+        for (row, index) in shown.iter().copied().skip(self.clip_first).take(rows).enumerate() {
+            let clip = &items[index];
+            let y = if searching { 62.0 } else { 44.0 } + row as f32 * 22.5;
+            let r = c.hit(48.0, y - 10.0, 323.0, 20.0, ("clip", index, clip.text.len(), clip.at.as_str()));
+            let (h, _) = c.hover_t(&r);
+            if h > 0.01 {
+                c.fill(48.0, y - 10.0, 323.0, 20.0, 7.0, Color32::from_white_alpha((12.0 * h) as u8));
+            }
+            if clip.pinned {
+''',
+     '''            c.fill(371.0, top, 2.5, track, 1.25, Color32::from_white_alpha(14));
+            c.fill(371.0, y, 2.5, thumb, 1.25, Color32::from_white_alpha(70));
+        }
+        // 搜索框拿到键盘焦点时：↑↓ 选行、Enter 复制。选中行始终保持在可视范围内。
+        if self.clip_search_open && self.clip_typing && !shown.is_empty() {
+            let (down, up, enter) = c.ui.ctx().input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter)));
+            if down { self.clip_sel=(self.clip_sel+1).min(n-1); }
+            if up { self.clip_sel=self.clip_sel.saturating_sub(1); }
+            self.clip_sel=self.clip_sel.min(n-1);
+            if self.clip_sel<self.clip_first { self.clip_first=self.clip_sel; }
+            if self.clip_sel>=self.clip_first+rows { self.clip_first=self.clip_sel+1-rows; }
+            if enter {
+                let text=items[shown[self.clip_sel]].text.clone();
+                #[cfg(windows)]
+                self.say(if crate::clipboard::copy_history(&text) { "已复制" } else { "复制失败，请重试" });
+                #[cfg(not(windows))]
+                _cmds.push(Cmd::Copy(text));
+            }
+        }
+        let mut action: Option<(usize, u8)> = None; // 0 复制 1 固定 2 删除
+        for (row, index) in shown.iter().copied().skip(self.clip_first).take(rows).enumerate() {
+            let clip = &items[index];
+            let y = if searching { 62.0 } else { 44.0 } + row as f32 * 22.5;
+            let r = c.hit(48.0, y - 10.0, 323.0, 20.0, ("clip", index, clip.text.len(), clip.at.as_str()));
+            let (h, _) = c.hover_t(&r);
+            let selected = self.clip_search_open && self.clip_typing && self.clip_first+row == self.clip_sel;
+            if selected {
+                c.fill(48.0, y - 10.0, 323.0, 20.0, 7.0, Color32::from_white_alpha(26));
+            } else if h > 0.01 {
+                c.fill(48.0, y - 10.0, 323.0, 20.0, 7.0, Color32::from_white_alpha((12.0 * h) as u8));
+            }
+            if clip.pinned {
+'''),
+    ("src/ui_tests.rs",
+     '''    crate::mail::save_accounts(&accounts);assert_eq!(crate::mail::load_accounts(),accounts);
+}
+
+#[test]
+fn clipboard_search_toggles_on_the_active_tab_and_filters_lines() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
+''',
+     '''    crate::mail::save_accounts(&accounts);assert_eq!(crate::mail::load_accounts(),accounts);
+}
+
+#[test]
+fn snoozed_notice_returns_when_due() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
+    h.app.snooze_notice(5.0,"短信验证码".into(),"您的验证码：4342".into());
+    assert_eq!(h.app.snoozed.len(),1,"点了稍后应该排进队列");
+    // 还差 1 秒时不该弹。
+    h.app.t += 299.0;
+    h.app.tick_snoozed();
+    assert!(h.app.notice.is_none(),"没到点不能提前弹");
+    h.app.t += 2.0;
+    h.app.tick_snoozed();
+    assert!(h.app.snoozed.is_empty(),"到点后要从队列里移除");
+    // 入队后由 tick_alerts 抬到 notice，这里两处都认。
+    assert!(h.app.notice.iter().chain(h.app.alerts.iter()).any(|a|a.title=="短信验证码"),"到点要重新弹出来");
+}
+
+#[test]
+fn clipboard_search_toggles_on_the_active_tab_and_filters_lines() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
 '''),
 ]
 

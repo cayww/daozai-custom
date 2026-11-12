@@ -683,6 +683,10 @@ pub struct App {
     pub(crate) clip_search_focus: bool,
     /// 搜索输入框是否展开（面板表头平时只放一个「搜索」按钮）。
     pub(crate) clip_search_open: bool,
+    /// 搜索框这一帧是否真的有键盘焦点（只有这时才处理 ↑↓ / Enter）。
+    pub(crate) clip_typing: bool,
+    /// 键盘选中的行（过滤后列表的下标）。
+    pub(crate) clip_sel: usize,
 
     // 饮水
     pub(crate) water_ring: Spring,
@@ -751,6 +755,19 @@ pub struct App {
     pub(crate) pc_last:Option<Option<u8>>,
     /// 勿扰截止时刻（app 时间）；> t 期间不弹提示、不闪铃铛，验证码除外。
     pub(crate) quiet_until:f64,
+    /// 已经自动勿扰过的会议（uid|start），避免同一场会重复触发。
+    pub(crate) quiet_meeting_key:Option<String>,
+    /// 上次检查会议勿扰的时刻（每 5 秒查一次，别每帧都拼日程）。
+    pub(crate) meeting_checked_at:f64,
+    /// 「稍后提醒」队列：(到期时刻, 标题, 正文)。
+    pub(crate) snoozed:Vec<(f64,String,String)>,
+    /// 设置页的最近通知缓存：(上次读取时刻, 列表)，避免每帧读盘。
+    pub(crate) notice_cache:(f64,Vec<(String,String,String)>),
+    /// 还没凑满一分钟的专注秒数，攒够就写进 focus-stats.json。
+    pub(crate) focus_pending:f32,
+    /// 今日专注分钟数与连续天数（每分钟更新一次，别每帧读盘）。
+    pub(crate) focus_today_min:u32,
+    pub(crate) focus_streak_days:u32,
     /// 状态总线当前存活的状态，用于常驻区并排显示。
     pub(crate) status_live:Vec<crate::island_status::Status>,
     /// 未接来电累计（点「未接来电」提示的关闭按钮清零）。
@@ -825,6 +842,8 @@ impl App {
             s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
         });
         let settings = model::Settings::load();
+        // 专注统计只在启动和每分钟更新，构造前先取一次。
+        let (focus_today, focus_streak)=crate::extras::focus_summary();
         // 邮件面板上次选的账号：结构体里 `settings` 会被 move，先取出来。
         let saved_mail_filter = settings.mail_filter.clone();
         let clipboard_on = settings.clipboard_history;
@@ -871,6 +890,8 @@ impl App {
             clip_query: String::new(),
             clip_search_focus: false,
             clip_search_open: false,
+            clip_typing: false,
+            clip_sel: 0,
             water_ring: Spring::new(0.0, 120.0, 0.9),
             water_ml: 0.0,
             water_view: 0,
@@ -898,7 +919,7 @@ impl App {
             media_anchor: (String::new(), 0.0, 0.0, false),
             media: NowPlaying::default(),
             music_artwork: None,
-            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), phone_last:None, pc_last:None, quiet_until:0.0, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
             listener_status: "尚未连接".into(),
             notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
@@ -1735,6 +1756,8 @@ impl App {
         self.pc_events(env.battery,env.charging);
         // 勿扰到点自动解除；同时把设置项归零，避免界面上还显示着「60 分钟」。
         if self.quiet_until>0.0 && self.t>=self.quiet_until {self.quiet_until=0.0;self.settings.quiet_minutes=0;self.settings.save();}
+        if self.t-self.meeting_checked_at>5.0 {self.meeting_checked_at=self.t;self.meeting_quiet(env);}
+        self.tick_snoozed();
         let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled());
         // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
         let status_width=self.status_total_width();
@@ -2830,6 +2853,18 @@ impl App {
             self.last_drink=None;self.last_reminder=self.t;
             self.water_ml = self.water.drunk_ml as f32;
             self.water_ring.snap(self.water.percent() / 100.0);
+        }
+        // 只统计真正在跑的专注阶段：暂停不计，攒满一分钟落盘一次。
+        if self.pomo.running && self.pomo.phase==Phase::Focus {
+            self.focus_pending += elapsed as f32;
+            if self.focus_pending>=60.0 {
+                let minutes=(self.focus_pending/60.0).floor();
+                self.focus_pending-=minutes*60.0;
+                crate::extras::focus_add(minutes as u32);
+                let (today,streak)=crate::extras::focus_summary();
+                self.focus_today_min=today;
+                self.focus_streak_days=streak;
+            }
         }
         if self.pomo.running {
             self.pomo.remaining -= elapsed;

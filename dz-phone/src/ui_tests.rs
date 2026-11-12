@@ -186,6 +186,22 @@ fn v0649_settings_and_mail_accounts_survive_upgrade(){
 }
 
 #[test]
+fn snoozed_notice_returns_when_due() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
+    h.app.snooze_notice(5.0,"短信验证码".into(),"您的验证码：4342".into());
+    assert_eq!(h.app.snoozed.len(),1,"点了稍后应该排进队列");
+    // 还差 1 秒时不该弹。
+    h.app.t += 299.0;
+    h.app.tick_snoozed();
+    assert!(h.app.notice.is_none(),"没到点不能提前弹");
+    h.app.t += 2.0;
+    h.app.tick_snoozed();
+    assert!(h.app.snoozed.is_empty(),"到点后要从队列里移除");
+    // 入队后由 tick_alerts 抬到 notice，这里两处都认。
+    assert!(h.app.notice.iter().chain(h.app.alerts.iter()).any(|a|a.title=="短信验证码"),"到点要重新弹出来");
+}
+
+#[test]
 fn clipboard_search_toggles_on_the_active_tab_and_filters_lines() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.app.show_page(3);h.app.shelf_tab=1;

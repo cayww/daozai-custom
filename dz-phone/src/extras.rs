@@ -243,6 +243,9 @@ impl App {
         // 通知仅保存在本次运行的内存中。
         if a.source==AlertSource::Internal {self.history.push_front(a.clone());}
         self.history.truncate(50);
+        // 落盘一份历史：岛仔重启或当时没看到时，还能在设置里回查。
+        let status_bus=matches!(&a.source,AlertSource::External(id) if id.starts_with("island-status"));
+        if !status_bus {notice_history_append(&a.title,&a.body);}
         // 勿扰：只记账、不打扰。横幅、铃铛、系统通知都不出现，验证码例外（用户要的就是那串数字）。
         if self.muted() && a.status.is_none() && crate::otp::extract("",&a.body,&[]).is_none() { return; }
         if self.settings.notifications {
@@ -361,6 +364,54 @@ impl App {
         if text.is_empty(){return false;}
         let lower=text.to_lowercase();
         self.settings.keywords().iter().any(|word|lower.contains(&word.to_lowercase()))
+    }
+
+    /// 会议自动勿扰：日程刚开始（90 秒内）且还没结束时把勿扰开到会议结束，最多 2 小时。
+    /// 同一场会议只触发一次，散会自动失效。
+    pub(crate) fn meeting_quiet(&mut self, env:&crate::app::Env){
+        if !self.settings.quiet_meeting || self.muted() {return;}
+        let Ok(day)=chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d") else{return};
+        let now=chrono::Local::now().timestamp();
+        let mut hit:Option<(i64,String)>=None;
+        for entry in self.calendar_entries(day) {
+            let event=entry.event;
+            if event.all_day || event.start>now || now-event.start>90 {continue;}
+            let Some(end)=event.end else{continue};
+            if end<=now {continue;}
+            hit=Some((end.min(now+7200), format!("{}|{}",event.uid,event.start)));
+        }
+        let Some((until,key))=hit else{return};
+        if self.quiet_meeting_key.as_deref()==Some(key.as_str()) {return;}
+        self.quiet_meeting_key=Some(key);
+        self.quiet_until=until as f64;
+        self.say("会议开始，自动勿扰到散会");
+    }
+
+    /// 设置页用的最近通知：2 秒缓存一次，别每帧读盘。
+    pub(crate) fn recent_notices(&mut self)->Vec<(String,String,String)>{
+        if self.notice_cache.0<=0.0 || self.t-self.notice_cache.0>2.0 {
+            self.notice_cache=(self.t.max(0.001),notice_history());
+        }
+        self.notice_cache.1.clone()
+    }
+
+    /// 把一条历史通知重新弹出来（「稍后提醒」用）。
+    pub(crate) fn replay_notice(&mut self,title:String,body:String){
+        self.enqueue_alert(Alert{source:AlertSource::External("notice-history".into()),title,body,page:usize::MAX,at:self.t,duration:if cfg!(test){4.5}else{30.0},bluetooth:None,meeting:None,status:None},false);
+    }
+
+    /// 稍后提醒：`minutes` 分钟后再弹一次。
+    pub(crate) fn snooze_notice(&mut self,minutes:f64,title:String,body:String){
+        self.snoozed.push((self.t+minutes*60.0,title,body));
+        self.say(format!("{minutes:.0} 分钟后再提醒"));
+    }
+
+    /// 到点的「稍后提醒」重新入队，一次只处理一条，避免同一帧连弹。
+    pub(crate) fn tick_snoozed(&mut self){
+        if let Some(index)=self.snoozed.iter().position(|(due,_,_)|self.t>=*due){
+            let (_,title,body)=self.snoozed.remove(index);
+            self.replay_notice(title,body);
+        }
     }
 
     /// 勿扰开关：`minutes = 0` 关闭。只在本次运行内有效，重启后恢复关闭。
@@ -519,6 +570,86 @@ pub(crate) fn log_otp(source:&str,code:Option<&str>){
         use std::io::Write;
         let _=writeln!(file,"{} | {} | {}",chrono::Local::now().format("%H:%M:%S"),source,code.unwrap_or("-"));
     }
+}
+
+/// 番茄统计：`%APPDATA%\Daozai\focus-stats.json`，只记「今天多少分钟」。
+/// 只统计真正在跑的专注阶段，暂停不计；写盘频率是每分钟一次。
+pub(crate) fn focus_stats_path()->Option<std::path::PathBuf>{
+    let base=std::env::var_os("APPDATA")?;
+    Some(std::path::PathBuf::from(base).join("Daozai").join("focus-stats.json"))
+}
+
+fn focus_days()->Vec<(String,u32)>{
+    let Some(path)=focus_stats_path() else{return Vec::new();};
+    let Ok(raw)=std::fs::read(&path) else{return Vec::new();};
+    let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Vec::new();};
+    json.get("days").and_then(|d|d.as_array()).into_iter().flatten().filter_map(|item|{
+        Some((item.get("date")?.as_str()?.to_owned(), item.get("minutes")?.as_u64()? as u32))
+    }).collect()
+}
+
+/// 今日专注分钟数与连续天数（连续天数从今天往回数，今天为 0 则从昨天算）。
+pub(crate) fn focus_summary()->(u32,u32){
+    let days=focus_days();
+    let today=chrono::Local::now().date_naive();
+    let minutes=days.iter().find(|(date,_)|date==&today.format("%Y-%m-%d").to_string()).map(|(_,m)|*m).unwrap_or(0);
+    let mut streak=0;
+    let mut cursor=today;
+    if minutes==0 {cursor=today-chrono::Duration::days(1);}
+    loop {
+        let key=cursor.format("%Y-%m-%d").to_string();
+        match days.iter().find(|(date,_)|date==&key) {
+            Some((_,m)) if *m>0 =>{streak+=1;cursor=cursor-chrono::Duration::days(1);}
+            _=>break,
+        }
+        if streak>365{break;}
+    }
+    (minutes,streak)
+}
+
+pub(crate) fn focus_add(minutes:u32){
+    if minutes==0 || cfg!(test) {return;}
+    let Some(path)=focus_stats_path() else{return;};
+    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    let today=chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let mut days=focus_days();
+    match days.iter_mut().find(|(date,_)|date==&today){
+        Some(entry)=>entry.1+=minutes,
+        None=>days.push((today,minutes)),
+    }
+    if days.len()>400 {let extra=days.len()-400;days.drain(0..extra);}
+    days.sort_by(|a,b|a.0.cmp(&b.0));
+    let json=serde_json::json!({"days":days.iter().map(|(date,m)|serde_json::json!({"date":date,"minutes":m})).collect::<Vec<_>>()});
+    if let Ok(data)=serde_json::to_vec(&json){let _=std::fs::write(&path,data);}
+}
+
+/// 通知历史（落盘，最多 100 条）：岛仔关掉之后「当时没看到的那条」还能查回来。
+/// 存 `%APPDATA%\Daozai\notices.json`，字段 at/title/body，新的在后面。
+pub(crate) fn notice_history_path()->Option<std::path::PathBuf>{
+    let base=std::env::var_os("APPDATA")?;
+    Some(std::path::PathBuf::from(base).join("Daozai").join("notices.json"))
+}
+
+/// 按时间顺序返回 (时间, 标题, 正文)，最新在最后。
+pub(crate) fn notice_history()->Vec<(String,String,String)>{
+    let Some(path)=notice_history_path() else{return Vec::new();};
+    let Ok(raw)=std::fs::read(&path) else{return Vec::new();};
+    let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Vec::new();};
+    json.as_array().into_iter().flatten().filter_map(|item|{
+        Some((item.get("at")?.as_str()?.to_owned(),item.get("title")?.as_str()?.to_owned(),item.get("body")?.as_str()?.to_owned()))
+    }).collect()
+}
+
+pub(crate) fn notice_history_append(title:&str,body:&str){
+    // 测试构建别往真实 APPDATA 里塞测试通知。
+    if cfg!(test) {return;}
+    let Some(path)=notice_history_path() else{return;};
+    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    let mut list=notice_history();
+    list.push((chrono::Local::now().format("%m-%d %H:%M").to_string(),title.to_string(),body.to_string()));
+    if list.len()>100{let extra=list.len()-100;list.drain(0..extra);}
+    let json:Vec<_>=list.iter().map(|(at,title,body)|serde_json::json!({"at":at,"title":title,"body":body})).collect();
+    if let Ok(data)=serde_json::to_vec(&json){let _=std::fs::write(&path,data);}
 }
 
 /// 通知通道诊断：每条进来的通知都记一行「显示 / 被谁拦下」，排查「某类通知不上岛」用。
@@ -1696,6 +1827,16 @@ impl App {
                             ui.add_space(3.0);
                             ui.small("调整后从下一阶段开始生效。");
                         });
+                        settings_label(ui,"专注记录");
+                        settings_card(ui,|ui|{
+                            // 只读内存里的统计（每分钟更新一次），不在这里读盘。
+                            let (today,streak)=(self.focus_today_min,self.focus_streak_days);
+                            let hours=today/60;
+                            let line=if today>=60 {format!("今日 {hours} 小时 {} 分 · 连续 {streak} 天",today%60)} else {format!("今日 {today} 分 · 连续 {streak} 天")};
+                            ui.add(egui::Label::new(egui::RichText::new(line).size(12.0)).wrap());
+                            ui.add_space(3.0);
+                            ui.small("只统计真正在跑的专注阶段，暂停不计；数据在 %APPDATA%\\Daozai\\focus-stats.json。");
+                        });
                     }
                     3=>{
                         settings_label(ui,"喝水提醒");
@@ -1778,6 +1919,28 @@ impl App {
                             setting_row(ui,"通知关键词高亮","命中关键词时卡片左侧亮起琥珀色竖条；词表改 settings.txt 的 notice_keywords",&mut keywords_on);
                             if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
                                 self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
+                            }
+                            ui.separator();
+                            setting_row(ui,"会议自动勿扰","日程开始时自动勿扰到散会（最多 2 小时），散会自动解除",&mut self.settings.quiet_meeting);
+                            ui.separator();
+                            // 最近通知：落盘的 100 条里取最新 8 条，点一行复制正文，右侧「稍后」5 分钟重弹。
+                            settings_hint(ui,"最近通知 · 点击复制正文，或点「稍后」5 分钟后再提醒");
+                            let recent=self.recent_notices();
+                            let mut picked:Option<(String,String,bool)>=None;
+                            if recent.is_empty() {
+                                settings_hint(ui,"还没有记录。收到通知后会写进 notices.json，重启也能回查。");
+                            }
+                            for (at,title,body) in recent.iter().rev().take(8) {
+                                let line=format!("{at}  {title} · {}",body.chars().take(26).collect::<String>());
+                                ui.horizontal(|ui|{
+                                    let resp=ui.add(egui::Label::new(egui::RichText::new(line).size(11.5)).sense(egui::Sense::click()));
+                                    if resp.on_hover_text(body.as_str()).clicked(){picked=Some((title.clone(),body.clone(),false));}
+                                    if ui.small_button("稍后").on_hover_text("5 分钟后再提醒一次").clicked(){picked=Some((title.clone(),body.clone(),true));}
+                                });
+                            }
+                            if let Some((title,body,snooze))=picked {
+                                if snooze {self.snooze_notice(5.0,title,body);}
+                                else {self.pending.push(Cmd::Copy(body));self.say("已复制通知正文");}
                             }
                         });
                         // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
