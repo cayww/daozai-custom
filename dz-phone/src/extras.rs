@@ -365,6 +365,10 @@ impl App {
         // 规则里的 highlight 与关键词表同权：命中就亮琥珀色竖条。
         if self.notice_rules.hits(text,"highlight"){return true;}
         let lower=text.to_lowercase();
+        // tick 里维护好的小写词表；源字符串刚改、缓存还没跟上时退回现算。
+        if self.keyword_src==self.settings.notice_keywords {
+            return self.keywords.iter().any(|word|lower.contains(word.as_str()));
+        }
         self.settings.keywords().iter().any(|word|lower.contains(&word.to_lowercase()))
     }
 
@@ -374,15 +378,14 @@ impl App {
         if !self.settings.quiet_meeting || self.muted() {return;}
         let Ok(day)=chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d") else{return};
         let now=chrono::Local::now().timestamp();
-        let mut hit:Option<(i64,String)>=None;
-        for entry in self.calendar_entries(day) {
-            let event=entry.event;
-            if event.all_day || event.start>now || now-event.start>90 {continue;}
-            let Some(end)=event.end else{continue};
-            if end<=now {continue;}
-            hit=Some((end.min(now+7200), format!("{}|{}",event.uid,event.start)));
+        // 原来每 5 秒都要把本地/工作/邮件日程合并再排序一次，日程多时会有抖动。
+        // 现在缓存今日候选，60 秒或跨天才重算；触发窗口是 90 秒，不会因此漏掉会议。
+        if self.meeting_plan.0!=env.today || self.t-self.meeting_plan.1>60.0 {
+            let entries=self.calendar_entries(day);
+            let plan=meeting_candidates(entries.iter().map(|entry|entry.event));
+            self.meeting_plan=(env.today.clone(),self.t,plan);
         }
-        let Some((until,key))=hit else{return};
+        let Some((until,key))=meeting_hit(&self.meeting_plan.2,now) else{return};
         if self.quiet_meeting_key.as_deref()==Some(key.as_str()) {return;}
         self.quiet_meeting_key=Some(key);
         self.quiet_until=until as f64;
@@ -620,6 +623,7 @@ impl App {
 }
 
 /// 验证码识别诊断：只在「自动复制」开启时写一行，便于排查邮件/短信为什么没复制。
+/// 日志只保留打码后的长度，绝不把验证码明文长期写进磁盘。
 pub(crate) fn log_otp(source:&str,code:Option<&str>){
     let Some(base)=std::env::var_os("APPDATA") else{return};
     let dir=std::path::PathBuf::from(base).join("Daozai").join("diagnostics");
@@ -628,7 +632,8 @@ pub(crate) fn log_otp(source:&str,code:Option<&str>){
     if std::fs::metadata(&path).is_ok_and(|m|m.len()>256*1024){let _=std::fs::remove_file(&path);}
     if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(&path){
         use std::io::Write;
-        let _=writeln!(file,"{} | {} | {}",chrono::Local::now().format("%H:%M:%S"),source,code.unwrap_or("-"));
+        let masked = code.map(|value| crate::mail_privacy::mask(value, value));
+        let _=writeln!(file,"{} | {} | {}",chrono::Local::now().format("%H:%M:%S"),source,masked.as_deref().unwrap_or("-"));
     }
 }
 
@@ -667,8 +672,8 @@ pub(crate) fn focus_stats_path()->Option<std::path::PathBuf>{
 
 fn focus_days()->Vec<(String,u32)>{
     let Some(path)=focus_stats_path() else{return Vec::new();};
-    let Ok(raw)=std::fs::read(&path) else{return Vec::new();};
-    let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Vec::new();};
+    // 坏文件会被改名成 .bad 后返回 None，避免「解析失败」被当成「本来是空的」而清空统计。
+    let Some(json)=crate::model::read_json_renaming_bad(&path,crate::model::MAX_JSON_BYTES) else{return Vec::new();};
     json.get("days").and_then(|d|d.as_array()).into_iter().flatten().filter_map(|item|{
         Some((item.get("date")?.as_str()?.to_owned(), item.get("minutes")?.as_u64()? as u32))
     }).collect()
@@ -706,7 +711,7 @@ pub(crate) fn focus_add(minutes:u32){
     if days.len()>400 {let extra=days.len()-400;days.drain(0..extra);}
     days.sort_by(|a,b|a.0.cmp(&b.0));
     let json=serde_json::json!({"days":days.iter().map(|(date,m)|serde_json::json!({"date":date,"minutes":m})).collect::<Vec<_>>()});
-    if let Ok(data)=serde_json::to_vec(&json){let _=std::fs::write(&path,data);}
+    if let Ok(data)=serde_json::to_vec(&json){let _=crate::model::atomic_write(&path,&data);}
 }
 
 /// 通知历史（落盘，最多 100 条）：岛仔关掉之后「当时没看到的那条」还能查回来。
@@ -719,8 +724,7 @@ pub(crate) fn notice_history_path()->Option<std::path::PathBuf>{
 /// 按时间顺序返回 (时间, 标题, 正文)，最新在最后。
 pub(crate) fn notice_history()->Vec<(String,String,String)>{
     let Some(path)=notice_history_path() else{return Vec::new();};
-    let Ok(raw)=std::fs::read(&path) else{return Vec::new();};
-    let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Vec::new();};
+    let Some(json)=crate::model::read_json_renaming_bad(&path,crate::model::MAX_JSON_BYTES) else{return Vec::new();};
     json.as_array().into_iter().flatten().filter_map(|item|{
         Some((item.get("at")?.as_str()?.to_owned(),item.get("title")?.as_str()?.to_owned(),item.get("body")?.as_str()?.to_owned()))
     }).collect()
@@ -731,11 +735,14 @@ pub(crate) fn notice_history_append(title:&str,body:&str){
     if cfg!(test) {return;}
     let Some(path)=notice_history_path() else{return;};
     if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    // 落盘前把验证码打码：历史文件只用于「回看是什么事」，不需要留着明文码。
+    let body=if let Some(code)=crate::otp::extract("",body,&[]) {crate::mail_privacy::mask(body,&code.text)} else {body.to_string()};
     let mut list=notice_history();
-    list.push((chrono::Local::now().format("%m-%d %H:%M").to_string(),title.to_string(),body.to_string()));
+    list.push((chrono::Local::now().format("%m-%d %H:%M").to_string(),title.to_string(),body));
     if list.len()>100{let extra=list.len()-100;list.drain(0..extra);}
     let json:Vec<_>=list.iter().map(|(at,title,body)|serde_json::json!({"at":at,"title":title,"body":body})).collect();
-    if let Ok(data)=serde_json::to_vec(&json){let _=std::fs::write(&path,data);}
+    // 原子写：中途断电也不会留下半截 JSON（否则下次读失败会被当空文件重建）。
+    if let Ok(data)=serde_json::to_vec(&json){let _=crate::model::atomic_write(&path,&data);}
 }
 
 /// 通知通道诊断：每条进来的通知都记一行「显示 / 被谁拦下」，排查「某类通知不上岛」用。
@@ -816,7 +823,13 @@ fn status_action(spec:&str)->Option<(&'static str,StatusAct)>{
         if url.starts_with("https://")||url.starts_with("http://"){return Some(("打开",Shell(Cmd::OpenUrl(url.to_string()))));}
     }
     if let Some(file)=spec.strip_prefix("file:") {
-        if !file.is_empty(){return Some(("打开",Shell(Cmd::Open(std::path::PathBuf::from(file)))));}
+        // 只放行「看到的文件」：路径必须存在，且不是可执行/脚本/快捷方式——
+        // 否则任何能写 island_status.json 的进程都能借岛仔的手启动程序。
+        let path=std::path::PathBuf::from(file);
+        let blocked=path.extension().and_then(|e|e.to_str()).map(|e|{
+            matches!(e.to_ascii_lowercase().as_str(),"exe"|"bat"|"cmd"|"com"|"ps1"|"vbs"|"js"|"jse"|"wsf"|"wsh"|"hta"|"lnk"|"scr"|"msi"|"pif"|"reg")
+        }).unwrap_or(false);
+        if path.exists() && !blocked {return Some(("打开",Shell(Cmd::Open(path))));}
     }
     let action=spec.strip_prefix("action:")?.trim();
     match action {
@@ -2457,4 +2470,90 @@ fn support_codes_are_cropped_small_and_released_when_hidden(){
     release_support_codes(&ctx);
     let _=ctx.run(Default::default(),|_|{});
     assert_eq!(ctx.tex_manager().read().allocated().filter(|(_,meta)|meta.name=="qr").count(),0,"收起后应释放收款码贴图");
+}
+
+#[cfg(test)]
+mod status_action_safety_tests {
+    use super::status_action;
+
+    #[test]
+    fn 文件动作只放行存在的非可执行文件() {
+        let root = std::env::temp_dir().join(format!("daozai-open-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let text = root.join("note.txt");
+        let exe = root.join("run.exe");
+        std::fs::write(&text, b"note").unwrap();
+        std::fs::write(&exe, b"not an executable").unwrap();
+        assert!(status_action(&format!("file:{}", text.display())).is_some());
+        assert!(status_action(&format!("file:{}", exe.display())).is_none(), "可执行扩展必须拒绝");
+        assert!(status_action(&format!("file:{}", root.join("missing.txt").display())).is_none(), "不存在的路径不该生成按钮");
+        assert!(status_action("url:https://example.com").is_some());
+        assert!(status_action("url:file:///C:/Windows/System32/cmd.exe").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod meeting_plan_tests {
+    use super::meeting_hit;
+
+    fn plan(items: &[(i64, i64, &str)]) -> Vec<(i64, i64, String)> {
+        items.iter().map(|(a, b, c)| (*a, *b, (*c).to_string())).collect()
+    }
+
+    #[test]
+    fn 只有刚开始且未结束的会议触发且最多两小时() {
+        let now = 10_000;
+        let p = plan(&[
+            (now - 200, now + 600, "太早"),      // 超过 90 秒窗口
+            (now + 60, now + 3600, "还没开始"),
+            (now - 30, now - 1, "已结束"),
+        ]);
+        assert!(meeting_hit(&p, now).is_none(), "这三种都不该触发");
+
+        let p = plan(&[(now - 30, now + 1800, "进行中")]);
+        let (until, key) = meeting_hit(&p, now).unwrap();
+        assert_eq!(until, now + 1800);
+        assert_eq!(key, format!("进行中|{}", now - 30));
+
+        let p = plan(&[(now - 30, now + 99_999, "超长会")]);
+        assert_eq!(meeting_hit(&p, now).unwrap().0, now + 7200, "勿扰最多 2 小时");
+    }
+
+    #[test]
+    fn 全天与无结束时间的日程不进候选表() {
+        use crate::mail::Meeting;
+        fn mk(all_day: bool, end: Option<i64>, uid: &str) -> Meeting {
+            Meeting { all_day, title: "会".into(), start: 9_900, end, at: "11-12 10:00".into(), uid: uid.into() }
+        }
+        let events = vec![
+            mk(true, Some(12_000), "全天"),
+            mk(false, None, "无结束"),
+            mk(false, Some(12_000), "正常"),
+        ];
+        let candidates = super::meeting_candidates(events.iter());
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].2, "正常");
+        assert!(meeting_hit(&[], 10_000).is_none(), "候选为空不该凭空触发");
+    }
+}
+
+/// 把今日日程压成轻量候选表：全天日程、没有结束时间的都不具备「散会自动失效」的条件。
+fn meeting_candidates<'a>(events:impl Iterator<Item=&'a crate::mail::Meeting>)->Vec<(i64,i64,String)>{
+    events.filter_map(|event|{
+        if event.all_day{return None;}
+        Some((event.start,event.end?,event.uid.clone()))
+    }).collect()
+}
+
+/// 从候选表挑出「刚开始 90 秒内、还没结束」的会议，返回 (勿扰截止, 去重键)。
+/// 抽成纯函数便于单测；多场同时命中时沿用原来的「取最后一个」语义。
+fn meeting_hit(plan:&[(i64,i64,String)],now:i64)->Option<(i64,String)>{
+    let mut hit=None;
+    for (start,end,uid) in plan {
+        if *start>now || now-*start>90 {continue;}
+        if *end<=now {continue;}
+        hit=Some(((*end).min(now+7200),format!("{}|{}",uid,start)));
+    }
+    hit
 }

@@ -59,7 +59,11 @@ impl Reader {
         if self.checked.is_some_and(|at| at.elapsed() < INTERVAL) { return (Vec::new(), Vec::new()); }
         self.checked = Some(Instant::now());
         let Some(path) = path() else { return (Vec::new(), clear_seen(&mut self.seen)); };
-        let Ok(raw) = std::fs::read_to_string(&path) else { return (Vec::new(), clear_seen(&mut self.seen)); };
+        // 只读常规文件且限 1 MB：脚本误写成大日志、或路径被占成管道时不会把内存顶爆。
+        let raw: String = match crate::model::read_capped(&path, crate::model::MAX_JSON_BYTES).and_then(|body| String::from_utf8(body).ok()) {
+            Some(text) => text,
+            None => return (Vec::new(), clear_seen(&mut self.seen)),
+        };
         parse(&raw, &mut self.seen).unwrap_or_default()
     }
 }

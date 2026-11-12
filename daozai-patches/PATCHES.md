@@ -558,6 +558,43 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 76 个 src 文件逐字节一致。
 
 
+## 性能与安全隐患全面优化（custom-36）
+
+一次代码审查后的集中整改，六项全部落地，不改任何界面布局。
+
+**性能**
+- 剪贴板分栏原来每帧 `lock().items.clone()`（最坏 30×2 万字 ≈ 600 KB/帧）。
+  现在 `Shared::version()` 先比版本号，只有变化时才 `snapshot()` 重建 `Arc`，绘制只读引用。
+- `History::changed()` 原来在 Mutex 里直接 `atomic_write`（一次粘贴要序列化并写满 600 KB，
+  UI 线程取快照时会被磁盘 IO 卡住）。改为只置 `dirty`，由 `flush()` 在**锁外**统一落盘；
+  `record()` 在监听线程里写完才返回。
+- 关键词命中在绘制路径上每帧 `to_lowercase()` + 重新 split：App 里缓存小写词表，
+  源字符串变了才重建。
+- 会议勿扰原来每 5 秒把本地 / 工作 / 邮件日程合并排序一遍。现在缓存今日候选
+  `(start, end, uid)`，60 秒或跨天才重算；触发窗口有 90 秒，不会漏。判定抽成
+  `meeting_hit()` 纯函数，候选构建抽成 `meeting_candidates()`。
+
+**数据安全 / 隐私**
+- 通知历史与专注统计原来是「读-改-写 + `fs::write`」，解析失败返回空数组会把
+  99 条历史一次性覆盖掉。现在统一走 `atomic_write`，并新增
+  `read_json_renaming_bad()`：坏文件先隔离成 `.bad.N`（逐个找可用名，绝不覆盖已有副本），
+  再返回空；`island_status.json`、`notice-rules.json`、`notification-apps.json`、
+  `phone-apps.json` 等外部 JSON 一律经 `read_capped()` 限 1 MB 且只认常规文件。
+- 通知历史落盘前把验证码打码；`otp.log` 只写掩码，不再留明文。
+- 剪贴板 `Clip` 增加 `saved_at`，未固定条目只留 24 小时，固定片段模板永久保留；
+  旧 JSON 缺字段时按「今天刚读到」迁移，升级不会突然清空。
+- `file:` 状态动作原来 `ShellExecute` 任何路径等价于执行。现在要求路径存在，
+  且拦掉 exe/bat/cmd/ps1/lnk/msi 等 16 种可执行扩展；`url:` 仍只放行 http/https。
+
+**新增模块的处理**：`island_status.rs` 是新增模块，`apply.py` 在 EDITS **之后**才复制它，
+所以针对它的补丁既会读不到文件、也会被随后覆盖。这一条改为直接同步
+`daozai-patches/island_status.rs` 副本，不放进 EDITS。
+
+**验证**：新增 7 项单测（外部 JSON 限流、坏文件重复隔离、file 动作白名单、
+快照版本、24 小时过期、会议候选与触发窗口），合计 `793 passed / 0 failed / 86 ignored`；
+干净源码重放 custom-36，305 处 EDITS、跳过 0、src 逐字节一致；实机验证码卡片
+照常显示大号 7316 + 复制。exe `f28b7b2136cb0298`。
+
 ## 验证码卡片停留时间（custom-35）
 
 上一版把验证码写死成「至少 90 秒」，用户要能自己调，但必须留下限。

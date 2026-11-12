@@ -47,6 +47,45 @@ fn write_kv(path: &Path, pairs: &[(String, String)]) -> std::io::Result<()> {
     atomic_write(path, body.as_bytes())
 }
 
+/// 外部 JSON 的体积上限（1 MB）。岛仔读的都是「脚本 / 配置」级别的小文件，
+/// 真遇到超大文件或管道，宁可当作没写，也不要一次性读进内存。
+pub(crate) const MAX_JSON_BYTES: u64 = 1_048_576;
+
+/// 读取外部 JSON：只读常规文件，且不超过 `max` 字节；不满足返回 None。
+pub(crate) fn read_capped(path:&Path,max:u64)->Option<Vec<u8>> {
+    let meta=fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len()>max {return None;}
+    fs::read(path).ok()
+}
+
+/// 读一个 JSON 数组文件。解析失败时把坏文件改名成 `.bad` 再返回 None，
+/// 调用方据此重建——不会把「文件坏了」误当成「本来是空的」从而把历史清掉。
+pub(crate) fn read_json_renaming_bad(path:&Path,max:u64)->Option<serde_json::Value> {
+    let raw=read_capped(path,max)?;
+    match serde_json::from_slice::<serde_json::Value>(&raw) {
+        Ok(value)=>Some(value),
+        Err(_)=>{
+            // 固定名在第二次损坏时会撞车：部分平台 rename 还会直接替换目标，
+            // 那样前一次的证据就没了。逐个找没被占用的名字，显式判存在再搬。
+            let mut moved=false;
+            for n in 0..64 {
+                let mut bad=path.as_os_str().to_owned();
+                bad.push(format!(".bad.{n}"));
+                let target=PathBuf::from(bad);
+                if target.exists(){continue;}
+                if fs::rename(path,&target).is_ok(){moved=true;break;}
+            }
+            if !moved {
+                // 实在移不走（文件被占用等），至少留一份副本，不让内容被覆盖得无影无踪。
+                let mut bad=path.as_os_str().to_owned();
+                bad.push(format!(".bad.copy.{}",std::process::id()));
+                let _=fs::copy(path,PathBuf::from(bad));
+            }
+            None
+        }
+    }
+}
+
 pub(crate) fn atomic_write(path:&Path,body:&[u8])->std::io::Result<()> {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64,Ordering};
@@ -940,7 +979,7 @@ pub struct NotificationApps {pub items:Vec<(String,String,bool)>}
 impl NotificationApps {
     pub fn load()->Self {
         let path=config_dir().join("notification-apps.json");
-        let Ok(raw)=fs::read(path) else{return Self::default()};
+        let Some(raw)=read_capped(&path,MAX_JSON_BYTES) else{return Self::default()};
         let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Self::default()};
         let items=json.as_array().into_iter().flatten().filter_map(|a|Some((a.get("id")?.as_str()?.to_owned(),a.get("name")?.as_str()?.to_owned(),a.get("enabled")?.as_bool()?))).collect();Self{items}
     }
@@ -989,7 +1028,7 @@ impl NoticeRules {
     pub fn reload(&mut self) {
         let path = Self::path();
         self.modified = fs::metadata(&path).and_then(|m| m.modified()).ok();
-        let Ok(raw) = fs::read(&path) else {
+        let Some(raw) = read_capped(&path, MAX_JSON_BYTES) else {
             self.items.clear();
             self.compiled.clear();
             return;
@@ -1046,7 +1085,7 @@ impl PhoneApps {
     pub fn builtin()->Self{Self{items:builtin_phone_apps(),modified:None}}
     fn path()->PathBuf{config_dir().join("phone-apps.json")}
     fn read_items(path:&Path)->Option<Vec<(String,String,bool)>>{
-        let raw=fs::read(path).ok()?;
+        let raw=read_capped(path,MAX_JSON_BYTES)?;
         let json=serde_json::from_slice::<serde_json::Value>(&raw).ok()?;
         let items:Vec<_>=json.as_array()?.iter().filter_map(|a|{
             let name=a.get("name")?.as_str()?.to_owned();
@@ -1113,5 +1152,54 @@ mod notice_rules_tests {
         assert_eq!(rules.first_action("广告里带验证码"), Some("mute"), "按文件顺序第一条生效");
         // 空文本不该命中。
         assert!(!rules.hits("", "mute"));
+    }
+}
+
+#[cfg(test)]
+mod external_json_safety_tests {
+    use super::*;
+
+    fn path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("daozai-{name}-{}.json", std::process::id()))
+    }
+
+    #[test]
+    fn 外部_JSON_只读常规文件且有体积上限() {
+        let file = path("capped");
+        fs::write(&file, b"[]").unwrap();
+        assert!(read_capped(&file, 2).is_some());
+        assert!(read_capped(&file, 1).is_none(), "超过上限的输入不能读进内存");
+        let dir = path("directory");
+        fs::create_dir_all(&dir).unwrap();
+        assert!(read_capped(&dir, MAX_JSON_BYTES).is_none(), "目录不能当 JSON 文件读");
+        let _ = fs::remove_file(&file);
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn 坏_JSON_被改名而不是伪装成空历史() {
+        let file = path("broken");
+        fs::write(&file, b"{not json").unwrap();
+        assert!(read_json_renaming_bad(&file, MAX_JSON_BYTES).is_none());
+        let quarantined: Vec<_> = fs::read_dir(std::env::temp_dir()).unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().starts_with(&format!("{}.bad.", file.display())))
+            .collect();
+        assert_eq!(quarantined.len(), 1, "坏文件应被隔离保留，不能直接覆盖");
+        assert!(!file.exists(), "原路径必须腾空，否则下次写入会盖掉坏文件");
+        // 故意不删隔离文件，模拟「已经损坏过一次」。
+
+        // 第二次损坏：.bad.0 已存在，仍必须成功隔离成 .bad.1。
+        fs::write(&file, b"{still broken").unwrap();
+        assert!(read_json_renaming_bad(&file, MAX_JSON_BYTES).is_none());
+        assert!(!file.exists(), "隔离目标已存在时也不能留下坏文件被覆盖");
+        let again: Vec<_> = fs::read_dir(std::env::temp_dir()).unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().starts_with(&format!("{}.bad.", file.display())))
+            .collect();
+        assert_eq!(again.len(), 2, "两次损坏应各留一份副本");
+        for p in again { let _ = fs::remove_file(p); }
     }
 }

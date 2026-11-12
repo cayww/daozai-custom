@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-35"
+PATCH_ID = "custom-36"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -5404,6 +5404,809 @@ pub(crate) fn backup_root()->Option<std::path::PathBuf>{
                             ui.label(egui::RichText::new("只接收 Windows 通知中心可见的内容；应用会在收到通知后出现在下方。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             let before_apps=self.notification_apps.items.clone();
                             for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+'''),
+
+    # custom-36：性能与安全隐患全面优化
+    ("src/app.rs",
+     '''    pub(crate) quiet_meeting_key:Option<String>,
+    /// 上次检查会议勿扰的时刻（每 5 秒查一次，别每帧都拼日程）。
+    pub(crate) meeting_checked_at:f64,
+    /// 「稍后提醒」队列：(到期时刻, 标题, 正文)。
+    pub(crate) snoozed:Vec<(f64,String,String)>,
+    /// 通知规则（notice-rules.json）：静音 / 高亮 / 自动复制。
+    pub(crate) notice_rules: model::NoticeRules,
+    /// 已经提醒过的「额度窗口」（id + 窗口名），回到阈值以上会移除、下次可再提醒。
+    pub(crate) quota_alerted: std::collections::HashSet<(String,String)>,
+    /// 上次检查额度阈值的时刻（每 30 秒一次）。
+''',
+     '''    pub(crate) quiet_meeting_key:Option<String>,
+    /// 上次检查会议勿扰的时刻（每 5 秒查一次，别每帧都拼日程）。
+    pub(crate) meeting_checked_at:f64,
+    /// 今日会议候选缓存：(日期, 生成时刻, (开始, 结束, uid))。
+    /// 日程合并排序较重，60 秒或跨天才重算一次；90 秒的触发窗口保证不会漏。
+    pub(crate) meeting_plan:(String,f64,Vec<(i64,i64,String)>),
+    /// 「稍后提醒」队列：(到期时刻, 标题, 正文)。
+    pub(crate) snoozed:Vec<(f64,String,String)>,
+    /// 通知规则（notice-rules.json）：静音 / 高亮 / 自动复制。
+    pub(crate) notice_rules: model::NoticeRules,
+    /// 剪贴板列表快照：(版本号, 共享列表)。只在版本变化时重建，避免每帧克隆整份历史。
+    pub(crate) clip_snapshot: (u64, std::sync::Arc<Vec<crate::clipboard::Clip>>),
+    /// 关键词缓存：(源字符串, 小写词表)。命中判断在绘制路径上，不能每次都 split + 小写。
+    pub(crate) keyword_src: String,
+    pub(crate) keywords: Vec<String>,
+    /// 已经提醒过的「额度窗口」（id + 窗口名），回到阈值以上会移除、下次可再提醒。
+    pub(crate) quota_alerted: std::collections::HashSet<(String,String)>,
+    /// 上次检查额度阈值的时刻（每 30 秒一次）。
+'''),
+    ("src/app.rs",
+     '''            media_anchor: (String::new(), 0.0, 0.0, false),
+            media: NowPlaying::default(),
+            music_artwork: None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), notice_rules:model::NoticeRules::load(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            listener_status: "尚未连接".into(),
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
+''',
+     '''            media_anchor: (String::new(), 0.0, 0.0, false),
+            media: NowPlaying::default(),
+            music_artwork: None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            listener_status: "尚未连接".into(),
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
+'''),
+    ("src/app.rs",
+     '''        if self.quiet_until>0.0 && self.t>=self.quiet_until {self.quiet_until=0.0;self.settings.quiet_minutes=0;self.settings.save();}
+        if self.t-self.meeting_checked_at>5.0 {self.meeting_checked_at=self.t;self.meeting_quiet(env);}
+        self.tick_snoozed();
+        if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled());
+        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
+''',
+     '''        if self.quiet_until>0.0 && self.t>=self.quiet_until {self.quiet_until=0.0;self.settings.quiet_minutes=0;self.settings.save();}
+        if self.t-self.meeting_checked_at>5.0 {self.meeting_checked_at=self.t;self.meeting_quiet(env);}
+        self.tick_snoozed();
+        if self.keyword_src!=self.settings.notice_keywords {
+            self.keyword_src=self.settings.notice_keywords.clone();
+            self.keywords=self.settings.keywords().iter().map(|word|word.to_lowercase()).collect();
+        }
+        self.clipboard.flush();
+        if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled());
+        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
+'''),
+    ("src/clipboard.rs",
+     '''    /// 本地时间 `HH:MM`。
+    pub at: String,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct History {
+    pub items: Vec<Clip>,
+    /// 每次变化 +1，界面据此判断是否需要重绘。
+    pub version: u64,
+    path: Option<std::path::PathBuf>,
+}
+
+''',
+     '''    /// 本地时间 `HH:MM`。
+    pub at: String,
+    pub pinned: bool,
+    /// 最后复制的 Unix 秒，用于清理 24 小时前的未固定内容。
+    /// 固定条目永远保留，不因这个字段被清理。
+    pub saved_at: i64,
+}
+
+/// 未固定剪贴板只保留最近 24 小时；固定条目不受影响。
+/// 旧的 JSON 没有时间戳时按「今天刚读到」迁移，不会在升级时突然清空历史。
+const RETENTION_SECS: i64 = 24 * 60 * 60;
+
+fn now_secs() -> i64 { chrono::Local::now().timestamp() }
+
+#[derive(Debug, Default)]
+pub struct History {
+    pub items: Vec<Clip>,
+    /// 每次变化 +1，界面据此判断是否需要重绘。
+    pub version: u64,
+    /// 有未落盘的改动；由 `flush()` 在锁外统一写盘。
+    dirty: bool,
+    path: Option<std::path::PathBuf>,
+}
+
+'''),
+    ("src/clipboard.rs",
+     '''            Some(i) => self.items.remove(i).pinned,
+            None => false,
+        };
+        self.items.insert(0, Clip { text: text.to_string(), at: at.to_string(), pinned });
+        let mut recent = 0;
+        self.items.retain(|c| c.pinned || { recent += 1; recent <= MAX_RECENT });
+        self.changed();
+''',
+     '''            Some(i) => self.items.remove(i).pinned,
+            None => false,
+        };
+        self.items.insert(0, Clip { text: text.to_string(), at: at.to_string(), pinned, saved_at: now_secs() });
+        let mut recent = 0;
+        self.items.retain(|c| c.pinned || { recent += 1; recent <= MAX_RECENT });
+        self.changed();
+'''),
+    ("src/clipboard.rs",
+     '''    }
+
+    fn to_json(&self) -> Vec<u8> {
+        let rows: Vec<_> = self.items.iter().map(|c| serde_json::json!({"pinned": c.pinned,"text": c.text, "at": c.at})).collect();
+        serde_json::to_vec(&rows).unwrap_or_default()
+    }
+
+''',
+     '''    }
+
+    fn to_json(&self) -> Vec<u8> {
+        let rows: Vec<_> = self.items.iter().map(|c| serde_json::json!({"pinned": c.pinned,"text": c.text, "at": c.at, "saved_at": c.saved_at})).collect();
+        serde_json::to_vec(&rows).unwrap_or_default()
+    }
+
+'''),
+    ("src/clipboard.rs",
+     '''            text: row.get("text")?.as_str()?.to_string(),
+            at: row.get("at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            pinned: row.get("pinned").and_then(|v| v.as_bool()).unwrap_or(true),
+        })).filter(|c| !c.text.is_empty()).take(MAX_PINNED + MAX_RECENT).collect();
+        Self { items, ..Self::default() }
+    }
+''',
+     '''            text: row.get("text")?.as_str()?.to_string(),
+            at: row.get("at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            pinned: row.get("pinned").and_then(|v| v.as_bool()).unwrap_or(true),
+            saved_at: row.get("saved_at").and_then(|v| v.as_i64()).unwrap_or_else(now_secs),
+        })).filter(|c| !c.text.is_empty()).take(MAX_PINNED + MAX_RECENT).collect();
+        Self { items, ..Self::default() }
+    }
+'''),
+    ("src/clipboard.rs",
+     '''
+    fn load_from(path: std::path::PathBuf) -> Self {
+        let mut history = std::fs::read(&path).map(|raw| Self::from_json(&raw)).unwrap_or_default();
+        history.path = Some(path);
+        history
+    }
+
+    fn changed(&mut self) {
+        self.version += 1;
+        if let Some(path) = &self.path {
+            if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+            let _ = crate::model::atomic_write(path, &self.to_json());
+        }
+    }
+}
+
+''',
+     '''
+    fn load_from(path: std::path::PathBuf) -> Self {
+        let mut history = std::fs::read(&path).map(|raw| Self::from_json(&raw)).unwrap_or_default();
+        let oldest = now_secs() - RETENTION_SECS;
+        // 敏感内容只在本机保留一天，重启时顺带清理；固定的片段模板不在此列。
+        history.items.retain(|clip| clip.pinned || clip.saved_at >= oldest);
+        history.path = Some(path);
+        history
+    }
+
+    /// 只标记「有改动」。写盘交给 `flush()` 在锁外做——
+    /// 之前是在 Mutex 里直接 atomic_write，界面每帧取快照时会被磁盘 IO 卡住。
+    fn changed(&mut self) {
+        self.version += 1;
+        self.dirty = true;
+    }
+
+    /// 取出待写盘的内容（同时清掉 dirty）。没有改动返回 None。
+    fn take_dirty(&mut self) -> Option<(std::path::PathBuf, Vec<u8>)> {
+        if !self.dirty { return None; }
+        let path = self.path.clone()?;
+        self.dirty = false;
+        Some((path, self.to_json()))
+    }
+}
+
+'''),
+    ("src/clipboard.rs",
+     '''    pub fn lock(&self) -> std::sync::MutexGuard<'_, History> {
+        self.history.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn record_update(&self, text: &str, from_history: bool) -> bool {
+        !from_history && self.record(text)
+    }
+    pub fn record(&self, text: &str) -> bool {
+        if !self.is_enabled() { return false; }
+        let at = chrono::Local::now().format("%H:%M").to_string();
+        self.lock().push(text, &at)
+    }
+}
+
+''',
+     '''    pub fn lock(&self) -> std::sync::MutexGuard<'_, History> {
+        self.history.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    /// 有改动才写盘，且整段在锁外完成；一次复制只序列化一次。
+    pub fn flush(&self) {
+        let payload = { let mut history = self.lock(); history.take_dirty() };
+        let Some((path, body)) = payload else { return; };
+        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+        let _ = crate::model::atomic_write(&path, &body);
+    }
+
+    /// 只读版本号（加锁极短），界面先用它判断是否需要重建快照。
+    pub fn version(&self) -> u64 { self.lock().version }
+
+    /// 当前列表 + 版本号。界面用版本号判断要不要重建快照，避免每帧克隆整份历史。
+    pub fn snapshot(&self) -> (u64, std::sync::Arc<Vec<Clip>>) {
+        let history = self.lock();
+        (history.version, std::sync::Arc::new(history.items.clone()))
+    }
+
+    fn record_update(&self, text: &str, from_history: bool) -> bool {
+        !from_history && self.record(text)
+    }
+    pub fn record(&self, text: &str) -> bool {
+        if !self.is_enabled() { return false; }
+        let at = chrono::Local::now().format("%H:%M").to_string();
+        let pushed = self.lock().push(text, &at);
+        self.flush();
+        pushed
+    }
+}
+
+'''),
+    ("src/clipboard.rs",
+     '''mod tests {
+    use super::*;
+
+    #[test]
+    fn history_copy_preserves_order_but_external_copy_promotes() {
+        let shared = Shared { history: Default::default(), enabled: Arc::new(AtomicBool::new(true)) };
+''',
+     '''mod tests {
+    use super::*;
+
+    /// 与 Shared::flush 同逻辑，但不构造整份 Shared（沿用现有历史对象即可）。
+    fn flush_history(history: &mut History) {
+        let Some((path, body)) = history.take_dirty() else { return; };
+        crate::model::atomic_write(&path, &body).unwrap();
+    }
+
+    #[test]
+    fn history_copy_preserves_order_but_external_copy_promotes() {
+        let shared = Shared { history: Default::default(), enabled: Arc::new(AtomicBool::new(true)) };
+'''),
+    ("src/clipboard.rs",
+     '''        history.push("保留", "09:00");
+        history.push("删除", "09:01");
+        history.remove(0);
+        let mut reopened = History::load_from(path.clone());
+        assert_eq!(reopened.items, history.items);
+        reopened.clear_recent();
+        let final_history = History::load_from(path.clone());
+        assert_eq!(final_history.items.len(), 1);
+        assert_eq!(final_history.items[0].text, "old");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn pinned_round_trip_and_preview() {
+        let mut h = History::default();
+''',
+     '''        history.push("保留", "09:00");
+        history.push("删除", "09:01");
+        history.remove(0);
+        flush_history(&mut history);
+        let mut reopened = History::load_from(path.clone());
+        assert_eq!(reopened.items, history.items);
+        reopened.clear_recent();
+        flush_history(&mut reopened);
+        let final_history = History::load_from(path.clone());
+        assert_eq!(final_history.items.len(), 1);
+        assert_eq!(final_history.items[0].text, "old");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn snapshot_version_changes_only_when_content_changes() {
+        let shared = Shared { history: Default::default(), enabled: Arc::new(AtomicBool::new(true)) };
+        let first = shared.snapshot();
+        assert_eq!(shared.snapshot().0, first.0, "重复读取不该让界面重建快照");
+        assert!(shared.record("new"));
+        let after = shared.snapshot();
+        assert!(after.0 > first.0, "内容变化才推进快照版本");
+        assert!(!shared.record("new"), "重复内容不产生新记录");
+        assert_eq!(shared.snapshot().0, after.0);
+    }
+
+    #[test]
+    fn old_unpinned_clips_expire_but_pins_survive() {
+        let path = std::env::temp_dir().join(format!("daozai-clip-retention-{}.json", std::process::id()));
+        let old = now_secs() - RETENTION_SECS - 60;
+        std::fs::write(&path, serde_json::to_vec(&serde_json::json!([
+            {"text":"过期秘密","at":"08:00","pinned":false,"saved_at":old},
+            {"text":"长期模板","at":"08:01","pinned":true,"saved_at":old}
+        ])).unwrap()).unwrap();
+        let history = History::load_from(path.clone());
+        assert_eq!(history.items.len(), 1);
+        assert_eq!(history.items[0].text, "长期模板");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn pinned_round_trip_and_preview() {
+        let mut h = History::default();
+'''),
+    ("src/extras.rs",
+     '''        // 规则里的 highlight 与关键词表同权：命中就亮琥珀色竖条。
+        if self.notice_rules.hits(text,"highlight"){return true;}
+        let lower=text.to_lowercase();
+        self.settings.keywords().iter().any(|word|lower.contains(&word.to_lowercase()))
+    }
+
+''',
+     '''        // 规则里的 highlight 与关键词表同权：命中就亮琥珀色竖条。
+        if self.notice_rules.hits(text,"highlight"){return true;}
+        let lower=text.to_lowercase();
+        // tick 里维护好的小写词表；源字符串刚改、缓存还没跟上时退回现算。
+        if self.keyword_src==self.settings.notice_keywords {
+            return self.keywords.iter().any(|word|lower.contains(word.as_str()));
+        }
+        self.settings.keywords().iter().any(|word|lower.contains(&word.to_lowercase()))
+    }
+
+'''),
+    ("src/extras.rs",
+     '''        if !self.settings.quiet_meeting || self.muted() {return;}
+        let Ok(day)=chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d") else{return};
+        let now=chrono::Local::now().timestamp();
+        let mut hit:Option<(i64,String)>=None;
+        for entry in self.calendar_entries(day) {
+            let event=entry.event;
+            if event.all_day || event.start>now || now-event.start>90 {continue;}
+            let Some(end)=event.end else{continue};
+            if end<=now {continue;}
+            hit=Some((end.min(now+7200), format!("{}|{}",event.uid,event.start)));
+        }
+        let Some((until,key))=hit else{return};
+        if self.quiet_meeting_key.as_deref()==Some(key.as_str()) {return;}
+        self.quiet_meeting_key=Some(key);
+        self.quiet_until=until as f64;
+''',
+     '''        if !self.settings.quiet_meeting || self.muted() {return;}
+        let Ok(day)=chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d") else{return};
+        let now=chrono::Local::now().timestamp();
+        // 原来每 5 秒都要把本地/工作/邮件日程合并再排序一次，日程多时会有抖动。
+        // 现在缓存今日候选，60 秒或跨天才重算；触发窗口是 90 秒，不会因此漏掉会议。
+        if self.meeting_plan.0!=env.today || self.t-self.meeting_plan.1>60.0 {
+            let entries=self.calendar_entries(day);
+            let plan=meeting_candidates(entries.iter().map(|entry|entry.event));
+            self.meeting_plan=(env.today.clone(),self.t,plan);
+        }
+        let Some((until,key))=meeting_hit(&self.meeting_plan.2,now) else{return};
+        if self.quiet_meeting_key.as_deref()==Some(key.as_str()) {return;}
+        self.quiet_meeting_key=Some(key);
+        self.quiet_until=until as f64;
+'''),
+    ("src/extras.rs",
+     '''}
+
+/// 验证码识别诊断：只在「自动复制」开启时写一行，便于排查邮件/短信为什么没复制。
+pub(crate) fn log_otp(source:&str,code:Option<&str>){
+    let Some(base)=std::env::var_os("APPDATA") else{return};
+    let dir=std::path::PathBuf::from(base).join("Daozai").join("diagnostics");
+''',
+     '''}
+
+/// 验证码识别诊断：只在「自动复制」开启时写一行，便于排查邮件/短信为什么没复制。
+/// 日志只保留打码后的长度，绝不把验证码明文长期写进磁盘。
+pub(crate) fn log_otp(source:&str,code:Option<&str>){
+    let Some(base)=std::env::var_os("APPDATA") else{return};
+    let dir=std::path::PathBuf::from(base).join("Daozai").join("diagnostics");
+'''),
+    ("src/extras.rs",
+     '''    if std::fs::metadata(&path).is_ok_and(|m|m.len()>256*1024){let _=std::fs::remove_file(&path);}
+    if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(&path){
+        use std::io::Write;
+        let _=writeln!(file,"{} | {} | {}",chrono::Local::now().format("%H:%M:%S"),source,code.unwrap_or("-"));
+    }
+}
+
+''',
+     '''    if std::fs::metadata(&path).is_ok_and(|m|m.len()>256*1024){let _=std::fs::remove_file(&path);}
+    if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(&path){
+        use std::io::Write;
+        let masked = code.map(|value| crate::mail_privacy::mask(value, value));
+        let _=writeln!(file,"{} | {} | {}",chrono::Local::now().format("%H:%M:%S"),source,masked.as_deref().unwrap_or("-"));
+    }
+}
+
+'''),
+    ("src/extras.rs",
+     '''
+fn focus_days()->Vec<(String,u32)>{
+    let Some(path)=focus_stats_path() else{return Vec::new();};
+    let Ok(raw)=std::fs::read(&path) else{return Vec::new();};
+    let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Vec::new();};
+    json.get("days").and_then(|d|d.as_array()).into_iter().flatten().filter_map(|item|{
+        Some((item.get("date")?.as_str()?.to_owned(), item.get("minutes")?.as_u64()? as u32))
+    }).collect()
+''',
+     '''
+fn focus_days()->Vec<(String,u32)>{
+    let Some(path)=focus_stats_path() else{return Vec::new();};
+    // 坏文件会被改名成 .bad 后返回 None，避免「解析失败」被当成「本来是空的」而清空统计。
+    let Some(json)=crate::model::read_json_renaming_bad(&path,crate::model::MAX_JSON_BYTES) else{return Vec::new();};
+    json.get("days").and_then(|d|d.as_array()).into_iter().flatten().filter_map(|item|{
+        Some((item.get("date")?.as_str()?.to_owned(), item.get("minutes")?.as_u64()? as u32))
+    }).collect()
+'''),
+    ("src/extras.rs",
+     '''    if days.len()>400 {let extra=days.len()-400;days.drain(0..extra);}
+    days.sort_by(|a,b|a.0.cmp(&b.0));
+    let json=serde_json::json!({"days":days.iter().map(|(date,m)|serde_json::json!({"date":date,"minutes":m})).collect::<Vec<_>>()});
+    if let Ok(data)=serde_json::to_vec(&json){let _=std::fs::write(&path,data);}
+}
+
+/// 通知历史（落盘，最多 100 条）：岛仔关掉之后「当时没看到的那条」还能查回来。
+''',
+     '''    if days.len()>400 {let extra=days.len()-400;days.drain(0..extra);}
+    days.sort_by(|a,b|a.0.cmp(&b.0));
+    let json=serde_json::json!({"days":days.iter().map(|(date,m)|serde_json::json!({"date":date,"minutes":m})).collect::<Vec<_>>()});
+    if let Ok(data)=serde_json::to_vec(&json){let _=crate::model::atomic_write(&path,&data);}
+}
+
+/// 通知历史（落盘，最多 100 条）：岛仔关掉之后「当时没看到的那条」还能查回来。
+'''),
+    ("src/extras.rs",
+     '''/// 按时间顺序返回 (时间, 标题, 正文)，最新在最后。
+pub(crate) fn notice_history()->Vec<(String,String,String)>{
+    let Some(path)=notice_history_path() else{return Vec::new();};
+    let Ok(raw)=std::fs::read(&path) else{return Vec::new();};
+    let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Vec::new();};
+    json.as_array().into_iter().flatten().filter_map(|item|{
+        Some((item.get("at")?.as_str()?.to_owned(),item.get("title")?.as_str()?.to_owned(),item.get("body")?.as_str()?.to_owned()))
+    }).collect()
+''',
+     '''/// 按时间顺序返回 (时间, 标题, 正文)，最新在最后。
+pub(crate) fn notice_history()->Vec<(String,String,String)>{
+    let Some(path)=notice_history_path() else{return Vec::new();};
+    let Some(json)=crate::model::read_json_renaming_bad(&path,crate::model::MAX_JSON_BYTES) else{return Vec::new();};
+    json.as_array().into_iter().flatten().filter_map(|item|{
+        Some((item.get("at")?.as_str()?.to_owned(),item.get("title")?.as_str()?.to_owned(),item.get("body")?.as_str()?.to_owned()))
+    }).collect()
+'''),
+    ("src/extras.rs",
+     '''    if cfg!(test) {return;}
+    let Some(path)=notice_history_path() else{return;};
+    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    let mut list=notice_history();
+    list.push((chrono::Local::now().format("%m-%d %H:%M").to_string(),title.to_string(),body.to_string()));
+    if list.len()>100{let extra=list.len()-100;list.drain(0..extra);}
+    let json:Vec<_>=list.iter().map(|(at,title,body)|serde_json::json!({"at":at,"title":title,"body":body})).collect();
+    if let Ok(data)=serde_json::to_vec(&json){let _=std::fs::write(&path,data);}
+}
+
+/// 通知通道诊断：每条进来的通知都记一行「显示 / 被谁拦下」，排查「某类通知不上岛」用。
+''',
+     '''    if cfg!(test) {return;}
+    let Some(path)=notice_history_path() else{return;};
+    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    // 落盘前把验证码打码：历史文件只用于「回看是什么事」，不需要留着明文码。
+    let body=if let Some(code)=crate::otp::extract("",body,&[]) {crate::mail_privacy::mask(body,&code.text)} else {body.to_string()};
+    let mut list=notice_history();
+    list.push((chrono::Local::now().format("%m-%d %H:%M").to_string(),title.to_string(),body));
+    if list.len()>100{let extra=list.len()-100;list.drain(0..extra);}
+    let json:Vec<_>=list.iter().map(|(at,title,body)|serde_json::json!({"at":at,"title":title,"body":body})).collect();
+    // 原子写：中途断电也不会留下半截 JSON（否则下次读失败会被当空文件重建）。
+    if let Ok(data)=serde_json::to_vec(&json){let _=crate::model::atomic_write(&path,&data);}
+}
+
+/// 通知通道诊断：每条进来的通知都记一行「显示 / 被谁拦下」，排查「某类通知不上岛」用。
+'''),
+    ("src/extras.rs",
+     '''        if url.starts_with("https://")||url.starts_with("http://"){return Some(("打开",Shell(Cmd::OpenUrl(url.to_string()))));}
+    }
+    if let Some(file)=spec.strip_prefix("file:") {
+        if !file.is_empty(){return Some(("打开",Shell(Cmd::Open(std::path::PathBuf::from(file)))));}
+    }
+    let action=spec.strip_prefix("action:")?.trim();
+    match action {
+''',
+     '''        if url.starts_with("https://")||url.starts_with("http://"){return Some(("打开",Shell(Cmd::OpenUrl(url.to_string()))));}
+    }
+    if let Some(file)=spec.strip_prefix("file:") {
+        // 只放行「看到的文件」：路径必须存在，且不是可执行/脚本/快捷方式——
+        // 否则任何能写 island_status.json 的进程都能借岛仔的手启动程序。
+        let path=std::path::PathBuf::from(file);
+        let blocked=path.extension().and_then(|e|e.to_str()).map(|e|{
+            matches!(e.to_ascii_lowercase().as_str(),"exe"|"bat"|"cmd"|"com"|"ps1"|"vbs"|"js"|"jse"|"wsf"|"wsh"|"hta"|"lnk"|"scr"|"msi"|"pif"|"reg")
+        }).unwrap_or(false);
+        if path.exists() && !blocked {return Some(("打开",Shell(Cmd::Open(path))));}
+    }
+    let action=spec.strip_prefix("action:")?.trim();
+    match action {
+'''),
+    ("src/extras.rs",
+     '''    let _=ctx.run(Default::default(),|_|{});
+    assert_eq!(ctx.tex_manager().read().allocated().filter(|(_,meta)|meta.name=="qr").count(),0,"收起后应释放收款码贴图");
+}
+''',
+     '''    let _=ctx.run(Default::default(),|_|{});
+    assert_eq!(ctx.tex_manager().read().allocated().filter(|(_,meta)|meta.name=="qr").count(),0,"收起后应释放收款码贴图");
+}
+
+#[cfg(test)]
+mod status_action_safety_tests {
+    use super::status_action;
+
+    #[test]
+    fn 文件动作只放行存在的非可执行文件() {
+        let root = std::env::temp_dir().join(format!("daozai-open-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let text = root.join("note.txt");
+        let exe = root.join("run.exe");
+        std::fs::write(&text, b"note").unwrap();
+        std::fs::write(&exe, b"not an executable").unwrap();
+        assert!(status_action(&format!("file:{}", text.display())).is_some());
+        assert!(status_action(&format!("file:{}", exe.display())).is_none(), "可执行扩展必须拒绝");
+        assert!(status_action(&format!("file:{}", root.join("missing.txt").display())).is_none(), "不存在的路径不该生成按钮");
+        assert!(status_action("url:https://example.com").is_some());
+        assert!(status_action("url:file:///C:/Windows/System32/cmd.exe").is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod meeting_plan_tests {
+    use super::meeting_hit;
+
+    fn plan(items: &[(i64, i64, &str)]) -> Vec<(i64, i64, String)> {
+        items.iter().map(|(a, b, c)| (*a, *b, (*c).to_string())).collect()
+    }
+
+    #[test]
+    fn 只有刚开始且未结束的会议触发且最多两小时() {
+        let now = 10_000;
+        let p = plan(&[
+            (now - 200, now + 600, "太早"),      // 超过 90 秒窗口
+            (now + 60, now + 3600, "还没开始"),
+            (now - 30, now - 1, "已结束"),
+        ]);
+        assert!(meeting_hit(&p, now).is_none(), "这三种都不该触发");
+
+        let p = plan(&[(now - 30, now + 1800, "进行中")]);
+        let (until, key) = meeting_hit(&p, now).unwrap();
+        assert_eq!(until, now + 1800);
+        assert_eq!(key, format!("进行中|{}", now - 30));
+
+        let p = plan(&[(now - 30, now + 99_999, "超长会")]);
+        assert_eq!(meeting_hit(&p, now).unwrap().0, now + 7200, "勿扰最多 2 小时");
+    }
+
+    #[test]
+    fn 全天与无结束时间的日程不进候选表() {
+        use crate::mail::Meeting;
+        fn mk(all_day: bool, end: Option<i64>, uid: &str) -> Meeting {
+            Meeting { all_day, title: "会".into(), start: 9_900, end, at: "11-12 10:00".into(), uid: uid.into() }
+        }
+        let events = vec![
+            mk(true, Some(12_000), "全天"),
+            mk(false, None, "无结束"),
+            mk(false, Some(12_000), "正常"),
+        ];
+        let candidates = super::meeting_candidates(events.iter());
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].2, "正常");
+        assert!(meeting_hit(&[], 10_000).is_none(), "候选为空不该凭空触发");
+    }
+}
+
+/// 把今日日程压成轻量候选表：全天日程、没有结束时间的都不具备「散会自动失效」的条件。
+fn meeting_candidates<'a>(events:impl Iterator<Item=&'a crate::mail::Meeting>)->Vec<(i64,i64,String)>{
+    events.filter_map(|event|{
+        if event.all_day{return None;}
+        Some((event.start,event.end?,event.uid.clone()))
+    }).collect()
+}
+
+/// 从候选表挑出「刚开始 90 秒内、还没结束」的会议，返回 (勿扰截止, 去重键)。
+/// 抽成纯函数便于单测；多场同时命中时沿用原来的「取最后一个」语义。
+fn meeting_hit(plan:&[(i64,i64,String)],now:i64)->Option<(i64,String)>{
+    let mut hit=None;
+    for (start,end,uid) in plan {
+        if *start>now || now-*start>90 {continue;}
+        if *end<=now {continue;}
+        hit=Some(((*end).min(now+7200),format!("{}|{}",uid,start)));
+    }
+    hit
+}
+'''),
+    ("src/model.rs",
+     '''    atomic_write(path, body.as_bytes())
+}
+
+pub(crate) fn atomic_write(path:&Path,body:&[u8])->std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64,Ordering};
+''',
+     '''    atomic_write(path, body.as_bytes())
+}
+
+/// 外部 JSON 的体积上限（1 MB）。岛仔读的都是「脚本 / 配置」级别的小文件，
+/// 真遇到超大文件或管道，宁可当作没写，也不要一次性读进内存。
+pub(crate) const MAX_JSON_BYTES: u64 = 1_048_576;
+
+/// 读取外部 JSON：只读常规文件，且不超过 `max` 字节；不满足返回 None。
+pub(crate) fn read_capped(path:&Path,max:u64)->Option<Vec<u8>> {
+    let meta=fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len()>max {return None;}
+    fs::read(path).ok()
+}
+
+/// 读一个 JSON 数组文件。解析失败时把坏文件改名成 `.bad` 再返回 None，
+/// 调用方据此重建——不会把「文件坏了」误当成「本来是空的」从而把历史清掉。
+pub(crate) fn read_json_renaming_bad(path:&Path,max:u64)->Option<serde_json::Value> {
+    let raw=read_capped(path,max)?;
+    match serde_json::from_slice::<serde_json::Value>(&raw) {
+        Ok(value)=>Some(value),
+        Err(_)=>{
+            // 固定名在第二次损坏时会撞车：部分平台 rename 还会直接替换目标，
+            // 那样前一次的证据就没了。逐个找没被占用的名字，显式判存在再搬。
+            let mut moved=false;
+            for n in 0..64 {
+                let mut bad=path.as_os_str().to_owned();
+                bad.push(format!(".bad.{n}"));
+                let target=PathBuf::from(bad);
+                if target.exists(){continue;}
+                if fs::rename(path,&target).is_ok(){moved=true;break;}
+            }
+            if !moved {
+                // 实在移不走（文件被占用等），至少留一份副本，不让内容被覆盖得无影无踪。
+                let mut bad=path.as_os_str().to_owned();
+                bad.push(format!(".bad.copy.{}",std::process::id()));
+                let _=fs::copy(path,PathBuf::from(bad));
+            }
+            None
+        }
+    }
+}
+
+pub(crate) fn atomic_write(path:&Path,body:&[u8])->std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64,Ordering};
+'''),
+    ("src/model.rs",
+     '''impl NotificationApps {
+    pub fn load()->Self {
+        let path=config_dir().join("notification-apps.json");
+        let Ok(raw)=fs::read(path) else{return Self::default()};
+        let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Self::default()};
+        let items=json.as_array().into_iter().flatten().filter_map(|a|Some((a.get("id")?.as_str()?.to_owned(),a.get("name")?.as_str()?.to_owned(),a.get("enabled")?.as_bool()?))).collect();Self{items}
+    }
+''',
+     '''impl NotificationApps {
+    pub fn load()->Self {
+        let path=config_dir().join("notification-apps.json");
+        let Some(raw)=read_capped(&path,MAX_JSON_BYTES) else{return Self::default()};
+        let Ok(json)=serde_json::from_slice::<serde_json::Value>(&raw) else{return Self::default()};
+        let items=json.as_array().into_iter().flatten().filter_map(|a|Some((a.get("id")?.as_str()?.to_owned(),a.get("name")?.as_str()?.to_owned(),a.get("enabled")?.as_bool()?))).collect();Self{items}
+    }
+'''),
+    ("src/model.rs",
+     '''    pub fn reload(&mut self) {
+        let path = Self::path();
+        self.modified = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let Ok(raw) = fs::read(&path) else {
+            self.items.clear();
+            self.compiled.clear();
+            return;
+''',
+     '''    pub fn reload(&mut self) {
+        let path = Self::path();
+        self.modified = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let Some(raw) = read_capped(&path, MAX_JSON_BYTES) else {
+            self.items.clear();
+            self.compiled.clear();
+            return;
+'''),
+    ("src/model.rs",
+     '''    pub fn builtin()->Self{Self{items:builtin_phone_apps(),modified:None}}
+    fn path()->PathBuf{config_dir().join("phone-apps.json")}
+    fn read_items(path:&Path)->Option<Vec<(String,String,bool)>>{
+        let raw=fs::read(path).ok()?;
+        let json=serde_json::from_slice::<serde_json::Value>(&raw).ok()?;
+        let items:Vec<_>=json.as_array()?.iter().filter_map(|a|{
+            let name=a.get("name")?.as_str()?.to_owned();
+''',
+     '''    pub fn builtin()->Self{Self{items:builtin_phone_apps(),modified:None}}
+    fn path()->PathBuf{config_dir().join("phone-apps.json")}
+    fn read_items(path:&Path)->Option<Vec<(String,String,bool)>>{
+        let raw=read_capped(path,MAX_JSON_BYTES)?;
+        let json=serde_json::from_slice::<serde_json::Value>(&raw).ok()?;
+        let items:Vec<_>=json.as_array()?.iter().filter_map(|a|{
+            let name=a.get("name")?.as_str()?.to_owned();
+'''),
+    ("src/model.rs",
+     '''        assert!(!rules.hits("", "mute"));
+    }
+}
+''',
+     '''        assert!(!rules.hits("", "mute"));
+    }
+}
+
+#[cfg(test)]
+mod external_json_safety_tests {
+    use super::*;
+
+    fn path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("daozai-{name}-{}.json", std::process::id()))
+    }
+
+    #[test]
+    fn 外部_JSON_只读常规文件且有体积上限() {
+        let file = path("capped");
+        fs::write(&file, b"[]").unwrap();
+        assert!(read_capped(&file, 2).is_some());
+        assert!(read_capped(&file, 1).is_none(), "超过上限的输入不能读进内存");
+        let dir = path("directory");
+        fs::create_dir_all(&dir).unwrap();
+        assert!(read_capped(&dir, MAX_JSON_BYTES).is_none(), "目录不能当 JSON 文件读");
+        let _ = fs::remove_file(&file);
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn 坏_JSON_被改名而不是伪装成空历史() {
+        let file = path("broken");
+        fs::write(&file, b"{not json").unwrap();
+        assert!(read_json_renaming_bad(&file, MAX_JSON_BYTES).is_none());
+        let quarantined: Vec<_> = fs::read_dir(std::env::temp_dir()).unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().starts_with(&format!("{}.bad.", file.display())))
+            .collect();
+        assert_eq!(quarantined.len(), 1, "坏文件应被隔离保留，不能直接覆盖");
+        assert!(!file.exists(), "原路径必须腾空，否则下次写入会盖掉坏文件");
+        // 故意不删隔离文件，模拟「已经损坏过一次」。
+
+        // 第二次损坏：.bad.0 已存在，仍必须成功隔离成 .bad.1。
+        fs::write(&file, b"{still broken").unwrap();
+        assert!(read_json_renaming_bad(&file, MAX_JSON_BYTES).is_none());
+        assert!(!file.exists(), "隔离目标已存在时也不能留下坏文件被覆盖");
+        let again: Vec<_> = fs::read_dir(std::env::temp_dir()).unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().starts_with(&format!("{}.bad.", file.display())))
+            .collect();
+        assert_eq!(again.len(), 2, "两次损坏应各留一份副本");
+        for p in again { let _ = fs::remove_file(p); }
+    }
+}
+'''),
+    ("src/pages.rs",
+     '''            if r.clicked() { self.settings.clipboard_history = true; self.clipboard.set_enabled(true); self.settings.save(); }
+            return;
+        }
+        let items = self.clipboard.lock().items.clone();
+        let query = self.clip_query.trim().to_lowercase();
+        let shown: Vec<usize> = if query.is_empty() {
+            (0..items.len()).collect()
+''',
+     '''            if r.clicked() { self.settings.clipboard_history = true; self.clipboard.set_enabled(true); self.settings.save(); }
+            return;
+        }
+        // 只在版本变化时重建快照：之前是每帧把整份历史（最多 30×2 万字）克隆一遍。
+        let version=self.clipboard.version();
+        if self.clip_snapshot.0!=version { self.clip_snapshot=self.clipboard.snapshot(); }
+        let items=self.clip_snapshot.1.clone();
+        let query = self.clip_query.trim().to_lowercase();
+        let shown: Vec<usize> = if query.is_empty() {
+            (0..items.len()).collect()
 '''),
 ]
 

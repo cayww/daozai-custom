@@ -655,7 +655,10 @@ impl App {
             if r.clicked() { self.settings.clipboard_history = true; self.clipboard.set_enabled(true); self.settings.save(); }
             return;
         }
-        let items = self.clipboard.lock().items.clone();
+        // 只在版本变化时重建快照：之前是每帧把整份历史（最多 30×2 万字）克隆一遍。
+        let version=self.clipboard.version();
+        if self.clip_snapshot.0!=version { self.clip_snapshot=self.clipboard.snapshot(); }
+        let items=self.clip_snapshot.1.clone();
         let query = self.clip_query.trim().to_lowercase();
         let shown: Vec<usize> = if query.is_empty() {
             (0..items.len()).collect()
