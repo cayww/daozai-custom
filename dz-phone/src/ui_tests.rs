@@ -186,6 +186,35 @@ fn v0649_settings_and_mail_accounts_survive_upgrade(){
 }
 
 #[test]
+fn settings_notification_tab_shows_meeting_quiet_and_history() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.ctx.set_embed_viewports(false);
+    fn frame(h:&mut H)->Vec<egui::epaint::ClippedShape>{
+        let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+            let id=viewport.ids.this;
+            let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,450.0))),
+                viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.25),focused:Some(true),..Default::default()})).collect(),
+                focused:true,events:Vec::new(),..Default::default()};
+            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+        });
+        let raw=egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.25),..Default::default()})).collect(),..Default::default()};
+        let _=h.ctx.run(raw,|ctx|h.app.settings_ui(ctx,false));
+        let shapes=output.lock().unwrap().take().unwrap().shapes;
+        shapes
+    }
+    let has=|shapes:&[egui::epaint::ClippedShape],phrase:&str|shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(t)if t.galley.text().contains(phrase)));
+    // 通知页内容很长，新增的「会议自动勿扰 / 最近通知」在滚动区下方，这里只验专注页的统计卡
+    // （通知页那几行由人工点开确认，避免测试依赖滚动位置）。
+    h.app.settings_tab=2;h.app.open_settings();
+    for _ in 0..3{frame(&mut h);}
+    let focus=frame(&mut h);
+    assert!(has(&focus,"专注记录"),"专注页应有专注统计卡");
+    assert!(has(&focus,"连续"),"专注统计要显示连续天数");
+}
+
+#[test]
 fn snoozed_notice_returns_when_due() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.app.snooze_notice(5.0,"短信验证码".into(),"您的验证码：4342".into());

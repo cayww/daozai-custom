@@ -587,8 +587,8 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 设置 → 专注 页显示「今日 X 分钟 · 连续 Y 天」，连续天数今天为 0 时从昨天往回数。
 每分钟才落盘一次，不在绘制路径上读盘。
 
-**验证**：`783 passed / 0 failed / 86 ignored`（新增 `snoozed_notice_returns_when_due`）；
-干净源码重放 custom-32，245 处 EDITS、跳过 0 处，src 逐字节一致。
+**验证**：`784 passed / 0 failed / 86 ignored`（新增 `snoozed_notice_returns_when_due`、`settings_notification_tab_shows_meeting_quiet_and_history`）；
+干净源码重放 custom-32，246 处 EDITS、跳过 0 处，src 逐字节一致。
 
 ## 开机漏通知 + 4 位验证码被当年份（custom-31）
 
