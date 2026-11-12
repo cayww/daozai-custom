@@ -1843,9 +1843,8 @@ impl App {
                             settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
                             settings_hint(ui,self.settings.open_anim.description());
                             ui.separator();
-                            let mut relay=self.settings.hover_relay;
-                            setting_row(ui,"悬停接力感","开启：悬停先轻微胀大再铺开，可防光标路过误触；关闭：一悬停就用同一条弹簧直接展开，更连贯，但划过也会触发",&mut relay);
-                            self.settings.hover_relay=relay;
+                            setting_number(ui,"悬停触发延时",&mut self.settings.hover_delay_ms,0,500," ms",10.0);
+                            settings_hint(ui,"光标停在岛上多久才展开。0 = 一悬停就展开（划过也会触发）；建议 80–120 ms 过滤鼠标路过；180 ms 以上等待期间会有轻微胀大反馈。极简模式自动加倍。");
                         });
                         settings_label(ui,"岛体显示");
                         settings_card(ui,|ui|{

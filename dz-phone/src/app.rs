@@ -69,9 +69,9 @@ fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
 pub(crate) const PAGE_NAMES: [&str; 8] = ["音乐", "专注", "饮水", "置物架", "待办", "邮箱", "AI 额度", "日程"];
 
 // ---------- 动效参数 ----------
-/// 悬停意图缓冲：光标停留这么久才真正展开（期间药丸轻微胀大作为反馈），防误触。
-const HOVER_INTENT: f64 = 0.20;
-const MINIMAL_HOVER_INTENT: f64 = 0.40;
+/// 等待超过这个时长才做「轻微胀大」反馈；更短的等待保持静止，
+/// 否则弹簧刚鼓一点就被展开打断，反而更突兀。
+const SWELL_MIN_MS: u32 = 180;
 /// 移开后等待多久开始收起；这段时间内回来不会收。
 const LEAVE_DELAY: f64 = 0.12;
 const SWELL: (f32, f32) = (1.075, 1.13);
@@ -81,11 +81,11 @@ const CLOSE: (f32, f32) = (620.0, 1.0);
 const SWELL_K: (f32, f32) = (420.0, 0.8);
 const PAGE_SLIDE: f32 = 46.0;
 
-/// 悬停意图缓冲时长。关掉「接力感」后为 0：光标一进入就当帧开始展开，
-/// 不再先跑一段缓慢预放大、也不再中途换弹簧。防误触仍由 `LEAVE_DELAY` 兜底。
-fn hover_delay(relay: bool, minimal: bool) -> f64 {
-    if !relay { return 0.0; }
-    if minimal { MINIMAL_HOVER_INTENT } else { HOVER_INTENT }
+/// 悬停多久才展开（秒）。`0` 表示当帧就展开；极简模式加倍，
+/// 默认 200 ms 时仍是原来的 0.40 s 保守值。防误触另由 `LEAVE_DELAY` 兜底。
+fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
+    let ms = if minimal { ms.saturating_mul(2) } else { ms };
+    (ms as f64 / 1000.0).min(1.0)
 }
 
 pub struct Options {
@@ -2517,8 +2517,9 @@ impl App {
         if want {
             self.leave_since = None;
             let since = *self.hover_since.get_or_insert(t);
-            let intent=hover_delay(self.settings.hover_relay,self.effective_minimal());
-            if !self.open && (self.drag_hot || t - since >= intent) {
+            let delay=hover_delay_secs(self.settings.hover_delay_ms,self.effective_minimal());
+            let swell=self.settings.hover_delay_ms>=SWELL_MIN_MS && !instant;
+            if !self.open && (self.drag_hot || t - since >= delay) {
                 self.open = true;
                 let target_h=self.expanded_height();
                 self.tune_open(PW,target_h);
@@ -2528,19 +2529,20 @@ impl App {
                     self.h.vel = self.h.vel.max(260.0);
                 }
             } else if !self.open {
-                if instant {
-                    // 瞬时模式不做「悬停胀大」反馈，避免先跳一下再瞬间展开。
-                    self.w.tune(close.0, close.1);
-                    self.h.tune(close.0, close.1);
-                    self.w.target = bw;
-                    self.h.target = bh;
-                } else {
+                if swell {
                     self.w.tune(SWELL_K.0, SWELL_K.1);
                     self.h.tune(SWELL_K.0, SWELL_K.1);
                     // 悬停时轻微胀大：厚度方向胀得多一点（侧边停靠时厚度是宽度）。
                     let (sw,sh)=if self.side(){(SWELL.1,SWELL.0)}else{SWELL};
                     self.w.target = bw * sw;
                     self.h.target = bh * sh;
+                } else {
+                    // 短等待（或瞬时动效）：保持静止，到点直接用同一条弹簧展开，
+                    // 不会出现「鼓一半被拉走」的接力感。
+                    self.w.tune(close.0, close.1);
+                    self.h.tune(close.0, close.1);
+                    self.w.target = bw;
+                    self.h.target = bh;
                 }
             }
         } else {
@@ -3358,28 +3360,57 @@ mod battery_source_tests {
 }
 
 #[cfg(test)]
-mod hover_relay_tests {
+mod hover_delay_tests {
     use super::*;
     use crate::anim::Spring;
 
+    fn approx(a: f64, b: f64) { assert!((a - b).abs() < 1e-9, "{a} != {b}"); }
+
     #[test]
-    fn 开关决定悬停缓冲且默认保留接力感() {
-        assert_eq!(hover_delay(true, false), HOVER_INTENT);
-        assert_eq!(hover_delay(true, true), MINIMAL_HOVER_INTENT);
-        assert_eq!(hover_delay(false, false), 0.0);
-        assert_eq!(hover_delay(false, true), 0.0);
-        assert!(crate::model::Settings::default().hover_relay, "旧配置无该键时保持现状");
+    fn 延时换算默认值与极简加倍() {
+        approx(hover_delay_secs(200, false), 0.20);
+        approx(hover_delay_secs(200, true), 0.40);
+        approx(hover_delay_secs(0, false), 0.0);
+        approx(hover_delay_secs(0, true), 0.0);
+        approx(hover_delay_secs(80, false), 0.08);
+        assert!(hover_delay_secs(500, true) <= 1.0, "极简加倍也要有上限");
+        assert_eq!(crate::model::Settings::default().hover_delay_ms, 200);
+        assert!(200 >= SWELL_MIN_MS && 80 < SWELL_MIN_MS, "默认有预放大、短延时保持静止");
     }
 
     #[test]
-    fn 关掉接力后展开曲线不再分段() {
+    fn 短延时既过滤鼠标划过又更早展开() {
+        let (bw, full) = (143.0f32, 419.0f32);
+        let tuning = crate::model::OpenAnim::Elastic.tuning().unwrap();
+        // 80 ms ≈ 5 帧 @60fps：等待期间保持静止，到点才换展开弹簧。
+        let mut short = Spring::new(bw, CLOSE.0, CLOSE.1);
+        short.target = bw;
+        // 200 ms ≈ 12 帧：等待期间跑 SWELL 预放大。
+        let mut long = Spring::new(bw, SWELL_K.0, SWELL_K.1);
+        long.target = bw * SWELL.0;
+        let mut width_before_delay = bw;
+        for frame in 0..10 {
+            if frame == 5 {
+                short.tune(tuning.open_w.0, tuning.open_w.1);
+                short.target = full;
+            }
+            short.step(1.0 / 60.0);
+            long.step(1.0 / 60.0);
+            if frame == 3 { width_before_delay = short.pos; }
+        }
+        assert!((width_before_delay - bw).abs() < 0.01,
+            "延时内不该有任何形变，划过 <80 ms 就不会展开：{width_before_delay}");
+        assert!(short.pos > long.pos + 20.0,
+            "短延时应更早进入展开：{} vs {}", short.pos, long.pos);
+    }
+
+    #[test]
+    fn 零延时比默认更早到位() {
         let (bw, full) = (143.0f32, 419.0f32);
         let near = bw + (full - bw) * 0.9;
         let tuning = crate::model::OpenAnim::Elastic.tuning().unwrap();
-        // 连贯：一进入就用展开弹簧追完整宽度。
         let mut direct = Spring::new(bw, tuning.open_w.0, tuning.open_w.1);
         direct.target = full;
-        // 接力：前 12 帧（0.20 s @ 60 fps）先用 SWELL_K 追「轻微胀大」，到点才换弹簧。
         let mut relay = Spring::new(bw, SWELL_K.0, SWELL_K.1);
         relay.target = bw * SWELL.0;
         let (mut direct_frames, mut relay_frames) = (None, None);
@@ -3394,8 +3425,7 @@ mod hover_relay_tests {
             if relay_frames.is_none() && relay.pos >= near { relay_frames = Some(frame + 1); }
             if direct_frames.is_some() && relay_frames.is_some() { break; }
         }
-        let (d, r) = (direct_frames.expect("连贯模式没到位"), relay_frames.expect("接力模式没到位"));
-        assert!(d < r, "连贯模式应更早展开到位：{d} 帧 vs {r} 帧");
-        assert!(d < 12, "连贯模式在原本的缓冲期内就该开始明显铺开：{d} 帧");
+        let (d, r) = (direct_frames.expect("零延时没到位"), relay_frames.expect("默认延时没到位"));
+        assert!(d < r, "零延时应更早到位：{d} 帧 vs {r} 帧");
     }
 }
