@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-43"
+PATCH_ID = "custom-46"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -7761,6 +7761,62 @@ fn editing_local_calendar_clears_outdated_reminders() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for reschedule in [false,true] {
 '''),
+
+    # custom-46：浏览器扩展桥宿主模式（daozai_bridge.exe），Inno Setup 安装包
+    ("src/lib.rs",
+     '''#[cfg(windows)]
+pub use updates::record_install_size;
+
+#[cfg(windows)]
+pub mod native;
+#[cfg(windows)]
+''',
+     '''#[cfg(windows)]
+pub use updates::record_install_size;
+
+#[cfg(windows)]
+pub mod bridge;
+#[cfg(windows)]
+pub mod native;
+#[cfg(windows)]
+'''),
+    ("src/main.rs",
+     '''}
+
+fn main() -> std::process::ExitCode {
+    diagnostics::install();
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+''',
+     '''}
+
+fn main() -> std::process::ExitCode {
+    // 浏览器扩展桥宿主模式：安装包把本 exe 复制为 daozai_bridge.exe，
+    // Chrome/Edge 按宿主清单启动它收发下载事件。不建窗口、不抢单实例互斥体。
+    #[cfg(windows)]
+    if daozai::bridge::is_bridge_invocation() {
+        return std::process::ExitCode::from(daozai::bridge::run_host() as u8);
+    }
+    diagnostics::install();
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+'''),
+    ("Cargo.toml",
+     '''  "Win32_Security_Cryptography",
+  "Win32_System_Power",
+  "Win32_System_Registry",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_System_Diagnostics_ToolHelp",
+''',
+     '''  "Win32_Security_Cryptography",
+  "Win32_System_Power",
+  "Win32_System_Registry",
+  "Win32_System_IO",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_System_Diagnostics_ToolHelp",
+'''),
 ]
 
 
@@ -7875,9 +7931,9 @@ def main() -> None:
     if marker.exists() and marker.read_text(encoding="utf-8").strip() == PATCH_ID and "--force" not in sys.argv:
         # 新增模块不依赖 EDITS，即使补丁已应用也要同步一次，
         # 这样后续修订 phone_battery.rs 时重跑本脚本能把改动带过去。
-        for name in ("phone_battery.rs", "island_status.rs"):
+        for name in ("phone_battery.rs", "island_status.rs", "bridge.rs"):
             shutil.copyfile(PATCH_DIR / name, root / "src" / name)
-        print(f"补丁 {PATCH_ID} 已应用，跳过编辑；已同步新增模块 phone_battery.rs / island_status.rs")
+        print(f"补丁 {PATCH_ID} 已应用，跳过编辑；已同步新增模块 phone_battery.rs / island_status.rs / bridge.rs")
         return
 
     applied = skipped = 0
@@ -7895,7 +7951,7 @@ def main() -> None:
         path.write_bytes(data.replace(old_b, new_b, 1))
         applied += 1
 
-    for name in ("phone_battery.rs", "island_status.rs"):
+    for name in ("phone_battery.rs", "island_status.rs", "bridge.rs"):
         shutil.copyfile(PATCH_DIR / name, root / "src" / name)
     version = bump_version(root)
     marker.write_text(PATCH_ID + "\n", encoding="utf-8")

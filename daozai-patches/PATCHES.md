@@ -558,6 +558,44 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 76 个 src 文件逐字节一致。
 
 
+## 安装包 + 浏览器扩展桥宿主（custom-46）
+
+用户要求「做成像 Windows 应用那样的安装包，选路径安装、能写注册表」。
+
+**组成**：
+1. **桥宿主模式**（`src/bridge.rs` 新模块）：安装包把 daozai.exe 复制为
+   `daozai_bridge.exe`，`main()` 按文件名识别后进入原生消息循环——不建窗口、
+   不抢单实例互斥体。协议与 python 版桥一致（4 字节小端长度 + JSON），
+   翻译成 island_status.json 条目；与 python `StatusBus` 共用同一把文件锁
+   （island_status.lock 首字节，LockFileEx 字节范围锁）。
+   Cargo 只加了 `Win32_System_IO` 特性（同 crate 同版本，Cargo.lock 不变）。
+2. **Inno Setup 7 安装包**（`installer/daozai.iss`，用户自装了 ISCC 到
+   D:////software////Inno Setup 7）：选路径（HKCU 无需管理员）、Chrome+Edge 的
+   NativeMessagingHosts 注册、开机自启 Run 项（接管原有同名项）、开始菜单/
+   桌面快捷方式、[Code] 生成宿主清单（JSON 路径双反斜杠、纯 ASCII）与
+   CUSTOM_BUILD.txt、[UninstallDelete] 清理 Code 生成物、自带卸载器。
+   用户数据 %APPDATA%\\Daozai 安装卸载都不碰。产物 `daozai-setup-custom-46.exe`
+   8.8 MB（lzma2），扩展 ID 由 manifest key 钉死 dcmheeclfeihicoaakoffjbbepfdfcin。
+
+**验证**：bridge 模块 6 项单测；全量 809 passed / 0 failed / 86 ignored；
+实机（bridge-test 目录改名副本）：喂 progress 消息 → 岛上蓝胶囊「下载 · 文件名」
++ 进度条 + 速度；安装包静默装到正式目录与测试目录各一次，注册表三处键值、
+宿主清单、桥副本全对；测试目录卸载后 Code 生成物清干净（UninstallDelete 生效）；
+修复安装后注册表指回正式目录，岛重启正常，胶囊再上岛。
+
+**踩坑**：
+- 只写句柄（append-only）上 LockFileEx 报拒绝访问——锁文件必须读写打开；
+- 自测帧长度要用 encode 后字节数（中文 len(str)≠字节数，python 侧）；
+- EnumWindows 回调是 2 参（HWND, LPARAM），写 3 参静默枚举不到窗口；
+- Git Bash 调 Windows 安装器，/DIR=... 会被 MSYS 路径转换吃掉，要加
+  MSYS_NO_PATHCONV=1；工具会话的 Job 对象会收回 Start-Process 的子进程，
+  常驻程序必须经 explorer.exe 启动；
+- 分支切换时 git autocrlf 把文件改回 CRLF，而补丁链约定 LF——replay 前
+  把链管文件统一归一 LF（apply.py 的 encode() 会按干净源自适应）；
+- 新增模块文件要整份放 daozai-patches/ 并加进 apply.py 末尾的 copy 列表。
+
+python 版桥（browser-bridge/）保留作参考，正式路径走安装包。
+
 ## 剪贴板搜索图标移位 + 去掉二次点击（custom-43）
 
 用户反馈：剪贴板的搜索放大镜和音乐播放图标重合了；同时要求去掉「再点一次剪贴板分栏

@@ -62,6 +62,8 @@ mod updates;
 pub use updates::record_install_size;
 
 #[cfg(windows)]
+pub mod bridge;
+#[cfg(windows)]
 pub mod native;
 #[cfg(windows)]
 pub mod wechat;
