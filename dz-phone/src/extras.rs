@@ -2425,6 +2425,10 @@ impl App {
                                 ui.vertical(|ui|self.updates.ui(ui,update_check));
                             });
                             setting_row(ui,"检查更新","关闭后隐藏检查更新入口，避免官方安装包覆盖自定义修改",&mut self.settings.update_check);
+                            ui.separator();
+                            let dbg_before=self.settings.debug_layout;
+                            setting_row(ui,"布局调试","把每个可点击区域（品红框）和卡片边界（蓝框）描出来并标注宽高，方便核对布局；按 F12 可随时切换",&mut self.settings.debug_layout);
+                            if self.settings.debug_layout!=dbg_before{crate::paint::set_debug_layout(self.settings.debug_layout);}
                             ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             ui.horizontal_wrapped(|ui|{
                                 if ui.button("打开本地数据目录").clicked(){self.pending.push(Cmd::Open(crate::model::config_dir()));}

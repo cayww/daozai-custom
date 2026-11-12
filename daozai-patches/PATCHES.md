@@ -558,6 +558,33 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 76 个 src 文件逐字节一致。
 
 
+## 布局调试模式（custom-44 · 分支 debug-layout）
+
+用户想要 Flutter 那样的 DebugPaint：把每一块的范围渲染出来看布局。
+整个功能做在独立分支 `debug-layout` 上，`main` 保持 custom-43 不动，未部署。
+
+**实现**（`Card` 是所有面板绘制的统一点，从它下手最省）：
+- `paint.rs`：线程局部 `DEBUG_HITS/DEBUG_CARDS/DEBUG_LAYOUT`。`Card::hit`/`hit_drag`
+  采集交互热区（已与裁剪区相交，即实际可点的屏幕区域），`Card::new` 采集卡片裁剪区；
+  `debug_begin_frame()` 帧首清空，`debug_overlay()` 帧末绘制：
+  卡片边界 = 蓝色圆角框，热区 = 品红实线框 + 左上角黄色「宽×高」标注。
+  关闭时每次 hit 只多读一个 `Cell<bool>`，零布局开销。
+- `main.rs`：Shell::new 启动时同步配置；update 里 **F12** 切换（toast 提示图例）；
+  CentralPanel 闭包里 frame 前后调 `debug_begin_frame/debug_overlay`。
+- `model.rs`：`debug_layout: bool` 持久化（settings.txt 的 `debug_layout=`）。
+- `extras.rs`：开关放「关于」卡片（放 tab 0 会把常规页内容顶高，测试里
+  `settings_theme_follows_system...` 的 center(...) 找到 None 而挂——已踩坑修正）。
+
+**注意**：岛窗口平时没有焦点，F12 常被前台应用吃掉；用配置文件或设置页开关更可靠。
+
+**验证**：新增 `paint::debug_layout_tests::debug_layout_collects_and_clears_regions`
+（关闭不采集 / 开启采集热区+卡片 / 帧首清空 / 标注宽高等于传入值）。
+**804 passed / 0 failed / 86 ignored**；重放 custom-44，367 处 EDITS、跳过 0、src 一致。
+实机（分支 exe 直接试运行，未动 D://software//Daozai）：展开态截图里 prev/next 箭头 26×26、
+进度条 184×14、播放控制 30×24、岛上歌词 68×20、齿轮 26×26 等热区一应俱全，黄字清晰可读。
+
+exe `58ec472f3839d52d`（仅分支 target 目录）。
+
 ## 剪贴板搜索图标移位 + 去掉二次点击（custom-43）
 
 用户反馈：剪贴板的搜索放大镜和音乐播放图标重合了；同时要求去掉「再点一次剪贴板分栏

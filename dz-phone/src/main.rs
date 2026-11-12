@@ -83,6 +83,8 @@ impl Shell {
         diagnostics::graphics(cc);
         diagnostics::startup("加载本地配置");
         let mut app = App::new(&cc.egui_ctx, Options::default());
+        // 启动时同步布局调试开关（配置持久化在 settings.txt，F12 可随时切换）。
+        daozai::paint::set_debug_layout(app.settings.debug_layout);
         #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
         #[cfg(not(feature="record"))] let quota_demo=false;
         diagnostics::startup("初始化额度配置");
@@ -284,6 +286,17 @@ impl eframe::App for Shell {
             self.guard_notified=true;self.app.opts.fetch_lyrics=false;
             self.app.alert("岛仔已暂停音乐功能","检测到资源占用异常，已暂停读取音乐信息和歌词。重启岛仔即可恢复；诊断记录在数据目录的 diagnostics 文件夹。",0,false);
         }
+        // 布局调试开关（Flutter DebugPaint 风格）：切换后立即生效并写回配置。
+        if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
+            self.app.settings.debug_layout = !self.app.settings.debug_layout;
+            daozai::paint::set_debug_layout(self.app.settings.debug_layout);
+            let _ = self.app.settings.save();
+            self.app.say(if self.app.settings.debug_layout {
+                "布局调试已开启：品红框 = 可点击区域，蓝框 = 卡片边界，黄字 = 宽×高"
+            } else {
+                "布局调试已关闭"
+            });
+        }
         self.media_enabled.store(self.app.settings.visible_pages[0] && !guarded,std::sync::atomic::Ordering::Relaxed);
         // 设置里改了岛体大小：下一帧起主窗口按新倍率栅格化，定位逻辑随像素比变化同步调整画布。
         #[cfg(windows)] eframe::set_root_viewport_scale(self.app.settings.island_scale());
@@ -475,10 +488,12 @@ impl eframe::App for Shell {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
             .show(ctx, |ui| {
+                daozai::paint::debug_begin_frame();
                 // 左右停靠时画布是竖向的 SIDE_W × SIDE_H。
                 let size=if self.app.settings.dock.is_side() {egui::vec2(daozai::side_dock::SIDE_W,daozai::side_dock::SIDE_H)} else {egui::vec2(app::WIN_W,app::WIN_H)};
                 let win = egui::Rect::from_min_size(ui.max_rect().min,size);
                 out = Some(self.app.frame(ui, win, &env));
+                daozai::paint::debug_overlay(&ui.painter());
             });
         let Some(out) = out else { return };
 

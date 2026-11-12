@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-43"
+PATCH_ID = "custom-44"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -7760,6 +7760,315 @@ fn clicking_the_active_clipboard_tab_no_longer_opens_search() {
 fn editing_local_calendar_clears_outdated_reminders() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for reschedule in [false,true] {
+'''),
+
+    # custom-44：布局调试模式：F12 DebugPaint 风格叠加层（分支 debug-layout）
+    ("src/paint.rs",
+     '''use eframe::egui::{self, Color32, FontId, Id, Pos2, Rect, Response, Sense, Stroke, Vec2};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum H {
+    Left,
+''',
+     '''use eframe::egui::{self, Color32, FontId, Id, Pos2, Rect, Response, Sense, Stroke, Vec2};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
+// ---------- 布局调试（F12 / 设置页开关）----------
+// Flutter DebugPaint 的轻量版：`Card::hit`/`hit_drag` 记录交互热区（已与裁剪区相交，
+// 即实际可点的屏幕区域），`Card::new` 记录每张卡片的裁剪区；帧末 `debug_overlay`
+// 统一描边并标注宽高。UI 单线程绘制，线程局部存储即可，关闭时每次 hit 只多读一个 Cell。
+thread_local! {
+    static DEBUG_HITS: std::cell::RefCell<Vec<Rect>> = std::cell::RefCell::new(Vec::new());
+    static DEBUG_CARDS: std::cell::RefCell<Vec<Rect>> = std::cell::RefCell::new(Vec::new());
+    static DEBUG_LAYOUT: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// 设置布局调试开关（main.rs 启动时同步配置，F12 与设置页切换时都会调它）。
+pub fn set_debug_layout(on: bool) { DEBUG_LAYOUT.with(|f| f.set(on)); }
+fn debug_record_hit(rect: Rect) {
+    if DEBUG_LAYOUT.with(|f| f.get()) { DEBUG_HITS.with(|v| v.borrow_mut().push(rect)); }
+}
+fn debug_record_card(clip: Rect) {
+    if DEBUG_LAYOUT.with(|f| f.get()) { DEBUG_CARDS.with(|v| v.borrow_mut().push(clip)); }
+}
+/// 帧开始清空上一帧（或其他视口）留下的采集，保证叠加层只显示本帧数据。
+pub fn debug_begin_frame() {
+    DEBUG_HITS.with(|v| v.borrow_mut().clear());
+    DEBUG_CARDS.with(|v| v.borrow_mut().clear());
+}
+/// 帧末绘制：卡片裁剪区 = 蓝色圆角框，交互热区 = 品红实线框 +
+/// 左上角黄色「宽×高」标注（标注的是代码里的逻辑坐标尺寸，乘 `Card.s` 前的值约等于屏上像素/缩放比）。
+pub fn debug_overlay(painter: &egui::Painter) {
+    if !DEBUG_LAYOUT.with(|f| f.get()) { return; }
+    let card_color = Color32::from_rgb(70, 150, 255);
+    let hit_color = Color32::from_rgb(255, 45, 150);
+    let label_color = Color32::from_rgb(255, 214, 64);
+    DEBUG_CARDS.with(|v| {
+        for r in v.borrow().iter() {
+            painter.rect_stroke(*r, 3.0, Stroke::new(1.0, card_color), egui::StrokeKind::Inside);
+        }
+    });
+    DEBUG_HITS.with(|v| {
+        for r in v.borrow().iter() {
+            painter.rect_stroke(*r, 2.0, Stroke::new(1.0, hit_color), egui::StrokeKind::Inside);
+            let label = format!("{:.0}×{:.0}", r.width(), r.height());
+            painter.text(r.left_top(), egui::Align2::LEFT_BOTTOM, label, FontId::monospace(10.0), label_color);
+        }
+    });
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum H {
+    Left,
+'''),
+    ("src/paint.rs",
+     '''impl<'a> Card<'a> {
+    pub fn new(ui: &'a egui::Ui, origin: Pos2, clip: Rect) -> Self {
+        let painter = ui.painter().with_clip_rect(clip);
+        Self { ui, painter, origin, s: 1.0, live: true }
+    }
+
+''',
+     '''impl<'a> Card<'a> {
+    pub fn new(ui: &'a egui::Ui, origin: Pos2, clip: Rect) -> Self {
+        let painter = ui.painter().with_clip_rect(clip);
+        debug_record_card(clip);
+        Self { ui, painter, origin, s: 1.0, live: true }
+    }
+
+'''),
+    ("src/paint.rs",
+     '''    // ---------- 交互 ----------
+    pub fn hit(&self, x: f32, y: f32, w: f32, h: f32, id: impl std::hash::Hash) -> Response {
+        let rect = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
+        let sense = if self.live { Sense::click() } else { Sense::hover() };
+        let id = Id::new(("card", self.live, id));
+        self.ui.interact(rect, id, sense)
+''',
+     '''    // ---------- 交互 ----------
+    pub fn hit(&self, x: f32, y: f32, w: f32, h: f32, id: impl std::hash::Hash) -> Response {
+        let rect = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
+        debug_record_hit(rect);
+        let sense = if self.live { Sense::click() } else { Sense::hover() };
+        let id = Id::new(("card", self.live, id));
+        self.ui.interact(rect, id, sense)
+'''),
+    ("src/paint.rs",
+     '''
+    pub fn hit_drag(&self,x:f32,y:f32,w:f32,h:f32,id:impl std::hash::Hash)->Response {
+        let rect=self.rect(x,y,w,h).intersect(self.painter.clip_rect());
+        self.ui.interact(rect,Id::new(("card-drag",self.live,id)),if self.live{Sense::click_and_drag()}else{Sense::hover()})
+    }
+    /// 悬停 / 按下的平滑过渡量（0..1）。
+''',
+     '''
+    pub fn hit_drag(&self,x:f32,y:f32,w:f32,h:f32,id:impl std::hash::Hash)->Response {
+        let rect=self.rect(x,y,w,h).intersect(self.painter.clip_rect());
+        debug_record_hit(rect);
+        self.ui.interact(rect,Id::new(("card-drag",self.live,id)),if self.live{Sense::click_and_drag()}else{Sense::hover()})
+    }
+    /// 悬停 / 按下的平滑过渡量（0..1）。
+'''),
+    ("src/paint.rs",
+     '''    }
+    c.painter.add(egui::Shape::mesh(mesh));
+}
+''',
+     '''    }
+    c.painter.add(egui::Shape::mesh(mesh));
+}
+
+#[cfg(test)]
+mod debug_layout_tests {
+    use super::*;
+
+    #[test]
+    fn debug_layout_collects_and_clears_regions() {
+        let ctx=egui::Context::default();
+        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(500.0))),..Default::default()};
+        debug_begin_frame();
+        set_debug_layout(false);
+        let _=ctx.run(raw.clone(),|ctx|{
+            egui::CentralPanel::default().show(ctx,|ui|{
+                let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
+                let _=c.hit(10.0,10.0,24.0,21.0,"dbg-off");
+                debug_overlay(&ui.painter());
+            });
+        });
+        assert!(DEBUG_HITS.with(|v|v.borrow().is_empty()),"关闭时不应采集热区");
+        assert!(DEBUG_CARDS.with(|v|v.borrow().is_empty()),"关闭时不应采集卡片");
+        set_debug_layout(true);
+        let _=ctx.run(raw,|ctx|{
+            egui::CentralPanel::default().show(ctx,|ui|{
+                let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
+                let _=c.hit(10.0,10.0,24.0,21.0,"dbg-on");
+                debug_overlay(&ui.painter());
+            });
+        });
+        assert_eq!(DEBUG_HITS.with(|v|v.borrow().len()),1,"开启时应采集 1 个热区");
+        assert_eq!(DEBUG_CARDS.with(|v|v.borrow().len()),1,"开启时应采集 1 张卡片");
+        let r=DEBUG_HITS.with(|v|v.borrow()[0]);
+        assert!((r.width()-24.0).abs()<1e-3&&(r.height()-21.0).abs()<1e-3,"标注的宽高应等于传入值");
+        debug_begin_frame();
+        assert!(DEBUG_HITS.with(|v|v.borrow().is_empty()),"帧开始应清空采集");
+        set_debug_layout(false);
+        debug_begin_frame();
+    }
+}
+'''),
+    ("src/model.rs",
+     '''    pub auto_copy_otp: bool,
+    /// 是否允许检查/安装官方更新；自定义构建默认关闭，避免覆盖本地修改。
+    pub update_check: bool,
+    pub clock_12h: bool,
+    pub clock_period: u8,
+    pub resident_order: Vec<usize>,
+''',
+     '''    pub auto_copy_otp: bool,
+    /// 是否允许检查/安装官方更新；自定义构建默认关闭，避免覆盖本地修改。
+    pub update_check: bool,
+    /// 布局调试：把每个可点击热区与卡片边界描边并标注宽高（F12 随时切换）。
+    pub debug_layout: bool,
+    pub clock_12h: bool,
+    pub clock_period: u8,
+    pub resident_order: Vec<usize>,
+'''),
+    ("src/model.rs",
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), hover_delay_ms: 200, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+''',
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), hover_delay_ms: 200, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, debug_layout: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+'''),
+    ("src/model.rs",
+     '''                "island_shape" => s.island_shape = IslandShape::parse(&v),
+                "open_anim" => s.open_anim = OpenAnim::parse(&v),
+                "hover_delay_ms" => s.hover_delay_ms = v.parse::<u32>().unwrap_or(200).min(500),
+                "dock" => s.dock = Dock::parse(&v),
+                "glass_blur" => s.glass_blur = v != "0",
+                "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
+''',
+     '''                "island_shape" => s.island_shape = IslandShape::parse(&v),
+                "open_anim" => s.open_anim = OpenAnim::parse(&v),
+                "hover_delay_ms" => s.hover_delay_ms = v.parse::<u32>().unwrap_or(200).min(500),
+                "debug_layout" => s.debug_layout = v != "0",
+                "dock" => s.dock = Dock::parse(&v),
+                "glass_blur" => s.glass_blur = v != "0",
+                "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
+'''),
+    ("src/model.rs",
+     '''                ("open_anim".into(),self.open_anim.key().into()),
+                ("hover_delay_ms".into(),self.hover_delay_ms.to_string()),
+                ("hover_relay".into(),(u8::from(self.hover_delay_ms>0)).to_string()),
+                ("dock".into(),self.dock.key().into()),
+                ("glass_blur".into(),(self.glass_blur as u8).to_string()),
+                ("island_size".into(),island_size_value(self.island_size).to_string()),
+''',
+     '''                ("open_anim".into(),self.open_anim.key().into()),
+                ("hover_delay_ms".into(),self.hover_delay_ms.to_string()),
+                ("hover_relay".into(),(u8::from(self.hover_delay_ms>0)).to_string()),
+                ("debug_layout".into(),(self.debug_layout as u8).to_string()),
+                ("dock".into(),self.dock.key().into()),
+                ("glass_blur".into(),(self.glass_blur as u8).to_string()),
+                ("island_size".into(),island_size_value(self.island_size).to_string()),
+'''),
+    ("src/main.rs",
+     '''        diagnostics::graphics(cc);
+        diagnostics::startup("加载本地配置");
+        let mut app = App::new(&cc.egui_ctx, Options::default());
+        #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
+        #[cfg(not(feature="record"))] let quota_demo=false;
+        diagnostics::startup("初始化额度配置");
+''',
+     '''        diagnostics::graphics(cc);
+        diagnostics::startup("加载本地配置");
+        let mut app = App::new(&cc.egui_ctx, Options::default());
+        // 启动时同步布局调试开关（配置持久化在 settings.txt，F12 可随时切换）。
+        daozai::paint::set_debug_layout(app.settings.debug_layout);
+        #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
+        #[cfg(not(feature="record"))] let quota_demo=false;
+        diagnostics::startup("初始化额度配置");
+'''),
+    ("src/main.rs",
+     '''            self.guard_notified=true;self.app.opts.fetch_lyrics=false;
+            self.app.alert("岛仔已暂停音乐功能","检测到资源占用异常，已暂停读取音乐信息和歌词。重启岛仔即可恢复；诊断记录在数据目录的 diagnostics 文件夹。",0,false);
+        }
+        self.media_enabled.store(self.app.settings.visible_pages[0] && !guarded,std::sync::atomic::Ordering::Relaxed);
+        // 设置里改了岛体大小：下一帧起主窗口按新倍率栅格化，定位逻辑随像素比变化同步调整画布。
+        #[cfg(windows)] eframe::set_root_viewport_scale(self.app.settings.island_scale());
+''',
+     '''            self.guard_notified=true;self.app.opts.fetch_lyrics=false;
+            self.app.alert("岛仔已暂停音乐功能","检测到资源占用异常，已暂停读取音乐信息和歌词。重启岛仔即可恢复；诊断记录在数据目录的 diagnostics 文件夹。",0,false);
+        }
+        // 布局调试开关（Flutter DebugPaint 风格）：切换后立即生效并写回配置。
+        if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
+            self.app.settings.debug_layout = !self.app.settings.debug_layout;
+            daozai::paint::set_debug_layout(self.app.settings.debug_layout);
+            let _ = self.app.settings.save();
+            self.app.say(if self.app.settings.debug_layout {
+                "布局调试已开启：品红框 = 可点击区域，蓝框 = 卡片边界，黄字 = 宽×高"
+            } else {
+                "布局调试已关闭"
+            });
+        }
+        self.media_enabled.store(self.app.settings.visible_pages[0] && !guarded,std::sync::atomic::Ordering::Relaxed);
+        // 设置里改了岛体大小：下一帧起主窗口按新倍率栅格化，定位逻辑随像素比变化同步调整画布。
+        #[cfg(windows)] eframe::set_root_viewport_scale(self.app.settings.island_scale());
+'''),
+    ("src/main.rs",
+     '''        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
+            .show(ctx, |ui| {
+                // 左右停靠时画布是竖向的 SIDE_W × SIDE_H。
+                let size=if self.app.settings.dock.is_side() {egui::vec2(daozai::side_dock::SIDE_W,daozai::side_dock::SIDE_H)} else {egui::vec2(app::WIN_W,app::WIN_H)};
+                let win = egui::Rect::from_min_size(ui.max_rect().min,size);
+                out = Some(self.app.frame(ui, win, &env));
+            });
+        let Some(out) = out else { return };
+
+''',
+     '''        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
+            .show(ctx, |ui| {
+                daozai::paint::debug_begin_frame();
+                // 左右停靠时画布是竖向的 SIDE_W × SIDE_H。
+                let size=if self.app.settings.dock.is_side() {egui::vec2(daozai::side_dock::SIDE_W,daozai::side_dock::SIDE_H)} else {egui::vec2(app::WIN_W,app::WIN_H)};
+                let win = egui::Rect::from_min_size(ui.max_rect().min,size);
+                out = Some(self.app.frame(ui, win, &env));
+                daozai::paint::debug_overlay(&ui.painter());
+            });
+        let Some(out) = out else { return };
+
+'''),
+    ("src/extras.rs",
+     '''                                ui.vertical(|ui|self.updates.ui(ui,update_check));
+                            });
+                            setting_row(ui,"检查更新","关闭后隐藏检查更新入口，避免官方安装包覆盖自定义修改",&mut self.settings.update_check);
+                            ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            ui.horizontal_wrapped(|ui|{
+                                if ui.button("打开本地数据目录").clicked(){self.pending.push(Cmd::Open(crate::model::config_dir()));}
+''',
+     '''                                ui.vertical(|ui|self.updates.ui(ui,update_check));
+                            });
+                            setting_row(ui,"检查更新","关闭后隐藏检查更新入口，避免官方安装包覆盖自定义修改",&mut self.settings.update_check);
+                            ui.separator();
+                            let dbg_before=self.settings.debug_layout;
+                            setting_row(ui,"布局调试","把每个可点击区域（品红框）和卡片边界（蓝框）描出来并标注宽高，方便核对布局；按 F12 可随时切换",&mut self.settings.debug_layout);
+                            if self.settings.debug_layout!=dbg_before{crate::paint::set_debug_layout(self.settings.debug_layout);}
+                            ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            ui.horizontal_wrapped(|ui|{
+                                if ui.button("打开本地数据目录").clicked(){self.pending.push(Cmd::Open(crate::model::config_dir()));}
 '''),
 ]
 

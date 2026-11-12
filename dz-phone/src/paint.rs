@@ -7,6 +7,50 @@ use crate::theme::{self, font, W};
 use eframe::egui::{self, Color32, FontId, Id, Pos2, Rect, Response, Sense, Stroke, Vec2};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
+// ---------- 布局调试（F12 / 设置页开关）----------
+// Flutter DebugPaint 的轻量版：`Card::hit`/`hit_drag` 记录交互热区（已与裁剪区相交，
+// 即实际可点的屏幕区域），`Card::new` 记录每张卡片的裁剪区；帧末 `debug_overlay`
+// 统一描边并标注宽高。UI 单线程绘制，线程局部存储即可，关闭时每次 hit 只多读一个 Cell。
+thread_local! {
+    static DEBUG_HITS: std::cell::RefCell<Vec<Rect>> = std::cell::RefCell::new(Vec::new());
+    static DEBUG_CARDS: std::cell::RefCell<Vec<Rect>> = std::cell::RefCell::new(Vec::new());
+    static DEBUG_LAYOUT: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// 设置布局调试开关（main.rs 启动时同步配置，F12 与设置页切换时都会调它）。
+pub fn set_debug_layout(on: bool) { DEBUG_LAYOUT.with(|f| f.set(on)); }
+fn debug_record_hit(rect: Rect) {
+    if DEBUG_LAYOUT.with(|f| f.get()) { DEBUG_HITS.with(|v| v.borrow_mut().push(rect)); }
+}
+fn debug_record_card(clip: Rect) {
+    if DEBUG_LAYOUT.with(|f| f.get()) { DEBUG_CARDS.with(|v| v.borrow_mut().push(clip)); }
+}
+/// 帧开始清空上一帧（或其他视口）留下的采集，保证叠加层只显示本帧数据。
+pub fn debug_begin_frame() {
+    DEBUG_HITS.with(|v| v.borrow_mut().clear());
+    DEBUG_CARDS.with(|v| v.borrow_mut().clear());
+}
+/// 帧末绘制：卡片裁剪区 = 蓝色圆角框，交互热区 = 品红实线框 +
+/// 左上角黄色「宽×高」标注（标注的是代码里的逻辑坐标尺寸，乘 `Card.s` 前的值约等于屏上像素/缩放比）。
+pub fn debug_overlay(painter: &egui::Painter) {
+    if !DEBUG_LAYOUT.with(|f| f.get()) { return; }
+    let card_color = Color32::from_rgb(70, 150, 255);
+    let hit_color = Color32::from_rgb(255, 45, 150);
+    let label_color = Color32::from_rgb(255, 214, 64);
+    DEBUG_CARDS.with(|v| {
+        for r in v.borrow().iter() {
+            painter.rect_stroke(*r, 3.0, Stroke::new(1.0, card_color), egui::StrokeKind::Inside);
+        }
+    });
+    DEBUG_HITS.with(|v| {
+        for r in v.borrow().iter() {
+            painter.rect_stroke(*r, 2.0, Stroke::new(1.0, hit_color), egui::StrokeKind::Inside);
+            let label = format!("{:.0}×{:.0}", r.width(), r.height());
+            painter.text(r.left_top(), egui::Align2::LEFT_BOTTOM, label, FontId::monospace(10.0), label_color);
+        }
+    });
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum H {
     Left,
@@ -26,6 +70,7 @@ pub struct Card<'a> {
 impl<'a> Card<'a> {
     pub fn new(ui: &'a egui::Ui, origin: Pos2, clip: Rect) -> Self {
         let painter = ui.painter().with_clip_rect(clip);
+        debug_record_card(clip);
         Self { ui, painter, origin, s: 1.0, live: true }
     }
 
@@ -257,6 +302,7 @@ impl<'a> Card<'a> {
     // ---------- 交互 ----------
     pub fn hit(&self, x: f32, y: f32, w: f32, h: f32, id: impl std::hash::Hash) -> Response {
         let rect = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
+        debug_record_hit(rect);
         let sense = if self.live { Sense::click() } else { Sense::hover() };
         let id = Id::new(("card", self.live, id));
         self.ui.interact(rect, id, sense)
@@ -264,6 +310,7 @@ impl<'a> Card<'a> {
 
     pub fn hit_drag(&self,x:f32,y:f32,w:f32,h:f32,id:impl std::hash::Hash)->Response {
         let rect=self.rect(x,y,w,h).intersect(self.painter.clip_rect());
+        debug_record_hit(rect);
         self.ui.interact(rect,Id::new(("card-drag",self.live,id)),if self.live{Sense::click_and_drag()}else{Sense::hover()})
     }
     /// 悬停 / 按下的平滑过渡量（0..1）。
@@ -912,4 +959,42 @@ pub fn chase(c: &Card, x0: f32, head: f32, y: f32, thick: f32, tint: Color32, ho
         }
     }
     c.painter.add(egui::Shape::mesh(mesh));
+}
+
+#[cfg(test)]
+mod debug_layout_tests {
+    use super::*;
+
+    #[test]
+    fn debug_layout_collects_and_clears_regions() {
+        let ctx=egui::Context::default();
+        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(500.0))),..Default::default()};
+        debug_begin_frame();
+        set_debug_layout(false);
+        let _=ctx.run(raw.clone(),|ctx|{
+            egui::CentralPanel::default().show(ctx,|ui|{
+                let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
+                let _=c.hit(10.0,10.0,24.0,21.0,"dbg-off");
+                debug_overlay(&ui.painter());
+            });
+        });
+        assert!(DEBUG_HITS.with(|v|v.borrow().is_empty()),"关闭时不应采集热区");
+        assert!(DEBUG_CARDS.with(|v|v.borrow().is_empty()),"关闭时不应采集卡片");
+        set_debug_layout(true);
+        let _=ctx.run(raw,|ctx|{
+            egui::CentralPanel::default().show(ctx,|ui|{
+                let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
+                let _=c.hit(10.0,10.0,24.0,21.0,"dbg-on");
+                debug_overlay(&ui.painter());
+            });
+        });
+        assert_eq!(DEBUG_HITS.with(|v|v.borrow().len()),1,"开启时应采集 1 个热区");
+        assert_eq!(DEBUG_CARDS.with(|v|v.borrow().len()),1,"开启时应采集 1 张卡片");
+        let r=DEBUG_HITS.with(|v|v.borrow()[0]);
+        assert!((r.width()-24.0).abs()<1e-3&&(r.height()-21.0).abs()<1e-3,"标注的宽高应等于传入值");
+        debug_begin_frame();
+        assert!(DEBUG_HITS.with(|v|v.borrow().is_empty()),"帧开始应清空采集");
+        set_debug_layout(false);
+        debug_begin_frame();
+    }
 }
