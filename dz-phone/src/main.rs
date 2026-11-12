@@ -775,12 +775,8 @@ mod open_path_tests {
 }
 
 fn main() -> std::process::ExitCode {
-    // 浏览器扩展桥宿主模式：安装包把本 exe 复制为 daozai_bridge.exe，
-    // Chrome/Edge 按宿主清单启动它收发下载事件。不建窗口、不抢单实例互斥体。
-    #[cfg(windows)]
-    if daozai::bridge::is_bridge_invocation() {
-        return std::process::ExitCode::from(daozai::bridge::run_host() as u8);
-    }
+    // 浏览器扩展桥宿主已拆成独立二进制 daozai-bridge.exe（见 src/bin/daozai-bridge），
+    // 不再复用本 exe，这里直接进入主程序。
     diagnostics::install();
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,

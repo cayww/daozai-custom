@@ -6,7 +6,7 @@
 
 #define MyAppName "岛仔 Daozai"
 #define MyAppVersion "0.6.64"
-#define MyAppBuild "custom-57"
+#define MyAppBuild "custom-58"
 
 [Setup]
 AppId={{A58C1D9E-4F02-4B6A-9C33-1E7B5D2F8A44}}
@@ -41,6 +41,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 Source: "..\dz-phone\target\release\daozai.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dz-phone\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
+; 浏览器扩展桥宿主：独立精简版二进制（不链接 GUI 栈，约 460KB），复制为 daozai_bridge.exe。
+Source: "..\dz-phone\target\release\daozai-bridge.exe"; DestDir: "{app}\bridge"; DestName: "daozai_bridge.exe"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\manifest.json"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\sw.js"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion
 Source: "INSTALL-NOTES.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
@@ -69,9 +71,8 @@ Type: dirifempty; Name: "{app}\bridge\extension"
 Filename: "{app}\daozai.exe"; Description: "启动岛仔"; Flags: nowait postinstall skipifsilent
 
 [Code]
-// 宿主清单与桥副本都要在装完后用真实路径生成：
-//  - daozai_bridge.exe = 主程序副本，浏览器按清单启动它进入桥宿主模式；
-//  - com.daozai.island.json 里 JSON 字符串的路径必须双反斜杠。
+// 宿主清单要在装完后用真实路径生成（com.daozai.island.json 里 JSON 字符串的路径必须双反斜杠）。
+// daozai_bridge.exe 已由 [Files] 直接打包（独立精简版），不再从 daozai.exe 复制。
 // 清单内容保持纯 ASCII（JSON 里不能有转义坑，也避开 ANSI/UTF8 编码问题）。
 procedure CurStepChanged(CurStep: TSetupStep);
 var
@@ -87,13 +88,11 @@ begin
       MsgBox('无法创建 bridge 目录。', mbError, MB_OK);
       exit;
     end;
-    // 浏览器扩展在线时桥进程一直运行，锁住目标 exe 会让 CopyFile 静默失败
+    // 浏览器扩展在线时桥进程一直运行，锁住目标 exe 会让文件覆盖静默失败
     // （静默安装下弹窗也看不见），升级就变成「装了新版桥还是旧的」。先结束它；
     // 扩展下次收发消息时浏览器会自动重新拉起，无感恢复。
     Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM daozai_bridge.exe /F',
       '', SW_HIDE, ewWaitUntilTerminated, resultCode);
-    if not CopyFile(ExpandConstant('{app}\daozai.exe'), exePath, False) then
-      MsgBox('复制 daozai_bridge.exe 失败，浏览器扩展桥将不可用。', mbError, MB_OK);
 
     StringChangeEx(exePath, '\', '\\', True);
     manifest := '{"name":"com.daozai.island",' +

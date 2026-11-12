@@ -15,6 +15,12 @@ path = "src/lib.rs"
 name = "daozai"
 path = "src/main.rs"
 
+# 独立精简的浏览器扩展桥宿主：不链接 GUI 栈，只做下载事件 → island_status.json 的翻译。
+# 安装包把编译出的 daozai-bridge.exe 复制为 daozai_bridge.exe（见 installer/daozai.iss）。
+[[bin]]
+name = "daozai-bridge"
+path = "src/bin/daozai-bridge/main.rs"
+
 # 无窗口演示录制器：脚本驱动 + 软件光栅化，输出 RGBA 帧流给 ffmpeg。
 [[bin]]
 name = "daozai-record"

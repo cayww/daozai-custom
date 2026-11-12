@@ -576,6 +576,30 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## 桥宿主拆成独立精简二进制（custom-58）
+
+用户问：daozai_bridge 是不是必须整个程序，能否只保留相关代码。此前桥是
+daozai.exe 的完整副本（18.7MB），因为 `bridge.rs` 只是主 crate 的一个模块，
+`main()` 按文件名走桥分支，整个 GUI 栈（eframe/egui 等）都被链接进来。
+
+**改动**：桥宿主拆成独立二进制 `daozai-bridge`（`src/bin/daozai-bridge/main.rs`），
+只依赖 `windows` + `serde_json`，不链接 GUI 栈——**体积从 18.7MB 降到 463KB**。
+
+- 新 bin 自包含：run_host / 下载聚合 / 状态写入 / 帧编解码 / 极简 BridgePrefs
+  （复刻主程序 model::BridgePrefs 的 bridge.json 读取，字段钳制一致），
+  带 8 项单测。不 `use daozai`，彻底不链接主 lib。
+- 主程序瘦身：`src/bridge.rs` 删掉全部桥宿主运行时（run_host/handle/set_status/
+  锁/帧编解码等），只留设置页要用的 `installed_browsers()`/`extension_folder()`；
+  `src/main.rs` 删掉 is_bridge_invocation 入口分支。
+- `installer/daozai.iss`：[Files] 直接打包 daozai-bridge.exe 为
+  `{app}\bridge\daozai_bridge.exe`（DestName），[Code] 不再从 daozai.exe 复制。
+- 补丁链：bridge.rs 副本同步、独立 bin 加进 NEW_FILES、main.rs 编辑改回
+  不插桥分支、Cargo.toml 加 [[bin]]。
+
+**验证**：主 crate 806 passed（删 14 项运行时测试）+ 独立 bin 8 passed；
+重放 custom-58 一致（EDITS 375）；装机桥 exe 474KB，端到端喂消息验证
+progress/complete 上岛正常。
+
 ## 下载流程活跃时不避让（custom-57）
 
 用户反馈：开了「自动避让」后，浏览器全屏时岛会收缩到顶部，下载进度和

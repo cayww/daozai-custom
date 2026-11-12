@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-57"
+PATCH_ID = "custom-58"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -21,6 +21,7 @@ NEW_FILES = [
     ("island_status.rs", "src/island_status.rs"),
     ("bridge.rs", "src/bridge.rs"),
     ("browser.svg", "assets/settings-icons/system/browser.svg"),
+    ("daozai-bridge-main.rs", "src/bin/daozai-bridge/main.rs"),
 ]
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
@@ -7799,12 +7800,8 @@ fn main() -> std::process::ExitCode {
      '''}
 
 fn main() -> std::process::ExitCode {
-    // 浏览器扩展桥宿主模式：安装包把本 exe 复制为 daozai_bridge.exe，
-    // Chrome/Edge 按宿主清单启动它收发下载事件。不建窗口、不抢单实例互斥体。
-    #[cfg(windows)]
-    if daozai::bridge::is_bridge_invocation() {
-        return std::process::ExitCode::from(daozai::bridge::run_host() as u8);
-    }
+    // 浏览器扩展桥宿主已拆成独立二进制 daozai-bridge.exe（见 src/bin/daozai-bridge），
+    // 不再复用本 exe，这里直接进入主程序。
     diagnostics::install();
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
@@ -7825,6 +7822,23 @@ fn main() -> std::process::ExitCode {
   "Win32_System_Threading",
   "Win32_System_Diagnostics_ToolHelp",
 '''),
+    ("Cargo.toml",
+     '''[[bin]]
+name = "daozai"
+path = "src/main.rs"
+
+# 无窗口演示录制器''',
+     '''[[bin]]
+name = "daozai"
+path = "src/main.rs"
+
+# 独立精简的浏览器扩展桥宿主：不链接 GUI 栈，只做下载事件 → island_status.json 的翻译。
+# 安装包把编译出的 daozai-bridge.exe 复制为 daozai_bridge.exe（见 installer/daozai.iss）。
+[[bin]]
+name = "daozai-bridge"
+path = "src/bin/daozai-bridge/main.rs"
+
+# 无窗口演示录制器'''),
 
     # custom-47：设置页浏览器下载卡片：桥在线状态 + 一键引导连接
     ("src/extras.rs",
