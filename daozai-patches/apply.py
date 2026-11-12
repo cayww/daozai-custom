@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-36"
+PATCH_ID = "custom-37"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -6207,6 +6207,266 @@ mod external_json_safety_tests {
         let query = self.clip_query.trim().to_lowercase();
         let shown: Vec<usize> = if query.is_empty() {
             (0..items.len()).collect()
+'''),
+
+    # custom-37：修圆角与半圆连接处的阴影突起
+    ("src/app.rs",
+     '''fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
+    if strength<=0.01 {return;}
+    for (grow,a) in [(10.0f32,0.035f32),(6.5,0.05),(3.5,0.07),(1.5,0.09)] {
+        let r=Rect::from_min_max(rect.min-Vec2::new(grow*0.6,grow*0.3),rect.max+Vec2::new(grow*0.6,grow));
+        painter.rect_filled(r,radius+grow*0.8,Color32::from_black_alpha((255.0*a*strength) as u8));
+    }
+}
+pub(crate) const PAGE_NAMES: [&str; 8] = ["音乐", "专注", "饮水", "置物架", "待办", "邮箱", "AI 额度", "日程"];
+''',
+     '''fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
+    if strength<=0.01 {return;}
+    for (grow,a) in [(10.0f32,0.035f32),(6.5,0.05),(3.5,0.07),(1.5,0.09)] {
+        // 每层都是主体的等距外扩（圆角增量 = 横向扩展量）+ 整体下移，
+        // 四角圆弧与主体严格同心同形，直线转圆角处不会再叠出错开的半圆凸边。
+        let (d,dy)=shape::shadow_expansion(grow);
+        let r=Rect::from_min_max(rect.min-Vec2::new(d,d-dy),rect.max+Vec2::new(d,d+dy));
+        painter.rect_filled(r,radius+d,Color32::from_black_alpha((255.0*a*strength) as u8));
+    }
+}
+pub(crate) const PAGE_NAMES: [&str; 8] = ["音乐", "专注", "饮水", "置物架", "待办", "邮箱", "AI 额度", "日程"];
+'''),
+    ("src/shape.rs",
+     '''    pub fn apply(self, p: Pos2) -> Pos2 {
+        match self.dock {
+            Dock::Top => p,
+            Dock::Left => Pos2::new(self.edge + p.y, p.x),
+            Dock::Right => Pos2::new(self.edge - p.y, p.x),
+        }
+    }
+    fn code(self) -> f32 { match self.dock { Dock::Top => 0.0, Dock::Left => 1.0, Dock::Right => 2.0 } }
+}
+
+/// 贴着 `dock` 边缘的轮廓（屏幕坐标）。
+pub fn outline_docked(rect: Rect, dock: Dock, flare: f32, flare_h: f32, radius: f32) -> Vec<Pos2> {
+    let (map, frame) = EdgeMap::of(rect, dock);
+    outline(frame, flare, flare_h, radius).into_iter().map(|p| map.apply(p)).collect()
+}
+
+/// 贴着 `dock` 边缘的抗锯齿填充。
+#[allow(clippy::too_many_arguments)]
+pub fn fill_docked(painter: &egui::Painter, rect: Rect, dock: Dock, flare: f32, flare_h: f32, radius: f32, color: Color32, feather: f32) {
+    let (map, frame) = EdgeMap::of(rect, dock);
+''',
+     '''    pub fn apply(self, p: Pos2) -> Pos2 {
+        match self.dock {
+            Dock::Top => p,
+            Dock::Left => Pos2::new(self.edge + p.y, p.x),
+            Dock::Right => Pos2::new(self.edge - p.y, p.x),
+        }
+    }
+    fn code(self) -> f32 { match self.dock { Dock::Top => 0.0, Dock::Left => 1.0, Dock::Right => 2.0 } }
+}
+
+/// 阴影层相对主体的 (等距外扩, 向下偏移)。
+///
+/// 圆角增量必须**等于**横向扩展量，否则每层阴影的圆弧与主体圆弧不同心、会在角部
+/// 互相交叉，看起来像「直线转半圆的地方多了一圈突起」。等距外扩后再整体下移 `dy`
+/// 模拟顶部光源，四角圆心只随 dy 平移，不会再横向漂移。
+pub(crate) fn shadow_expansion(grow: f32) -> (f32, f32) {
+    (grow * 0.6, grow * 0.35)
+}
+
+/// 贴着 `dock` 边缘的轮廓（屏幕坐标）。
+pub fn outline_docked(rect: Rect, dock: Dock, flare: f32, flare_h: f32, radius: f32) -> Vec<Pos2> {
+    let (map, frame) = EdgeMap::of(rect, dock);
+    outline(frame, flare, flare_h, radius).into_iter().map(|p| map.apply(p)).collect()
+}
+
+/// 贴着 `dock` 边缘的抗锯齿填充。
+#[allow(clippy::too_many_arguments)]
+pub fn fill_docked(painter: &egui::Painter, rect: Rect, dock: Dock, flare: f32, flare_h: f32, radius: f32, color: Color32, feather: f32) {
+    let (map, frame) = EdgeMap::of(rect, dock);
+'''),
+    ("src/shape.rs",
+     '''    const N_FLARE: usize = 14;
+    for i in 0..=N_FLARE {
+        let t = i as f32 / N_FLARE as f32;
+        // 肩部曲线：(1-t)^2.4 比三次方更饱满，过渡更柔。
+        let wing = flare * (1.0 - t).powf(2.4);
+        rows.push((y0 + fh * t, x0 - wing, x1 + wing));
+    }
+    if y1 - r > y0 + fh {
+        rows.push((y1 - r, x0, x1));
+    }
+    const N_CORNER: usize = 20;
+    for i in 1..=N_CORNER {
+        let a = i as f32 / N_CORNER as f32 * std::f32::consts::FRAC_PI_2;
+        rows.push((y1 - r + r * a.sin(), x0 + r - r * a.cos(), x1 - r + r * a.cos()));
+    }
+    rows
+}
+
+/// 闭合外轮廓（顺时针：右侧自上而下，再左侧自下而上）。
+pub fn outline(rect: Rect, flare: f32, flare_h: f32, radius: f32) -> Vec<Pos2> {
+    let rows = sections(rect, flare, flare_h, radius);
+''',
+     '''    const N_FLARE: usize = 14;
+    for i in 0..=N_FLARE {
+        let t = i as f32 / N_FLARE as f32;
+        // 肩部曲线：(1-t)^2.4 比三次方更饱满，过渡更柔。
+        let wing = flare * (1.0 - t).powf(2.4);
+        rows.push((y0 + fh * t, x0 - wing, x1 + wing));
+    }
+    if y1 - r > y0 + fh {
+        rows.push((y1 - r, x0, x1));
+    }
+    // 32 段：直线转圆弧的过渡更细腻，端点切线几乎与直边重合。
+    const N_CORNER: usize = 32;
+    for i in 1..=N_CORNER {
+        let a = i as f32 / N_CORNER as f32 * std::f32::consts::FRAC_PI_2;
+        rows.push((y1 - r + r * a.sin(), x0 + r - r * a.cos(), x1 - r + r * a.cos()));
+    }
+    rows
+}
+
+/// 闭合外轮廓（顺时针：右侧自上而下，再左侧自下而上）。
+pub fn outline(rect: Rect, flare: f32, flare_h: f32, radius: f32) -> Vec<Pos2> {
+    let rows = sections(rect, flare, flare_h, radius);
+'''),
+    ("src/shape.rs",
+     '''/// 柔和的落影：多层半透明轮廓叠加，近似高斯模糊（不依赖 GPU 模糊）。
+pub fn shadow(painter: &egui::Painter, rect: Rect, flare: f32, flare_h: f32, radius: f32, strength: f32) {
+    shadow_mapped(painter, rect, EdgeMap::TOP, flare, flare_h, radius, strength);
+}
+
+fn shadow_mapped(painter: &egui::Painter, rect: Rect, map: EdgeMap, flare: f32, flare_h: f32, radius: f32, strength: f32) {
+    if strength <= 0.01 {
+        return;
+    }
+    for (grow, a) in [(10.0f32, 0.035f32), (6.5, 0.05), (3.5, 0.07), (1.5, 0.09)] {
+        let r = Rect::from_min_max(
+            Pos2::new(rect.left() - grow * 0.6, rect.top()),
+            Pos2::new(rect.right() + grow * 0.6, rect.bottom() + grow),
+        );
+        let c = Color32::from_black_alpha((255.0 * a * strength) as u8);
+        fill_mapped(painter, r, map, flare, flare_h, radius + grow * 0.8, c, c, r.height(), grow * 0.9);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inside(points: &[Pos2], p: Pos2) -> bool {
+        let mut inside = false;
+        let mut prev = *points.last().unwrap();
+''',
+     '''/// 柔和的落影：多层半透明轮廓叠加，近似高斯模糊（不依赖 GPU 模糊）。
+pub fn shadow(painter: &egui::Painter, rect: Rect, flare: f32, flare_h: f32, radius: f32, strength: f32) {
+    shadow_mapped(painter, rect, EdgeMap::TOP, flare, flare_h, radius, strength);
+}
+
+fn shadow_mapped(painter: &egui::Painter, rect: Rect, map: EdgeMap, flare: f32, flare_h: f32, radius: f32, strength: f32) {
+    if strength <= 0.01 {
+        return;
+    }
+    for (grow, a) in [(10.0f32, 0.035f32), (6.5, 0.05), (3.5, 0.07), (1.5, 0.09)] {
+        let (d, dy) = shadow_expansion(grow);
+        let r = Rect::from_min_max(
+            Pos2::new(rect.left() - d, rect.top() - (d - dy)),
+            Pos2::new(rect.right() + d, rect.bottom() + d + dy),
+        );
+        let c = Color32::from_black_alpha((255.0 * a * strength) as u8);
+        fill_mapped(painter, r, map, flare, flare_h, radius + d, c, c, r.height(), grow * 0.9);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inside(points: &[Pos2], p: Pos2) -> bool {
+        let mut inside = false;
+        let mut prev = *points.last().unwrap();
+'''),
+    ("src/shape.rs",
+     '''        mesh.colored_vertex(a, shade(a.x, a.y));
+        mesh.colored_vertex(b, shade(b.x, b.y));
+        mesh.colored_vertex(b + nb * feather, clear(b + nb * feather));
+        mesh.colored_vertex(a + na * feather, clear(a + na * feather));
+        mesh.add_triangle(base, base + 1, base + 2);
+        mesh.add_triangle(base, base + 2, base + 3);
+    }
+    mesh
+}
+
+''',
+     '''        mesh.colored_vertex(a, shade(a.x, a.y));
+        mesh.colored_vertex(b, shade(b.x, b.y));
+        mesh.colored_vertex(b + nb * feather, clear(b + nb * feather));
+        mesh.colored_vertex(a + na * feather, clear(a + na * feather));
+        mesh.add_triangle(base, base + 1, base + 2);
+        mesh.add_triangle(base, base + 2, base + 3);
+    }
+    mesh
+}
+
+#[cfg(test)]
+mod corner_tests {
+    use super::*;
+
+    #[test]
+    fn 阴影层四角圆弧与主体同心等距() {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 46.0));
+        let radius = 16.0;
+        let body_rt = Pos2::new(rect.right() - radius, rect.top() + radius);
+        let body_lb = Pos2::new(rect.left() + radius, rect.bottom() - radius);
+        for grow in [10.0f32, 6.5, 3.5, 1.5] {
+            let (d, dy) = shadow_expansion(grow);
+            let r = Rect::from_min_max(rect.min - Vec2::new(d, d - dy), rect.max + Vec2::new(d, d + dy));
+            let rr = radius + d;
+            let shadow_rt = Pos2::new(r.right() - rr, r.top() + rr);
+            let shadow_lb = Pos2::new(r.left() + rr, r.bottom() - rr);
+            // 等距外扩不改圆心，整体下移只让圆心跟着下移 dy；圆弧不横向漂移就不会与主体交叉。
+            assert!((rr - radius - d).abs() < 1e-4, "圆角增量必须等于横向扩展量");
+            assert!((shadow_rt.x - body_rt.x).abs() < 1e-4, "右上角圆弧不能横向漂移");
+            assert!((shadow_rt.y - body_rt.y - dy).abs() < 1e-4);
+            assert!((shadow_lb.x - body_lb.x).abs() < 1e-4, "左下角圆弧不能横向漂移");
+            assert!((shadow_lb.y - body_lb.y - dy).abs() < 1e-4);
+
+            // 旧参数（圆角 +0.8g、横向 +0.6g、上下不对称）确实让角部圆弧错位，
+            // 这正是「直线转半圆处有突起」的来源。
+            let old_r = Rect::from_min_max(
+                rect.min - Vec2::new(grow * 0.6, grow * 0.3),
+                rect.max + Vec2::new(grow * 0.6, grow),
+            );
+            let old_c = Pos2::new(old_r.right() - (radius + grow * 0.8), old_r.top() + radius + grow * 0.8);
+            assert!((old_c.x - body_rt.x).abs() > 0.1 * grow, "旧实现圆心漂移量应当可测");
+        }
+    }
+
+    #[test]
+    fn 圆弧两端与直边相切() {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(320.0, 140.0));
+        let r = 33.0;
+        let rows = sections(rect, 0.0, 16.0, r);
+        let corner: Vec<_> = rows.iter().copied().filter(|t| t.0 >= rect.bottom() - r - 1e-4).collect();
+        assert!(corner.len() > 20, "1/4 圆弧要有足够采样");
+
+        // 竖直侧边 -> 圆弧起点：切线必须接近竖直，否则直线接半圆时会有折角。
+        let (ya, la, _) = corner[0];
+        let (yb, lb, _) = corner[1];
+        assert!((lb - la).abs() / (yb - ya) < 0.03, "圆弧起点切线不够竖直");
+
+        // 圆弧终点 -> 水平底边：切线必须接近水平。
+        let (y1, l1, _) = corner[corner.len() - 2];
+        let (y2, l2, _) = corner[corner.len() - 1];
+        assert!((y2 - y1) / (l2 - l1) < 0.03, "圆弧终点切线不够水平");
+
+        // 羽化法线不能在轮廓拐点炸开（否则角部会拉出尖刺）。
+        let pts = outline(rect, 0.0, 16.0, r);
+        for i in 0..pts.len() {
+            assert!(edge_normal(&pts, i).length() < 2.0, "角部羽化法线异常：{i}");
+        }
+    }
+}
 '''),
 ]
 

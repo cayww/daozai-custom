@@ -59,8 +59,11 @@ pub const PILL_GAP: f32 = 6.0;
 fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
     if strength<=0.01 {return;}
     for (grow,a) in [(10.0f32,0.035f32),(6.5,0.05),(3.5,0.07),(1.5,0.09)] {
-        let r=Rect::from_min_max(rect.min-Vec2::new(grow*0.6,grow*0.3),rect.max+Vec2::new(grow*0.6,grow));
-        painter.rect_filled(r,radius+grow*0.8,Color32::from_black_alpha((255.0*a*strength) as u8));
+        // 每层都是主体的等距外扩（圆角增量 = 横向扩展量）+ 整体下移，
+        // 四角圆弧与主体严格同心同形，直线转圆角处不会再叠出错开的半圆凸边。
+        let (d,dy)=shape::shadow_expansion(grow);
+        let r=Rect::from_min_max(rect.min-Vec2::new(d,d-dy),rect.max+Vec2::new(d,d+dy));
+        painter.rect_filled(r,radius+d,Color32::from_black_alpha((255.0*a*strength) as u8));
     }
 }
 pub(crate) const PAGE_NAMES: [&str; 8] = ["音乐", "专注", "饮水", "置物架", "待办", "邮箱", "AI 额度", "日程"];
