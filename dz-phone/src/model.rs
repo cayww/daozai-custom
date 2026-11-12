@@ -1255,6 +1255,57 @@ impl BridgePrefs {
     }
 }
 
+/// MAA（明日方舟助手）对接偏好：存 config_dir()/maa.json。
+///
+/// 只在设置页「MAA」分组可改；「MAA 通知」未开启时整页不可操作（由设置页判断）。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MaaPrefs {
+    /// 任务链开始/完成提示。
+    pub notify_chain: bool,
+    /// 公招刷出 4 星以上 tag 时提示。
+    pub notify_recruit_star: bool,
+    /// 出错提示。
+    pub notify_error: bool,
+    /// 提示停留秒数（4..=30）。
+    pub seconds: u32,
+    /// MAA 日志目录（空 = 从 MAA 可执行文件自动推导 <MAA目录>\debug）。
+    pub log_dir: String,
+}
+
+impl Default for MaaPrefs {
+    fn default() -> Self {
+        Self { notify_chain: true, notify_recruit_star: true, notify_error: true, seconds: 8, log_dir: String::new() }
+    }
+}
+
+impl MaaPrefs {
+    fn path() -> PathBuf { config_dir().join("maa.json") }
+
+    pub fn load() -> Self {
+        #[cfg(test)]
+        { return Self::default(); }
+        #[cfg(not(test))]
+        {
+            let Some(raw) = read_capped(&Self::path(), MAX_JSON_BYTES) else { return Self::default(); };
+            let Ok(mut prefs) = serde_json::from_slice::<Self>(&raw) else { return Self::default(); };
+            prefs.seconds = prefs.seconds.clamp(4, 30);
+            prefs
+        }
+    }
+
+    pub fn save(&self) {
+        #[cfg(not(test))]
+        {
+            let path = Self::path();
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let Ok(body) = serde_json::to_vec_pretty(self) else { return };
+            let _ = atomic_write(&path, &body);
+        }
+    }
+}
+
 #[cfg(test)]
 mod notice_rules_tests {
     use super::NoticeRules;

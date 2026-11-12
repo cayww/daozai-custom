@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-62"
+PATCH_ID = "custom-63"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -22,6 +22,8 @@ NEW_FILES = [
     ("bridge.rs", "src/bridge.rs"),
     ("browser.svg", "assets/settings-icons/system/browser.svg"),
     ("daozai-bridge-main.rs", "src/bin/daozai-bridge/main.rs"),
+    ("maa.rs", "src/maa.rs"),
+    ("maa.svg", "assets/settings-icons/system/maa.svg"),
 ]
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
@@ -8804,6 +8806,351 @@ const SETTINGS_GROUPS: [(&str,usize,usize);10] = [
                             });
                         });
                     }
+'''),
+
+    # custom-63：MAA 深度对接：读日志回调上岛 + 独立设置页（依赖 MAA 通知开启）
+    ("src/lib.rs",
+     '''mod task_picker;
+pub mod model;
+pub mod island_status;
+pub mod otp;
+pub mod phone_battery;
+pub mod quota;
+''',
+     '''mod task_picker;
+pub mod model;
+pub mod island_status;
+pub mod maa;
+pub mod otp;
+pub mod phone_battery;
+pub mod quota;
+'''),
+    ("src/model.rs",
+     '''    }
+}
+
+#[cfg(test)]
+mod notice_rules_tests {
+    use super::NoticeRules;
+''',
+     '''    }
+}
+
+/// MAA（明日方舟助手）对接偏好：存 config_dir()/maa.json。
+///
+/// 只在设置页「MAA」分组可改；「MAA 通知」未开启时整页不可操作（由设置页判断）。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MaaPrefs {
+    /// 任务链开始/完成提示。
+    pub notify_chain: bool,
+    /// 公招刷出 4 星以上 tag 时提示。
+    pub notify_recruit_star: bool,
+    /// 出错提示。
+    pub notify_error: bool,
+    /// 提示停留秒数（4..=30）。
+    pub seconds: u32,
+    /// MAA 日志目录（空 = 从 MAA 可执行文件自动推导 <MAA目录>\\debug）。
+    pub log_dir: String,
+}
+
+impl Default for MaaPrefs {
+    fn default() -> Self {
+        Self { notify_chain: true, notify_recruit_star: true, notify_error: true, seconds: 8, log_dir: String::new() }
+    }
+}
+
+impl MaaPrefs {
+    fn path() -> PathBuf { config_dir().join("maa.json") }
+
+    pub fn load() -> Self {
+        #[cfg(test)]
+        { return Self::default(); }
+        #[cfg(not(test))]
+        {
+            let Some(raw) = read_capped(&Self::path(), MAX_JSON_BYTES) else { return Self::default(); };
+            let Ok(mut prefs) = serde_json::from_slice::<Self>(&raw) else { return Self::default(); };
+            prefs.seconds = prefs.seconds.clamp(4, 30);
+            prefs
+        }
+    }
+
+    pub fn save(&self) {
+        #[cfg(not(test))]
+        {
+            let path = Self::path();
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let Ok(body) = serde_json::to_vec_pretty(self) else { return };
+            let _ = atomic_write(&path, &body);
+        }
+    }
+}
+
+#[cfg(test)]
+mod notice_rules_tests {
+    use super::NoticeRules;
+'''),
+    ("src/app.rs",
+     '''    pub(crate) phone_apps:crate::model::PhoneApps,
+    /// 浏览器下载偏好（`bridge.json`，桥宿主与设置页共用）。
+    pub(crate) browser_prefs:crate::model::BridgePrefs,
+    /// 上次看到的手机电量（None=尚未初始化，用于断开/重连/低电/充满提示）。
+    pub(crate) phone_last:Option<Option<u8>>,
+    /// 上次看到的本机电量，用于本机低电 / 充满提示。
+''',
+     '''    pub(crate) phone_apps:crate::model::PhoneApps,
+    /// 浏览器下载偏好（`bridge.json`，桥宿主与设置页共用）。
+    pub(crate) browser_prefs:crate::model::BridgePrefs,
+    /// MAA（明日方舟助手）对接：日志跟随器 + 偏好。
+    pub(crate) maa_watch:crate::maa::Watcher,
+    pub(crate) maa_prefs:crate::model::MaaPrefs,
+    /// 上次看到的手机电量（None=尚未初始化，用于断开/重连/低电/充满提示）。
+    pub(crate) phone_last:Option<Option<u8>>,
+    /// 上次看到的本机电量，用于本机低电 / 充满提示。
+'''),
+    ("src/app.rs",
+     '''            media_anchor: (String::new(), 0.0, 0.0, false),
+            media: NowPlaying::default(),
+            music_artwork: None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), browser_prefs:model::BridgePrefs::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            listener_status: "尚未连接".into(),
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
+''',
+     '''            media_anchor: (String::new(), 0.0, 0.0, false),
+            media: NowPlaying::default(),
+            music_artwork: None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), browser_prefs:model::BridgePrefs::load(), maa_watch:Default::default(), maa_prefs:model::MaaPrefs::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            listener_status: "尚未连接".into(),
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
+'''),
+    ("src/app.rs",
+     '''        }
+        for key in removed { self.drop_status(&key); }
+
+        let cx = win.center().x;
+        // 胶囊皮肤悬浮在屏幕顶边下方。
+        let pill = self.settings.island_shape==model::IslandShape::Pill;
+''',
+     '''        }
+        for key in removed { self.drop_status(&key); }
+
+        // MAA 对接：仅在通知名单里开启 MAA 时跟随它的日志；关掉即停（不读盘）。
+        if self.maa_enabled() {
+            self.maa_watch.follow(self.maa_log_path());
+            for event in self.maa_watch.poll() { self.maa_event(event); }
+        } else {
+            self.maa_watch.follow(None);
+        }
+
+        let cx = win.center().x;
+        // 胶囊皮肤悬浮在屏幕顶边下方。
+        let pill = self.settings.island_shape==model::IslandShape::Pill;
+'''),
+    ("src/extras.rs",
+     '''        if self.notice.as_ref().is_some_and(|a|a.source==source){self.notice=None;self.notification_bell_until=0.0;}
+        if self.hud_notice.as_ref().is_some_and(|a|a.source==source){self.hud_notice=None;}
+    }
+    /// 手机电量的关键变化：断开 / 重连 / 低电 / 充满。
+    /// 首轮只记录不提示，避免每次启动都弹一条「已连接」。
+    pub(crate) fn phone_events(&mut self,now:Option<u8>,charging:bool){
+''',
+     '''        if self.notice.as_ref().is_some_and(|a|a.source==source){self.notice=None;self.notification_bell_until=0.0;}
+        if self.hud_notice.as_ref().is_some_and(|a|a.source==source){self.hud_notice=None;}
+    }
+    /// MAA 通知是否已开启：通知分组里勾选了 MAA，才认为可以对接（配置页据此解锁）。
+    pub(crate) fn maa_enabled(&self)->bool {
+        self.notification_apps.items.iter().any(|(id,name,on)| *on && (name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe")))
+    }
+    /// MAA 日志文件：优先用设置里的目录，其次从通知名单里 MAA 的 exe 路径推导 `<MAA目录>\\debug`。
+    pub(crate) fn maa_log_path(&self)->Option<std::path::PathBuf> {
+        let custom=self.maa_prefs.log_dir.trim();
+        if !custom.is_empty() { return Some(std::path::PathBuf::from(custom).join("asst.log")); }
+        let exe=self.notification_apps.items.iter()
+            .find(|(id,name,_)| name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe"))
+            .map(|(id,_,_)| id.clone())?;
+        crate::maa::log_dir_from_exe(&exe).map(|dir|dir.join("asst.log"))
+    }
+    /// 把一条 MAA 事件转成岛上提示（时长取 MAA 偏好）。
+    pub(crate) fn maa_event(&mut self,event:crate::maa::Event){
+        let (title,body)=match event {
+            crate::maa::Event::ChainStart(_,label)=>{
+                if !self.maa_prefs.notify_chain {return;}
+                ("MAA".to_string(),format!("开始{label}"))
+            }
+            crate::maa::Event::ChainDone(_,label)=>{
+                if !self.maa_prefs.notify_chain {return;}
+                ("MAA".to_string(),format!("{label}完成"))
+            }
+            crate::maa::Event::AllDone(_)=>{
+                if !self.maa_prefs.notify_chain {return;}
+                ("MAA".to_string(),"日常任务全部完成".to_string())
+            }
+            crate::maa::Event::RecruitStar(level)=>{
+                if !self.maa_prefs.notify_recruit_star {return;}
+                ("MAA 公招".to_string(),format!("刷出 {level} 星 tag"))
+            }
+            crate::maa::Event::Error(label)=>{
+                if !self.maa_prefs.notify_error {return;}
+                ("MAA 出错".to_string(),label)
+            }
+        };
+        let a=Alert{source:AlertSource::Internal,title,body,page:usize::MAX,at:self.t,duration:self.maa_prefs.seconds as f64,bluetooth:None,meeting:None,status:None};
+        self.enqueue_alert(a,false);
+    }
+    /// 手机电量的关键变化：断开 / 重连 / 低电 / 充满。
+    /// 首轮只记录不提示，避免每次启动都弹一条「已连接」。
+    pub(crate) fn phone_events(&mut self,now:Option<u8>,charging:bool){
+'''),
+    ("src/extras.rs",
+     '''
+    #[test]
+    fn settings_groups_keep_every_page_reachable() {
+        let groups = ["常规", "音乐与歌词", "专注与饮水", "专注与饮水", "待办与置物", "待办与置物", "通知、邮箱与日程", "通知、邮箱与日程", "通知、邮箱与日程", "关于", "页面管理", "AI 额度", "手机连接", "浏览器下载"];
+        for (tab, expected) in groups.iter().enumerate() {
+            let matches: Vec<_> = SETTINGS_GROUPS.iter().filter(|(_,start,end)| (*start..=*end).contains(&tab)).collect();
+            assert_eq!(matches.len(), 1, "页面 {tab} 必须且只能属于一个分组");
+''',
+     '''
+    #[test]
+    fn settings_groups_keep_every_page_reachable() {
+        let groups = ["常规", "音乐与歌词", "专注与饮水", "专注与饮水", "待办与置物", "待办与置物", "通知、邮箱与日程", "通知、邮箱与日程", "通知、邮箱与日程", "关于", "页面管理", "AI 额度", "手机连接", "浏览器下载", "MAA"];
+        for (tab, expected) in groups.iter().enumerate() {
+            let matches: Vec<_> = SETTINGS_GROUPS.iter().filter(|(_,start,end)| (*start..=*end).contains(&tab)).collect();
+            assert_eq!(matches.len(), 1, "页面 {tab} 必须且只能属于一个分组");
+'''),
+    ("src/extras.rs",
+     '''    let options:Vec<(u32,&str)>=values.iter().zip(labels.iter()).map(|(v,l)|(*v,l.as_str())).collect();
+    settings_control_row_right(ui,title,|ui|{settings_segmented(ui,value,&options,62.0);});
+}
+const SETTINGS_GROUPS: [(&str,usize,usize);10] = [
+    ("常规",0,0), ("页面管理",10,10), ("音乐与歌词",1,1), ("专注与饮水",2,3),
+    ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("手机连接",12,12), ("浏览器下载",13,13), ("AI 额度",11,11), ("关于",9,9),
+];
+
+/// 「浏览器下载」卡片：始终显示安装指引（打开浏览器扩展页和扩展文件夹、复制路径）。
+''',
+     '''    let options:Vec<(u32,&str)>=values.iter().zip(labels.iter()).map(|(v,l)|(*v,l.as_str())).collect();
+    settings_control_row_right(ui,title,|ui|{settings_segmented(ui,value,&options,62.0);});
+}
+const SETTINGS_GROUPS: [(&str,usize,usize);11] = [
+    ("常规",0,0), ("页面管理",10,10), ("音乐与歌词",1,1), ("专注与饮水",2,3),
+    ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("手机连接",12,12), ("浏览器下载",13,13), ("MAA",14,14), ("AI 额度",11,11), ("关于",9,9),
+];
+
+/// 「浏览器下载」卡片：始终显示安装指引（打开浏览器扩展页和扩展文件夹、复制路径）。
+'''),
+    ("src/extras.rs",
+     '''                        4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
+                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+                        13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
+                    };
+                    let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(25.0,25.0));
+''',
+     '''                        4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
+                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+                        13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        14=>egui::include_image!("../assets/settings-icons/system/maa.svg"),
+                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
+                    };
+                    let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(25.0,25.0));
+'''),
+    ("src/extras.rs",
+     '''                    }
+                }
+                ui.visuals_mut().selection.bg_fill=settings_color(ctx,Color32::from_rgb(45,105,165),Color32::from_rgb(209,226,248));
+                let titles=["常规","音乐与歌词","专注","饮水","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","手机连接","浏览器下载"];
+                ui.label(egui::RichText::new(titles[self.settings_tab.min(13)]).size(18.0).strong().color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))));
+                if let Some((_,start,end))=SETTINGS_GROUPS.iter().find(|(_,start,end)|(*start..=*end).contains(&self.settings_tab)) {
+                    if start!=end {
+                        ui.add_space(7.0);
+''',
+     '''                    }
+                }
+                ui.visuals_mut().selection.bg_fill=settings_color(ctx,Color32::from_rgb(45,105,165),Color32::from_rgb(209,226,248));
+                let titles=["常规","音乐与歌词","专注","饮水","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","手机连接","浏览器下载","MAA"];
+                ui.label(egui::RichText::new(titles[self.settings_tab.min(14)]).size(18.0).strong().color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))));
+                if let Some((_,start,end))=SETTINGS_GROUPS.iter().find(|(_,start,end)|(*start..=*end).contains(&self.settings_tab)) {
+                    if start!=end {
+                        ui.add_space(7.0);
+'''),
+    ("src/extras.rs",
+     '''                            ui.label(egui::RichText::new("浏览器扩展把下载事件发给本机桥进程，桥写入状态总线后由岛仔显示。Chrome/Edge 出于安全不允许软件静默安装本地扩展，所以首次使用需要按上方指引手动加载一次。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                        });
+                    }
+                    7=>{
+                        settings_label(ui,"邮件提醒");
+                        settings_card(ui,|ui|{
+''',
+     '''                            ui.label(egui::RichText::new("浏览器扩展把下载事件发给本机桥进程，桥写入状态总线后由岛仔显示。Chrome/Edge 出于安全不允许软件静默安装本地扩展，所以首次使用需要按上方指引手动加载一次。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                        });
+                    }
+                    14=>{
+                        // 对接前提：通知名单里开启 MAA，本页配置才可操作（与状态跟随同步）。
+                        let maa_on=self.maa_enabled();
+                        let maa_exe=self.notification_apps.items.iter()
+                            .find(|(id,name,_)| name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe"))
+                            .map(|(id,_,_)| id.clone());
+                        let log_path=self.maa_log_path();
+                        let log_ready=log_path.as_ref().is_some_and(|p|p.is_file());
+
+                        settings_label(ui,"状态");
+                        settings_card(ui,|ui|{
+                            let (text,light,dark)=if !maa_on {
+                                ("未开启 MAA 通知".to_string(),Color32::from_gray(120),Color32::from_gray(160))
+                            } else if log_ready {
+                                ("已对接：正在跟随 MAA 日志".to_string(),Color32::from_rgb(46,125,50),Color32::from_rgb(129,199,132))
+                            } else {
+                                ("已开启通知，但没找到 MAA 日志".to_string(),Color32::from_rgb(198,120,30),Color32::from_rgb(240,180,90))
+                            };
+                            ui.label(egui::RichText::new(text).size(13.0).strong().color(settings_color(ctx,light,dark)));
+                            if let Some(exe)=maa_exe.as_ref() {
+                                ui.label(egui::RichText::new(format!("MAA：{exe}")).size(11.5).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            }
+                            if let Some(path)=log_path.as_ref() {
+                                ui.label(egui::RichText::new(format!("日志：{}",path.display())).size(11.5).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            }
+                            if !maa_on {
+                                settings_hint(ui,"先在「通知、邮箱与日程」分组底部勾选 MAA，本页配置才会生效并可操作。");
+                            } else if !log_ready {
+                                settings_hint(ui,"没找到 debug\\\\asst.log。确认 MAA 与岛仔在同一台机器上跑过任务；目录特殊时在下方填 MAA 安装目录。");
+                            }
+                        });
+
+                        settings_label(ui,"上岛提醒");
+                        settings_card(ui,|ui|{
+                            ui.add_enabled_ui(maa_on,|ui|{
+                                let before=self.maa_prefs.clone();
+                                setting_row(ui,"任务进度","任务开始、完成、全部跑完时提示",&mut self.maa_prefs.notify_chain);
+                                ui.separator();
+                                setting_row(ui,"公招高星","自动公招刷出 4 星以上 tag 时提示",&mut self.maa_prefs.notify_recruit_star);
+                                ui.separator();
+                                setting_row(ui,"任务出错","任务失败或中断时提示",&mut self.maa_prefs.notify_error);
+                                ui.separator();
+                                setting_number(ui,"提示停留",&mut self.maa_prefs.seconds,4,30," 秒",1.0);
+                                settings_hint(ui,"MAA 的任务提示与普通通知一样在岛上弹卡片，到时间自动收起。");
+                                if before!=self.maa_prefs{self.maa_prefs.save();}
+                            });
+                        });
+
+                        settings_label(ui,"日志目录");
+                        settings_card(ui,|ui|{
+                            ui.add_enabled_ui(maa_on,|ui|{
+                                let before=self.maa_prefs.log_dir.clone();
+                                settings_control_row(ui,"MAA 目录",80.0,|ui|{
+                                    ui.add(egui::TextEdit::singleline(&mut self.maa_prefs.log_dir).vertical_align(egui::Align::Center).hint_text("留空自动识别（<MAA目录>\\\\debug）"))
+                                });
+                                settings_hint(ui,"岛仔只读 MAA 的 debug\\\\asst.log 获取运行状态，不修改 MAA、不需要它开任何服务。留空时按通知名单里 MAA 的路径自动定位。");
+                                if before!=self.maa_prefs.log_dir{self.maa_prefs.save();}
+                            });
+                        });
+                    }
+                    7=>{
+                        settings_label(ui,"邮件提醒");
+                        settings_card(ui,|ui|{
 '''),
 ]
 

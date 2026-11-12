@@ -760,6 +760,9 @@ pub struct App {
     pub(crate) phone_apps:crate::model::PhoneApps,
     /// 浏览器下载偏好（`bridge.json`，桥宿主与设置页共用）。
     pub(crate) browser_prefs:crate::model::BridgePrefs,
+    /// MAA（明日方舟助手）对接：日志跟随器 + 偏好。
+    pub(crate) maa_watch:crate::maa::Watcher,
+    pub(crate) maa_prefs:crate::model::MaaPrefs,
     /// 上次看到的手机电量（None=尚未初始化，用于断开/重连/低电/充满提示）。
     pub(crate) phone_last:Option<Option<u8>>,
     /// 上次看到的本机电量，用于本机低电 / 充满提示。
@@ -944,7 +947,7 @@ impl App {
             media_anchor: (String::new(), 0.0, 0.0, false),
             media: NowPlaying::default(),
             music_artwork: None,
-            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), browser_prefs:model::BridgePrefs::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), browser_prefs:model::BridgePrefs::load(), maa_watch:Default::default(), maa_prefs:model::MaaPrefs::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
             listener_status: "尚未连接".into(),
             notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
@@ -1835,6 +1838,14 @@ impl App {
             self.status_live=statuses;
         }
         for key in removed { self.drop_status(&key); }
+
+        // MAA 对接：仅在通知名单里开启 MAA 时跟随它的日志；关掉即停（不读盘）。
+        if self.maa_enabled() {
+            self.maa_watch.follow(self.maa_log_path());
+            for event in self.maa_watch.poll() { self.maa_event(event); }
+        } else {
+            self.maa_watch.follow(None);
+        }
 
         let cx = win.center().x;
         // 胶囊皮肤悬浮在屏幕顶边下方。

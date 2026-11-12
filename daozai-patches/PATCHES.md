@@ -576,6 +576,37 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## MAA 深度对接 + 独立设置页（custom-63）
+
+用户要求对 MAA（明日方舟助手）做深度对接：单独配置页，且「开启 MAA 通知」作为
+配置页可操作的前提。
+
+**对接方式（不改 MAA）**：MAA 不对第三方推状态，但它的核心日志
+`debug\asst.log` 会把每条回调原样打印（`Assistant::append_callback | <类型> <JSON>`）。
+岛仔只读这份日志拿到状态，不需要 MAA 开服务、不需要改它。
+
+**新增 `src/maa.rs`**：
+- `Watcher`：记住读取偏移，500ms 节流增量读日志（单次最多 512KB），只处理完整行；
+  首轮对齐文件末尾（不重放历史），日志轮转自动复位。
+- `parse_callback`：解析 `TaskChainStart/Completed`、`AllTasksCompleted`、
+  `SubTaskExtraInfo`（仅 AutoRecruitTask 且 level>=4）、`SubTaskError/TaskChainError`。
+- `chain_label`：任务链英文名 → 中文（Fight=理智作战、Recruit=自动公招…）。
+- `log_dir_from_exe`：从 MAA.exe 路径推导 `<MAA目录>\debug`。5 项单测。
+
+**配置 `model::MaaPrefs`（maa.json）**：notify_chain / notify_recruit_star /
+notify_error / seconds(4..30) / log_dir（空=自动识别）。
+
+**App 集成**：主循环里仅当通知名单开启 MAA 时跟随日志（关掉即停、不读盘），
+事件经 `maa_event` 转成岛内提示（时长取偏好）。
+
+**设置页新增「MAA」分组（tab 14）**：状态卡（未开启/已对接/找不到日志三种状态 +
+MAA 路径 + 日志路径）、上岛提醒卡（三个开关 + 停留时长）、日志目录卡（可手填）。
+**MAA 通知未开启时，整页控件禁用**并提示先去通知分组勾选。
+
+**验证**：812 passed（新增 5 项 MAA 单测）；重放 custom-63 一致（EDITS 406）；
+实机注入 3 条回调到 asst.log → 岛上依次出现「开始理智作战」「刷出 5 星 tag」
+「日常任务全部完成」；安装包 custom-63 静默装回。
+
 ## 手机 App 名单并入手机连接页（custom-62）
 
 继续归拢手机相关配置：把散落在「通知、邮箱与日程」分组里「QQ 与 Windows 通知」
