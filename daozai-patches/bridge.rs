@@ -111,6 +111,8 @@ fn handle_download(msg: &serde_json::Value, speed: &mut HashMap<String, (u64, In
             let mut item = serde_json::json!({
                 "id": key, "text": format!("下载完成 · {name}"),
                 "seconds": DONE_SECONDS, "color": "green",
+                // ttl 到点岛仔自动撤下：桥挂了/没人续写也不会留下永久胶囊（custom-48 修复）。
+                "ttl": unix_secs() + DONE_SECONDS,
             });
             let path = msg.get("path").and_then(|v| v.as_str()).unwrap_or("");
             if !path.is_empty() && std::path::Path::new(path).is_file() {
@@ -139,6 +141,8 @@ fn handle_download(msg: &serde_json::Value, speed: &mut HashMap<String, (u64, In
             let mut item = serde_json::json!({
                 "id": key, "text": format!("下载 · {name}"),
                 "detail": detail, "seconds": PROGRESS_SECONDS, "color": "blue",
+                // 每条 progress 消息覆写即续期；桥进程挂了最多 15 秒后自动撤下（防僵尸胶囊）。
+                "ttl": unix_secs() + PROGRESS_SECONDS,
             });
             if total > 0 {
                 item["progress"] = serde_json::json!((received as f64 / total as f64).clamp(0.0, 1.0));
@@ -148,11 +152,15 @@ fn handle_download(msg: &serde_json::Value, speed: &mut HashMap<String, (u64, In
     }
 }
 
+/// 通用状态透传的字段白名单（ttl/priority 同为状态总线的标准字段），未知字段一律丢弃。
+const STATUS_FIELDS: [&str; 9] = [
+    "id", "text", "detail", "seconds", "progress", "color", "click", "ttl", "priority",
+];
+
 /// 通用状态透传：只认状态总线的字段白名单，其余一律丢弃。
 fn handle_status(msg: &serde_json::Value) {
-    let fields = ["id", "text", "detail", "seconds", "progress", "color", "click"];
     let mut item = serde_json::Map::new();
-    for field in fields {
+    for field in STATUS_FIELDS {
         if let Some(value) = msg.get(field).filter(|v| !v.is_null()) {
             item.insert(field.into(), value.clone());
         }
@@ -167,8 +175,19 @@ fn handle_status(msg: &serde_json::Value) {
 
 /// 状态文件路径：与岛仔读的 `island_status::path()` 同一位置。
 fn status_path() -> Option<PathBuf> {
-    let base = std::env::var_os("APPDATA")?;
-    Some(PathBuf::from(base).join("Daozai").join("island_status.json"))
+    #[cfg(test)]
+    {
+        // 单测绝不能碰真实的 %APPDATA%\Daozai\island_status.json——
+        // 测试写入会直接出现在用户岛上（custom-48 实测踩坑），重定向到临时目录。
+        let dir = std::env::temp_dir().join(format!("daozai-bridge-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok()?;
+        return Some(dir.join("island_status.json"));
+    }
+    #[cfg(not(test))]
+    {
+        let base = std::env::var_os("APPDATA")?;
+        Some(PathBuf::from(base).join("Daozai").join("island_status.json"))
+    }
 }
 
 /// 覆写一条状态（同 id 替换），写失败不影响主循环。
@@ -228,6 +247,10 @@ fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Option<()> {
 /// 岛仔状态文件的写锁：与 python `StatusBus` 同一把（island_status.lock 的首字节），
 /// Chrome 和 Edge 同时各起一个桥实例时也不会互相覆盖。
 fn with_status_lock<T>(op: impl FnOnce() -> T) -> Option<T> {
+    // 进程内先串行化：同一进程多个写者（并行测试/未来多线程）先过这把互斥体，
+    // 文件锁只留给跨进程的竞争——否则同进程线程互相抢文件锁会把重试预算饿死。
+    static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let path = status_path()?.with_extension("lock");
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok()?;
@@ -258,6 +281,10 @@ fn write_frame(writer: &mut impl Write, value: &serde_json::Value) -> std::io::R
     writer.write_all(&(raw.len() as u32).to_le_bytes())?;
     writer.write_all(&raw)?;
     writer.flush()
+}
+
+fn unix_secs() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
 fn fmt_bytes(n: u64) -> String {
@@ -426,21 +453,63 @@ mod tests {
     }
 
     #[test]
+    fn 下载条目必须带ttl否则永远挂在岛上() {
+        let mut speed = HashMap::new();
+        let before = unix_secs();
+        let msg = serde_json::json!({
+            "t":"dl","id":18,"name":"a.zip","state":"progress","received":10,"total":100
+        });
+        handle_download(&msg, &mut speed);
+        let entry = read_test_status("dl-18").expect("progress 条目应已写入");
+        let ttl = entry.get("ttl").and_then(|v| v.as_f64()).expect("progress 必须带 ttl");
+        assert!((before + 10.0..=before + 20.0).contains(&ttl), "progress ttl 应在写入时刻 +15s 附近：{ttl}");
+        let msg = serde_json::json!({"t":"dl","id":18,"name":"a.zip","state":"complete","path":""});
+        handle_download(&msg, &mut speed);
+        let entry = read_test_status("dl-18").expect("complete 条目应覆盖同 id");
+        let ttl = entry.get("ttl").and_then(|v| v.as_f64()).expect("complete 必须带 ttl");
+        let after = unix_secs();
+        assert!((after + 5.0..=after + 20.0).contains(&ttl), "complete ttl 应在写入时刻 +12s 附近：{ttl}");
+    }
+
+    #[test]
+    fn 单测写状态不污染用户真实文件() {
+        // status_path 在测试下重定向到临时目录，真实 %APPDATA% 文件必须原样。
+        let mut speed = HashMap::new();
+        handle_download(&serde_json::json!({
+            "t":"dl","id":99,"name":"x.zip","state":"progress","received":1,"total":2
+        }), &mut speed);
+        let real = std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("Daozai").join("island_status.json"));
+        if let Some(path) = real.filter(|p| p.exists()) {
+            let raw = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(!raw.contains("dl-99"), "测试条目绝不能出现在用户真实状态文件里：{raw}");
+        }
+    }
+
+    /// 读取测试重定向目录里的状态文件，返回指定 id 的条目。
+    fn read_test_status(id: &str) -> Option<serde_json::Value> {
+        let path = status_path()?;
+        let list: Vec<serde_json::Value> = std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice(&raw).ok())?;
+        list.into_iter().find(|entry| entry.get("id").and_then(|v| v.as_str()) == Some(id))
+    }
+
+    #[test]
     fn 通用状态只透传白名单字段() {
         let msg = serde_json::json!({
             "t":"status","id":"tab","text":"在听歌","detail":"xxx",
-            "evil_field":"rm -rf /","seconds":6,"color":"green"
+            "evil_field":"rm -rf /","seconds":6,"color":"green",
+            "ttl":1800.0,"priority":5
         });
         // 直接构造校验：handle_status 内部走 set_status（真写文件），这里只验证字段过滤逻辑
-        let fields = ["id", "text", "detail", "seconds", "progress", "color", "click"];
         let mut item = serde_json::Map::new();
-        for field in fields {
+        for field in STATUS_FIELDS {
             if let Some(value) = msg.get(field).filter(|v| !v.is_null()) {
                 item.insert(field.into(), value.clone());
             }
         }
-        assert_eq!(item.len(), 5);
+        assert_eq!(item.len(), 7);
         assert!(item.get("evil_field").is_none());
+        assert_eq!(item.get("ttl").and_then(|v| v.as_f64()), Some(1800.0), "ttl 必须透传，否则脚本写的自动过期失效");
+        assert_eq!(item.get("priority").and_then(|v| v.as_i64()), Some(5));
     }
 
     #[test]

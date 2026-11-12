@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "description": "把 Chrome 的下载进度实时发到桌面灵动岛（岛仔）。 Native Messaging 桥：com.daozai.island",
   "permissions": [
-    "downloads"
+    "downloads",
+    "nativeMessaging"
   ],
   "background": {
     "service_worker": "sw.js"

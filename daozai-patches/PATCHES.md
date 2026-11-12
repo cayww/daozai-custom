@@ -558,6 +558,36 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 76 个 src 文件逐字节一致。
 
 
+## 扩展原生消息权限缺失修复（custom-49）
+
+用户装好扩展后下载进度始终不上岛。逐环排查：桥 exe 手动拉起正常、注册表
+（REG_SZ、路径正确）、宿主清单（无 BOM、allowed_origins 与钉死的扩展 ID 一致）、
+扩展登记（已启用、SW 已启动、downloads 事件已注册）、无企业策略拦截——
+Chrome 全程从未尝试拉起桥进程（WMI 毫秒级监听确认）。
+
+**排查手段**：给 sw.js 临时加「信标」（fetch 到本地 HTTP 日志服务器），
+用户重载扩展后触发真实下载，抓到决定性错误：
+`TypeError: chrome.runtime.connectNative is not a function`。
+
+**根因**：Chrome 官方文档要求 `connectNative`/`sendNativeMessage` 必须在
+manifest 声明 `"nativeMessaging"` 权限（Runtime API 中仅这两个方法需要权限）；
+我们的 manifest 只声明了 `downloads`，API 根本不暴露给扩展。
+
+**修复**：`browser-bridge/extension/manifest.json`（安装包的扩展源）的
+permissions 加 `"nativeMessaging"`。无 Rust 侧改动，src 零变更、重放通过。
+
+**端到端验证**：修好并重载后，本地慢速下载服务器触发真实 Chrome 下载 →
+桥进程被浏览器拉起 → 岛上蓝胶囊「下载 · xxx.bin · 0 B / 60.0 MB」进度滚动 →
+完成变绿胶囊「下载完成 · xxx.bin」（带点击打开）；过期条目清理正常。
+
+**踩坑（诊断方法论）**：
+- 扩展 SW 无法直接观察 → 信标法（fetch 到 127.0.0.1 日志服务器），
+  SW 顶层、事件入口、connectNative 前后、onDisconnect 的 lastError 全埋点；
+- tasklist 轮询可能漏掉「被拉起即闪退」的进程，需 WMI ProcessStartTrace
+  毫秒级确认「从未拉起」与「拉起即死」的区别；
+- 用户下载的浏览器/Profile 要实证（浏览器 History SQLite 的 downloads 表），
+  不能凭进程列表猜。
+
 ## 设置页「浏览器下载」一键引导连接（custom-47）
 
 用户要求把「装浏览器扩展」做进软件，并问桥为什么必须另开一个 exe。
