@@ -140,6 +140,18 @@ pub fn installed() -> bool {
     }
 }
 
+/// 设置页引导用的即时快照：直接读卡片文件，返回 (是否已连接, 手机型号, 电量百分比)。
+/// 不经 Reader 节流，每次打开设置页都能拿到最新状态。
+pub fn snapshot() -> (bool, String, Option<u8>) {
+    let Some(path) = card_path() else { return (false, String::new(), None); };
+    let Ok(text) = std::fs::read_to_string(&path) else { return (false, String::new(), None); };
+    let plain = decode_escapes(&text);
+    let linked = parse_linked(&plain).unwrap_or(false);
+    let device = parse_device(&plain).unwrap_or_default();
+    let level = parse_level(&plain);
+    (linked, device, level)
+}
+
 fn card_path() -> Option<PathBuf> {
     // 官方 UI 测试依赖「无电池设备」的确定性布局；测试构建不读真实手机连接数据，
     // 否则本机配对手机的电量会污染 resident_power，让布局/吉祥物断言失效。
@@ -299,6 +311,15 @@ mod tests {
         assert_eq!(parse_linked(r#"{"speak":"Phone - disconnected"}"#), Some(false));
         assert_eq!(parse_linked(r#"{"speak":"Phone - not connected"}"#), Some(false));
         assert_eq!(parse_linked(r#"{"text":"49%"}"#), None);
+    }
+
+    #[test]
+    fn 快照在无卡片时返回未连接() {
+        // 测试构建下 card_path 返回 None，快照应安全地给出「未连接」而非 panic。
+        let (linked, device, level) = snapshot();
+        assert!(!linked);
+        assert!(device.is_empty());
+        assert_eq!(level, None);
     }
 
     #[test]

@@ -1763,11 +1763,44 @@ impl App {
                     match self.settings_tab {
                     11=>self.quota_settings(ui),
                     12=>{
+                        settings_label(ui,"手机连接");
+                        settings_card(ui,|ui|{
+                            // 连接状态：直接读手机连接卡片，不经电量开关。
+                            let (linked, device, level) = crate::phone_battery::snapshot();
+                            let status_text = if linked {
+                                match (&device, level) {
+                                    (d, Some(l)) if !d.is_empty() => format!("已连接：{d} · {l}%"),
+                                    (_, Some(l)) => format!("已连接 · 电量 {l}%"),
+                                    (d, _) if !d.is_empty() => format!("已连接：{d}"),
+                                    _ => "已连接".to_string(),
+                                }
+                            } else {
+                                "未连接".to_string()
+                            };
+                            let (light, dark) = if linked {
+                                (Color32::from_rgb(46,125,50), Color32::from_rgb(129,199,132))
+                            } else {
+                                (Color32::from_gray(120), Color32::from_gray(160))
+                            };
+                            ui.label(egui::RichText::new(status_text).size(13.0).strong().color(settings_color(ctx, light, dark)));
+
+                            // 一键打开「手机连接」：已装直接启动，未装跳商店。
+                            let open = if crate::phone_battery::installed() {
+                                Some(("打开手机连接", "explorer.exe", "shell:AppsFolder\\Microsoft.YourPhone_8wekyb3d8bbwe!App"))
+                            } else {
+                                Some(("安装手机连接", "explorer.exe", "ms-windows-store://pdp/?ProductId=9NMPJ99VJBWV"))
+                            };
+                            if let Some((label, prog, arg)) = open {
+                                if ui.button(label).clicked() {
+                                    let _ = std::process::Command::new(prog).arg(arg).spawn();
+                                }
+                            }
+                            settings_hint(ui, "用 Windows 内置的「手机连接」配对手机：打开后按提示扫码连接，之后手机短信、来电、电量都会自动上岛。连接成功后上方状态会变绿，再按需开启下面的「手机电量」与「验证码自动复制」。");
+                        });
                         settings_label(ui,"手机短信");
                         settings_card(ui,|ui|{
                             ui.label(egui::RichText::new("手机短信通过「手机连接」转发；验证码可自动写入剪贴板。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
-
                         });
                     },
                     10=>{
