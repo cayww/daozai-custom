@@ -120,6 +120,112 @@ pub fn log_dir_from_exe(exe: &str) -> Option<PathBuf> {
     debug.is_dir().then_some(debug)
 }
 
+/// MAA 官方图标（取自其仓库 `src/MaaWpfGui/newlogo.ico`，缩放到 96px）。
+/// 编译期嵌入，不依赖运行环境能否从 exe 抽图标。
+const MAA_ICON_PNG: &[u8] = include_bytes!("../assets/maa-icon.png");
+
+/// 把 MAA 图标落到缓存文件并返回路径（只写一次）。
+///
+/// 状态胶囊的图标走「图片文件」这条最稳的路：图标缓存是异步的，
+/// 而这里先同步写一次，之后直接读 PNG 就没有时序问题。
+pub fn ensure_icon(_exe: &str, out: &Path) -> Option<PathBuf> {
+    if out.is_file() { return Some(out.to_path_buf()); }
+    if let Some(parent) = out.parent() { std::fs::create_dir_all(parent).ok(); }
+    std::fs::write(out, MAA_ICON_PNG).ok()?;
+    Some(out.to_path_buf())
+}
+
+/// 一轮任务队列的进度快照（来自 gui.log）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Progress {
+    /// 本轮启用的任务总数。
+    pub total: usize,
+    /// 已完成的任务数。
+    pub done: usize,
+    /// 当前正在跑的任务中文名（空 = 还没开始）。
+    pub current: String,
+    /// 是否正在运行。
+    pub running: bool,
+}
+
+impl Progress {
+    /// 完成比例 0..=1；没有任务时返回 None。
+    pub fn ratio(&self) -> Option<f64> {
+        if self.total == 0 { return None; }
+        Some((self.done as f64 / self.total as f64).clamp(0.0, 1.0))
+    }
+}
+
+/// 跟随 gui.log 维护任务队列进度。
+///
+/// MAA 每次点「Link Start」会先把整份任务队列打印一遍（`Index n, Type "...",
+/// Name 中文名, IsEnable true/false`），随后是 `开始任务: X` / `完成任务: X`，
+/// 全部跑完打印 `任务已全部完成！`。
+#[derive(Default)]
+pub struct ProgressTracker {
+    total: usize,
+    done: usize,
+    current: String,
+    running: bool,
+}
+
+impl ProgressTracker {
+    /// 喂一行 gui.log，更新内部进度。
+    pub fn feed(&mut self, line: &str) {
+        // 任务队列重打印：从 Index 0 开始新一轮，先清空计数。
+        if line.contains("TaskQueueViewModel") && line.contains("Index 0,") {
+            self.total = 0;
+            self.done = 0;
+            self.current.clear();
+        }
+        if let Some(enabled) = parse_task_item(line) {
+            if enabled { self.total += 1; }
+            return;
+        }
+        if let Some(name) = after_marker(line, "开始任务: ") {
+            self.current = name;
+            self.running = true;
+            return;
+        }
+        if line.contains("正在运行中") {
+            self.running = true;
+            return;
+        }
+        if let Some(name) = after_marker(line, "完成任务: ") {
+            self.done += 1;
+            if self.current == name { self.current.clear(); }
+            return;
+        }
+        if line.contains("任务已全部完成") {
+            self.running = false;
+            if self.total > 0 { self.done = self.total; }
+        }
+    }
+
+    /// 当前快照；没有任何进度信息时返回 None。
+    pub fn snapshot(&self) -> Option<Progress> {
+        if self.total == 0 && self.current.is_empty() && !self.running { return None; }
+        Some(Progress { total: self.total, done: self.done, current: self.current.clone(), running: self.running })
+    }
+
+    /// 清空（MAA 通知关闭或日志切换时）。
+    pub fn reset(&mut self) { *self = Self::default(); }
+}
+
+/// 解析任务队列行：`Index 1, Type "Infrast", Name 基建换班, IsEnable false`。
+/// 返回 Some(是否启用)；不是任务行返回 None。
+fn parse_task_item(line: &str) -> Option<bool> {
+    if !line.contains("Index ") || !line.contains("IsEnable") { return None; }
+    Some(line.trim_end().ends_with("IsEnable true"))
+}
+
+/// 取标记之后的文本（到行尾，去掉空白）。
+fn after_marker(line: &str, marker: &str) -> Option<String> {
+    let start = line.find(marker)? + marker.len();
+    let text = line[start..].trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
 /// 日志跟随器：记住读到的位置，每次 poll 只解析新增部分。
 #[derive(Default)]
 pub struct Watcher {
@@ -142,8 +248,8 @@ impl Watcher {
         }
     }
 
-    /// 读新增内容并返回解析出的事件（最多读到文件末尾）。
-    pub fn poll(&mut self) -> Vec<Event> {
+    /// 读新增内容并返回新增的完整行（最多读到文件末尾）。
+    pub fn poll_lines(&mut self) -> Vec<String> {
         // 500ms 一次足够实时，又不会每帧读盘。
         if self.last_check.is_some_and(|at| at.elapsed().as_millis() < 500) {
             return Vec::new();
@@ -185,7 +291,7 @@ impl Watcher {
         self.offset -= (read - consumed) as u64;
 
         let text = String::from_utf8_lossy(&buf[..consumed]);
-        text.lines().filter_map(parse_callback).collect()
+        text.lines().map(str::to_string).collect()
     }
 }
 
@@ -227,6 +333,43 @@ mod tests {
     }
 
     #[test]
+    fn 进度跟随任务队列() {
+        let mut t = ProgressTracker::default();
+        t.feed(r#"[..][INF][TaskQueueViewModel]     <2> Index 0, Type "StartUp", Name 开始唤醒, IsEnable true"#);
+        t.feed(r#"[..][INF][TaskQueueViewModel]     <2> Index 1, Type "Fight", Name 理智作战, IsEnable true"#);
+        t.feed(r#"[..][INF][TaskQueueViewModel]     <2> Index 2, Type "Recruit", Name 自动公招, IsEnable false"#);
+        let p = t.snapshot().expect("有任务队列就应有快照");
+        assert_eq!(p.total, 2, "只数启用的任务");
+        assert_eq!(p.done, 0);
+
+        t.feed("[..][INF][TaskQueueViewModel]     <2> 开始任务: 开始唤醒");
+        assert_eq!(t.snapshot().unwrap().current, "开始唤醒");
+        t.feed("[..][INF][TaskQueueViewModel]     <2> 完成任务: 开始唤醒");
+        let p = t.snapshot().unwrap();
+        assert_eq!(p.done, 1);
+        assert_eq!(p.ratio(), Some(0.5));
+
+        t.feed("[..][INF][TaskQueueViewModel]     <2> 任务已全部完成！");
+        let p = t.snapshot().unwrap();
+        assert_eq!(p.done, 2);
+        assert!(!p.running);
+        assert_eq!(p.ratio(), Some(1.0));
+    }
+
+    #[test]
+    fn 新一轮任务队列会重置计数() {
+        let mut t = ProgressTracker::default();
+        t.feed(r#"[..][TaskQueueViewModel] <2> Index 0, Type "StartUp", Name 开始唤醒, IsEnable true"#);
+        t.feed("[..][TaskQueueViewModel] <2> 完成任务: 开始唤醒");
+        assert_eq!(t.snapshot().unwrap().done, 1);
+        // 再次点 Link Start：Index 0 重新出现 → 计数归零。
+        t.feed(r#"[..][TaskQueueViewModel] <2> Index 0, Type "StartUp", Name 开始唤醒, IsEnable true"#);
+        let p = t.snapshot().unwrap();
+        assert_eq!(p.total, 1);
+        assert_eq!(p.done, 0);
+    }
+
+    #[test]
     fn 新增内容增量读取且不重复() {
         let dir = std::env::temp_dir().join(format!("maa-watch-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -236,15 +379,17 @@ mod tests {
         let mut w = Watcher::default();
         w.follow(Some(log.clone()));
         // 首轮对齐末尾，不吐历史。
-        assert!(w.poll().is_empty());
+        assert!(w.poll_lines().is_empty());
 
         let line = "[..] Assistant::append_callback | TaskChainStart {\"taskchain\":\"Fight\",\"taskid\":1}\n";
         std::fs::write(&log, line).unwrap();
         w.last_check = None; // 跳过 500ms 轮询节流，模拟下一次检查窗口。
-        assert_eq!(w.poll(), vec![Event::ChainStart("Fight".into(), "理智作战".into())]);
+        let lines = w.poll_lines();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(parse_callback(&lines[0]), Some(Event::ChainStart("Fight".into(), "理智作战".into())));
         // 再 poll 不应重复同一条。
         w.last_check = None;
-        assert!(w.poll().is_empty());
+        assert!(w.poll_lines().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -576,6 +576,27 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## MAA 常驻进度胶囊 + 官方图标（custom-64）
+
+用户要求：MAA 执行任务时通知常驻、显示任务进度（像下载那样），并采用 MAA 的图标。
+
+**实现**：
+- 状态条目 `Status` 新增 `icon` 字段（图片路径），胶囊左侧画图标替换色点。
+- `maa.rs` 新增 `ProgressTracker`：解析 `gui.log` 的
+  `Index n, Type "X", Name 中文名, IsEnable true/false` 任务队列 + `开始任务/完成任务/任务已全部完成`，
+  算出「已完成/总任务」；`Index 0` 重新出现时归零（新一轮）。
+- 主循环同时跟随 `gui.log`（进度）与 `asst.log`（事件），`refresh_maa_status` 合成常驻胶囊：
+  运行中蓝色 + 进度填充 + 「MAA · 当前任务」+ `done/total`；15 秒续期（MAA 停了自动撤下）；
+  全部完成后绿色「MAA · 任务完成」停留 8 秒。
+- 图标：从 MAA 仓库 `src/MaaWpfGui/newlogo.ico` 取官方图标，缩到 96px 编译期内嵌
+  （`assets/maa-icon.png`，`include_bytes!`），首次运行落到 `%APPDATA%\Daozai\maa-icon.png`
+  供状态胶囊读取。试过从 exe 抽图标（IShellItemImageFactory / SHGetFileInfo）不可靠。
+- 设置页「MAA → 上岛提醒」新增「常驻进度」开关；图标直接画、不加白色底衬。
+- `MaaPrefs` 加 `#[serde(default)]`：手写配置缺字段时不会整体回退默认。
+
+**验证**：814 passed（新增 2 项进度追踪测试）；重放 custom-64 一致（EDITS 418）；
+实机注入 gui.log 任务队列 → 岛上出现「MAA · 理智作战/领取奖励」+ 蓝色进度填充 + 图标。
+
 ## MAA 深度对接 + 独立设置页（custom-63）
 
 用户要求对 MAA（明日方舟助手）做深度对接：单独配置页，且「开启 MAA 通知」作为

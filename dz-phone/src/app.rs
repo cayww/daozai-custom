@@ -760,9 +760,18 @@ pub struct App {
     pub(crate) phone_apps:crate::model::PhoneApps,
     /// 浏览器下载偏好（`bridge.json`，桥宿主与设置页共用）。
     pub(crate) browser_prefs:crate::model::BridgePrefs,
-    /// MAA（明日方舟助手）对接：日志跟随器 + 偏好。
+    /// MAA（明日方舟助手）对接：事件日志跟随器、进度日志跟随器、任务进度追踪、常驻胶囊。
     pub(crate) maa_watch:crate::maa::Watcher,
+    pub(crate) maa_prog:crate::maa::Watcher,
+    pub(crate) maa_tracker:crate::maa::ProgressTracker,
+    pub(crate) maa_status:Option<crate::island_status::Status>,
+    /// MAA 全部完成的提示截止时刻（Unix 秒）；0 = 未进入完成态。
+    pub(crate) maa_done_until:f64,
+    /// MAA 图标 PNG 路径缓存（首次从 exe 提取后记住）。
+    pub(crate) maa_icon:Option<String>,
     pub(crate) maa_prefs:crate::model::MaaPrefs,
+    /// 状态胶囊的图标缓存（RefCell：渲染时借用 &self 也要能取图）。
+    pub(crate) status_icons:std::cell::RefCell<crate::icons::Cache>,
     /// 上次看到的手机电量（None=尚未初始化，用于断开/重连/低电/充满提示）。
     pub(crate) phone_last:Option<Option<u8>>,
     /// 上次看到的本机电量，用于本机低电 / 充满提示。
@@ -947,7 +956,7 @@ impl App {
             media_anchor: (String::new(), 0.0, 0.0, false),
             media: NowPlaying::default(),
             music_artwork: None,
-            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), browser_prefs:model::BridgePrefs::load(), maa_watch:Default::default(), maa_prefs:model::MaaPrefs::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), browser_prefs:model::BridgePrefs::load(), maa_watch:Default::default(), maa_prog:Default::default(), maa_tracker:Default::default(), maa_status:None, maa_done_until:0.0, maa_icon:None, maa_prefs:model::MaaPrefs::load(), status_icons:Default::default(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
             listener_status: "尚未连接".into(),
             notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
@@ -1839,12 +1848,22 @@ impl App {
         }
         for key in removed { self.drop_status(&key); }
 
-        // MAA 对接：仅在通知名单里开启 MAA 时跟随它的日志；关掉即停（不读盘）。
+        // MAA 对接：仅在通知名单里开启 MAA 时跟随日志；关掉即停（不读盘）。
+        // asst.log 提供一次性事件（公招高星/出错），gui.log 提供任务队列进度（常驻胶囊）。
         if self.maa_enabled() {
-            self.maa_watch.follow(self.maa_log_path());
-            for event in self.maa_watch.poll() { self.maa_event(event); }
+            let dir=self.maa_log_path().and_then(|p|p.parent().map(|d|d.to_path_buf()));
+            self.maa_watch.follow(dir.as_ref().map(|d|d.join("asst.log")));
+            for line in self.maa_watch.poll_lines() {
+                if let Some(event)=crate::maa::parse_callback(&line) { self.maa_event(event); }
+            }
+            self.maa_prog.follow(dir.as_ref().map(|d|d.join("gui.log")));
+            for line in self.maa_prog.poll_lines() { self.maa_tracker.feed(&line); }
+            self.refresh_maa_status();
         } else {
             self.maa_watch.follow(None);
+            self.maa_prog.follow(None);
+            self.maa_tracker.reset();
+            self.maa_status=None;
         }
 
         let cx = win.center().x;
@@ -2602,16 +2621,26 @@ impl App {
     // 顶栏：电池 + 日期 + 时钟。药丸里的电池与时钟会「飞」到顶栏位置（共享元素过渡）。
     // ---------------------------------------------------------------
     /// 单条状态的估算宽度：中文按 11px/字，夹在 48~140 之间。
+    /// 渲染用的状态列表：状态总线里的常驻条目 + MAA 的常驻进度胶囊。
+    fn statuses_for_render(&self) -> Vec<crate::island_status::Status> {
+        let mut list = self.status_live.clone();
+        if let Some(maa) = &self.maa_status { list.push(maa.clone()); }
+        list
+    }
+
     fn status_item_width(&self, status: &crate::island_status::Status) -> f32 {
         let chars = status.text.chars().count() as f32;
-        (chars * 11.0 + 24.0).clamp(48.0, 140.0)
+        // 有图标时左侧要留出图标位置。
+        let icon_pad = if status.icon.is_empty() { 0.0 } else { 15.0 };
+        (chars * 11.0 + 24.0 + icon_pad).clamp(48.0, 160.0)
     }
 
     /// 状态区总宽：最多 3 条，条间 6px。
     fn status_total_width(&self) -> f32 {
-        let shown = self.status_live.len().min(3);
+        let list = self.statuses_for_render();
+        let shown = list.len().min(3);
         if shown == 0 { return 0.0; }
-        let items: f32 = self.status_live.iter().take(shown).map(|s| self.status_item_width(s)).sum();
+        let items: f32 = list.iter().take(shown).map(|s| self.status_item_width(s)).sum();
         items + (shown.saturating_sub(1)) as f32 * 6.0
     }
 
@@ -2766,15 +2795,16 @@ impl App {
         // 状态总线：并排显示最多 3 条常驻状态（色点 + 文本 + 可选进度条）。
         if let Some(slot)=layout.status {
             if let Some(center)=layout.x[slot] {
-                if compact_alpha>0.004 && !self.status_live.is_empty() {
+                let statuses=self.statuses_for_render();
+                if compact_alpha>0.004 && !statuses.is_empty() {
                     let c=base.faded(compact_alpha);
                     let total=layout.widths[slot];
                     let mut x=local_cx+center-total/2.0;
-                    for status in self.status_live.iter().take(3) {
+                    for status in statuses.iter().take(3) {
                         let w=self.status_item_width(status);
                         let tone=crate::extras::status_color(&status.color);
-                        // 有进度条的下载胶囊：底色灰，彩色进度层从左向右逐渐填满整个胶囊
-                        // （裁剪到进度宽度，左圆角保留、右边缘随进度推进），替代底部细进度条。
+                        // 有进度条的胶囊：底色灰，彩色进度层从左向右逐渐填满整个胶囊
+                        // （裁剪到进度宽度，左圆角保留、右边缘随进度推进）。
                         let progress=status.progress.filter(|v|v.is_finite())
                             .map(|v|v.clamp(0.0,1.0) as f32);
                         c.fill(x,5.0,w,20.0,10.0,Color32::from_gray(36));
@@ -2785,8 +2815,24 @@ impl App {
                                 fillc.fill(x,5.0,w,20.0,10.0,tone);
                             }
                         }
-                        c.circle(x+8.0,15.0,2.5,tone);
-                        c.centered_text(x+14.0,15.0,&c.fit(&status.text,10.5,W::Regular,w-20.0),10.5,W::Regular,theme::WHITE,H::Left);
+                        // 左侧：有图标就画图标，没有就画状态色点。
+                        let mut text_x=x+14.0;
+                        let mut text_w=w-20.0;
+                        let icon_tex=if status.icon.is_empty() {None} else {
+                            self.status_icons.borrow_mut()
+                                .get(c.ui.ctx(),std::path::Path::new(&status.icon))
+                                .and_then(|p|p.image)
+                        };
+                        if let Some(tex)=icon_tex {
+                            let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
+                            c.painter.add(egui::epaint::RectShape::filled(
+                                c.rect(x+2.5,7.0,16.0,16.0),4.0*c.s,Color32::WHITE).with_texture(tex.id(),uv));
+                            text_x=x+22.0;
+                            text_w=w-26.0;
+                        } else {
+                            c.circle(x+8.0,15.0,2.5,tone);
+                        }
+                        c.centered_text(text_x,15.0,&c.fit(&status.text,10.5,W::Regular,text_w),10.5,W::Regular,theme::WHITE,H::Left);
                         x+=w+6.0;
                     }
                 }

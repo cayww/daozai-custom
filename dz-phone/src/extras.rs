@@ -330,10 +330,59 @@ impl App {
     pub(crate) fn maa_log_path(&self)->Option<std::path::PathBuf> {
         let custom=self.maa_prefs.log_dir.trim();
         if !custom.is_empty() { return Some(std::path::PathBuf::from(custom).join("asst.log")); }
-        let exe=self.notification_apps.items.iter()
-            .find(|(id,name,_)| name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe"))
-            .map(|(id,_,_)| id.clone())?;
+        let exe=self.maa_exe()?;
         crate::maa::log_dir_from_exe(&exe).map(|dir|dir.join("asst.log"))
+    }
+    /// 通知名单里登记的 MAA 可执行文件路径（用于取图标、定位日志）。
+    pub(crate) fn maa_exe(&self)->Option<String> {
+        self.notification_apps.items.iter()
+            .find(|(id,name,_)| name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe"))
+            .map(|(id,_,_)| id.clone())
+    }
+    /// 按 MAA 任务进度刷新岛上那条常驻胶囊（运行中续期、完成后停留几秒）。
+    pub(crate) fn refresh_maa_status(&mut self){
+        if !self.maa_prefs.resident_progress { self.maa_status=None; return; }
+        let now=unix_secs_f64();
+        let Some(p)=self.maa_tracker.snapshot() else { self.maa_status=None; return; };
+        // 图标：首次从 MAA.exe 提取成 PNG 缓存，之后直接读图片。
+        let icon=match &self.maa_icon {
+            Some(path)=>path.clone(),
+            None=>{
+                let path=self.maa_exe().and_then(|exe|{
+                    let out=crate::model::config_dir().join("maa-icon.png");
+                    crate::maa::ensure_icon(&exe,&out)
+                }).map(|p|p.display().to_string()).unwrap_or_default();
+                self.maa_icon=Some(path.clone());
+                path
+            }
+        };
+        if p.running {
+            self.maa_done_until=0.0;
+            // 运行中：15 秒持续续期；MAA 停下后不再续期，自动撤下（不会留僵尸胶囊）。
+            let text=if p.current.is_empty(){"MAA · 运行中".to_string()}else{format!("MAA · {}",p.current)};
+            let detail=if p.total>0 {format!("{}/{} 个任务",p.done,p.total)} else {String::new()};
+            self.maa_status=Some(crate::island_status::Status{
+                id:"maa".into(), text, detail, seconds:15.0,
+                progress:p.ratio(), color:"blue".into(), click:String::new(),
+                priority:5, ttl:now+15.0, icon,
+            });
+            return;
+        }
+        // 跑完：绿色「任务完成」停留几秒后撤下。
+        let all_done=p.total>0 && p.done>=p.total;
+        if all_done {
+            if self.maa_done_until<=0.0 { self.maa_done_until=now+8.0; }
+            if now<self.maa_done_until {
+                self.maa_status=Some(crate::island_status::Status{
+                    id:"maa".into(), text:"MAA · 任务完成".into(),
+                    detail:format!("{} 个任务",p.total), seconds:8.0,
+                    progress:Some(1.0), color:"green".into(), click:String::new(),
+                    priority:5, ttl:now+8.0, icon,
+                });
+                return;
+            }
+        }
+        self.maa_status=None;
     }
     /// 把一条 MAA 事件转成岛上提示（时长取 MAA 偏好）。
     pub(crate) fn maa_event(&mut self,event:crate::maa::Event){
@@ -881,6 +930,11 @@ fn status_action(spec:&str)->Option<(&'static str,StatusAct)>{
         _=>action.strip_prefix("page:").and_then(|n|n.trim().parse::<usize>().ok()).filter(|n|*n<8).map(|n|("打开",Page(n))),
     }
 }
+/// 当前 Unix 时间（秒，带小数）；写状态总线的 ttl 用。
+pub(crate) fn unix_secs_f64()->f64{
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_secs_f64()).unwrap_or(0.0)
+}
+
 pub(crate) fn status_color(name:&str)->Color32{
     match name.trim().to_ascii_lowercase().as_str(){
         "red"=>Color32::from_rgb(226,75,74),
@@ -2289,7 +2343,9 @@ impl App {
                         settings_card(ui,|ui|{
                             ui.add_enabled_ui(maa_on,|ui|{
                                 let before=self.maa_prefs.clone();
-                                setting_row(ui,"任务进度","任务开始、完成、全部跑完时提示",&mut self.maa_prefs.notify_chain);
+                                setting_row(ui,"常驻进度","任务运行时在岛上常驻一条进度胶囊（带 MAA 图标、像下载那样随任务完成填满），全部结束后自动收起",&mut self.maa_prefs.resident_progress);
+                                ui.separator();
+                                setting_row(ui,"任务进度","任务开始、完成、全部跑完时各弹一条提示",&mut self.maa_prefs.notify_chain);
                                 ui.separator();
                                 setting_row(ui,"公招高星","自动公招刷出 4 星以上 tag 时提示",&mut self.maa_prefs.notify_recruit_star);
                                 ui.separator();

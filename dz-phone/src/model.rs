@@ -1259,6 +1259,7 @@ impl BridgePrefs {
 ///
 /// 只在设置页「MAA」分组可改；「MAA 通知」未开启时整页不可操作（由设置页判断）。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct MaaPrefs {
     /// 任务链开始/完成提示。
     pub notify_chain: bool,
@@ -1266,6 +1267,8 @@ pub struct MaaPrefs {
     pub notify_recruit_star: bool,
     /// 出错提示。
     pub notify_error: bool,
+    /// 任务运行时在岛上常驻一条进度胶囊（像下载那样填满）。
+    pub resident_progress: bool,
     /// 提示停留秒数（4..=30）。
     pub seconds: u32,
     /// MAA 日志目录（空 = 从 MAA 可执行文件自动推导 <MAA目录>\debug）。
@@ -1274,7 +1277,7 @@ pub struct MaaPrefs {
 
 impl Default for MaaPrefs {
     fn default() -> Self {
-        Self { notify_chain: true, notify_recruit_star: true, notify_error: true, seconds: 8, log_dir: String::new() }
+        Self { notify_chain: true, notify_recruit_star: true, notify_error: true, resident_progress: true, seconds: 8, log_dir: String::new() }
     }
 }
 

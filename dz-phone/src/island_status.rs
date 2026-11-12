@@ -36,6 +36,8 @@ pub struct Status {
     #[serde(default)] pub priority: i32,
     /// 绝对过期时间（Unix 秒）；0 = 不过期。脚本写一次即可，到点自动撤下。
     #[serde(default)] pub ttl: f64,
+    /// 图标来源（exe / 图片路径）；非空时胶囊左侧画该图标而不是色点。
+    #[serde(default)] pub icon: String,
 }
 
 impl Status {
