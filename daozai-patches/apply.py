@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-37"
+PATCH_ID = "custom-38"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -6467,6 +6467,58 @@ mod corner_tests {
         }
     }
 }
+'''),
+
+    # custom-38：四角阴影完全对称，顶部两角与底部一样平滑
+    ("src/shape.rs",
+     '''
+/// 阴影层相对主体的 (等距外扩, 向下偏移)。
+///
+/// 圆角增量必须**等于**横向扩展量，否则每层阴影的圆弧与主体圆弧不同心、会在角部
+/// 互相交叉，看起来像「直线转半圆的地方多了一圈突起」。等距外扩后再整体下移 `dy`
+/// 模拟顶部光源，四角圆心只随 dy 平移，不会再横向漂移。
+pub(crate) fn shadow_expansion(grow: f32) -> (f32, f32) {
+    (grow * 0.6, grow * 0.35)
+}
+
+/// 贴着 `dock` 边缘的轮廓（屏幕坐标）。
+''',
+     '''
+/// 阴影层相对主体的 (等距外扩, 向下偏移)。
+///
+/// 圆角增量必须**等于**横向扩展量 `d`，否则每层阴影的圆弧与主体圆弧不同心、会在角部
+/// 互相交叉，看起来像「直线转半圆的地方多了一圈突起」。等距外扩后再整体下移 `dy`
+/// 模拟顶部光源，四角圆心只随 dy 平移，不会再横向漂移。
+///
+/// `dy` 必须保持 0：顶部净外扩是 `d - dy`、底部是 `d + dy`。早期用 `0.35g` 时两者
+/// 是 0.25g : 0.95g，顶部只剩一条硬边、底部有四五层渐淡的环，于是「上面两个角
+/// 不如下面两个角平滑」。岛本来就贴着屏幕顶边，向下的落影方向感收益极小，
+/// 完全对称的等距外扩才能保证四角过渡一模一样。
+pub(crate) fn shadow_expansion(grow: f32) -> (f32, f32) {
+    (grow * 0.6, 0.0)
+}
+
+/// 贴着 `dock` 边缘的轮廓（屏幕坐标）。
+'''),
+    ("src/shape.rs",
+     '''            let shadow_lb = Pos2::new(r.left() + rr, r.bottom() - rr);
+            // 等距外扩不改圆心，整体下移只让圆心跟着下移 dy；圆弧不横向漂移就不会与主体交叉。
+            assert!((rr - radius - d).abs() < 1e-4, "圆角增量必须等于横向扩展量");
+            assert!((shadow_rt.x - body_rt.x).abs() < 1e-4, "右上角圆弧不能横向漂移");
+            assert!((shadow_rt.y - body_rt.y - dy).abs() < 1e-4);
+            assert!((shadow_lb.x - body_lb.x).abs() < 1e-4, "左下角圆弧不能横向漂移");
+''',
+     '''            let shadow_lb = Pos2::new(r.left() + rr, r.bottom() - rr);
+            // 等距外扩不改圆心，整体下移只让圆心跟着下移 dy；圆弧不横向漂移就不会与主体交叉。
+            assert!((rr - radius - d).abs() < 1e-4, "圆角增量必须等于横向扩展量");
+            // 顶部净外扩 / 底部净外扩：太不对称就会「上两角硬、下两角柔」。
+            let top = d - dy;
+            let bottom = d + dy;
+            assert!(top > 0.0, "顶部阴影不能缩进主体");
+            assert!((top - bottom).abs() < 1e-6, "上下阴影必须严格对称，否则上两角比下两角生硬：{top}/{bottom}");
+            assert!((shadow_rt.x - body_rt.x).abs() < 1e-4, "右上角圆弧不能横向漂移");
+            assert!((shadow_rt.y - body_rt.y - dy).abs() < 1e-4);
+            assert!((shadow_lb.x - body_lb.x).abs() < 1e-4, "左下角圆弧不能横向漂移");
 '''),
 ]
 
