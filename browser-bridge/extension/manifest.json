@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "岛仔状态桥",
+  "version": "1.0.0",
+  "description": "把 Chrome 的下载进度实时发到桌面灵动岛（岛仔）。 Native Messaging 桥：com.daozai.island",
+  "permissions": [
+    "downloads"
+  ],
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwUiK8qusszEMYWRYN7lBEvEu8fhVbIGGpKIazdkTth7ATO2hQJUx12BnpmRKj+ZpnM9RGD1tveTHsqqNkXhlizLUS8/a6nfydUaQ7+bVIuqyJmOyRKDSMa38sNl2/G34e2+1DkgSB05RMQsnLa4TKkKQFZU908zgw1VwMxC21XQBl5qvBsNBAtOiYFs7siPvl/sE/EcDeMm6VsxuMStFjTFGCSZ7XattBFUsniLYfX5TUv/XIQ70dylnViIhP3Cm8+Akw6q+YtLuPR+ylfspfQq1Cgf3ypW1AvTJLHnX3zTKvkxQzWCcYEB31HU+7FDqyKI1pTCilPiym7cqqSzgKQIDAQAB"
+}

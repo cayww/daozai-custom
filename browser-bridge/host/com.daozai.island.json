@@ -1,0 +1,9 @@
+{
+  "name": "com.daozai.island",
+  "description": "岛仔状态总线桥：把扩展消息写进 island_status.json 显示到灵动岛",
+  "path": "D:\\code\\daozai-custom\\browser-bridge\\host\\daozai_bridge.cmd",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://dcmheeclfeihicoaakoffjbbepfdfcin/"
+  ]
+}
