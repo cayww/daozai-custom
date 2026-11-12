@@ -237,8 +237,8 @@ fn clipboard_search_toggles_on_the_active_tab_and_filters_lines() {
     {let mut hist=h.app.clipboard.lock();hist.items.clear();
      hist.push("会议纪要：周四评审","09:31");hist.push("验证码 482913","09:32");}
     h.hover(H::local(209.0,60.0),1.2);
-    // 点右上角固定的放大镜：浮出搜索输入框。
-    h.click(H::local(364.0,20.0));
+    // 点面板右下侧的放大镜：浮出搜索输入框。
+    h.click(H::local(397.0,115.0));
     assert!(h.app.clip_search_open,"点放大镜应浮出搜索框");
     h.frame(vec![]);
     // 过滤只影响显示，历史本身不动。
@@ -247,9 +247,21 @@ fn clipboard_search_toggles_on_the_active_tab_and_filters_lines() {
     assert_eq!(h.app.clipboard.lock().items.len(),2,"搜索不能删改历史");
     assert!(!h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("验证码 482913"))),"过滤后不该再画不匹配的记录");
     assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("会议纪要"))),"命中的记录要留下");
-    h.click(H::local(364.0,20.0));
+    h.click(H::local(397.0,115.0));
     assert!(!h.app.clip_search_open,"再点一次应收起搜索");
     assert!(h.app.clip_query.is_empty(),"收起搜索要清空关键词");
+}
+
+#[test]
+fn clicking_the_active_clipboard_tab_no_longer_opens_search() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
+    h.app.show_page(3);h.app.shelf_tab=1;
+    assert!(!h.app.clip_search_open);
+    // 第二个分栏（剪贴板）中心：shelf_tabs 从 x=13 起，第一栏约 50 宽。
+    h.click(H::local(90.0,20.0));
+    h.frame(vec![]);
+    assert_eq!(h.app.shelf_tab,1,"仍在剪贴板分栏");
+    assert!(!h.app.clip_search_open,"再点已选中的分栏不该展开搜索框");
 }
 
 fn editing_local_calendar_clears_outdated_reminders() {

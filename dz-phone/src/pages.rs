@@ -431,7 +431,7 @@ impl App {
         for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
             let selected = self.shelf_tab == i;
             let r = c.hit(left, 9.5, *w, 21.0, ("shelf-tab", i));
-            let r = if i == 1 { r.on_hover_text(if selected { "再点一次：搜索剪贴板" } else { "切到剪贴板" }) } else { r };
+            let r = if i == 1 { r.on_hover_text("切到剪贴板") } else { r };
             let (h, _) = c.hover_t(&r);
             if selected {
                 c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
@@ -439,17 +439,10 @@ impl App {
                 c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_white_alpha((18.0 * h) as u8));
             }
             c.text(left + w / 2.0, 24.3, label, font, W::Bold, if selected { theme::WHITE } else { theme::GRAY }, H::Center);
-            if r.clicked() {
-                if !selected {
-                    self.shelf_tab = i;
-                    self.confirm_clear = None;
-                    self.clip_confirm_clear = None;
-                } else if i == 1 {
-                    // 已选中的「剪贴板」再点一次：展开 / 收起搜索。
-                    self.clip_search_open = !self.clip_search_open;
-                    self.clip_query.clear();
-                    self.clip_search_focus = false;
-                }
+            if r.clicked() && !selected {
+                self.shelf_tab = i;
+                self.confirm_clear = None;
+                self.clip_confirm_clear = None;
             }
             left += w;
         }
@@ -582,18 +575,19 @@ impl App {
     }
 
     // ================= 剪贴板（置物架第二个分栏） =================
-    /// 剪贴板搜索：表头其余元素（专注环/日期/时钟）都会随内容左右移动，
-    /// 只有「清空」右侧那一小段是固定位置，放大镜就钉在那里；
+    /// 剪贴板搜索：放大镜放在面板右侧的空白竖带（翻页箭头下方、页码豆上方）。
+    /// 以前钉在表头 (352, 9.5)，会和常驻的音乐播放条 (x≈367, y≈18) 叠在一起；
+    /// 表头其余元素又随内容动态排布，没有稳定空位，所以移到卡片外侧。
     /// 点开后输入框浮在列表上方（盖住第一行），Esc 或小叉收起。
     /// 过滤只作用于显示，索引仍指向同一份历史，复制/固定/删除的行为不变。
     fn clip_search(&mut self, c: &Card, cmds: &mut Vec<Cmd>) {
-        // 放大镜：固定位置，不参与表头的动态排布。
-        let icon = c.hit(352.0, 9.5, 24.0, 21.0, "clip-search-open");
+        // 右下侧空白带：x 377..419 不画列表，y 在箭头(≤101)与页码豆(≈131)之间。
+        let icon = c.hit(384.0, 105.0, 26.0, 20.0, "clip-search-open");
         let (h, _) = c.hover_t(&icon);
-        if h > 0.01 { c.circle(364.0, 20.0, 10.5, Color32::from_white_alpha((22.0 * h) as u8)); }
+        if h > 0.01 { c.circle(397.0, 115.0, 10.5, Color32::from_white_alpha((22.0 * h) as u8)); }
         let ink = if self.clip_search_open { theme::BLUE } else { paint::mix(theme::GRAY, theme::WHITE, h) };
-        c.ring(362.2, 18.2, 4.4, 1.3, ink);
-        c.seg((365.6, 21.6), (369.4, 25.4), 1.3, ink);
+        c.ring(395.2, 113.2, 4.4, 1.3, ink);
+        c.seg((398.6, 116.6), (402.4, 120.4), 1.3, ink);
         let icon = icon.on_hover_text(if self.clip_search_open { "收起搜索" } else { "搜索剪贴板" });
         if icon.clicked() {
             self.clip_search_open = !self.clip_search_open;

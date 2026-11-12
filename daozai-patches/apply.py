@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-42"
+PATCH_ID = "custom-43"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -7615,6 +7615,151 @@ impl Default for Settings {
                         });
                         settings_label(ui,"岛体显示");
                         settings_card(ui,|ui|{
+'''),
+
+    # custom-43：剪贴板搜索图标移位并移除二次点击搜索
+    ("src/pages.rs",
+     '''        for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
+            let selected = self.shelf_tab == i;
+            let r = c.hit(left, 9.5, *w, 21.0, ("shelf-tab", i));
+            let r = if i == 1 { r.on_hover_text(if selected { "再点一次：搜索剪贴板" } else { "切到剪贴板" }) } else { r };
+            let (h, _) = c.hover_t(&r);
+            if selected {
+                c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
+''',
+     '''        for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
+            let selected = self.shelf_tab == i;
+            let r = c.hit(left, 9.5, *w, 21.0, ("shelf-tab", i));
+            let r = if i == 1 { r.on_hover_text("切到剪贴板") } else { r };
+            let (h, _) = c.hover_t(&r);
+            if selected {
+                c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
+'''),
+    ("src/pages.rs",
+     '''                c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_white_alpha((18.0 * h) as u8));
+            }
+            c.text(left + w / 2.0, 24.3, label, font, W::Bold, if selected { theme::WHITE } else { theme::GRAY }, H::Center);
+            if r.clicked() {
+                if !selected {
+                    self.shelf_tab = i;
+                    self.confirm_clear = None;
+                    self.clip_confirm_clear = None;
+                } else if i == 1 {
+                    // 已选中的「剪贴板」再点一次：展开 / 收起搜索。
+                    self.clip_search_open = !self.clip_search_open;
+                    self.clip_query.clear();
+                    self.clip_search_focus = false;
+                }
+            }
+            left += w;
+        }
+''',
+     '''                c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_white_alpha((18.0 * h) as u8));
+            }
+            c.text(left + w / 2.0, 24.3, label, font, W::Bold, if selected { theme::WHITE } else { theme::GRAY }, H::Center);
+            if r.clicked() && !selected {
+                self.shelf_tab = i;
+                self.confirm_clear = None;
+                self.clip_confirm_clear = None;
+            }
+            left += w;
+        }
+'''),
+    ("src/pages.rs",
+     '''    }
+
+    // ================= 剪贴板（置物架第二个分栏） =================
+    /// 剪贴板搜索：表头其余元素（专注环/日期/时钟）都会随内容左右移动，
+    /// 只有「清空」右侧那一小段是固定位置，放大镜就钉在那里；
+    /// 点开后输入框浮在列表上方（盖住第一行），Esc 或小叉收起。
+    /// 过滤只作用于显示，索引仍指向同一份历史，复制/固定/删除的行为不变。
+    fn clip_search(&mut self, c: &Card, cmds: &mut Vec<Cmd>) {
+        // 放大镜：固定位置，不参与表头的动态排布。
+        let icon = c.hit(352.0, 9.5, 24.0, 21.0, "clip-search-open");
+        let (h, _) = c.hover_t(&icon);
+        if h > 0.01 { c.circle(364.0, 20.0, 10.5, Color32::from_white_alpha((22.0 * h) as u8)); }
+        let ink = if self.clip_search_open { theme::BLUE } else { paint::mix(theme::GRAY, theme::WHITE, h) };
+        c.ring(362.2, 18.2, 4.4, 1.3, ink);
+        c.seg((365.6, 21.6), (369.4, 25.4), 1.3, ink);
+        let icon = icon.on_hover_text(if self.clip_search_open { "收起搜索" } else { "搜索剪贴板" });
+        if icon.clicked() {
+            self.clip_search_open = !self.clip_search_open;
+''',
+     '''    }
+
+    // ================= 剪贴板（置物架第二个分栏） =================
+    /// 剪贴板搜索：放大镜放在面板右侧的空白竖带（翻页箭头下方、页码豆上方）。
+    /// 以前钉在表头 (352, 9.5)，会和常驻的音乐播放条 (x≈367, y≈18) 叠在一起；
+    /// 表头其余元素又随内容动态排布，没有稳定空位，所以移到卡片外侧。
+    /// 点开后输入框浮在列表上方（盖住第一行），Esc 或小叉收起。
+    /// 过滤只作用于显示，索引仍指向同一份历史，复制/固定/删除的行为不变。
+    fn clip_search(&mut self, c: &Card, cmds: &mut Vec<Cmd>) {
+        // 右下侧空白带：x 377..419 不画列表，y 在箭头(≤101)与页码豆(≈131)之间。
+        let icon = c.hit(384.0, 105.0, 26.0, 20.0, "clip-search-open");
+        let (h, _) = c.hover_t(&icon);
+        if h > 0.01 { c.circle(397.0, 115.0, 10.5, Color32::from_white_alpha((22.0 * h) as u8)); }
+        let ink = if self.clip_search_open { theme::BLUE } else { paint::mix(theme::GRAY, theme::WHITE, h) };
+        c.ring(395.2, 113.2, 4.4, 1.3, ink);
+        c.seg((398.6, 116.6), (402.4, 120.4), 1.3, ink);
+        let icon = icon.on_hover_text(if self.clip_search_open { "收起搜索" } else { "搜索剪贴板" });
+        if icon.clicked() {
+            self.clip_search_open = !self.clip_search_open;
+'''),
+    ("src/ui_tests.rs",
+     '''    {let mut hist=h.app.clipboard.lock();hist.items.clear();
+     hist.push("会议纪要：周四评审","09:31");hist.push("验证码 482913","09:32");}
+    h.hover(H::local(209.0,60.0),1.2);
+    // 点右上角固定的放大镜：浮出搜索输入框。
+    h.click(H::local(364.0,20.0));
+    assert!(h.app.clip_search_open,"点放大镜应浮出搜索框");
+    h.frame(vec![]);
+    // 过滤只影响显示，历史本身不动。
+''',
+     '''    {let mut hist=h.app.clipboard.lock();hist.items.clear();
+     hist.push("会议纪要：周四评审","09:31");hist.push("验证码 482913","09:32");}
+    h.hover(H::local(209.0,60.0),1.2);
+    // 点面板右下侧的放大镜：浮出搜索输入框。
+    h.click(H::local(397.0,115.0));
+    assert!(h.app.clip_search_open,"点放大镜应浮出搜索框");
+    h.frame(vec![]);
+    // 过滤只影响显示，历史本身不动。
+'''),
+    ("src/ui_tests.rs",
+     '''    assert_eq!(h.app.clipboard.lock().items.len(),2,"搜索不能删改历史");
+    assert!(!h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("验证码 482913"))),"过滤后不该再画不匹配的记录");
+    assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("会议纪要"))),"命中的记录要留下");
+    h.click(H::local(364.0,20.0));
+    assert!(!h.app.clip_search_open,"再点一次应收起搜索");
+    assert!(h.app.clip_query.is_empty(),"收起搜索要清空关键词");
+}
+
+fn editing_local_calendar_clears_outdated_reminders() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    for reschedule in [false,true] {
+''',
+     '''    assert_eq!(h.app.clipboard.lock().items.len(),2,"搜索不能删改历史");
+    assert!(!h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("验证码 482913"))),"过滤后不该再画不匹配的记录");
+    assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("会议纪要"))),"命中的记录要留下");
+    h.click(H::local(397.0,115.0));
+    assert!(!h.app.clip_search_open,"再点一次应收起搜索");
+    assert!(h.app.clip_query.is_empty(),"收起搜索要清空关键词");
+}
+
+#[test]
+fn clicking_the_active_clipboard_tab_no_longer_opens_search() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
+    h.app.show_page(3);h.app.shelf_tab=1;
+    assert!(!h.app.clip_search_open);
+    // 第二个分栏（剪贴板）中心：shelf_tabs 从 x=13 起，第一栏约 50 宽。
+    h.click(H::local(90.0,20.0));
+    h.frame(vec![]);
+    assert_eq!(h.app.shelf_tab,1,"仍在剪贴板分栏");
+    assert!(!h.app.clip_search_open,"再点已选中的分栏不该展开搜索框");
+}
+
+fn editing_local_calendar_clears_outdated_reminders() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    for reschedule in [false,true] {
 '''),
 ]
 
