@@ -740,6 +740,8 @@ pub struct App {
     pub(crate) fluid_origin:Pos2,
     fluid_art:Option<egui::TextureId>,
     fluid_title:String,
+    /// 悬浮云每帧刷新的颜色纹理：低分辨率交给 GPU 双线性插值，避免每帧生成上万顶点。
+    fluid_tex:Option<egui::TextureHandle>,
     screen:Option<Rect>,
     pub(crate) settings_focus_requested:bool,
     pub(crate) settings_tab:usize,
@@ -936,7 +938,7 @@ impl App {
             media_anchor: (String::new(), 0.0, 0.0, false),
             media: NowPlaying::default(),
             music_artwork: None,
-            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
             listener_status: "尚未连接".into(),
             notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
@@ -2384,9 +2386,16 @@ impl App {
     }
 
     /// 绘制岛体（或通知胶囊）的本体：经典皮肤为纯黑；毛玻璃为着色底 + 顶部柔光 + 边缘高光。
-    fn paint_body(&self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32){
+    fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32){
         let skin=self.settings.skin;
         if skin==model::Skin::Fluid {
+            // 胶囊 + 顶部停靠：和毛玻璃共用 egui 的精确圆角矩形，颜色走一张小纹理。
+            // 旧的「按行梯形条 + 折线圆弧 + 手工羽化带」只在悬浮云上用，
+            // 直线转圆弧处的折角感正是它独有、毛玻璃没有的瑕疵。
+            if self.settings.island_shape==model::IslandShape::Pill && !self.dock().is_side() {
+                self.paint_fluid_pill(painter,rect,radius);
+                return;
+            }
             let pill=self.settings.island_shape==model::IslandShape::Pill;
             let (map,frame)=shape::EdgeMap::of(rect,if pill {model::Dock::Top}else{self.dock()});
             let mut rows=shape::sections(frame,flare,flare_h,radius);
@@ -2441,6 +2450,34 @@ impl App {
             let edge=Rect::from_min_max(rect.min+Vec2::new(0.5,0.0),rect.max-Vec2::new(0.5,0.5));
             painter.add(egui::Shape::line(shape::outline(edge,flare,flare_h,(radius-0.5).max(0.0)),egui::Stroke::new(1.0_f32,self.glass_rim())));
         }
+    }
+
+    /// 悬浮云主体：轮廓交给 `RectShape` 的精确圆角，流动颜色做成一张固定尺寸的小纹理。
+    ///
+    /// 固定 160×80，避免展开动画里尺寸每帧变化导致纹理反复重新分配；
+    /// 光晕尺度是 152×100 逻辑点，双线性插值完全够用，看不出采样痕迹。
+    fn paint_fluid_pill(&mut self,painter:&egui::Painter,rect:Rect,radius:f32){
+        const TEX_W:usize=160;
+        const TEX_H:usize=80;
+        let w=rect.width().max(1.0);
+        let h=rect.height().max(1.0);
+        let expand=self.progress().clamp(0.0,1.0);
+        let mut image=egui::ColorImage::new([TEX_W,TEX_H],Color32::TRANSPARENT);
+        for row in 0..TEX_H {
+            let py=h*(row as f32+0.5)/TEX_H as f32;
+            for col in 0..TEX_W {
+                let px=w*(col as f32+0.5)/TEX_W as f32;
+                image.pixels[row*TEX_W+col]=self.fluid.compose(px,py,w,h,expand);
+            }
+        }
+        let options=egui::TextureOptions::LINEAR;
+        let handle=self.fluid_tex.get_or_insert_with(||{
+            painter.ctx().load_texture("daozai-fluid",image.clone(),options)
+        });
+        handle.set(image,options);
+        let radius=radius.min(rect.height().min(rect.width())*0.5);
+        let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
+        painter.add(egui::epaint::RectShape::filled(rect,radius,Color32::WHITE).with_texture(handle.id(),uv));
     }
 
     /// 悬停状态机：意图缓冲 → 弹簧展开 → 离开延迟 → 临界阻尼收起；全程可打断。

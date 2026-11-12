@@ -487,3 +487,59 @@ mod corner_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod fluid_path_bench {
+    use super::*;
+    use crate::fluid::Fluid;
+    use std::time::Instant;
+
+    /// 复刻 `paint_body` 里悬浮云胶囊的行表镜像。
+    fn pill_rows(rect: Rect, radius: f32) -> Vec<(f32, f32, f32)> {
+        let mut rows = sections(rect, 0.0, 16.0, radius);
+        let mid = rect.center().y;
+        rows.retain(|r| r.0 > mid && r.0 >= rect.bottom() - radius);
+        let top = rows.iter().rev().map(|&(y, l, r)| (2.0 * mid - y, l, r)).collect::<Vec<_>>();
+        rows.splice(0..0, top);
+        rows
+    }
+
+    #[test]
+    fn 纹理路径比梯形网格省得多() {
+        let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(419.0, 215.0));
+        let rows = pill_rows(rect, 26.0);
+        let fluid = Fluid::default();
+        let (w, h) = (rect.width(), rect.height());
+        const N: usize = 40;
+
+        let t = Instant::now();
+        let mut vertices = 0usize;
+        let mut tris = 0usize;
+        for _ in 0..N {
+            let mesh = shade_mesh(rect, rows.clone(), 1.0, &|x, y| fluid.compose(x, y, w, h, 1.0));
+            vertices = mesh.vertices.len();
+            tris = mesh.indices.len() / 3;
+            std::hint::black_box(mesh);
+        }
+        let old_ms = t.elapsed().as_secs_f64() * 1000.0 / N as f64;
+
+        let t = Instant::now();
+        for _ in 0..N {
+            let mut image = egui::ColorImage::new([160, 80], Color32::TRANSPARENT);
+            for row in 0..80usize {
+                let py = h * (row as f32 + 0.5) / 80.0;
+                for col in 0..160usize {
+                    image.pixels[row * 160 + col] =
+                        fluid.compose(w * (col as f32 + 0.5) / 160.0, py, w, h, 1.0);
+                }
+            }
+            std::hint::black_box(image);
+        }
+        let new_ms = t.elapsed().as_secs_f64() * 1000.0 / N as f64;
+
+        println!("旧 shade_mesh: {vertices} 顶点 / {tris} 三角形 / {old_ms:.3} ms 每帧");
+        println!("新颜色纹理: {} 像素 / {new_ms:.3} ms 每帧", 160 * 80);
+        println!("顶点数据量: 旧 {:.0} KB -> 新 1 个 RectShape", vertices as f64 * 24.0 / 1024.0);
+        assert!(vertices > 1000, "旧路径确实每帧生成大量顶点");
+    }
+}
