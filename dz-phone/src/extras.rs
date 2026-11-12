@@ -385,18 +385,22 @@ impl App {
         self.maa_status=None;
     }
     /// 把一条 MAA 事件转成岛上提示（时长取 MAA 偏好）。
+    ///
+    /// 常驻进度胶囊开启时，任务开始/完成/全部完成都不再弹横幅——胶囊本身就在
+    /// 显示当前任务和进度，再弹一条会重复。公招高星、出错仍单独提示（胶囊表达不了）。
     pub(crate) fn maa_event(&mut self,event:crate::maa::Event){
+        let resident=self.maa_prefs.resident_progress;
         let (title,body)=match event {
             crate::maa::Event::ChainStart(_,label)=>{
-                if !self.maa_prefs.notify_chain {return;}
+                if !self.maa_prefs.notify_chain || resident {return;}
                 ("MAA".to_string(),format!("开始{label}"))
             }
             crate::maa::Event::ChainDone(_,label)=>{
-                if !self.maa_prefs.notify_chain {return;}
+                if !self.maa_prefs.notify_chain || resident {return;}
                 ("MAA".to_string(),format!("{label}完成"))
             }
             crate::maa::Event::AllDone(_)=>{
-                if !self.maa_prefs.notify_chain {return;}
+                if !self.maa_prefs.notify_chain || resident {return;}
                 ("MAA".to_string(),"日常任务全部完成".to_string())
             }
             crate::maa::Event::RecruitStar(level)=>{
@@ -2345,7 +2349,7 @@ impl App {
                                 let before=self.maa_prefs.clone();
                                 setting_row(ui,"常驻进度","任务运行时在岛上常驻一条进度胶囊（带 MAA 图标、像下载那样随任务完成填满），全部结束后自动收起",&mut self.maa_prefs.resident_progress);
                                 ui.separator();
-                                setting_row(ui,"任务进度","任务开始、完成、全部跑完时各弹一条提示",&mut self.maa_prefs.notify_chain);
+                                setting_row(ui,"任务进度","没有常驻胶囊时，任务开始/完成/全部跑完各弹一条提示；开了常驻进度就不再重复弹",&mut self.maa_prefs.notify_chain);
                                 ui.separator();
                                 setting_row(ui,"公招高星","自动公招刷出 4 星以上 tag 时提示",&mut self.maa_prefs.notify_recruit_star);
                                 ui.separator();
