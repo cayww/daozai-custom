@@ -2815,24 +2815,26 @@ impl App {
                                 fillc.fill(x,5.0,w,20.0,10.0,tone);
                             }
                         }
-                        // 左侧：有图标就画图标，没有就画状态色点。
-                        let mut text_x=x+14.0;
-                        let mut text_w=w-20.0;
+                        // 带图标的状态（MAA 进度胶囊）：图标 + 文字作为整体在胶囊内水平居中。
+                        // 其他状态保持原来的「色点 + 左对齐文字」。
                         let icon_tex=if status.icon.is_empty() {None} else {
                             self.status_icons.borrow_mut()
                                 .get(c.ui.ctx(),std::path::Path::new(&status.icon))
                                 .and_then(|p|p.image)
                         };
                         if let Some(tex)=icon_tex {
+                            // 图标 16 + 间距 4 = 20 的前导占位，按实际文字宽度整体居中。
+                            let fitted=c.fit(&status.text,10.5,W::Regular,(w-28.0).max(20.0));
+                            let text_w=c.text_w(&fitted,10.5,W::Regular);
+                            let start=x+((w-20.0-text_w).max(0.0))/2.0;
                             let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
                             c.painter.add(egui::epaint::RectShape::filled(
-                                c.rect(x+2.5,7.0,16.0,16.0),4.0*c.s,Color32::WHITE).with_texture(tex.id(),uv));
-                            text_x=x+22.0;
-                            text_w=w-26.0;
+                                c.rect(start,7.0,16.0,16.0),4.0*c.s,Color32::WHITE).with_texture(tex.id(),uv));
+                            c.centered_text(start+20.0,15.0,&fitted,10.5,W::Regular,theme::WHITE,H::Left);
                         } else {
                             c.circle(x+8.0,15.0,2.5,tone);
+                            c.centered_text(x+14.0,15.0,&c.fit(&status.text,10.5,W::Regular,w-20.0),10.5,W::Regular,theme::WHITE,H::Left);
                         }
-                        c.centered_text(text_x,15.0,&c.fit(&status.text,10.5,W::Regular,text_w),10.5,W::Regular,theme::WHITE,H::Left);
                         x+=w+6.0;
                     }
                 }
