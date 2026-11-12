@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-61"
+PATCH_ID = "custom-62"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -8756,6 +8756,54 @@ const SETTINGS_GROUPS: [(&str,usize,usize);10] = [
                             setting_row(ui,"岛上歌词","收起时显示歌词，无歌词时显示封面和歌名",&mut self.settings.island_lyrics);
                         });
                         settings_label(ui,"功能页面");
+'''),
+
+    # custom-62：手机 App 名单从通知分组挪入手机连接页
+    ("src/extras.rs",
+     '''                            ui.separator();
+                            ui.label(egui::RichText::new("手机短信通过「手机连接」转发。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
+                        });
+                    },
+                    10=>{
+''',
+     '''                            ui.separator();
+                            ui.label(egui::RichText::new("手机短信通过「手机连接」转发。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
+                            ui.separator();
+                            ui.label(egui::RichText::new("手机 App 名单：勾选立即生效；增删条目改 %APPDATA%\\\\Daozai\\\\phone-apps.json。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            let before_phone_apps=self.phone_apps.items.clone();
+                            for (name,label,allow) in &mut self.phone_apps.items {
+                                let title=if label==name {name.clone()} else {format!("{} · {}",label,name)};
+                                setting_row(ui,&title,"",allow);
+                            }
+                            if before_phone_apps!=self.phone_apps.items{self.phone_apps.save();}
+                        });
+                    },
+                    10=>{
+'''),
+    ("src/extras.rs",
+     '''                            let before_apps=self.notification_apps.items.clone();
+                            for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+                            if before_apps!=self.notification_apps.items{self.notification_apps.save();}
+                            ui.separator();
+                            ui.label(egui::RichText::new("手机 App 名单：勾选立即生效；增删条目改 %APPDATA%\\\\Daozai\\\\phone-apps.json。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            let before_phone_apps=self.phone_apps.items.clone();
+                            for (name,label,allow) in &mut self.phone_apps.items {
+                                let title=if label==name {name.clone()} else {format!("{} · {}",label,name)};
+                                setting_row(ui,&title,"",allow);
+                            }
+                            if before_phone_apps!=self.phone_apps.items{self.phone_apps.save();}
+                            });
+                        });
+                    }
+''',
+     '''                            let before_apps=self.notification_apps.items.clone();
+                            for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+                            if before_apps!=self.notification_apps.items{self.notification_apps.save();}
+                            });
+                        });
+                    }
 '''),
 ]
 
