@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-44"
+PATCH_ID = "custom-45"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -8069,6 +8069,141 @@ impl Default for Settings {
                             ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             ui.horizontal_wrapped(|ui|{
                                 if ui.button("打开本地数据目录").clicked(){self.pending.push(Cmd::Open(crate::model::config_dir()));}
+'''),
+
+    # custom-45：布局调试热键改 Ctrl+Shift+D（输入钩子检测），修 F12 无焦点收不到
+    ("src/input.rs",
+     '''mod shortcuts {
+    use super::*;
+    use std::cell::RefCell;
+    use windows::Win32::{Foundation::{HINSTANCE,LPARAM,LRESULT,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::*};
+    thread_local!{static KEYS:RefCell<SwitchKeys>=RefCell::new(SwitchKeys::default());}
+    pub struct Shortcuts(HHOOK);
+    impl Shortcuts {
+''',
+     '''mod shortcuts {
+    use super::*;
+    use std::cell::RefCell;
+    use windows::Win32::{Foundation::{HINSTANCE,LPARAM,LRESULT,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::Input::KeyboardAndMouse::{GetAsyncKeyState,VK_CONTROL,VK_SHIFT},UI::WindowsAndMessaging::*};
+    /// 布局调试的全局切换热键（Ctrl+Shift+D）在钩子里置位，主循环每帧消费一次。
+    /// 岛窗口平时不持有键盘焦点，普通按键收不到；低级钩子只观察不拦截，
+    /// 不影响其他应用的快捷键（所以不用 F12——那是浏览器开发者工具的键）。
+    static DEBUG_TOGGLE:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+    pub fn debug_toggle_fired()->bool{DEBUG_TOGGLE.swap(false,std::sync::atomic::Ordering::Relaxed)}
+    #[cfg(test)] pub fn debug_toggle_press_for_test(){DEBUG_TOGGLE.store(true,std::sync::atomic::Ordering::Relaxed);}
+    thread_local!{static KEYS:RefCell<SwitchKeys>=RefCell::new(SwitchKeys::default());}
+    pub struct Shortcuts(HHOOK);
+    impl Shortcuts {
+'''),
+    ("src/input.rs",
+     '''                let mut info=GUITHREADINFO{cbSize:std::mem::size_of::<GUITHREADINFO>()as u32,..Default::default()};
+                let focus=if GetGUIThreadInfo(thread,&mut info).is_ok()&&!info.hwndFocus.0.is_null(){info.hwndFocus}else{foreground};
+                let down=matches!(wp.0 as u32,WM_KEYDOWN|WM_SYSKEYDOWN);
+                KEYS.with(|keys|{
+                    let mut keys=keys.borrow_mut();keys.key(event.vkCode,down,(foreground.0 as usize,focus.0 as usize),Instant::now());
+                    if keys.pending.is_some(){SWITCH_AT.store(windows::Win32::System::SystemInformation::GetTickCount64(),std::sync::atomic::Ordering::Relaxed);}
+''',
+     '''                let mut info=GUITHREADINFO{cbSize:std::mem::size_of::<GUITHREADINFO>()as u32,..Default::default()};
+                let focus=if GetGUIThreadInfo(thread,&mut info).is_ok()&&!info.hwndFocus.0.is_null(){info.hwndFocus}else{foreground};
+                let down=matches!(wp.0 as u32,WM_KEYDOWN|WM_SYSKEYDOWN);
+                if down&&event.vkCode==0x44
+                    &&(GetAsyncKeyState(VK_CONTROL.0 as i32) as u16&0x8000)!=0
+                    &&(GetAsyncKeyState(VK_SHIFT.0 as i32) as u16&0x8000)!=0{
+                    DEBUG_TOGGLE.store(true,std::sync::atomic::Ordering::Relaxed);
+                }
+                KEYS.with(|keys|{
+                    let mut keys=keys.borrow_mut();keys.key(event.vkCode,down,(foreground.0 as usize,focus.0 as usize),Instant::now());
+                    if keys.pending.is_some(){SWITCH_AT.store(windows::Win32::System::SystemInformation::GetTickCount64(),std::sync::atomic::Ordering::Relaxed);}
+'''),
+    ("src/input.rs",
+     '''}
+#[cfg(windows)]
+pub use shortcuts::Shortcuts;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn chinese(native:Option<bool>)->State {State{context:(1,11),layout:0xe0200804,profile:Some((1,2)),native}}
+    #[test]
+    fn shift_changes_between_chinese_and_english_without_changing_the_input_method(){
+        let mut monitor=Monitor::new(Some(chinese(Some(true))));
+''',
+     '''}
+#[cfg(windows)]
+pub use shortcuts::Shortcuts;
+#[cfg(windows)]
+pub use shortcuts::debug_toggle_fired;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn chinese(native:Option<bool>)->State {State{context:(1,11),layout:0xe0200804,profile:Some((1,2)),native}}
+    #[cfg(windows)]
+    #[test]
+    fn debug_toggle_hotkey_flag_roundtrip(){
+        // 钩子置位 → 主循环一次性消费：读第二次必须为 false，否则一次按键会切换两回。
+        super::shortcuts::debug_toggle_press_for_test();
+        assert!(super::debug_toggle_fired(),"钩子置位后主循环应读到");
+        assert!(!super::debug_toggle_fired(),"读一次即消费，防重复切换");
+    }
+
+    #[test]
+    fn shift_changes_between_chinese_and_english_without_changing_the_input_method(){
+        let mut monitor=Monitor::new(Some(chinese(Some(true))));
+'''),
+    ("src/main.rs",
+     '''            self.guard_notified=true;self.app.opts.fetch_lyrics=false;
+            self.app.alert("岛仔已暂停音乐功能","检测到资源占用异常，已暂停读取音乐信息和歌词。重启岛仔即可恢复；诊断记录在数据目录的 diagnostics 文件夹。",0,false);
+        }
+        // 布局调试开关（Flutter DebugPaint 风格）：切换后立即生效并写回配置。
+        if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
+            self.app.settings.debug_layout = !self.app.settings.debug_layout;
+            daozai::paint::set_debug_layout(self.app.settings.debug_layout);
+            let _ = self.app.settings.save();
+            self.app.say(if self.app.settings.debug_layout {
+                "布局调试已开启：品红框 = 可点击区域，蓝框 = 卡片边界，黄字 = 宽×高"
+            } else {
+                "布局调试已关闭"
+            });
+        }
+        self.media_enabled.store(self.app.settings.visible_pages[0] && !guarded,std::sync::atomic::Ordering::Relaxed);
+''',
+     '''            self.guard_notified=true;self.app.opts.fetch_lyrics=false;
+            self.app.alert("岛仔已暂停音乐功能","检测到资源占用异常，已暂停读取音乐信息和歌词。重启岛仔即可恢复；诊断记录在数据目录的 diagnostics 文件夹。",0,false);
+        }
+        // 布局调试开关（Flutter DebugPaint 风格）：Ctrl+Shift+D 全局热键（输入钩子置位）。
+        // 岛窗口平时不持有键盘焦点，直接监听按键收不到；钩子只观察不拦截。
+        // 切换后立即生效并写回配置。
+        #[cfg(windows)] let debug_hotkey = daozai::input::debug_toggle_fired();
+        #[cfg(not(windows))] let debug_hotkey = ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::D));
+        if debug_hotkey {
+            self.app.settings.debug_layout = !self.app.settings.debug_layout;
+            daozai::paint::set_debug_layout(self.app.settings.debug_layout);
+            let _ = self.app.settings.save();
+            self.app.say(if self.app.settings.debug_layout {
+                "布局调试已开启（Ctrl+Shift+D 关闭）：品红框 = 可点击区域，蓝框 = 卡片边界，黄字 = 宽×高"
+            } else {
+                "布局调试已关闭（Ctrl+Shift+D 开启）"
+            });
+        }
+        self.media_enabled.store(self.app.settings.visible_pages[0] && !guarded,std::sync::atomic::Ordering::Relaxed);
+'''),
+    ("src/extras.rs",
+     '''                            setting_row(ui,"检查更新","关闭后隐藏检查更新入口，避免官方安装包覆盖自定义修改",&mut self.settings.update_check);
+                            ui.separator();
+                            let dbg_before=self.settings.debug_layout;
+                            setting_row(ui,"布局调试","把每个可点击区域（品红框）和卡片边界（蓝框）描出来并标注宽高，方便核对布局；按 F12 可随时切换",&mut self.settings.debug_layout);
+                            if self.settings.debug_layout!=dbg_before{crate::paint::set_debug_layout(self.settings.debug_layout);}
+                            ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            ui.horizontal_wrapped(|ui|{
+''',
+     '''                            setting_row(ui,"检查更新","关闭后隐藏检查更新入口，避免官方安装包覆盖自定义修改",&mut self.settings.update_check);
+                            ui.separator();
+                            let dbg_before=self.settings.debug_layout;
+                            setting_row(ui,"布局调试","把每个可点击区域（品红框）和卡片边界（蓝框）描出来并标注宽高，方便核对布局；按 Ctrl+Shift+D 可随时切换（全局热键，无需聚焦岛）",&mut self.settings.debug_layout);
+                            if self.settings.debug_layout!=dbg_before{crate::paint::set_debug_layout(self.settings.debug_layout);}
+                            ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            ui.horizontal_wrapped(|ui|{
 '''),
 ]
 

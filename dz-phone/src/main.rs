@@ -286,15 +286,19 @@ impl eframe::App for Shell {
             self.guard_notified=true;self.app.opts.fetch_lyrics=false;
             self.app.alert("岛仔已暂停音乐功能","检测到资源占用异常，已暂停读取音乐信息和歌词。重启岛仔即可恢复；诊断记录在数据目录的 diagnostics 文件夹。",0,false);
         }
-        // 布局调试开关（Flutter DebugPaint 风格）：切换后立即生效并写回配置。
-        if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
+        // 布局调试开关（Flutter DebugPaint 风格）：Ctrl+Shift+D 全局热键（输入钩子置位）。
+        // 岛窗口平时不持有键盘焦点，直接监听按键收不到；钩子只观察不拦截。
+        // 切换后立即生效并写回配置。
+        #[cfg(windows)] let debug_hotkey = daozai::input::debug_toggle_fired();
+        #[cfg(not(windows))] let debug_hotkey = ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::D));
+        if debug_hotkey {
             self.app.settings.debug_layout = !self.app.settings.debug_layout;
             daozai::paint::set_debug_layout(self.app.settings.debug_layout);
             let _ = self.app.settings.save();
             self.app.say(if self.app.settings.debug_layout {
-                "布局调试已开启：品红框 = 可点击区域，蓝框 = 卡片边界，黄字 = 宽×高"
+                "布局调试已开启（Ctrl+Shift+D 关闭）：品红框 = 可点击区域，蓝框 = 卡片边界，黄字 = 宽×高"
             } else {
-                "布局调试已关闭"
+                "布局调试已关闭（Ctrl+Shift+D 开启）"
             });
         }
         self.media_enabled.store(self.app.settings.visible_pages[0] && !guarded,std::sync::atomic::Ordering::Relaxed);

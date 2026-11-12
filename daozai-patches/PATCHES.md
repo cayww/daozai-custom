@@ -558,6 +558,27 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 76 个 src 文件逐字节一致。
 
 
+## 布局调试热键改为 Ctrl+Shift+D（custom-45 · 分支 debug-layout）
+
+用户反馈「没有生效」：跑的是分支 exe，但按 F12 没反应。原因正是 custom-44 里记过的坑——
+**岛窗口平时不持有键盘焦点**，egui 的 `key_pressed(F12)` 根本收不到按键。
+
+**修复**：全局热键改用 **Ctrl+Shift+D**，在现成的 `WH_KEYBOARD_LL` 输入钩子（`input.rs` 的
+`Shortcuts`）里检测——钩子只观察不拦截，岛有没有焦点都收得到。不用 F12 是因为钩子会看到
+全系统的 F12，用户在浏览器按 F12 开开发者工具时岛也会跟着切换。
+- `input.rs`：钩子回调里 `vkCode==0x44` 且 `GetAsyncKeyState(Ctrl/Shift)` 高位时置
+  `DEBUG_TOGGLE` 原子标志；导出 `debug_toggle_fired()`（swap 一次性消费）。
+  跳过 `LLKHF_INJECTED` 的原有逻辑顺带防了模拟按键误触。Ctrl+Shift+D 也不会干扰
+  Ctrl+Shift 的输入法切换（D 键按下会让 SwitchKeys 置 used）。
+- `main.rs`：删掉 egui 的 F12 分支（会和钩子双触发），windows 下消费
+  `debug_toggle_fired()`，非 windows 回退 Ctrl+Shift+D 的 egui 按键。
+- `extras.rs`：提示文案更新。
+
+**验证**：新增 `input::tests::debug_toggle_hotkey_flag_roundtrip`（置位→读一次消费）。
+**805 passed / 0 failed / 86 ignored**；重放 custom-45，372 处 EDITS、跳过 0、src 一致。
+实机用新 exe + `debug_layout=1` 启动截图确认叠加层正常（热键需真人按键，无法注入测试——
+钩子会过滤模拟按键，这正是设计）。exe `974188adbbb6fd2c`（仅分支 target 目录）。
+
 ## 布局调试模式（custom-44 · 分支 debug-layout）
 
 用户想要 Flutter 那样的 DebugPaint：把每一块的范围渲染出来看布局。

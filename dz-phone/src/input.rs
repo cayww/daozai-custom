@@ -122,7 +122,13 @@ impl SwitchKeys {
 mod shortcuts {
     use super::*;
     use std::cell::RefCell;
-    use windows::Win32::{Foundation::{HINSTANCE,LPARAM,LRESULT,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::WindowsAndMessaging::*};
+    use windows::Win32::{Foundation::{HINSTANCE,LPARAM,LRESULT,WPARAM},System::LibraryLoader::GetModuleHandleW,UI::Input::KeyboardAndMouse::{GetAsyncKeyState,VK_CONTROL,VK_SHIFT},UI::WindowsAndMessaging::*};
+    /// 布局调试的全局切换热键（Ctrl+Shift+D）在钩子里置位，主循环每帧消费一次。
+    /// 岛窗口平时不持有键盘焦点，普通按键收不到；低级钩子只观察不拦截，
+    /// 不影响其他应用的快捷键（所以不用 F12——那是浏览器开发者工具的键）。
+    static DEBUG_TOGGLE:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+    pub fn debug_toggle_fired()->bool{DEBUG_TOGGLE.swap(false,std::sync::atomic::Ordering::Relaxed)}
+    #[cfg(test)] pub fn debug_toggle_press_for_test(){DEBUG_TOGGLE.store(true,std::sync::atomic::Ordering::Relaxed);}
     thread_local!{static KEYS:RefCell<SwitchKeys>=RefCell::new(SwitchKeys::default());}
     pub struct Shortcuts(HHOOK);
     impl Shortcuts {
@@ -144,6 +150,11 @@ mod shortcuts {
                 let mut info=GUITHREADINFO{cbSize:std::mem::size_of::<GUITHREADINFO>()as u32,..Default::default()};
                 let focus=if GetGUIThreadInfo(thread,&mut info).is_ok()&&!info.hwndFocus.0.is_null(){info.hwndFocus}else{foreground};
                 let down=matches!(wp.0 as u32,WM_KEYDOWN|WM_SYSKEYDOWN);
+                if down&&event.vkCode==0x44
+                    &&(GetAsyncKeyState(VK_CONTROL.0 as i32) as u16&0x8000)!=0
+                    &&(GetAsyncKeyState(VK_SHIFT.0 as i32) as u16&0x8000)!=0{
+                    DEBUG_TOGGLE.store(true,std::sync::atomic::Ordering::Relaxed);
+                }
                 KEYS.with(|keys|{
                     let mut keys=keys.borrow_mut();keys.key(event.vkCode,down,(foreground.0 as usize,focus.0 as usize),Instant::now());
                     if keys.pending.is_some(){SWITCH_AT.store(windows::Win32::System::SystemInformation::GetTickCount64(),std::sync::atomic::Ordering::Relaxed);}
@@ -155,11 +166,22 @@ mod shortcuts {
 }
 #[cfg(windows)]
 pub use shortcuts::Shortcuts;
+#[cfg(windows)]
+pub use shortcuts::debug_toggle_fired;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     fn chinese(native:Option<bool>)->State {State{context:(1,11),layout:0xe0200804,profile:Some((1,2)),native}}
+    #[cfg(windows)]
+    #[test]
+    fn debug_toggle_hotkey_flag_roundtrip(){
+        // 钩子置位 → 主循环一次性消费：读第二次必须为 false，否则一次按键会切换两回。
+        super::shortcuts::debug_toggle_press_for_test();
+        assert!(super::debug_toggle_fired(),"钩子置位后主循环应读到");
+        assert!(!super::debug_toggle_fired(),"读一次即消费，防重复切换");
+    }
+
     #[test]
     fn shift_changes_between_chinese_and_english_without_changing_the_input_method(){
         let mut monitor=Monitor::new(Some(chinese(Some(true))));
