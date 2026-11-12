@@ -64,8 +64,7 @@ impl Reader {
     /// 这样「已连接 → 断开」的状态切换能用单测直接覆盖。
     fn evaluate(&mut self, plain: &str, is_fresh: bool) -> (Option<u8>, bool) {
         let level = parse_level(plain);
-        // 连接态必须先于「沿用缓存」判断：断开时卡片会移除电量数值，
-        // 旧逻辑在 parse_level 失败时直接返回缓存电量，导致断开后一直显示旧电量。
+        // 连接态必须先于「沿用缓存」判断：断开时移除电量数值，避免断开后仍显示旧电量。
         if !card_usable(plain, level, is_fresh) {
             self.clear();
             return (None, false);

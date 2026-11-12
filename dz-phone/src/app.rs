@@ -35,9 +35,9 @@ pub(crate) const LANE_ART_GAP: f32 = 4.0;     // 封面右缘 → 宠物左缘
 pub(crate) const LANE_TEXT_GAP: f32 = 4.0;    // 宠物右缘 → 歌词通道（硬余量，保证不重叠）
 pub(crate) const LANE_CENTER_CAP: f32 = 16.0; // 歌词在通道内居中的最大偏移，避免短歌词离宠物太远
 // 播放指示 5 根竖条以 content_width-21 为中心、向左占 7.8，左缘在 content_width-28.8；
-// 这里留 42 才能让文字与竖条之间有 ~13px 空隙（原来 30 只剩 1.2px，看起来贴在一起）。
+// 42 = 文字与竖条之间留出约 13px 空隙，避免两者贴在一起。
 pub(crate) const LANE_RIGHT_PAD: f32 = 48.0;  // 歌词通道右侧留给播放指示
-// 歌词固定字号：放不下就横向滚动，不再缩字号。
+// 歌词固定字号：放不下就横向滚动。
 const LYRIC_BASE_SIZE: f32 = 11.0;
 const SCROLL_DWELL: f32 = 1.0;      // 句首/句尾停留，先让人看清开头
 const SCROLL_MIN_SPEED: f32 = 22.0; // px/s，约每秒 2 个汉字
@@ -81,8 +81,7 @@ const CLOSE: (f32, f32) = (620.0, 1.0);
 const SWELL_K: (f32, f32) = (420.0, 0.8);
 const PAGE_SLIDE: f32 = 46.0;
 
-/// 悬停多久才展开（秒）。`0` 表示当帧就展开；极简模式加倍，
-/// 默认 200 ms 时仍是原来的 0.40 s 保守值。防误触另由 `LEAVE_DELAY` 兜底。
+/// 悬停多久才展开（秒）。`0` 表示当帧就展开；极简模式加倍。防误触另由 `LEAVE_DELAY` 兜底。
 fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
     let ms = if minimal { ms.saturating_mul(2) } else { ms };
     (ms as f64 / 1000.0).min(1.0)
@@ -1748,7 +1747,7 @@ impl App {
             self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
         }
         // 下载流程（下载中/完成/取消的提示）活跃时不避让，保持常驻显示，
-        // 否则浏览器全屏时下载进度/结果会被收成细线看不见（custom-57）。
+        // 下载流程活跃时保持常驻，否则浏览器全屏时下载进度/结果会被收成细线看不见。
         let browser_minimal=self.settings.browser_minimal && self.browser_at_top && !self.download_active();
         if browser_minimal && !self.browser_minimal_active {
             self.open=false;

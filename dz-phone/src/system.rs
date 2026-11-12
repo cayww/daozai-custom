@@ -252,7 +252,7 @@ pub fn browser_at_top(island:HWND,settings:&crate::model::Settings)->Option<bool
         if foreground.0.is_null(){return None;}
         let mut pid=0;
         GetWindowThreadProcessId(foreground,Some(&mut pid));
-        // 设置、托盘和岛内输入沿用此前的避让状态，避免自身窗口引起反复切换。
+        // 自身窗口（设置、托盘、岛内输入）不计入避让，保持当前避让状态，避免反复切换。
         if pid==0 || pid==GetCurrentProcessId(){return None;}
         let mut browser_rect=RECT::default();let mut island_rect=RECT::default();
         if GetWindowRect(foreground,&mut browser_rect).is_err() || GetWindowRect(island,&mut island_rect).is_err(){return None;}

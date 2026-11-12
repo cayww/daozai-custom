@@ -74,8 +74,7 @@ impl Layout {
     /// 只是把整体左移半个宽度，让常驻组件保持相对位置。
     pub fn add_status(&mut self, width: f32) -> usize {
         let gap = 12.0;
-        // 状态区是胶囊最右侧的槽位，右侧要留与左侧一致的 16px 边距，
-        // 否则下载胶囊会贴到右边缘、与其他槽位左右不对称（custom-55 修复）。
+        // 状态区是胶囊最右的槽位，右侧留与左侧一致的 16px 边距，避免胶囊贴边、左右不对称。
         let end_pad = 16.0;
         let slot = self.x.len();
         self.x.push(None);

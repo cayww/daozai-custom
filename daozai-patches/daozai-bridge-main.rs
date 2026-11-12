@@ -1,10 +1,10 @@
 //! daozai-bridge：浏览器扩展的 Native Messaging 宿主（独立精简版）。
 //!
-//! 这是从主程序 `daozai` 拆出来的独立二进制：只做「接收 Chrome/Edge 下载事件 →
-//! 翻译成 island_status.json 条目」这一件事，不链接 GUI 栈，体积从 18.7MB 降到约 1MB。
+//! 只做「接收 Chrome/Edge 下载事件 → 翻译成 island_status.json 条目」这一件事，
+//! 不链接 GUI 栈。
 //!
-//! 协议与历史版本一致：stdin/stdout 上跑 Native Messaging（4 字节小端长度 + UTF-8 JSON），
-//! 写入与 python 版 StatusBus 同一把文件锁（island_status.lock 首字节）。
+//! 协议：stdin/stdout 上跑 Native Messaging（4 字节小端长度 + UTF-8 JSON），
+//! 写入 island_status.json，与状态总线其他写入者共用同一把文件锁（island_status.lock 首字节）。
 //!
 //! 消息类型：
 //! - `dl`（下载事件，state = progress/complete/cancel）

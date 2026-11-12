@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-58"
+PATCH_ID = "custom-59"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -8380,6 +8380,182 @@ fn bridge_card_body(_app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
         if browser_minimal && !self.browser_minimal_active {
             self.open=false;
             self.hover_lock=true;
+'''),
+
+    # custom-59：清理代码注释里的改动历史痕迹，改为功能描述
+    ("src/app.rs",
+     '''pub(crate) const LANE_TEXT_GAP: f32 = 4.0;    // 宠物右缘 → 歌词通道（硬余量，保证不重叠）
+pub(crate) const LANE_CENTER_CAP: f32 = 16.0; // 歌词在通道内居中的最大偏移，避免短歌词离宠物太远
+// 播放指示 5 根竖条以 content_width-21 为中心、向左占 7.8，左缘在 content_width-28.8；
+// 这里留 42 才能让文字与竖条之间有 ~13px 空隙（原来 30 只剩 1.2px，看起来贴在一起）。
+pub(crate) const LANE_RIGHT_PAD: f32 = 48.0;  // 歌词通道右侧留给播放指示
+// 歌词固定字号：放不下就横向滚动，不再缩字号。
+const LYRIC_BASE_SIZE: f32 = 11.0;
+''',
+     '''pub(crate) const LANE_TEXT_GAP: f32 = 4.0;    // 宠物右缘 → 歌词通道（硬余量，保证不重叠）
+pub(crate) const LANE_CENTER_CAP: f32 = 16.0; // 歌词在通道内居中的最大偏移，避免短歌词离宠物太远
+// 播放指示 5 根竖条以 content_width-21 为中心、向左占 7.8，左缘在 content_width-28.8；
+// 42 = 文字与竖条之间留出约 13px 空隙，避免两者贴在一起。
+pub(crate) const LANE_RIGHT_PAD: f32 = 48.0;  // 歌词通道右侧留给播放指示
+// 歌词固定字号：放不下就横向滚动，不再缩字号。
+const LYRIC_BASE_SIZE: f32 = 11.0;
+'''),
+    ("src/app.rs",
+     '''const SWELL_K: (f32, f32) = (420.0, 0.8);
+const PAGE_SLIDE: f32 = 46.0;
+
+/// 悬停多久才展开（秒）。`0` 表示当帧就展开；极简模式加倍，
+/// 默认 200 ms 时仍是原来的 0.40 s 保守值。防误触另由 `LEAVE_DELAY` 兜底。
+fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
+    let ms = if minimal { ms.saturating_mul(2) } else { ms };
+    (ms as f64 / 1000.0).min(1.0)
+''',
+     '''const SWELL_K: (f32, f32) = (420.0, 0.8);
+const PAGE_SLIDE: f32 = 46.0;
+
+/// 悬停多久才展开（秒）。`0` 表示当帧就展开；极简模式加倍。防误触另由 `LEAVE_DELAY` 兜底。
+fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
+    let ms = if minimal { ms.saturating_mul(2) } else { ms };
+    (ms as f64 / 1000.0).min(1.0)
+'''),
+    ("src/app.rs",
+     '''            self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
+        }
+        // 下载流程（下载中/完成/取消的提示）活跃时不避让，保持常驻显示，
+        // 否则浏览器全屏时下载进度/结果会被收成细线看不见（custom-57）。
+        let browser_minimal=self.settings.browser_minimal && self.browser_at_top && !self.download_active();
+        if browser_minimal && !self.browser_minimal_active {
+            self.open=false;
+''',
+     '''            self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
+        }
+        // 下载流程（下载中/完成/取消的提示）活跃时不避让，保持常驻显示，
+        // 下载流程活跃时保持常驻，否则浏览器全屏时下载进度/结果会被收成细线看不见。
+        let browser_minimal=self.settings.browser_minimal && self.browser_at_top && !self.download_active();
+        if browser_minimal && !self.browser_minimal_active {
+            self.open=false;
+'''),
+    ("src/bar_layout.rs",
+     '''    /// 只是把整体左移半个宽度，让常驻组件保持相对位置。
+    pub fn add_status(&mut self, width: f32) -> usize {
+        let gap = 12.0;
+        // 状态区是胶囊最右侧的槽位，右侧要留与左侧一致的 16px 边距，
+        // 否则下载胶囊会贴到右边缘、与其他槽位左右不对称（custom-55 修复）。
+        let end_pad = 16.0;
+        let slot = self.x.len();
+        self.x.push(None);
+''',
+     '''    /// 只是把整体左移半个宽度，让常驻组件保持相对位置。
+    pub fn add_status(&mut self, width: f32) -> usize {
+        let gap = 12.0;
+        // 状态区是胶囊最右的槽位，右侧留与左侧一致的 16px 边距，避免胶囊贴边、左右不对称。
+        let end_pad = 16.0;
+        let slot = self.x.len();
+        self.x.push(None);
+'''),
+    ("src/extras.rs",
+     '''        if !self.settings.quiet_meeting || self.muted() {return;}
+        let Ok(day)=chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d") else{return};
+        let now=chrono::Local::now().timestamp();
+        // 原来每 5 秒都要把本地/工作/邮件日程合并再排序一次，日程多时会有抖动。
+        // 现在缓存今日候选，60 秒或跨天才重算；触发窗口是 90 秒，不会因此漏掉会议。
+        if self.meeting_plan.0!=env.today || self.t-self.meeting_plan.1>60.0 {
+            let entries=self.calendar_entries(day);
+            let plan=meeting_candidates(entries.iter().map(|entry|entry.event));
+''',
+     '''        if !self.settings.quiet_meeting || self.muted() {return;}
+        let Ok(day)=chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d") else{return};
+        let now=chrono::Local::now().timestamp();
+        // 缓存今日会议候选，60 秒或跨天才重算，避免高频合并排序引起抖动；
+        // 触发窗口是 90 秒，不会因此漏掉会议。
+        if self.meeting_plan.0!=env.today || self.t-self.meeting_plan.1>60.0 {
+            let entries=self.calendar_entries(day);
+            let plan=meeting_candidates(entries.iter().map(|entry|entry.event));
+'''),
+    ("src/extras.rs",
+     '''}
+
+/// 从候选表挑出「刚开始 90 秒内、还没结束」的会议，返回 (勿扰截止, 去重键)。
+/// 抽成纯函数便于单测；多场同时命中时沿用原来的「取最后一个」语义。
+fn meeting_hit(plan:&[(i64,i64,String)],now:i64)->Option<(i64,String)>{
+    let mut hit=None;
+    for (start,end,uid) in plan {
+''',
+     '''}
+
+/// 从候选表挑出「刚开始 90 秒内、还没结束」的会议，返回 (勿扰截止, 去重键)。
+/// 抽成纯函数便于单测；多场同时命中时取最后一个。
+fn meeting_hit(plan:&[(i64,i64,String)],now:i64)->Option<(i64,String)>{
+    let mut hit=None;
+    for (start,end,uid) in plan {
+'''),
+    ("src/pages.rs",
+     '''        }
+
+        self.mail_manage_tick();
+        // v0.5.5：点开某封邮件 → 整块换成正文摘要，左上「返回」回到列表。
+        if let Some((account, uid)) = self.mail.open_uid.clone() {
+            match self.mail_rows()
+                .iter()
+''',
+     '''        }
+
+        self.mail_manage_tick();
+        // 点开某封邮件 → 整块换成正文摘要，左上「返回」回到列表。
+        if let Some((account, uid)) = self.mail.open_uid.clone() {
+            match self.mail_rows()
+                .iter()
+'''),
+    ("src/pages.rs",
+     '''        let unread=self.mail.recent.iter().filter(|m|self.mail_account_match(m)&&self.mail_seen(m,Folder::Inbox)==Some(false)).count();
+        if trash{
+            c.text(list_x+6.0,47.0,&format!("{} {}",if self.settings.mail_sync_operations{"回收站"}else{"本机回收站"},self.mail.manage.trash.len()),10.5,W::Semibold,theme::WHITE,H::Left);
+            // 回收站同样遵守账号筛选，这里补上同一个选框（原来只有收件箱有）。
+            let filter_label=match &self.mail.manage.account_filter{
+                Some(email)=>Self::mail_account_label(email),
+                None=>"全部账号".to_string(),
+''',
+     '''        let unread=self.mail.recent.iter().filter(|m|self.mail_account_match(m)&&self.mail_seen(m,Folder::Inbox)==Some(false)).count();
+        if trash{
+            c.text(list_x+6.0,47.0,&format!("{} {}",if self.settings.mail_sync_operations{"回收站"}else{"本机回收站"},self.mail.manage.trash.len()),10.5,W::Semibold,theme::WHITE,H::Left);
+            // 回收站同样遵守账号筛选，这里补上同一个选框。
+            let filter_label=match &self.mail.manage.account_filter{
+                Some(email)=>Self::mail_account_label(email),
+                None=>"全部账号".to_string(),
+'''),
+    ("src/pages.rs",
+     '''                c.text(x+width/2.0,47.0,&label,10.0,W::Semibold,if selected{theme::WHITE}else{theme::GRAY},H::Center);
+                if c.hit(x,33.0,width,19.0,id).on_hover_text("当前加载的最近邮件").clicked(){self.mail.manage.unread_only=id=="mail-unread";}
+            }
+            // 账号筛选：取代原来的「同步 / 仅本机」小字，模式信息挪进悬停提示。
+            let filter_label=match &self.mail.manage.account_filter{
+                Some(email)=>Self::mail_account_label(email),
+                None=>"全部账号".to_string(),
+''',
+     '''                c.text(x+width/2.0,47.0,&label,10.0,W::Semibold,if selected{theme::WHITE}else{theme::GRAY},H::Center);
+                if c.hit(x,33.0,width,19.0,id).on_hover_text("当前加载的最近邮件").clicked(){self.mail.manage.unread_only=id=="mail-unread";}
+            }
+            // 账号筛选：模式信息放进悬停提示。
+            let filter_label=match &self.mail.manage.account_filter{
+                Some(email)=>Self::mail_account_label(email),
+                None=>"全部账号".to_string(),
+'''),
+    ("src/system.rs",
+     '''        if foreground.0.is_null(){return None;}
+        let mut pid=0;
+        GetWindowThreadProcessId(foreground,Some(&mut pid));
+        // 设置、托盘和岛内输入沿用此前的避让状态，避免自身窗口引起反复切换。
+        if pid==0 || pid==GetCurrentProcessId(){return None;}
+        let mut browser_rect=RECT::default();let mut island_rect=RECT::default();
+        if GetWindowRect(foreground,&mut browser_rect).is_err() || GetWindowRect(island,&mut island_rect).is_err(){return None;}
+''',
+     '''        if foreground.0.is_null(){return None;}
+        let mut pid=0;
+        GetWindowThreadProcessId(foreground,Some(&mut pid));
+        // 自身窗口（设置、托盘、岛内输入）不计入避让，保持当前避让状态，避免反复切换。
+        if pid==0 || pid==GetCurrentProcessId(){return None;}
+        let mut browser_rect=RECT::default();let mut island_rect=RECT::default();
+        if GetWindowRect(foreground,&mut browser_rect).is_err() || GetWindowRect(island,&mut island_rect).is_err(){return None;}
 '''),
 ]
 

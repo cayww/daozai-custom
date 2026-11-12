@@ -378,8 +378,8 @@ impl App {
         if !self.settings.quiet_meeting || self.muted() {return;}
         let Ok(day)=chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d") else{return};
         let now=chrono::Local::now().timestamp();
-        // 原来每 5 秒都要把本地/工作/邮件日程合并再排序一次，日程多时会有抖动。
-        // 现在缓存今日候选，60 秒或跨天才重算；触发窗口是 90 秒，不会因此漏掉会议。
+        // 缓存今日会议候选，60 秒或跨天才重算，避免高频合并排序引起抖动；
+        // 触发窗口是 90 秒，不会因此漏掉会议。
         if self.meeting_plan.0!=env.today || self.t-self.meeting_plan.1>60.0 {
             let entries=self.calendar_entries(day);
             let plan=meeting_candidates(entries.iter().map(|entry|entry.event));
@@ -2602,7 +2602,7 @@ fn meeting_candidates<'a>(events:impl Iterator<Item=&'a crate::mail::Meeting>)->
 }
 
 /// 从候选表挑出「刚开始 90 秒内、还没结束」的会议，返回 (勿扰截止, 去重键)。
-/// 抽成纯函数便于单测；多场同时命中时沿用原来的「取最后一个」语义。
+/// 抽成纯函数便于单测；多场同时命中时取最后一个。
 fn meeting_hit(plan:&[(i64,i64,String)],now:i64)->Option<(i64,String)>{
     let mut hit=None;
     for (start,end,uid) in plan {

@@ -975,7 +975,7 @@ impl App {
         }
 
         self.mail_manage_tick();
-        // v0.5.5：点开某封邮件 → 整块换成正文摘要，左上「返回」回到列表。
+        // 点开某封邮件 → 整块换成正文摘要，左上「返回」回到列表。
         if let Some((account, uid)) = self.mail.open_uid.clone() {
             match self.mail_rows()
                 .iter()
@@ -1012,7 +1012,7 @@ impl App {
         let unread=self.mail.recent.iter().filter(|m|self.mail_account_match(m)&&self.mail_seen(m,Folder::Inbox)==Some(false)).count();
         if trash{
             c.text(list_x+6.0,47.0,&format!("{} {}",if self.settings.mail_sync_operations{"回收站"}else{"本机回收站"},self.mail.manage.trash.len()),10.5,W::Semibold,theme::WHITE,H::Left);
-            // 回收站同样遵守账号筛选，这里补上同一个选框（原来只有收件箱有）。
+            // 回收站同样遵守账号筛选，这里补上同一个选框。
             let filter_label=match &self.mail.manage.account_filter{
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
@@ -1033,7 +1033,7 @@ impl App {
                 c.text(x+width/2.0,47.0,&label,10.0,W::Semibold,if selected{theme::WHITE}else{theme::GRAY},H::Center);
                 if c.hit(x,33.0,width,19.0,id).on_hover_text("当前加载的最近邮件").clicked(){self.mail.manage.unread_only=id=="mail-unread";}
             }
-            // 账号筛选：取代原来的「同步 / 仅本机」小字，模式信息挪进悬停提示。
+            // 账号筛选：模式信息放进悬停提示。
             let filter_label=match &self.mail.manage.account_filter{
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
