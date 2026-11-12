@@ -37,7 +37,7 @@ pub(crate) const LANE_CENTER_CAP: f32 = 16.0; // 歌词在通道内居中的最�
 // 播放指示 5 根竖条以 content_width-21 为中心、向左占 7.8，左缘在 content_width-28.8；
 // 42 = 文字与竖条之间留出约 13px 空隙，避免两者贴在一起。
 pub(crate) const LANE_RIGHT_PAD: f32 = 48.0;  // 歌词通道右侧留给播放指示
-// 歌词固定字号：放不下就横向滚动，不再缩字号。
+// 歌词固定字号：放不下就横向滚动。
 const LYRIC_BASE_SIZE: f32 = 11.0;
 const SCROLL_DWELL: f32 = 1.0;      // 句首/句尾停留，先让人看清开头
 const SCROLL_MIN_SPEED: f32 = 22.0; // px/s，约每秒 2 个汉字

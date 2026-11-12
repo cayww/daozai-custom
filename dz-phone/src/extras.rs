@@ -1185,7 +1185,7 @@ mod tests {
 
     #[test]
     fn settings_groups_keep_every_page_reachable() {
-        let groups = ["常规", "音乐与歌词", "专注与饮水", "专注与饮水", "待办与置物", "待办与置物", "通知、邮箱与日程", "通知、邮箱与日程", "通知、邮箱与日程", "关于", "页面管理", "AI 额度", "短信", "浏览器下载"];
+        let groups = ["常规", "音乐与歌词", "专注与饮水", "专注与饮水", "待办与置物", "待办与置物", "通知、邮箱与日程", "通知、邮箱与日程", "通知、邮箱与日程", "关于", "页面管理", "AI 额度", "手机连接", "浏览器下载"];
         for (tab, expected) in groups.iter().enumerate() {
             let matches: Vec<_> = SETTINGS_GROUPS.iter().filter(|(_,start,end)| (*start..=*end).contains(&tab)).collect();
             assert_eq!(matches.len(), 1, "页面 {tab} 必须且只能属于一个分组");
@@ -1628,7 +1628,7 @@ fn setting_choices(ui:&mut egui::Ui,title:&str,value:&mut u32,values:[u32;3],uni
 }
 const SETTINGS_GROUPS: [(&str,usize,usize);10] = [
     ("常规",0,0), ("页面管理",10,10), ("音乐与歌词",1,1), ("专注与饮水",2,3),
-    ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("短信",12,12), ("浏览器下载",13,13), ("AI 额度",11,11), ("关于",9,9),
+    ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("手机连接",12,12), ("浏览器下载",13,13), ("AI 额度",11,11), ("关于",9,9),
 ];
 
 /// 「浏览器下载」卡片：始终显示安装指引（打开浏览器扩展页和扩展文件夹、复制路径）。
@@ -1737,7 +1737,7 @@ impl App {
                     }
                 }
                 ui.visuals_mut().selection.bg_fill=settings_color(ctx,Color32::from_rgb(45,105,165),Color32::from_rgb(209,226,248));
-                let titles=["常规","音乐与歌词","专注","饮水","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","短信","浏览器下载"];
+                let titles=["常规","音乐与歌词","专注","饮水","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","手机连接","浏览器下载"];
                 ui.label(egui::RichText::new(titles[self.settings_tab.min(13)]).size(18.0).strong().color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))));
                 if let Some((_,start,end))=SETTINGS_GROUPS.iter().find(|(_,start,end)|(*start..=*end).contains(&self.settings_tab)) {
                     if start!=end {
@@ -1763,7 +1763,7 @@ impl App {
                     match self.settings_tab {
                     11=>self.quota_settings(ui),
                     12=>{
-                        settings_label(ui,"手机连接");
+                        settings_label(ui,"连接状态");
                         settings_card(ui,|ui|{
                             // 连接状态：直接读手机连接卡片，不经电量开关。
                             let (linked, device, level) = crate::phone_battery::snapshot();
@@ -1795,11 +1795,18 @@ impl App {
                                     let _ = std::process::Command::new(prog).arg(arg).spawn();
                                 }
                             }
-                            settings_hint(ui, "用 Windows 内置的「手机连接」配对手机：打开后按提示扫码连接，之后手机短信、来电、电量都会自动上岛。连接成功后上方状态会变绿，再按需开启下面的「手机电量」与「验证码自动复制」。");
+                            settings_hint(ui, "用 Windows 内置的「手机连接」配对手机：打开后按提示扫码连接，之后手机短信、来电、电量都会自动上岛。连接成功后上方状态会变绿。");
                         });
-                        settings_label(ui,"手机短信");
+                        settings_label(ui,"手机功能");
                         settings_card(ui,|ui|{
-                            ui.label(egui::RichText::new("手机短信通过「手机连接」转发；验证码可自动写入剪贴板。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            // 手机电量：从「手机连接」读取，与本机电量并排显示。
+                            if crate::phone_battery::installed() {
+                                setting_row(ui,"手机电量","读取「手机连接」的电量，与本机电量各自独立、并排显示；手机断开时自动收起",&mut self.settings.phone_battery);
+                            } else {
+                                setting_row_locked(ui,"手机电量","未检测到「手机连接」，安装后才能开启",self.settings.phone_battery);
+                            }
+                            ui.separator();
+                            ui.label(egui::RichText::new("手机短信通过「手机连接」转发。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
                         });
                     },
@@ -1810,12 +1817,6 @@ impl App {
                         settings_label(ui,"状态组件");
                         settings_card(ui,|ui|{
                             setting_row(ui,"电量","显示本机（电脑）的电量环；台式机没有电池时不显示",&mut self.settings.show_battery);
-                            ui.separator();
-                            if crate::phone_battery::installed() {
-                                setting_row(ui,"手机电量","读取「手机连接」的电量，与本机电量各自独立、并排显示；手机断开时自动收起",&mut self.settings.phone_battery);
-                            } else {
-                                setting_row_locked(ui,"手机电量","未检测到「手机连接」，安装后才能开启",self.settings.phone_battery);
-                            }
                             ui.separator();
                             setting_row(ui,"岛上歌词","收起时显示歌词，无歌词时显示封面和歌名",&mut self.settings.island_lyrics);
                         });
