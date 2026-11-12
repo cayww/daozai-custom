@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-46"
+PATCH_ID = "custom-47"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -7816,6 +7816,101 @@ fn main() -> std::process::ExitCode {
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_System_Diagnostics_ToolHelp",
+'''),
+
+    # custom-47：设置页浏览器下载卡片：桥在线状态 + 一键引导连接
+    ("src/extras.rs",
+     '''    ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("短信",12,12), ("AI 额度",11,11), ("关于",9,9),
+];
+
+impl App {
+    pub fn settings_ui(&mut self,ctx:&egui::Context,autostart:bool){
+        if !self.settings_open{release_support_codes(ctx);}
+''',
+     '''    ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("短信",12,12), ("AI 额度",11,11), ("关于",9,9),
+];
+
+/// 浏览器扩展桥是否在线（2 秒缓存，避免每帧扫一次进程表）。
+///
+/// Chrome/Edge 只在扩展真正连上时才拉起 daozai_bridge.exe，断开即回收进程，
+/// 所以「桥宿主进程在」就是「扩展在线」的可靠信号。
+#[cfg(windows)]
+fn bridge_alive_cached() -> bool {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, value)) = *cache {
+        if at.elapsed().as_millis() < 2000 { return value; }
+    }
+    let value = crate::bridge::host_process_running();
+    *cache = Some((std::time::Instant::now(), value));
+    value
+}
+
+#[cfg(not(windows))]
+fn bridge_alive_cached() -> bool { false }
+
+/// 「浏览器下载」卡片：连接状态 + 一键引导连接（打开浏览器扩展页和扩展文件夹、复制路径）。
+/// Chrome/Edge 从 33 版起封死了本地扩展的静默安装，只能开发者模式加载，所以做成引导而非自动装。
+#[cfg(windows)]
+fn bridge_card_body(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui, alive: bool) {
+    let text = if alive {
+        "浏览器扩展已连接：下载进度实时上岛（蓝胶囊 = 下载中，绿胶囊 = 完成可点击打开）。"
+    } else {
+        "浏览器扩展未连接"
+    };
+    let light = if alive { Color32::from_rgb(46,125,50) } else { Color32::from_gray(120) };
+    let dark = if alive { Color32::from_rgb(129,199,132) } else { Color32::from_gray(160) };
+    ui.label(egui::RichText::new(text).size(13.0).color(settings_color(ctx, light, dark)));
+    if alive { return; }
+    let Some(ext) = crate::bridge::extension_folder() else {
+        ui.label(egui::RichText::new("未找到浏览器扩展（bridge\\\\extension）。请用岛仔安装包安装后再来连接。").size(12.0).color(settings_color(ctx, Color32::from_gray(180), Color32::from_gray(75))));
+        return;
+    };
+    ui.horizontal_wrapped(|ui| {
+        for (name, exe) in crate::bridge::installed_browsers() {
+            if ui.button(format!("连接 {name}")).clicked() {
+                let page = if name == "Edge" { "edge://extensions/" } else { "chrome://extensions/" };
+                let _ = std::process::Command::new(&exe).arg(page).spawn();
+                let _ = std::process::Command::new("explorer.exe").arg(&ext).spawn();
+                ui.ctx().copy_text(ext.display().to_string());
+                app.say(format!("已打开 {name} 的扩展页和扩展文件夹，把文件夹拖进去即可（路径已复制）"));
+            }
+        }
+    });
+    ui.label(egui::RichText::new(format!("扩展目录：{}", ext.display())).size(11.5).color(settings_color(ctx, Color32::from_gray(195), Color32::from_gray(60))));
+    settings_hint(ui, "步骤：扩展页右上角打开「开发者模式」→ 把弹出的 extension 文件夹拖进扩展页（或点「加载已解压的扩展程序」选它）→ 之后浏览器下载会实时上岛。连接成功后这里会自动变绿。");
+}
+
+#[cfg(not(windows))]
+fn bridge_card_body(_app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui, _alive: bool) {
+    ui.label("浏览器下载对接仅支持 Windows。");
+}
+
+impl App {
+    pub fn settings_ui(&mut self,ctx:&egui::Context,autostart:bool){
+        if !self.settings_open{release_support_codes(ctx);}
+'''),
+    ("src/extras.rs",
+     '''                            if before_phone_apps!=self.phone_apps.items{self.phone_apps.save();}
+                            });
+                        });
+                    }
+                    7=>{
+                        settings_label(ui,"邮件提醒");
+''',
+     '''                            if before_phone_apps!=self.phone_apps.items{self.phone_apps.save();}
+                            });
+                        });
+                        settings_label(ui,"浏览器下载");
+                        settings_card(ui,|ui|{
+                            let alive=bridge_alive_cached();
+                            ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
+                            bridge_card_body(self,ctx,ui,alive);
+                        });
+                    }
+                    7=>{
+                        settings_label(ui,"邮件提醒");
 '''),
 ]
 

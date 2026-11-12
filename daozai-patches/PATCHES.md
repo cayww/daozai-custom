@@ -558,6 +558,39 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 76 个 src 文件逐字节一致。
 
 
+## 设置页「浏览器下载」一键引导连接（custom-47）
+
+用户要求把「装浏览器扩展」做进软件，并问桥为什么必须另开一个 exe。
+
+**结论（先说限制）**：Chrome/Edge 从 33 版起封死本地扩展的静默安装
+（官方文档明说 Windows 注册表外部安装只认 Web Store 的 update_url；
+本地 CRX 路径安装已禁用）。所以做不了「点一下就装好」，做成**一键引导**：
+
+**改动**：
+- `src/bridge.rs` 新增主程序侧助手（模块整份随链分发）：
+  `host_process_running()`（进程表查 daozai_bridge.exe = 扩展在线信号，
+  Chrome 只在扩展真正连上时才拉宿主、断开即回收）；
+  `installed_browsers()`（App Paths 注册表 HKLM/HKCU + 常见路径兜底，
+  找 Chrome/Edge 真实存在的 exe，去重）；
+  `extension_folder()`（exe 同目录 bridge\extension，安装布局才有）。
+  复用 Cargo.toml 已有的 `Win32_System_Diagnostics_ToolHelp` /
+  `Win32_System_Registry` 特性，本轮 Cargo 零改动。
+- `src/extras.rs` 设置 → 通知，末尾新增「浏览器下载」卡片：
+  2 秒缓存轮询桥进程（`Mutex` 静态缓存 + `request_repaint_after`），
+  未连接时按检测结果出「连接 Chrome / 连接 Edge」按钮——一键同时打开
+  浏览器扩展页、资源管理器里的 extension 文件夹、复制路径到剪贴板；
+  附三步指引；扩展文件夹缺失时提示用安装包安装。连接成功状态自动变绿。
+
+**为什么桥是独立的 daozai_bridge.exe**（回答用户疑问，记入文档）：
+Chrome Native Messaging 只能由浏览器拉起宿主清单里指定的 exe（path
+字段不能带参数），断开时会杀掉宿主进程；主程序有单实例互斥体且不能
+被浏览器随手杀掉，所以用改了名的自身副本按文件名进桥模式。
+
+**验证**：814 passed / 0 failed / 86 ignored（新增 5 项桥单测）；
+重放 custom-47，359 处 EDITS、跳过 0、src 一致；安装包
+daozai-setup-custom-47.exe 静默装回 D:////software////Daozai，
+岛重启正常（进程 31144）。
+
 ## 安装包 + 浏览器扩展桥宿主（custom-46）
 
 用户要求「做成像 Windows 应用那样的安装包，选路径安装、能写注册表」。
