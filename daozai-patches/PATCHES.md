@@ -576,6 +576,29 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## 下载进度实时更新：轮询引擎（custom-50）
+
+用户报告：下载能上岛但不更新实时进度，且 15 秒左右消失。
+
+**诊断**：桥侧用「模拟扩展节奏直接喂 30 条消息」验证完美（实时写入+速度）；
+信标法抓到关键事实——下载进行中 Chrome 的 `downloads.onChanged` 只在
+filename 确定和 complete 时各触发一次，**期间 32 秒零事件**。查官方文档：
+onChanged 明确排除 `bytesReceived`（每次网络包都变，故意不上报）——
+进度必须主动轮询 `chrome.downloads.search`。15 秒消失 = 进度条目 TTL
+（PROGRESS_SECONDS=15）到期且无新数据刷新。
+
+**修复**（`browser-bridge/extension/sw.js` 重写）：
+- 保留 onCreated/onChanged 监听（文件名/状态切换事件）；
+- 新增轮询引擎：push 见到 in_progress 就 ensurePolling——
+  500 ms setInterval 查 `search({state:"in_progress"})` 逐项推送，
+  无活跃下载时自动 clearInterval（SW 随之休眠、端口断开，桥幂等退出）；
+- 30 秒 alarms 心跳兜底：SW 万一被回收，闹钟唤醒后恢复轮询，
+  长下载进度不断流（manifest 加 `"alarms"` 权限）。
+
+**验证**：80 MB 慢速下载（32 秒）端到端——状态文件 67 次更新，
+进度 0 B → 80.0 MB 每 0.5 秒滚动、速度实时（2.5 MB/s）、完成正常转绿；
+重放 custom-50 一致；安装包 custom-50 静默装回，扩展文件装机一致。
+
 ## 扩展原生消息权限缺失修复（custom-49）
 
 用户装好扩展后下载进度始终不上岛。逐环排查：桥 exe 手动拉起正常、注册表
