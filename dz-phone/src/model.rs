@@ -248,6 +248,8 @@ pub struct Settings {
     pub clipboard_history: bool,
     /// 低电提醒阈值（百分比，0 = 关闭）。手机与本机共用，跨越阈值只提醒一次。
     pub battery_alert: u32,
+    /// AI 额度提醒阈值（剩余百分比，0 = 关闭）。跌破提醒一次，回升后重新武装。
+    pub quota_alert: u32,
     /// 通知关键词高亮：逗号分隔，命中时卡片左侧亮一条琥珀色竖条；空 = 关闭。
     pub notice_keywords: String,
     /// 勿扰时长（分钟，0 = 关闭）。只在本次运行内生效，重启后恢复为关闭。
@@ -260,7 +262,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
     }
 }
 
@@ -374,6 +376,7 @@ impl Settings {
                 "notice_keywords" => s.notice_keywords = v.trim().to_string(),
                 "quiet_minutes" => s.quiet_minutes = match v.parse::<u32>().unwrap_or(0) { 30 => 30, 60 => 60, 120 => 120, _ => 0 },
                 "quiet_meeting" => s.quiet_meeting = v != "0",
+                "quota_alert" => s.quota_alert = match v.parse::<u32>().unwrap_or(20) { 0 => 0, 10 => 10, 20 => 20, 30 => 30, _ => 20 },
                 "mail_filter" => s.mail_filter = v.trim().to_string(),
                 _ => {}
             }
@@ -442,6 +445,7 @@ impl Settings {
                 ("notice_keywords".into(), self.notice_keywords.clone()),
                 ("quiet_minutes".into(), self.quiet_minutes.to_string()),
                 ("quiet_meeting".into(), (self.quiet_meeting as u8).to_string()),
+                ("quota_alert".into(), self.quota_alert.to_string()),
                 ("mail_filter".into(), self.mail_filter.clone()),
             ],
         );
@@ -942,6 +946,78 @@ impl NotificationApps {
     }
 }
 
+/// 通知规则：`notice-rules.json` 里每条 = 正则 + 动作，按文件顺序、第一条命中即生效。
+///
+/// ```json
+/// [{"pattern":"^(广告|促销)","action":"mute"},
+///  {"pattern":"验证码","action":"copy"},
+///  {"pattern":"面试|offer","action":"highlight"}]
+/// ```
+///
+/// 动作：`mute` 静音（不上岛）、`highlight` 左侧亮琥珀色竖条、`copy` 自动复制正文。
+/// 正则按 `(?i)` 编译，写错的那条会被跳过，不影响其它规则。
+pub struct NoticeRules {
+    pub items: Vec<(String, String)>,
+    compiled: Vec<(regex::Regex, String)>,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl Default for NoticeRules {
+    fn default() -> Self {
+        Self { items: Vec::new(), compiled: Vec::new(), modified: None }
+    }
+}
+
+impl NoticeRules {
+    pub fn path() -> PathBuf { config_dir().join("notice-rules.json") }
+
+    pub fn load() -> Self {
+        let mut rules = Self::default();
+        rules.reload();
+        rules
+    }
+
+    pub fn reload(&mut self) {
+        let path = Self::path();
+        self.modified = fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let Ok(raw) = fs::read(&path) else {
+            self.items.clear();
+            self.compiled.clear();
+            return;
+        };
+        let Ok(text)=std::str::from_utf8(&raw) else{return;};
+        self.parse(text);
+    }
+
+    /// 从 JSON 字节解析规则（reload 与单测共用）：正则写错的那条跳过，不影响其它规则。
+    fn parse(&mut self, raw: &str) {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(raw) else { return; };
+        self.items = json.as_array().into_iter().flatten().filter_map(|rule| {
+            Some((rule.get("pattern")?.as_str()?.to_owned(), rule.get("action")?.as_str()?.to_lowercase()))
+        }).collect();
+        self.compiled = self.items.iter().filter_map(|(pattern, action)| {
+            regex::Regex::new(&format!("(?i){pattern}")).ok().map(|re| (re, action.clone()))
+        }).collect();
+    }
+
+    /// 文件改动约 1 秒内生效，不用重启。
+    pub fn reload_if_changed(&mut self) {
+        let now = fs::metadata(Self::path()).and_then(|m| m.modified()).ok();
+        if now != self.modified { self.reload(); }
+    }
+
+    /// 是否有任一条「动作 = action」的规则命中文本。
+    pub fn hits(&self, text: &str, action: &str) -> bool {
+        if text.is_empty() { return false; }
+        self.compiled.iter().any(|(re, act)| act == action && re.is_match(text))
+    }
+
+    /// 第一条命中的规则动作，用于诊断日志。
+    pub fn first_action(&self, text: &str) -> Option<&str> {
+        self.compiled.iter().find(|(re, _)| re.is_match(text)).map(|(_, act)| act.as_str())
+    }
+}
+
 /// 手机连接通知的来源 App 名单：`name` 匹配 Toast 正文首段，`label` 是岛上显示的标签，
 /// `allow=false` 表示静默。放在 `phone-apps.json`，改完约 1 秒自动重载，不用重编译。
 pub struct PhoneApps {
@@ -1010,5 +1086,23 @@ impl PhoneApps {
     pub fn lookup(&self,head:&str)->Option<(String,bool)>{
         self.items.iter().find(|(name,_,_)|head.contains(name.as_str()))
             .map(|(_,label,allow)|(label.clone(),*allow))
+    }
+}
+
+#[cfg(test)]
+mod notice_rules_tests {
+    use super::NoticeRules;
+
+    #[test]
+    fn 规则按顺序第一条命中且坏正则不影响其它条() {
+        let mut rules = NoticeRules::default();
+        rules.parse(r#"[{"pattern":"广告","action":"mute"},{"pattern":"(","action":"copy"},{"pattern":"验证码|校验码","action":"copy"},{"pattern":"面试","action":"highlight"}]"#);
+        assert!(rules.hits("这是一条广告推送", "mute"), "广告应被静音");
+        assert!(rules.hits("您的验证码 1234", "copy"), "验证码应自动复制");
+        assert!(rules.hits("明天下午面试", "highlight"), "面试应高亮");
+        assert!(!rules.hits("普通消息", "mute"));
+        assert_eq!(rules.first_action("广告里带验证码"), Some("mute"), "按文件顺序第一条生效");
+        // 空文本不该命中。
+        assert!(!rules.hits("", "mute"));
     }
 }

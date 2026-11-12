@@ -362,6 +362,8 @@ impl App {
     /// 文本是否命中通知关键词表（大小写不敏感）。
     pub(crate) fn keyword_hit(&self,text:&str)->bool{
         if text.is_empty(){return false;}
+        // 规则里的 highlight 与关键词表同权：命中就亮琥珀色竖条。
+        if self.notice_rules.hits(text,"highlight"){return true;}
         let lower=text.to_lowercase();
         self.settings.keywords().iter().any(|word|lower.contains(&word.to_lowercase()))
     }
@@ -385,6 +387,49 @@ impl App {
         self.quiet_meeting_key=Some(key);
         self.quiet_until=until as f64;
         self.say("会议开始，自动勿扰到散会");
+    }
+
+    /// 把配置与状态复制到 `backups/<时间戳>/`：只复制文件、不递归子目录，不动原配置。
+    pub(crate) fn backup_settings(&mut self){
+        let Some(base)=std::env::var_os("APPDATA") else{self.say("找不到 APPDATA，无法备份");return;};
+        let root=std::path::PathBuf::from(base).join("Daozai");
+        let Some(backups)=backup_root() else{self.say("找不到 APPDATA，无法备份");return;};
+        let dest=backups.join(chrono::Local::now().format("%Y%m%d-%H%M%S").to_string());
+        if std::fs::create_dir_all(&dest).is_err(){self.say("备份失败：建不了目录");return;}
+        let mut count=0;
+        if let Ok(entries)=std::fs::read_dir(&root){
+            for entry in entries.flatten(){
+                let path=entry.path();
+                if path.is_dir(){continue;}
+                let Some(name)=path.file_name() else{continue;};
+                if std::fs::copy(&path,dest.join(name)).is_ok(){count+=1;}
+            }
+        }
+        self.say(format!("已备份 {count} 个文件"));
+        self.pending.push(Cmd::Open(dest));
+    }
+
+    /// AI 额度阈值：任一窗口剩余 ≤ 阈值时提醒一次；回到阈值以上后重新武装。
+    /// 每 30 秒看一次内存里的快照，不额外请求接口。
+    pub(crate) fn quota_threshold_alert(&mut self){
+        let threshold=self.settings.quota_alert;
+        if threshold==0 {return;}
+        let mut fresh:Vec<(String,f32)>=Vec::new();
+        let mut armed=std::collections::HashSet::new();
+        for (id,row) in self.quota.rows.iter(){
+            let Ok(snapshot)=row else{continue};
+            for window in snapshot.windows.iter().chain(snapshot.extra.iter()){
+                if window.remaining<=threshold as f32 {
+                    let key=(id.clone(),window.label.clone());
+                    if !self.quota_alerted.contains(&key){fresh.push((window.label.clone(),window.remaining));}
+                    armed.insert(key);
+                }
+            }
+        }
+        self.quota_alerted=armed;
+        for (label,remaining) in fresh {
+            self.alert("AI 额度", format!("{label} 只剩 {remaining:.0}%"), 7, true);
+        }
     }
 
     /// 设置页用的最近通知：2 秒缓存一次，别每帧读盘。
@@ -455,6 +500,17 @@ impl App {
         if phone_info.as_ref().is_some_and(|(_,allow)|!allow){
             log_notice(&format!("DROP 名单静默    {trace}"));
             return;
+        }
+        // 通知规则：静音 / 自动复制正文。规则文件改完约 1 秒生效，不用重启。
+        self.notice_rules.reload_if_changed();
+        let rule_text=format!("{app} {body}");
+        if self.notice_rules.hits(&rule_text,"mute") {
+            log_notice(&format!("DROP 规则静音    {trace}"));
+            return;
+        }
+        if self.notice_rules.hits(&rule_text,"copy") && !body.trim().is_empty() {
+            self.pending.push(Cmd::Copy(body.clone()));
+            log_notice(&format!("规则命中 copy    {trace}"));
         }
         // 来电方（正文首段就是号码或联系人），来电中/未接来电都用它当副标题。
         let caller=body.split('·').next().unwrap_or("").trim().to_string();
@@ -570,6 +626,12 @@ pub(crate) fn log_otp(source:&str,code:Option<&str>){
         use std::io::Write;
         let _=writeln!(file,"{} | {} | {}",chrono::Local::now().format("%H:%M:%S"),source,code.unwrap_or("-"));
     }
+}
+
+/// 备份目录：`%APPDATA%\Daozai\backups`，每次备份一个时间戳子目录。
+pub(crate) fn backup_root()->Option<std::path::PathBuf>{
+    let base=std::env::var_os("APPDATA")?;
+    Some(std::path::PathBuf::from(base).join("Daozai").join("backups"))
 }
 
 /// 番茄统计：`%APPDATA%\Daozai\focus-stats.json`，只记「今天多少分钟」。
@@ -1801,6 +1863,17 @@ impl App {
                             ui.separator();
                             setting_row(ui,"全屏时隐藏","游戏、视频和演示全屏时隐藏",&mut self.settings.hide_fullscreen);
                         });
+                        settings_label(ui,"备份");
+                        settings_card(ui,|ui|{
+                            ui.horizontal(|ui|{
+                                if ui.button("备份配置").on_hover_text("把 Daozai 目录下的配置与状态复制一份").clicked(){self.backup_settings();}
+                                if ui.button("打开备份目录").clicked(){
+                                    if let Some(dir)=backup_root(){let _=std::fs::create_dir_all(&dir);self.pending.push(Cmd::Open(dir));}
+                                }
+                            });
+                            ui.add_space(3.0);
+                            ui.small("备份到 %APPDATA%\\Daozai\\backups\\<时间戳>\\，只复制文件，不动原配置。");
+                        });
                     }
                     1=>{
                         settings_label(ui,"歌词");
@@ -1892,34 +1965,6 @@ impl App {
                             ui.separator();
                             setting_row(ui,"提醒总开关","关闭后饮水、专注、待办、微信和 QQ 提醒都不显示",&mut self.settings.notifications);
                             ui.separator();
-                            settings_control_row(ui,"低电提醒",SETTINGS_LABEL_W,|ui|{
-                                let mut value=self.settings.battery_alert;
-                                ui.horizontal(|ui|{
-                                    if settings_segmented(ui,&mut value,&[(0,"关"),(10,"10%"),(20,"20%"),(30,"30%")],44.0){
-                                        self.settings.battery_alert=value;
-                                    }
-                                }).response
-                            });
-                            settings_hint(ui,"跨过阈值只提醒一次，手机与本机共用；充满时也会提示。");
-                            ui.separator();
-                            // 勿扰：选时长立即生效，到点自动关闭；重启后恢复关闭。
-                            let mut quiet=if self.quiet_until>self.t {self.settings.quiet_minutes.max(30)} else {0};
-                            let mut quiet_pick=None;
-                            settings_control_row(ui,"勿扰",SETTINGS_LABEL_W,|ui|{
-                                ui.horizontal(|ui|{
-                                    if settings_segmented(ui,&mut quiet,&[(0,"关"),(30,"30 分"),(60,"60 分"),(120,"2 小时")],48.0){
-                                        quiet_pick=Some(quiet);
-                                    }
-                                }).response
-                            });
-                            if let Some(minutes)=quiet_pick {self.set_quiet(minutes);}
-                            settings_hint(ui,"勿扰期间不弹横幅、不闪铃铛；验证码仍会提醒。");
-                            ui.separator();
-                            let mut keywords_on=!self.settings.notice_keywords.trim().is_empty();
-                            setting_row(ui,"通知关键词高亮","命中关键词时卡片左侧亮起琥珀色竖条；词表改 settings.txt 的 notice_keywords",&mut keywords_on);
-                            if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
-                                self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
-                            }
                             ui.separator();
                             setting_row(ui,"会议自动勿扰","日程开始时自动勿扰到散会（最多 2 小时），散会自动解除",&mut self.settings.quiet_meeting);
                             ui.separator();
@@ -1942,6 +1987,53 @@ impl App {
                                 if snooze {self.snooze_notice(5.0,title,body);}
                                 else {self.pending.push(Cmd::Copy(body));self.say("已复制通知正文");}
                             }
+                            settings_control_row(ui,"低电提醒",SETTINGS_LABEL_W,|ui|{
+                                let mut value=self.settings.battery_alert;
+                                ui.horizontal(|ui|{
+                                    if settings_segmented(ui,&mut value,&[(0,"关"),(10,"10%"),(20,"20%"),(30,"30%")],44.0){
+                                        self.settings.battery_alert=value;
+                                    }
+                                }).response
+                            });
+                            settings_hint(ui,"跨过阈值只提醒一次，手机与本机共用；充满时也会提示。");
+                            ui.separator();
+                            settings_control_row(ui,"AI 额度提醒",SETTINGS_LABEL_W,|ui|{
+                                let mut value=self.settings.quota_alert;
+                                ui.horizontal(|ui|{
+                                    if settings_segmented(ui,&mut value,&[(0,"关"),(10,"10%"),(20,"20%"),(30,"30%")],44.0){
+                                        self.settings.quota_alert=value;
+                                    }
+                                }).response
+                            });
+                            settings_hint(ui,"任一额度窗口剩余跌破阈值时提醒一次，回升后下次还能再提醒。");
+                            ui.separator();
+                            // 勿扰：选时长立即生效，到点自动关闭；重启后恢复关闭。
+                            let mut quiet=if self.quiet_until>self.t {self.settings.quiet_minutes.max(30)} else {0};
+                            let mut quiet_pick=None;
+                            settings_control_row(ui,"勿扰",SETTINGS_LABEL_W,|ui|{
+                                ui.horizontal(|ui|{
+                                    if settings_segmented(ui,&mut quiet,&[(0,"关"),(30,"30 分"),(60,"60 分"),(120,"2 小时")],48.0){
+                                        quiet_pick=Some(quiet);
+                                    }
+                                }).response
+                            });
+                            if let Some(minutes)=quiet_pick {self.set_quiet(minutes);}
+                            settings_hint(ui,"勿扰期间不弹横幅、不闪铃铛；验证码仍会提醒。");
+                            ui.separator();
+                            let mut keywords_on=!self.settings.notice_keywords.trim().is_empty();
+                            setting_row(ui,"通知关键词高亮","命中关键词时卡片左侧亮起琥珀色竖条；词表改 settings.txt 的 notice_keywords",&mut keywords_on);
+                            if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
+                                self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
+                            }
+                            ui.separator();
+                            settings_control_row(ui,"通知规则",SETTINGS_LABEL_W,|ui|{
+                                ui.horizontal(|ui|{
+                                    let count=self.notice_rules.items.len();
+                                    ui.label(egui::RichText::new(if count==0 {"未配置".to_string()} else {format!("{count} 条")}).size(12.0));
+                                    if ui.button("编辑规则").clicked(){self.pending.push(Cmd::Open(crate::model::NoticeRules::path()));}
+                                }).response
+                            });
+                            settings_hint(ui,"notice-rules.json：pattern + action（mute 静音 / highlight 高亮 / copy 自动复制），按顺序第一条生效，改完约 1 秒生效。");
                         });
                         // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
                         let master=self.settings.notifications;
