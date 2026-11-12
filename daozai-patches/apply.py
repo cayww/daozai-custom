@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-55"
+PATCH_ID = "custom-56"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -8286,6 +8286,45 @@ fn bridge_card_body(_app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
         self.status = Some(slot);
         slot
     }
+'''),
+
+    # custom-56：下载进度改为胶囊自身逐渐填满（替换底部细进度条）
+    ("src/app.rs",
+     '''                    for status in self.status_live.iter().take(3) {
+                        let w=self.status_item_width(status);
+                        let tone=crate::extras::status_color(&status.color);
+                        c.fill(x,5.0,w,20.0,10.0,Color32::from_gray(36));
+                        c.circle(x+8.0,15.0,2.5,tone);
+                        c.centered_text(x+14.0,15.0,&c.fit(&status.text,10.5,W::Regular,w-20.0),10.5,W::Regular,theme::WHITE,H::Left);
+                        if let Some(progress)=status.progress.filter(|v|v.is_finite()) {
+                            let p=progress.clamp(0.0,1.0) as f32;
+                            c.fill(x+2.0,23.0,w-4.0,1.5,0.75,Color32::from_gray(60));
+                            c.fill(x+2.0,23.0,(w-4.0)*p,1.5,0.75,tone);
+                        }
+                        x+=w+6.0;
+                    }
+                }
+''',
+     '''                    for status in self.status_live.iter().take(3) {
+                        let w=self.status_item_width(status);
+                        let tone=crate::extras::status_color(&status.color);
+                        // 有进度条的下载胶囊：底色灰，彩色进度层从左向右逐渐填满整个胶囊
+                        // （裁剪到进度宽度，左圆角保留、右边缘随进度推进），替代底部细进度条。
+                        let progress=status.progress.filter(|v|v.is_finite())
+                            .map(|v|v.clamp(0.0,1.0) as f32);
+                        c.fill(x,5.0,w,20.0,10.0,Color32::from_gray(36));
+                        if let Some(p)=progress {
+                            if p>0.0 {
+                                // 填充层裁剪到 [x, x+w*p]，整体画圆角矩形即可得到「左边圆角+右侧随进度裁平」。
+                                let fillc=c.clipped(x,5.0,(w*p).max(1.0),20.0);
+                                fillc.fill(x,5.0,w,20.0,10.0,tone);
+                            }
+                        }
+                        c.circle(x+8.0,15.0,2.5,tone);
+                        c.centered_text(x+14.0,15.0,&c.fit(&status.text,10.5,W::Regular,w-20.0),10.5,W::Regular,theme::WHITE,H::Left);
+                        x+=w+6.0;
+                    }
+                }
 '''),
 ]
 
