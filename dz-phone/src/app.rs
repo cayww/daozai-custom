@@ -1639,6 +1639,11 @@ impl App {
     }
 
     pub(crate) fn effective_minimal(&self)->bool {self.settings.minimal || self.browser_minimal_active}
+    /// 下载流程是否活跃：状态总线里有下载聚合条目（id == "dl"）。
+    /// 下载中 / 完成 / 取消的提示期间都算活跃，此时岛不避让、保持常驻显示。
+    pub(crate) fn download_active(&self)->bool {
+        self.status_live.iter().any(|s| s.id == "dl" || s.id.starts_with("dl-"))
+    }
     /// 常驻电量环：(本机, 手机)，None 表示该来源关闭或没有数据。
     /// 两个来源互不影响，都开就并排画两个环（本机在左）。
     pub(crate) fn battery_rings(&self)->(Option<(Option<u8>,bool)>,Option<(Option<u8>,bool)>) {
@@ -1742,7 +1747,9 @@ impl App {
             let target=if self.settings.skin==model::Skin::GlassLight {glass::light_tint(env.backdrop,env.glass_blur)}else{glass::glass_tint(env.backdrop,env.glass_blur)};
             self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
         }
-        let browser_minimal=self.settings.browser_minimal && self.browser_at_top;
+        // 下载流程（下载中/完成/取消的提示）活跃时不避让，保持常驻显示，
+        // 否则浏览器全屏时下载进度/结果会被收成细线看不见（custom-57）。
+        let browser_minimal=self.settings.browser_minimal && self.browser_at_top && !self.download_active();
         if browser_minimal && !self.browser_minimal_active {
             self.open=false;
             self.hover_lock=true;
