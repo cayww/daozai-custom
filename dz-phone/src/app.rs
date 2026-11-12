@@ -81,6 +81,13 @@ const CLOSE: (f32, f32) = (620.0, 1.0);
 const SWELL_K: (f32, f32) = (420.0, 0.8);
 const PAGE_SLIDE: f32 = 46.0;
 
+/// 悬停意图缓冲时长。关掉「接力感」后为 0：光标一进入就当帧开始展开，
+/// 不再先跑一段缓慢预放大、也不再中途换弹簧。防误触仍由 `LEAVE_DELAY` 兜底。
+fn hover_delay(relay: bool, minimal: bool) -> f64 {
+    if !relay { return 0.0; }
+    if minimal { MINIMAL_HOVER_INTENT } else { HOVER_INTENT }
+}
+
 pub struct Options {
     /// 是否联网查歌词（录制/测试时关掉）。
     pub fetch_lyrics: bool,
@@ -2510,7 +2517,7 @@ impl App {
         if want {
             self.leave_since = None;
             let since = *self.hover_since.get_or_insert(t);
-            let intent=if self.effective_minimal() {MINIMAL_HOVER_INTENT}else{HOVER_INTENT};
+            let intent=hover_delay(self.settings.hover_relay,self.effective_minimal());
             if !self.open && (self.drag_hot || t - since >= intent) {
                 self.open = true;
                 let target_h=self.expanded_height();
@@ -3347,5 +3354,48 @@ mod battery_source_tests {
         app.phone_resident=(None,false);
         assert_eq!(app.battery_ring_count(),1);
         assert!(app.battery_visible());
+    }
+}
+
+#[cfg(test)]
+mod hover_relay_tests {
+    use super::*;
+    use crate::anim::Spring;
+
+    #[test]
+    fn 开关决定悬停缓冲且默认保留接力感() {
+        assert_eq!(hover_delay(true, false), HOVER_INTENT);
+        assert_eq!(hover_delay(true, true), MINIMAL_HOVER_INTENT);
+        assert_eq!(hover_delay(false, false), 0.0);
+        assert_eq!(hover_delay(false, true), 0.0);
+        assert!(crate::model::Settings::default().hover_relay, "旧配置无该键时保持现状");
+    }
+
+    #[test]
+    fn 关掉接力后展开曲线不再分段() {
+        let (bw, full) = (143.0f32, 419.0f32);
+        let near = bw + (full - bw) * 0.9;
+        let tuning = crate::model::OpenAnim::Elastic.tuning().unwrap();
+        // 连贯：一进入就用展开弹簧追完整宽度。
+        let mut direct = Spring::new(bw, tuning.open_w.0, tuning.open_w.1);
+        direct.target = full;
+        // 接力：前 12 帧（0.20 s @ 60 fps）先用 SWELL_K 追「轻微胀大」，到点才换弹簧。
+        let mut relay = Spring::new(bw, SWELL_K.0, SWELL_K.1);
+        relay.target = bw * SWELL.0;
+        let (mut direct_frames, mut relay_frames) = (None, None);
+        for frame in 0..600 {
+            if frame == 12 {
+                relay.tune(tuning.open_w.0, tuning.open_w.1);
+                relay.target = full;
+            }
+            direct.step(1.0 / 60.0);
+            relay.step(1.0 / 60.0);
+            if direct_frames.is_none() && direct.pos >= near { direct_frames = Some(frame + 1); }
+            if relay_frames.is_none() && relay.pos >= near { relay_frames = Some(frame + 1); }
+            if direct_frames.is_some() && relay_frames.is_some() { break; }
+        }
+        let (d, r) = (direct_frames.expect("连贯模式没到位"), relay_frames.expect("接力模式没到位"));
+        assert!(d < r, "连贯模式应更早展开到位：{d} 帧 vs {r} 帧");
+        assert!(d < 12, "连贯模式在原本的缓冲期内就该开始明显铺开：{d} 帧");
     }
 }

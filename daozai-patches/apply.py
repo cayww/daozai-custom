@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-40"
+PATCH_ID = "custom-41"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -7087,6 +7087,185 @@ mod open_anim_tests {
                             let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
                             settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
                             settings_hint(ui,self.settings.open_anim.description());
+                        });
+                        settings_label(ui,"岛体显示");
+                        settings_card(ui,|ui|{
+'''),
+
+    # custom-41：悬停接力感开关
+    ("src/app.rs",
+     '''const SWELL_K: (f32, f32) = (420.0, 0.8);
+const PAGE_SLIDE: f32 = 46.0;
+
+pub struct Options {
+    /// 是否联网查歌词（录制/测试时关掉）。
+    pub fetch_lyrics: bool,
+''',
+     '''const SWELL_K: (f32, f32) = (420.0, 0.8);
+const PAGE_SLIDE: f32 = 46.0;
+
+/// 悬停意图缓冲时长。关掉「接力感」后为 0：光标一进入就当帧开始展开，
+/// 不再先跑一段缓慢预放大、也不再中途换弹簧。防误触仍由 `LEAVE_DELAY` 兜底。
+fn hover_delay(relay: bool, minimal: bool) -> f64 {
+    if !relay { return 0.0; }
+    if minimal { MINIMAL_HOVER_INTENT } else { HOVER_INTENT }
+}
+
+pub struct Options {
+    /// 是否联网查歌词（录制/测试时关掉）。
+    pub fetch_lyrics: bool,
+'''),
+    ("src/app.rs",
+     '''        if want {
+            self.leave_since = None;
+            let since = *self.hover_since.get_or_insert(t);
+            let intent=if self.effective_minimal() {MINIMAL_HOVER_INTENT}else{HOVER_INTENT};
+            if !self.open && (self.drag_hot || t - since >= intent) {
+                self.open = true;
+                let target_h=self.expanded_height();
+''',
+     '''        if want {
+            self.leave_since = None;
+            let since = *self.hover_since.get_or_insert(t);
+            let intent=hover_delay(self.settings.hover_relay,self.effective_minimal());
+            if !self.open && (self.drag_hot || t - since >= intent) {
+                self.open = true;
+                let target_h=self.expanded_height();
+'''),
+    ("src/app.rs",
+     '''        assert!(app.battery_visible());
+    }
+}
+''',
+     '''        assert!(app.battery_visible());
+    }
+}
+
+#[cfg(test)]
+mod hover_relay_tests {
+    use super::*;
+    use crate::anim::Spring;
+
+    #[test]
+    fn 开关决定悬停缓冲且默认保留接力感() {
+        assert_eq!(hover_delay(true, false), HOVER_INTENT);
+        assert_eq!(hover_delay(true, true), MINIMAL_HOVER_INTENT);
+        assert_eq!(hover_delay(false, false), 0.0);
+        assert_eq!(hover_delay(false, true), 0.0);
+        assert!(crate::model::Settings::default().hover_relay, "旧配置无该键时保持现状");
+    }
+
+    #[test]
+    fn 关掉接力后展开曲线不再分段() {
+        let (bw, full) = (143.0f32, 419.0f32);
+        let near = bw + (full - bw) * 0.9;
+        let tuning = crate::model::OpenAnim::Elastic.tuning().unwrap();
+        // 连贯：一进入就用展开弹簧追完整宽度。
+        let mut direct = Spring::new(bw, tuning.open_w.0, tuning.open_w.1);
+        direct.target = full;
+        // 接力：前 12 帧（0.20 s @ 60 fps）先用 SWELL_K 追「轻微胀大」，到点才换弹簧。
+        let mut relay = Spring::new(bw, SWELL_K.0, SWELL_K.1);
+        relay.target = bw * SWELL.0;
+        let (mut direct_frames, mut relay_frames) = (None, None);
+        for frame in 0..600 {
+            if frame == 12 {
+                relay.tune(tuning.open_w.0, tuning.open_w.1);
+                relay.target = full;
+            }
+            direct.step(1.0 / 60.0);
+            relay.step(1.0 / 60.0);
+            if direct_frames.is_none() && direct.pos >= near { direct_frames = Some(frame + 1); }
+            if relay_frames.is_none() && relay.pos >= near { relay_frames = Some(frame + 1); }
+            if direct_frames.is_some() && relay_frames.is_some() { break; }
+        }
+        let (d, r) = (direct_frames.expect("连贯模式没到位"), relay_frames.expect("接力模式没到位"));
+        assert!(d < r, "连贯模式应更早展开到位：{d} 帧 vs {r} 帧");
+        assert!(d < 12, "连贯模式在原本的缓冲期内就该开始明显铺开：{d} 帧");
+    }
+}
+'''),
+    ("src/model.rs",
+     '''    pub island_shape: IslandShape,
+    /// 收起 ↔ 展开的过渡动效。
+    pub open_anim: OpenAnim,
+    pub glass_blur: bool,
+    pub island_size: u32,
+    pub island_offset: i32,
+''',
+     '''    pub island_shape: IslandShape,
+    /// 收起 ↔ 展开的过渡动效。
+    pub open_anim: OpenAnim,
+    /// 是否保留「悬停先轻微胀大、再切换到展开弹簧」的两段接力感。
+    /// 关闭后一悬停就用同一条展开弹簧直接铺开，更连贯。
+    pub hover_relay: bool,
+    pub glass_blur: bool,
+    pub island_size: u32,
+    pub island_offset: i32,
+'''),
+    ("src/model.rs",
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+''',
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), hover_relay: true, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+'''),
+    ("src/model.rs",
+     '''                }
+                "island_shape" => s.island_shape = IslandShape::parse(&v),
+                "open_anim" => s.open_anim = OpenAnim::parse(&v),
+                "dock" => s.dock = Dock::parse(&v),
+                "glass_blur" => s.glass_blur = v != "0",
+                "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
+''',
+     '''                }
+                "island_shape" => s.island_shape = IslandShape::parse(&v),
+                "open_anim" => s.open_anim = OpenAnim::parse(&v),
+                "hover_relay" => s.hover_relay = v != "0",
+                "dock" => s.dock = Dock::parse(&v),
+                "glass_blur" => s.glass_blur = v != "0",
+                "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
+'''),
+    ("src/model.rs",
+     '''                ("skin".into(),self.skin.key().into()),
+                ("island_shape".into(),self.island_shape.key().into()),
+                ("open_anim".into(),self.open_anim.key().into()),
+                ("dock".into(),self.dock.key().into()),
+                ("glass_blur".into(),(self.glass_blur as u8).to_string()),
+                ("island_size".into(),island_size_value(self.island_size).to_string()),
+''',
+     '''                ("skin".into(),self.skin.key().into()),
+                ("island_shape".into(),self.island_shape.key().into()),
+                ("open_anim".into(),self.open_anim.key().into()),
+                ("hover_relay".into(),(self.hover_relay as u8).to_string()),
+                ("dock".into(),self.dock.key().into()),
+                ("glass_blur".into(),(self.glass_blur as u8).to_string()),
+                ("island_size".into(),island_size_value(self.island_size).to_string()),
+'''),
+    ("src/extras.rs",
+     '''                            let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
+                            settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
+                            settings_hint(ui,self.settings.open_anim.description());
+                        });
+                        settings_label(ui,"岛体显示");
+                        settings_card(ui,|ui|{
+''',
+     '''                            let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
+                            settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
+                            settings_hint(ui,self.settings.open_anim.description());
+                            ui.separator();
+                            let mut relay=self.settings.hover_relay;
+                            setting_row(ui,"悬停接力感","开启：悬停先轻微胀大再铺开，可防光标路过误触；关闭：一悬停就用同一条弹簧直接展开，更连贯，但划过也会触发",&mut relay);
+                            self.settings.hover_relay=relay;
                         });
                         settings_label(ui,"岛体显示");
                         settings_card(ui,|ui|{

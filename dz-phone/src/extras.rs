@@ -1842,6 +1842,10 @@ impl App {
                             let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
                             settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
                             settings_hint(ui,self.settings.open_anim.description());
+                            ui.separator();
+                            let mut relay=self.settings.hover_relay;
+                            setting_row(ui,"悬停接力感","开启：悬停先轻微胀大再铺开，可防光标路过误触；关闭：一悬停就用同一条弹簧直接展开，更连贯，但划过也会触发",&mut relay);
+                            self.settings.hover_relay=relay;
                         });
                         settings_label(ui,"岛体显示");
                         settings_card(ui,|ui|{
