@@ -1652,7 +1652,7 @@ fn bridge_card_body(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         }
     });
     ui.label(egui::RichText::new(format!("扩展目录：{}", ext.display())).size(11.5).color(settings_color(ctx, Color32::from_gray(195), Color32::from_gray(60))));
-    settings_hint(ui, "步骤：点上方按钮（自动打开扩展页和扩展文件夹）→ 扩展页右上角打开「开发者模式」→ 把 extension 文件夹拖进扩展页（或点「加载已解压的扩展程序」选它）→ 之后浏览器下载会实时上岛（蓝胶囊 = 下载中，绿胶囊 = 完成可点击打开）。装好后此页无需再动。");
+    settings_hint(ui, "步骤：点上方按钮→ 扩展页右上角打开「开发者模式」→ 把 extension 文件夹拖进扩展页（或点「加载已解压的扩展程序」选它）→ 之后浏览器下载会实时上岛（蓝胶囊 = 下载中，绿胶囊 = 完成可点击打开）");
 }
 
 #[cfg(not(windows))]

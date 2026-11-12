@@ -9,6 +9,9 @@
 // 长连接懒建：首个下载事件到达时才 connectNative；原生消息端口 + 轮询活动
 // 会维持 SW 存活，下载全部结束后轮询自动停止、SW 随之休眠，端口断开——
 // 桥侧对断开是幂等的。
+//
+// 取消语义（custom-54）：state === "interrupted" 时发 cancel（带文件名），
+// 桥侧显示「已取消下载 · xxx」而非直接删掉；取消不再误重放历史完成条目。
 const HOST = "com.daozai.island";
 let port = null;
 
@@ -28,6 +31,10 @@ function baseName(p) {
   return p ? String(p).split(/[\\/]/).pop() : "下载";
 }
 
+// 已处理的下载状态记录：id -> 状态。SW 重启后清空（内存态），
+// 但下载本身不会因 SW 重启而消失，所以 onCreated + 轮询能重新发现。
+const seen = {};
+
 // onChanged 每收到一段数据就触发一次，太密；每个下载至少间隔 400 ms 发一次，
 // complete/cancel 无条件立即发。
 const lastSent = {};
@@ -44,7 +51,9 @@ function throttled(id, msg) {
 
 function push(item) {
   if (!item) return;
+  const prev = seen[item.id];
   if (item.state === "in_progress") {
+    seen[item.id] = "in_progress";
     throttled(item.id, {
       t: "dl", id: item.id, name: baseName(item.filename),
       path: item.filename, state: "progress",
@@ -52,14 +61,24 @@ function push(item) {
     });
     ensurePolling();
   } else if (item.state === "complete") {
+    // 只有「从进行中/新状态 → 完成」这一次才发，避免 SW 重启后把历史完成项重放一遍。
+    if (prev === "in_progress" || prev === undefined) {
+      seen[item.id] = "complete";
+      delete lastSent[item.id];
+      send({
+        t: "dl", id: item.id, name: baseName(item.filename),
+        path: item.filename, state: "complete",
+      });
+    }
+  } else if (item.state === "interrupted") {
+    // 取消/中断：发 cancel，桥侧显示「已取消下载」。
+    seen[item.id] = "interrupted";
     delete lastSent[item.id];
-    send({
-      t: "dl", id: item.id, name: baseName(item.filename),
-      path: item.filename, state: "complete",
-    });
-  } else { // interrupted / cancelled
+    send({ t: "dl", id: item.id, name: baseName(item.filename), state: "cancel" });
+  } else {
+    // cancelled / 其他终态：仅更新记录，不再打扰。
+    seen[item.id] = item.state;
     delete lastSent[item.id];
-    send({ t: "dl", id: item.id, state: "cancel" });
   }
 }
 
@@ -92,5 +111,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.downloads.onCreated.addListener(push);
 chrome.downloads.onChanged.addListener((delta) => {
+  // 只在状态变化时按 id 查一次；delta 本身带 state 时直接判，减少历史重放。
   chrome.downloads.search({ id: delta.id }, (items) => push(items && items[0]));
 });
