@@ -576,6 +576,43 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## 「浏览器下载」独立设置分组 + 用户偏好（custom-51）
+
+用户要求把浏览器下载的 GUI 从通知页拿出来，做成跟「常规」「短信」平级的
+独立分组，并可配置。
+
+**改动**：
+- `src/model.rs` 新增 `BridgePrefs`（`bridge.json` 持久化，主程序与桥共用，
+  原子写 + 1MB 读上限，字段钳制）：`done_seconds`（完成提示时长，5~600 秒，
+  默认 12）、`min_progress_mb`（小于此大小不显示进度条、完成仍提示，0~1024，
+  默认 0）。
+- `src/bridge.rs`：`handle_download` 读偏好——complete 时长/门槛实时生效
+  （每次消息重读，改配置无需重启浏览器）。
+- `src/extras.rs`：`SETTINGS_GROUPS` 扩为 10 组，新增「浏览器下载」（tab 13，
+  独立图标 `assets/settings-icons/system/browser.svg`）；页面含连接状态、
+  一键引导连接（原通知页卡片迁移），加两个偏好滑块/输入（改即存）。
+- `daozai-patches/apply.py`：新文件复制列表重构为 `NEW_FILES` 常量
+  （补丁目录文件名 → 落点），`browser.svg` 入链。
+
+**验证**：818 passed（含偏好行为 3 项单测）；沙箱端到端——3MB<5MB 门槛
+拦进度、完成仍上岛、done_seconds=30 生效。
+
+## 状态总线 retain 谓词写反导致条目互相覆盖（custom-52）
+
+custom-51 偏好验证时发现探测条目 500ms 内消失、并发下载只剩最后一个。
+根因：`set_status`/`remove_status` 的 retain 谓词
+`id != key && (id.is_empty() && fallback != key)` 对「id 非空且 ≠ key」的
+条目恒为 false → **每写一条就把所有其他带 id 的条目删光**（并发下载互相
+覆盖，还会冲掉岛上微信/专注等其他来源的状态）。python 版 StatusBus
+（`key(x) != key` 语义）是对的，Rust 移植时写反。
+
+**修复**：谓词改为「只删同 key」（id 非空按 id，空则文本兜底），
+`set_status` 与 `remove_status` 两处同步。
+
+**验证**：819 passed（新增「写入不冲掉其他条目」回归测试：三并发条目共存、
+同 id 覆盖不重复、撤下只影响自身）；沙箱端到端——两并发下载 + 其他来源
+状态共存，完成一个不影响另一个，偏好 30 秒生效。
+
 ## 下载进度实时更新：轮询引擎（custom-50）
 
 用户报告：下载能上岛但不更新实时进度，且 15 秒左右消失。

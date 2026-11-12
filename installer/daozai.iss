@@ -6,7 +6,7 @@
 
 #define MyAppName "岛仔 Daozai"
 #define MyAppVersion "0.6.64"
-#define MyAppBuild "custom-50"
+#define MyAppBuild "custom-52"
 
 [Setup]
 AppId={{A58C1D9E-4F02-4B6A-9C33-1E7B5D2F8A44}}
@@ -76,6 +76,7 @@ Filename: "{app}\daozai.exe"; Description: "启动岛仔"; Flags: nowait postins
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   manifest, exePath, jsonPath: string;
+  resultCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
@@ -86,6 +87,11 @@ begin
       MsgBox('无法创建 bridge 目录。', mbError, MB_OK);
       exit;
     end;
+    // 浏览器扩展在线时桥进程一直运行，锁住目标 exe 会让 CopyFile 静默失败
+    // （静默安装下弹窗也看不见），升级就变成「装了新版桥还是旧的」。先结束它；
+    // 扩展下次收发消息时浏览器会自动重新拉起，无感恢复。
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM daozai_bridge.exe /F',
+      '', SW_HIDE, ewWaitUntilTerminated, resultCode);
     if not CopyFile(ExpandConstant('{app}\daozai.exe'), exePath, False) then
       MsgBox('复制 daozai_bridge.exe 失败，浏览器扩展桥将不可用。', mbError, MB_OK);
 

@@ -1208,6 +1208,53 @@ impl PhoneApps {
     }
 }
 
+/// 浏览器扩展桥的用户偏好（设置 → 浏览器下载页写入，桥宿主读取）。
+/// 存 config_dir()/bridge.json，桥进程与主程序通过这份文件交接。
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct BridgePrefs {
+    /// 下载完成后绿色胶囊的显示秒数（3..=60）。
+    pub done_seconds: u32,
+    /// 小于该大小（MB）的下载不显示进度胶囊、只在完成时提示；0 = 全部显示进度。
+    pub min_progress_mb: u32,
+}
+
+impl Default for BridgePrefs {
+    fn default() -> Self {
+        Self { done_seconds: 12, min_progress_mb: 0 }
+    }
+}
+
+impl BridgePrefs {
+    fn path() -> PathBuf { config_dir().join("bridge.json") }
+
+    pub fn load() -> Self {
+        #[cfg(test)]
+        { return Self::default(); }
+        #[cfg(not(test))]
+        {
+            let path = Self::path();
+            let Some(raw) = read_capped(&path, MAX_JSON_BYTES) else { return Self::default(); };
+            let Ok(prefs) = serde_json::from_slice::<Self>(&raw) else { return Self::default(); };
+            let mut prefs = prefs;
+            prefs.done_seconds = prefs.done_seconds.clamp(3, 60);
+            prefs.min_progress_mb = prefs.min_progress_mb.min(500);
+            prefs
+        }
+    }
+
+    pub fn save(&self) {
+        #[cfg(not(test))]
+        {
+            let path = Self::path();
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let Ok(body) = serde_json::to_vec_pretty(self) else { return };
+            let _ = atomic_write(&path, &body);
+        }
+    }
+}
+
 #[cfg(test)]
 mod notice_rules_tests {
     use super::NoticeRules;

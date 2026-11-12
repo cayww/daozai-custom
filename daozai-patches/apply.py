@@ -13,7 +13,15 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-50"
+PATCH_ID = "custom-52"
+
+# 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
+NEW_FILES = [
+    ("phone_battery.rs", "src/phone_battery.rs"),
+    ("island_status.rs", "src/island_status.rs"),
+    ("bridge.rs", "src/bridge.rs"),
+    ("browser.svg", "assets/settings-icons/system/browser.svg"),
+]
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -7912,6 +7920,218 @@ impl App {
                     7=>{
                         settings_label(ui,"邮件提醒");
 '''),
+
+    # custom-51：设置页「浏览器下载」独立分组 + 用户偏好（完成时长/进度门槛，bridge.json）
+    ("src/model.rs",
+     '''    }
+}
+
+#[cfg(test)]
+mod notice_rules_tests {
+    use super::NoticeRules;
+''',
+     '''    }
+}
+
+/// 浏览器扩展桥的用户偏好（设置 → 浏览器下载页写入，桥宿主读取）。
+/// 存 config_dir()/bridge.json，桥进程与主程序通过这份文件交接。
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+pub struct BridgePrefs {
+    /// 下载完成后绿色胶囊的显示秒数（3..=60）。
+    pub done_seconds: u32,
+    /// 小于该大小（MB）的下载不显示进度胶囊、只在完成时提示；0 = 全部显示进度。
+    pub min_progress_mb: u32,
+}
+
+impl Default for BridgePrefs {
+    fn default() -> Self {
+        Self { done_seconds: 12, min_progress_mb: 0 }
+    }
+}
+
+impl BridgePrefs {
+    fn path() -> PathBuf { config_dir().join("bridge.json") }
+
+    pub fn load() -> Self {
+        #[cfg(test)]
+        { return Self::default(); }
+        #[cfg(not(test))]
+        {
+            let path = Self::path();
+            let Some(raw) = read_capped(&path, MAX_JSON_BYTES) else { return Self::default(); };
+            let Ok(prefs) = serde_json::from_slice::<Self>(&raw) else { return Self::default(); };
+            let mut prefs = prefs;
+            prefs.done_seconds = prefs.done_seconds.clamp(3, 60);
+            prefs.min_progress_mb = prefs.min_progress_mb.min(500);
+            prefs
+        }
+    }
+
+    pub fn save(&self) {
+        #[cfg(not(test))]
+        {
+            let path = Self::path();
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let Ok(body) = serde_json::to_vec_pretty(self) else { return };
+            let _ = atomic_write(&path, &body);
+        }
+    }
+}
+
+#[cfg(test)]
+mod notice_rules_tests {
+    use super::NoticeRules;
+'''),
+    ("src/app.rs",
+     '''    pub(crate) phone_icons:std::collections::HashMap<String,eframe::egui::TextureHandle>,
+    /// 手机连接通知的来源 App 名单（`phone-apps.json`，支持热重载）。
+    pub(crate) phone_apps:crate::model::PhoneApps,
+    /// 上次看到的手机电量（None=尚未初始化，用于断开/重连/低电/充满提示）。
+    pub(crate) phone_last:Option<Option<u8>>,
+    /// 上次看到的本机电量，用于本机低电 / 充满提示。
+''',
+     '''    pub(crate) phone_icons:std::collections::HashMap<String,eframe::egui::TextureHandle>,
+    /// 手机连接通知的来源 App 名单（`phone-apps.json`，支持热重载）。
+    pub(crate) phone_apps:crate::model::PhoneApps,
+    /// 浏览器下载偏好（`bridge.json`，桥宿主与设置页共用）。
+    pub(crate) browser_prefs:crate::model::BridgePrefs,
+    /// 上次看到的手机电量（None=尚未初始化，用于断开/重连/低电/充满提示）。
+    pub(crate) phone_last:Option<Option<u8>>,
+    /// 上次看到的本机电量，用于本机低电 / 充满提示。
+'''),
+    ("src/app.rs",
+     '''            media_anchor: (String::new(), 0.0, 0.0, false),
+            media: NowPlaying::default(),
+            music_artwork: None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            listener_status: "尚未连接".into(),
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
+''',
+     '''            media_anchor: (String::new(), 0.0, 0.0, false),
+            media: NowPlaying::default(),
+            music_artwork: None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), browser_prefs:model::BridgePrefs::load(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            listener_status: "尚未连接".into(),
+            notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
+            todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
+'''),
+    ("src/extras.rs",
+     '''
+    #[test]
+    fn settings_groups_keep_every_page_reachable() {
+        let groups = ["常规", "音乐与歌词", "专注与饮水", "专注与饮水", "待办与置物", "待办与置物", "通知、邮箱与日程", "通知、邮箱与日程", "通知、邮箱与日程", "关于", "页面管理", "AI 额度", "短信"];
+        for (tab, expected) in groups.iter().enumerate() {
+            let matches: Vec<_> = SETTINGS_GROUPS.iter().filter(|(_,start,end)| (*start..=*end).contains(&tab)).collect();
+            assert_eq!(matches.len(), 1, "页面 {tab} 必须且只能属于一个分组");
+''',
+     '''
+    #[test]
+    fn settings_groups_keep_every_page_reachable() {
+        let groups = ["常规", "音乐与歌词", "专注与饮水", "专注与饮水", "待办与置物", "待办与置物", "通知、邮箱与日程", "通知、邮箱与日程", "通知、邮箱与日程", "关于", "页面管理", "AI 额度", "短信", "浏览器下载"];
+        for (tab, expected) in groups.iter().enumerate() {
+            let matches: Vec<_> = SETTINGS_GROUPS.iter().filter(|(_,start,end)| (*start..=*end).contains(&tab)).collect();
+            assert_eq!(matches.len(), 1, "页面 {tab} 必须且只能属于一个分组");
+'''),
+    ("src/extras.rs",
+     '''    let options:Vec<(u32,&str)>=values.iter().zip(labels.iter()).map(|(v,l)|(*v,l.as_str())).collect();
+    settings_control_row_right(ui,title,|ui|{settings_segmented(ui,value,&options,62.0);});
+}
+const SETTINGS_GROUPS: [(&str,usize,usize);9] = [
+    ("常规",0,0), ("页面管理",10,10), ("音乐与歌词",1,1), ("专注与饮水",2,3),
+    ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("短信",12,12), ("AI 额度",11,11), ("关于",9,9),
+];
+
+/// 浏览器扩展桥是否在线（2 秒缓存，避免每帧扫一次进程表）。
+''',
+     '''    let options:Vec<(u32,&str)>=values.iter().zip(labels.iter()).map(|(v,l)|(*v,l.as_str())).collect();
+    settings_control_row_right(ui,title,|ui|{settings_segmented(ui,value,&options,62.0);});
+}
+const SETTINGS_GROUPS: [(&str,usize,usize);10] = [
+    ("常规",0,0), ("页面管理",10,10), ("音乐与歌词",1,1), ("专注与饮水",2,3),
+    ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("短信",12,12), ("浏览器下载",13,13), ("AI 额度",11,11), ("关于",9,9),
+];
+
+/// 浏览器扩展桥是否在线（2 秒缓存，避免每帧扫一次进程表）。
+'''),
+    ("src/extras.rs",
+     '''                        2=>egui::include_image!("../assets/settings-icons/system/focus.svg"),
+                        4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
+                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
+                    };
+                    let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(25.0,25.0));
+''',
+     '''                        2=>egui::include_image!("../assets/settings-icons/system/focus.svg"),
+                        4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
+                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+                        13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
+                    };
+                    let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(25.0,25.0));
+'''),
+    ("src/extras.rs",
+     '''                    }
+                }
+                ui.visuals_mut().selection.bg_fill=settings_color(ctx,Color32::from_rgb(45,105,165),Color32::from_rgb(209,226,248));
+                let titles=["常规","音乐与歌词","专注","饮水","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","短信"];
+                ui.label(egui::RichText::new(titles[self.settings_tab.min(12)]).size(18.0).strong().color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))));
+                if let Some((_,start,end))=SETTINGS_GROUPS.iter().find(|(_,start,end)|(*start..=*end).contains(&self.settings_tab)) {
+                    if start!=end {
+                        ui.add_space(7.0);
+''',
+     '''                    }
+                }
+                ui.visuals_mut().selection.bg_fill=settings_color(ctx,Color32::from_rgb(45,105,165),Color32::from_rgb(209,226,248));
+                let titles=["常规","音乐与歌词","专注","饮水","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","短信","浏览器下载"];
+                ui.label(egui::RichText::new(titles[self.settings_tab.min(13)]).size(18.0).strong().color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))));
+                if let Some((_,start,end))=SETTINGS_GROUPS.iter().find(|(_,start,end)|(*start..=*end).contains(&self.settings_tab)) {
+                    if start!=end {
+                        ui.add_space(7.0);
+'''),
+    ("src/extras.rs",
+     '''                            if before_phone_apps!=self.phone_apps.items{self.phone_apps.save();}
+                            });
+                        });
+                        settings_label(ui,"浏览器下载");
+                        settings_card(ui,|ui|{
+                            let alive=bridge_alive_cached();
+                            ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
+                            bridge_card_body(self,ctx,ui,alive);
+                        });
+                    }
+                    7=>{
+                        settings_label(ui,"邮件提醒");
+''',
+     '''                            if before_phone_apps!=self.phone_apps.items{self.phone_apps.save();}
+                            });
+                        });
+                    }
+                    13=>{
+                        settings_label(ui,"连接");
+                        settings_card(ui,|ui|{
+                            let alive=bridge_alive_cached();
+                            ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
+                            bridge_card_body(self,ctx,ui,alive);
+                        });
+                        settings_label(ui,"下载提示");
+                        settings_card(ui,|ui|{
+                            let before=self.browser_prefs.clone();
+                            setting_number(ui,"完成提示时长",&mut self.browser_prefs.done_seconds,3,60," 秒",1.0);
+                            setting_number(ui,"进度显示门槛",&mut self.browser_prefs.min_progress_mb,0,500," MB",1.0);
+                            settings_hint(ui,"完成提示时长：下载完成后绿色胶囊显示多久（点击可打开文件）。进度显示门槛：小于该大小的下载不显示进度胶囊、只在完成时提示，避免小文件频繁打扰；0 = 全部显示进度。改动最迟 5 秒后生效。");
+                            if before!=self.browser_prefs{self.browser_prefs.save();}
+                        });
+                        settings_label(ui,"工作原理");
+                        settings_card(ui,|ui|{
+                            ui.label(egui::RichText::new("浏览器扩展把下载事件发给本机桥进程，桥写入状态总线后由岛仔显示。Chrome/Edge 出于安全不允许软件静默安装本地扩展，所以首次使用需要按上方指引手动加载一次。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                        });
+                    }
+                    7=>{
+                        settings_label(ui,"邮件提醒");
+'''),
 ]
 
 
@@ -8026,9 +8246,11 @@ def main() -> None:
     if marker.exists() and marker.read_text(encoding="utf-8").strip() == PATCH_ID and "--force" not in sys.argv:
         # 新增模块不依赖 EDITS，即使补丁已应用也要同步一次，
         # 这样后续修订 phone_battery.rs 时重跑本脚本能把改动带过去。
-        for name in ("phone_battery.rs", "island_status.rs", "bridge.rs"):
-            shutil.copyfile(PATCH_DIR / name, root / "src" / name)
-        print(f"补丁 {PATCH_ID} 已应用，跳过编辑；已同步新增模块 phone_battery.rs / island_status.rs / bridge.rs")
+        for name, dest in NEW_FILES:
+            target = root / dest
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(PATCH_DIR / name, target)
+        print(f"补丁 {PATCH_ID} 已应用，跳过编辑；已同步新增文件：{[d for _, d in NEW_FILES]}")
         return
 
     applied = skipped = 0
@@ -8046,8 +8268,10 @@ def main() -> None:
         path.write_bytes(data.replace(old_b, new_b, 1))
         applied += 1
 
-    for name in ("phone_battery.rs", "island_status.rs", "bridge.rs"):
-        shutil.copyfile(PATCH_DIR / name, root / "src" / name)
+    for name, dest in NEW_FILES:
+        target = root / dest
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(PATCH_DIR / name, target)
     version = bump_version(root)
     marker.write_text(PATCH_ID + "\n", encoding="utf-8")
     print(f"补丁 {PATCH_ID} 应用完成：新增/修改 {applied} 处，跳过 {skipped} 处，版本 -> v{version}")

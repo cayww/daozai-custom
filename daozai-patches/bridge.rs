@@ -32,8 +32,6 @@ pub const BRIDGE_EXE: &str = "daozai_bridge.exe";
 
 /// 进行中条目的自动消失时限（秒）：桥进程挂了也不会留僵尸胶囊，活着就靠覆写续期。
 const PROGRESS_SECONDS: f64 = 15.0;
-/// 完成提示的停留时长（秒）。
-const DONE_SECONDS: f64 = 12.0;
 /// 单条消息上限（字节）：浏览器侧出了问题也不会把内存顶爆。
 const MAX_MESSAGE: usize = 1 << 20;
 
@@ -83,7 +81,7 @@ pub fn run_host() -> u32 {
 fn handle(msg: serde_json::Value, speed: &mut HashMap<String, (u64, Instant)>) -> serde_json::Value {
     let ok = (|| {
         match msg.get("t").and_then(|t| t.as_str()) {
-            Some("dl") => handle_download(&msg, speed),
+            Some("dl") => handle_download(&msg, speed, &prefs_cached()),
             Some("status") => handle_status(&msg),
             Some("ping") => {}
             _ => return Err(format!("unknown t={:?}", msg.get("t"))),
@@ -96,7 +94,23 @@ fn handle(msg: serde_json::Value, speed: &mut HashMap<String, (u64, Instant)>) -
     }
 }
 
-fn handle_download(msg: &serde_json::Value, speed: &mut HashMap<String, (u64, Instant)>) {
+/// 用户偏好（bridge.json，设置 → 浏览器下载页写入）。5 秒缓存：消息频率约 2 条/秒，
+/// 没必要每条读盘；改设置后最迟 5 秒生效。
+fn prefs_cached() -> crate::model::BridgePrefs {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(Instant, crate::model::BridgePrefs)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, prefs)) = cache.as_ref() {
+        if at.elapsed().as_secs() < 5 {
+            return prefs.clone();
+        }
+    }
+    let prefs = crate::model::BridgePrefs::load();
+    *cache = Some((Instant::now(), prefs.clone()));
+    prefs
+}
+
+fn handle_download(msg: &serde_json::Value, speed: &mut HashMap<String, (u64, Instant)>, prefs: &crate::model::BridgePrefs) {
     let key = "dl-".to_string()
         + msg.get("id").and_then(|v| v.as_u64()).map(|n| n.to_string()).as_deref()
             .or_else(|| msg.get("name").and_then(|v| v.as_str())).unwrap_or("x");
@@ -108,11 +122,12 @@ fn handle_download(msg: &serde_json::Value, speed: &mut HashMap<String, (u64, In
         "complete" => {
             speed.remove(&key);
             let name = short_name(msg.get("name").and_then(|v| v.as_str()).unwrap_or("下载"));
+            let done_seconds = prefs.done_seconds as f64;
             let mut item = serde_json::json!({
                 "id": key, "text": format!("下载完成 · {name}"),
-                "seconds": DONE_SECONDS, "color": "green",
+                "seconds": done_seconds, "color": "green",
                 // ttl 到点岛仔自动撤下：桥挂了/没人续写也不会留下永久胶囊（custom-48 修复）。
-                "ttl": unix_secs() + DONE_SECONDS,
+                "ttl": unix_secs() + done_seconds,
             });
             let path = msg.get("path").and_then(|v| v.as_str()).unwrap_or("");
             if !path.is_empty() && std::path::Path::new(path).is_file() {
@@ -123,6 +138,12 @@ fn handle_download(msg: &serde_json::Value, speed: &mut HashMap<String, (u64, In
         _ => {
             let received = msg.get("received").and_then(|v| v.as_u64()).unwrap_or(0);
             let total = msg.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+            // 小文件不打扰：小于门槛的下载不显示进度胶囊（完成时仍会提示）；
+            // total 未知（0）时无法判断大小，照常显示。
+            let threshold = prefs.min_progress_mb as u64 * 1024 * 1024;
+            if threshold > 0 && total > 0 && total < threshold {
+                return;
+            }
             let name = short_name(msg.get("name").and_then(|v| v.as_str()).unwrap_or("下载"));
             let now = Instant::now();
             let mut detail = match total {
@@ -198,10 +219,14 @@ fn set_status(key: &str, item: serde_json::Value) {
             .ok()
             .and_then(|raw| serde_json::from_slice(&raw).ok())
             .unwrap_or_default();
+        // 只撤下同 key 条目（有 id 按 id，无 id 按文本兜底）；其他条目一律保留。
+        // 此前谓词写反过（id != key && ... 会误删所有带 id 的其他条目，导致
+        // 并发下载互相覆盖、还会冲掉岛上其他来源的状态），custom-52 修复。
         list.retain(|entry| {
             let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let fallback = entry.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            id != key && (id.is_empty() && fallback != key)
+            let same = if id.is_empty() { fallback == key } else { id == key };
+            !same
         });
         list.push(item);
         atomic_write(&path, &serde_json::to_vec(&list).ok()?)
@@ -222,7 +247,8 @@ fn remove_status(key: &str) {
         list.retain(|entry| {
             let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("");
             let fallback = entry.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            id != key && (id.is_empty() && fallback != key)
+            let same = if id.is_empty() { fallback == key } else { id == key };
+            !same
         });
         if list.len() == before {
             return None;
@@ -439,7 +465,7 @@ mod tests {
             "t":"dl","id":17,"name":"C:\\x\\演示文件.zip","state":"progress",
             "received":60*1024*1024,"total":100*1024*1024
         });
-        handle_download(&msg, &mut speed);
+        handle_download(&msg, &mut speed, &Default::default());
         assert!(speed.contains_key("dl-17"));
         // complete：路径存在才给 click
         let tmp = std::env::temp_dir().join("daozai-bridge-test-file.txt");
@@ -448,7 +474,7 @@ mod tests {
             "t":"dl","id":17,"name":"note.txt","state":"complete",
             "path":tmp.to_string_lossy()
         });
-        handle_download(&msg, &mut speed);
+        handle_download(&msg, &mut speed, &Default::default());
         assert!(speed.is_empty(), "完成后速度记录应清空");
     }
 
@@ -459,16 +485,88 @@ mod tests {
         let msg = serde_json::json!({
             "t":"dl","id":18,"name":"a.zip","state":"progress","received":10,"total":100
         });
-        handle_download(&msg, &mut speed);
+        handle_download(&msg, &mut speed, &Default::default());
         let entry = read_test_status("dl-18").expect("progress 条目应已写入");
         let ttl = entry.get("ttl").and_then(|v| v.as_f64()).expect("progress 必须带 ttl");
         assert!((before + 10.0..=before + 20.0).contains(&ttl), "progress ttl 应在写入时刻 +15s 附近：{ttl}");
         let msg = serde_json::json!({"t":"dl","id":18,"name":"a.zip","state":"complete","path":""});
-        handle_download(&msg, &mut speed);
+        handle_download(&msg, &mut speed, &Default::default());
         let entry = read_test_status("dl-18").expect("complete 条目应覆盖同 id");
         let ttl = entry.get("ttl").and_then(|v| v.as_f64()).expect("complete 必须带 ttl");
         let after = unix_secs();
         assert!((after + 5.0..=after + 20.0).contains(&ttl), "complete ttl 应在写入时刻 +12s 附近：{ttl}");
+    }
+
+    fn find_test_entry(id: &str, text: &str) -> bool {
+        let Some(path) = status_path() else { return false };
+        let Some(list): Option<Vec<serde_json::Value>> = std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice(&raw).ok()) else { return false };
+        list.iter().any(|entry| {
+            entry.get("id").and_then(|v| v.as_str()) == Some(id)
+                || entry.get("text").and_then(|v| v.as_str()) == Some(text)
+        })
+    }
+
+    #[test]
+    fn 写入不冲掉其他条目() {
+        use crate::model::BridgePrefs;
+        // 并发下载（或岛上其他来源的条目）必须共存：set_status 只覆盖同 key。
+        // 回归背景：旧谓词会误删所有 id 不同的条目（custom-52 修复）。
+        let mut speed = HashMap::new();
+        let prefs = BridgePrefs::default();
+        handle_download(&serde_json::json!({"t":"dl","id":1,"name":"a.bin","state":"progress","received":100,"total":1000}), &mut speed, &prefs);
+        handle_download(&serde_json::json!({"t":"dl","id":2,"name":"b.bin","state":"progress","received":200,"total":2000}), &mut speed, &prefs);
+        // 其他来源的条目（无 id，走文本兜底 key）
+        set_status("微信 · 张三", serde_json::json!({"text": "微信 · 张三"}));
+        // 再写一条下载，前两条和其他来源条目都必须还在
+        handle_download(&serde_json::json!({"t":"dl","id":3,"name":"c.bin","state":"progress","received":300,"total":3000}), &mut speed, &prefs);
+        assert!(find_test_entry("dl-1", ""));
+        assert!(find_test_entry("dl-2", ""));
+        assert!(find_test_entry("dl-3", ""));
+        assert!(find_test_entry("", "微信 · 张三"), "无 id 条目按文本兜底 key 匹配");
+        // 同 id 覆盖：重写 dl-1 不应新增重复条目
+        handle_download(&serde_json::json!({"t":"dl","id":1,"name":"a2.bin","state":"progress","received":400,"total":1000}), &mut speed, &prefs);
+        let raw = std::fs::read(status_path().unwrap()).unwrap();
+        let list: Vec<serde_json::Value> = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(list.iter().filter(|e| e.get("id").and_then(|v| v.as_str()) == Some("dl-1")).count(), 1, "同 id 应覆盖不重复");
+        // 撤下也只影响自身
+        remove_status("dl-2");
+        assert!(!find_test_entry("dl-2", ""));
+        assert!(find_test_entry("dl-1", ""));
+        assert!(find_test_entry("", "微信 · 张三"));
+    }
+
+    #[test]
+    fn 完成时长跟随用户偏好() {
+        let mut speed = HashMap::new();
+        let prefs = crate::model::BridgePrefs { done_seconds: 30, min_progress_mb: 0 };
+        let before = unix_secs();
+        handle_download(&serde_json::json!({
+            "t":"dl","id":21,"name":"p.zip","state":"complete","path":""
+        }), &mut speed, &prefs);
+        let entry = read_test_status("dl-21").expect("complete 条目应写入");
+        let ttl = entry.get("ttl").and_then(|v| v.as_f64()).unwrap();
+        assert!((before + 25.0..=before + 35.0).contains(&ttl), "done_seconds=30 时 ttl 应为 +30s：{ttl}");
+    }
+
+    #[test]
+    fn 小于门槛的下载不显示进度完成仍提示() {
+        let mut speed = HashMap::new();
+        let prefs = crate::model::BridgePrefs { done_seconds: 12, min_progress_mb: 5 };
+        // 3 MB < 5 MB：progress 不上岛。
+        handle_download(&serde_json::json!({
+            "t":"dl","id":22,"name":"small.zip","state":"progress","received":1024,"total":3*1024*1024
+        }), &mut speed, &prefs);
+        assert!(read_test_status("dl-22").is_none(), "小于门槛的下载不应显示进度");
+        // 大小未知（total=0）：照常显示。
+        handle_download(&serde_json::json!({
+            "t":"dl","id":23,"name":"unk.zip","state":"progress","received":1024,"total":0
+        }), &mut speed, &prefs);
+        assert!(read_test_status("dl-23").is_some(), "大小未知的下载应照常显示进度");
+        // 完成不受门槛影响。
+        handle_download(&serde_json::json!({
+            "t":"dl","id":22,"name":"small.zip","state":"complete","path":""
+        }), &mut speed, &prefs);
+        assert!(read_test_status("dl-22").is_some(), "完成提示不受门槛影响");
     }
 
     #[test]
@@ -477,7 +575,7 @@ mod tests {
         let mut speed = HashMap::new();
         handle_download(&serde_json::json!({
             "t":"dl","id":99,"name":"x.zip","state":"progress","received":1,"total":2
-        }), &mut speed);
+        }), &mut speed, &Default::default());
         let real = std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("Daozai").join("island_status.json"));
         if let Some(path) = real.filter(|p| p.exists()) {
             let raw = std::fs::read_to_string(&path).unwrap_or_default();
