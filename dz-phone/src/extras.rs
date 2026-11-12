@@ -1838,6 +1838,10 @@ impl App {
                                 }).response
                             });
                             settings_hint(ui,"文字、图标和吉祥物按实际像素重新绘制，放大后依旧清晰；只影响岛体，不影响设置窗口。");
+                            ui.separator();
+                            let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
+                            settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
+                            settings_hint(ui,self.settings.open_anim.description());
                         });
                         settings_label(ui,"岛体显示");
                         settings_card(ui,|ui|{

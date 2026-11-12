@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-39"
+PATCH_ID = "custom-40"
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
 EDITS = [
@@ -6697,6 +6697,399 @@ mod fluid_path_bench {
         assert!(vertices > 1000, "旧路径确实每帧生成大量顶点");
     }
 }
+'''),
+
+    # custom-40：展开动效可选（5 种过渡效果）
+    ("src/app.rs",
+     '''/// 移开后等待多久开始收起；这段时间内回来不会收。
+const LEAVE_DELAY: f64 = 0.12;
+const SWELL: (f32, f32) = (1.075, 1.13);
+// 展开：欠阻尼，末段约 5% 过冲后回落；高度略软于宽度，像「垂落」下来。
+const OPEN_W: (f32, f32) = (330.0, 0.70);
+const OPEN_H: (f32, f32) = (290.0, 0.74);
+// 收起：临界阻尼，约 0.18 s 干净收回，无回弹。
+const CLOSE: (f32, f32) = (620.0, 1.0);
+const SWELL_K: (f32, f32) = (420.0, 0.8);
+const PAGE_SLIDE: f32 = 46.0;
+''',
+     '''/// 移开后等待多久开始收起；这段时间内回来不会收。
+const LEAVE_DELAY: f64 = 0.12;
+const SWELL: (f32, f32) = (1.075, 1.13);
+// 展开参数按 `model::OpenAnim` 的配置取，见 `OpenAnim::tuning()`；
+// CLOSE 仍用于弹簧初始化与非展开态的回位。
+const CLOSE: (f32, f32) = (620.0, 1.0);
+const SWELL_K: (f32, f32) = (420.0, 0.8);
+const PAGE_SLIDE: f32 = 46.0;
+'''),
+    ("src/app.rs",
+     '''        self.notice=None;
+        self.go(page,1.0);
+        self.open=true; self.forced_open_until=self.t+4.0;
+        self.w.tune(OPEN_W.0,OPEN_W.1);self.h.tune(OPEN_H.0,OPEN_H.1);
+        self.w.target=PW;self.h.target=self.expanded_height();
+    }
+    pub fn open_settings(&mut self){
+        self.settings_open=true;
+''',
+     '''        self.notice=None;
+        self.go(page,1.0);
+        self.open=true; self.forced_open_until=self.t+4.0;
+        let target_h=self.expanded_height();
+        self.tune_open(PW,target_h);
+    }
+    pub fn open_settings(&mut self){
+        self.settings_open=true;
+'''),
+    ("src/app.rs",
+     '''    pub(crate) fn reveal_unread(&mut self){
+        self.notice=None;
+        self.open=true; self.forced_open_until=self.t+4.0;
+        self.w.tune(OPEN_W.0,OPEN_W.1);self.h.tune(OPEN_H.0,OPEN_H.1);
+        self.w.target=PW;self.h.target=self.expanded_height();
+    }
+    fn notice_rect(&self,cx:f32,top:f32)->Option<Rect>{
+        if !self.compact_notices(){return None;}
+''',
+     '''    pub(crate) fn reveal_unread(&mut self){
+        self.notice=None;
+        self.open=true; self.forced_open_until=self.t+4.0;
+        let target_h=self.expanded_height();
+        self.tune_open(PW,target_h);
+    }
+    fn notice_rect(&self,cx:f32,top:f32)->Option<Rect>{
+        if !self.compact_notices(){return None;}
+'''),
+    ("src/app.rs",
+     '''    }
+
+    /// 悬停状态机：意图缓冲 → 弹簧展开 → 离开延迟 → 临界阻尼收起；全程可打断。
+    fn morph(&mut self, want: bool, inside: bool, t: f64, dt: f32) {
+        let (bw, bh) = self.base_size();
+        if want {
+            self.leave_since = None;
+            let since = *self.hover_since.get_or_insert(t);
+            let intent=if self.effective_minimal() {MINIMAL_HOVER_INTENT}else{HOVER_INTENT};
+            if !self.open && (self.drag_hot || t - since >= intent) {
+                self.open = true;
+                self.w.tune(OPEN_W.0, OPEN_W.1);
+                self.h.tune(OPEN_H.0, OPEN_H.1);
+                self.w.target = PW;
+                self.h.target = self.expanded_height();
+                if self.drag_hot {
+                    // 拖入不等缓冲，直接给一点初速度，30 ms 内就能看到形变
+                    self.w.vel = self.w.vel.max(600.0);
+                    self.h.vel = self.h.vel.max(260.0);
+                }
+            } else if !self.open {
+                self.w.tune(SWELL_K.0, SWELL_K.1);
+                self.h.tune(SWELL_K.0, SWELL_K.1);
+                // 悬停时轻微胀大：厚度方向胀得多一点（侧边停靠时厚度是宽度）。
+                let (sw,sh)=if self.side(){(SWELL.1,SWELL.0)}else{SWELL};
+                self.w.target = bw * sw;
+                self.h.target = bh * sh;
+            }
+        } else {
+            self.hover_since = None;
+''',
+     '''    }
+
+    /// 悬停状态机：意图缓冲 → 弹簧展开 → 离开延迟 → 临界阻尼收起；全程可打断。
+    /// 按当前配置的动效启动展开；「瞬时」直接到位，不跑形变。
+    fn tune_open(&mut self,target_w:f32,target_h:f32){
+        if let Some(t)=self.settings.open_anim.tuning() {
+            self.w.tune(t.open_w.0,t.open_w.1);
+            self.h.tune(t.open_h.0,t.open_h.1);
+            self.w.target=target_w;self.h.target=target_h;
+        } else {
+            self.w.snap(target_w);self.h.snap(target_h);
+        }
+    }
+    /// 按当前配置的动效收起；「瞬时」直接到位。
+    fn tune_close(&mut self,bw:f32,bh:f32){
+        if let Some(t)=self.settings.open_anim.tuning() {
+            self.w.tune(t.close.0,t.close.1);
+            self.h.tune(t.close.0,t.close.1);
+            self.w.target=bw;self.h.target=bh;
+        } else {
+            self.w.snap(bw);self.h.snap(bh);
+        }
+    }
+
+    fn morph(&mut self, want: bool, inside: bool, t: f64, dt: f32) {
+        let (bw, bh) = self.base_size();
+        let tuning=self.settings.open_anim.tuning();
+        let instant=tuning.is_none();
+        // 非展开态每帧都会重新 tune，所以这里也要用配置里的收起参数，
+        // 否则 `tune_close` 设置的参数只在切换那一帧有效。
+        let close=tuning.map(|t|t.close).unwrap_or(CLOSE);
+        if want {
+            self.leave_since = None;
+            let since = *self.hover_since.get_or_insert(t);
+            let intent=if self.effective_minimal() {MINIMAL_HOVER_INTENT}else{HOVER_INTENT};
+            if !self.open && (self.drag_hot || t - since >= intent) {
+                self.open = true;
+                let target_h=self.expanded_height();
+                self.tune_open(PW,target_h);
+                if !instant && self.drag_hot {
+                    // 拖入不等缓冲，直接给一点初速度，30 ms 内就能看到形变
+                    self.w.vel = self.w.vel.max(600.0);
+                    self.h.vel = self.h.vel.max(260.0);
+                }
+            } else if !self.open {
+                if instant {
+                    // 瞬时模式不做「悬停胀大」反馈，避免先跳一下再瞬间展开。
+                    self.w.tune(close.0, close.1);
+                    self.h.tune(close.0, close.1);
+                    self.w.target = bw;
+                    self.h.target = bh;
+                } else {
+                    self.w.tune(SWELL_K.0, SWELL_K.1);
+                    self.h.tune(SWELL_K.0, SWELL_K.1);
+                    // 悬停时轻微胀大：厚度方向胀得多一点（侧边停靠时厚度是宽度）。
+                    let (sw,sh)=if self.side(){(SWELL.1,SWELL.0)}else{SWELL};
+                    self.w.target = bw * sw;
+                    self.h.target = bh * sh;
+                }
+            }
+        } else {
+            self.hover_since = None;
+'''),
+    ("src/app.rs",
+     '''                if t - since >= LEAVE_DELAY {
+                    self.open = false;
+                    self.leave_since = None;
+                    self.w.tune(CLOSE.0, CLOSE.1);
+                    self.h.tune(CLOSE.0, CLOSE.1);
+                    self.w.target = bw;
+                    self.h.target = bh;
+                    self.cancel_edit();
+                    self.confirm_clear = None;
+                }
+            } else {
+                self.w.tune(CLOSE.0, CLOSE.1);
+                self.h.tune(CLOSE.0, CLOSE.1);
+                self.w.target = bw;
+                self.h.target = bh;
+            }
+''',
+     '''                if t - since >= LEAVE_DELAY {
+                    self.open = false;
+                    self.leave_since = None;
+                    self.tune_close(bw,bh);
+                    self.cancel_edit();
+                    self.confirm_clear = None;
+                }
+            } else {
+                self.w.tune(close.0, close.1);
+                self.h.tune(close.0, close.1);
+                self.w.target = bw;
+                self.h.target = bh;
+            }
+'''),
+    ("src/model.rs",
+     '''    /// 岛体皮肤、毛玻璃是否使用系统模糊、大小百分比、水平位置。
+    pub skin: Skin,
+    pub island_shape: IslandShape,
+    pub glass_blur: bool,
+    pub island_size: u32,
+    pub island_offset: i32,
+''',
+     '''    /// 岛体皮肤、毛玻璃是否使用系统模糊、大小百分比、水平位置。
+    pub skin: Skin,
+    pub island_shape: IslandShape,
+    /// 收起 ↔ 展开的过渡动效。
+    pub open_anim: OpenAnim,
+    pub glass_blur: bool,
+    pub island_size: u32,
+    pub island_offset: i32,
+'''),
+    ("src/model.rs",
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+''',
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+/// 收起 ↔ 展开的过渡动效。刚度 k 越大越快，阻尼比 zeta < 1 会过冲、=1 为临界阻尼。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpenAnim {
+    /// 官方默认：欠阻尼垂落，末段约 5% 过冲。
+    #[default]
+    Elastic,
+    /// 临界阻尼，无回弹。
+    Smooth,
+    /// 更快的刚度 + 更低的阻尼，回弹更明显。
+    Snappy,
+    /// 低刚度、大阻尼，慢慢铺开。
+    Gentle,
+    /// 不做形变动画，直接切换大小。
+    Instant,
+}
+
+/// 一组动效的弹簧参数：(宽度刚度, 高度刚度, 收起刚度)，每项都是 `(k, zeta)`。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnimTuning {
+    pub open_w: (f32, f32),
+    pub open_h: (f32, f32),
+    pub close: (f32, f32),
+}
+
+impl OpenAnim {
+    pub const ALL: [OpenAnim; 5] = [Self::Elastic, Self::Smooth, Self::Snappy, Self::Gentle, Self::Instant];
+    pub fn key(self) -> &'static str {
+        match self { Self::Elastic => "elastic", Self::Smooth => "smooth", Self::Snappy => "snappy", Self::Gentle => "gentle", Self::Instant => "instant" }
+    }
+    pub fn parse(value: &str) -> Self {
+        match value { "smooth" => Self::Smooth, "snappy" => Self::Snappy, "gentle" => Self::Gentle, "instant" => Self::Instant, _ => Self::Elastic }
+    }
+    pub fn label(self) -> &'static str {
+        match self { Self::Elastic => "弹性", Self::Smooth => "平滑", Self::Snappy => "轻快", Self::Gentle => "柔和", Self::Instant => "瞬时" }
+    }
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Elastic => "默认。欠阻尼弹簧，末段约 5% 过冲后回落，高度略软于宽度，像垂落下来。",
+            Self::Smooth => "临界阻尼，没有回弹，展开和收起都干净利落。",
+            Self::Snappy => "刚度更高、阻尼更低，展开更快，回弹也更明显。",
+            Self::Gentle => "刚度低、阻尼大，慢慢铺开，适合不喜欢快速形变的时候。",
+            Self::Instant => "不做形变动画，直接切换大小；仍保留悬停防误触的短暂延迟。",
+        }
+    }
+    /// `None` 表示不做形变动画（瞬时切换）。
+    pub fn tuning(self) -> Option<AnimTuning> {
+        Some(match self {
+            Self::Elastic => AnimTuning { open_w: (330.0, 0.70), open_h: (290.0, 0.74), close: (620.0, 1.0) },
+            Self::Smooth  => AnimTuning { open_w: (300.0, 1.00), open_h: (260.0, 1.00), close: (620.0, 1.0) },
+            Self::Snappy  => AnimTuning { open_w: (560.0, 0.58), open_h: (500.0, 0.62), close: (760.0, 1.0) },
+            Self::Gentle  => AnimTuning { open_w: (170.0, 0.92), open_h: (150.0, 0.95), close: (320.0, 1.0) },
+            Self::Instant => return None,
+        })
+    }
+}
+
+'''),
+    ("src/model.rs",
+     '''                    s.skin = Skin::parse(&v);
+                }
+                "island_shape" => s.island_shape = IslandShape::parse(&v),
+                "dock" => s.dock = Dock::parse(&v),
+                "glass_blur" => s.glass_blur = v != "0",
+                "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
+''',
+     '''                    s.skin = Skin::parse(&v);
+                }
+                "island_shape" => s.island_shape = IslandShape::parse(&v),
+                "open_anim" => s.open_anim = OpenAnim::parse(&v),
+                "dock" => s.dock = Dock::parse(&v),
+                "glass_blur" => s.glass_blur = v != "0",
+                "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
+'''),
+    ("src/model.rs",
+     '''                ("display_id".into(),self.display_id.clone()),
+                ("skin".into(),self.skin.key().into()),
+                ("island_shape".into(),self.island_shape.key().into()),
+                ("dock".into(),self.dock.key().into()),
+                ("glass_blur".into(),(self.glass_blur as u8).to_string()),
+                ("island_size".into(),island_size_value(self.island_size).to_string()),
+''',
+     '''                ("display_id".into(),self.display_id.clone()),
+                ("skin".into(),self.skin.key().into()),
+                ("island_shape".into(),self.island_shape.key().into()),
+                ("open_anim".into(),self.open_anim.key().into()),
+                ("dock".into(),self.dock.key().into()),
+                ("glass_blur".into(),(self.glass_blur as u8).to_string()),
+                ("island_size".into(),island_size_value(self.island_size).to_string()),
+'''),
+    ("src/model.rs",
+     '''        for p in again { let _ = fs::remove_file(p); }
+    }
+}
+''',
+     '''        for p in again { let _ = fs::remove_file(p); }
+    }
+}
+
+#[cfg(test)]
+mod open_anim_tests {
+    use super::*;
+    use crate::anim::Spring;
+
+    #[test]
+    fn 配置键往返且未知值回落到默认() {
+        for style in OpenAnim::ALL {
+            assert_eq!(OpenAnim::parse(style.key()), style);
+            assert!(!style.label().is_empty());
+            assert!(!style.description().is_empty());
+        }
+        assert_eq!(OpenAnim::parse(""), OpenAnim::Elastic);
+        assert_eq!(OpenAnim::parse("whatever"), OpenAnim::Elastic);
+        assert_eq!(OpenAnim::default(), OpenAnim::Elastic, "旧配置文件没有这个键时保持官方手感");
+    }
+
+    #[test]
+    fn 参数合法且瞬时不需要弹簧() {
+        assert!(OpenAnim::Instant.tuning().is_none());
+        for style in OpenAnim::ALL {
+            let Some(t) = style.tuning() else { continue; };
+            for (k, zeta) in [t.open_w, t.open_h, t.close] {
+                assert!(k > 0.0 && zeta > 0.0 && zeta <= 1.0, "{style:?} 参数越界: {k}/{zeta}");
+            }
+        }
+    }
+
+    #[test]
+    fn 各动效轨迹确实不同且都能收敛() {
+        let mut results = Vec::new();
+        for style in OpenAnim::ALL {
+            let Some(t) = style.tuning() else { continue; };
+            let mut spring = Spring::new(143.0, t.open_w.0, t.open_w.1);
+            spring.target = 419.0;
+            let (mut peak, mut frames) = (143.0f32, 0usize);
+            loop {
+                spring.step(1.0 / 60.0);
+                peak = peak.max(spring.pos);
+                frames += 1;
+                if (spring.pos - 419.0).abs() < 0.5 && spring.vel.abs() < 0.5 { break; }
+                assert!(frames < 600, "{style:?} 没有收敛");
+            }
+            results.push((style, frames, peak));
+        }
+        let peak_of = |style| results.iter().find(|r| r.0 == style).unwrap().2;
+        let frames_of = |style| results.iter().find(|r| r.0 == style).unwrap().1;
+        assert!(peak_of(OpenAnim::Elastic) > 419.0, "弹性要有过冲");
+        assert!(peak_of(OpenAnim::Snappy) > peak_of(OpenAnim::Elastic), "轻快回弹更明显");
+        assert!(peak_of(OpenAnim::Smooth) <= 419.5, "平滑不该过冲");
+        assert!(peak_of(OpenAnim::Gentle) <= 419.5, "柔和不该过冲");
+        assert!(frames_of(OpenAnim::Snappy) < frames_of(OpenAnim::Gentle), "轻快应比柔和更快到位");
+    }
+}
+'''),
+    ("src/extras.rs",
+     '''                                }).response
+                            });
+                            settings_hint(ui,"文字、图标和吉祥物按实际像素重新绘制，放大后依旧清晰；只影响岛体，不影响设置窗口。");
+                        });
+                        settings_label(ui,"岛体显示");
+                        settings_card(ui,|ui|{
+''',
+     '''                                }).response
+                            });
+                            settings_hint(ui,"文字、图标和吉祥物按实际像素重新绘制，放大后依旧清晰；只影响岛体，不影响设置窗口。");
+                            ui.separator();
+                            let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
+                            settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
+                            settings_hint(ui,self.settings.open_anim.description());
+                        });
+                        settings_label(ui,"岛体显示");
+                        settings_card(ui,|ui|{
 '''),
 ]
 

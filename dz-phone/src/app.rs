@@ -75,10 +75,8 @@ const MINIMAL_HOVER_INTENT: f64 = 0.40;
 /// 移开后等待多久开始收起；这段时间内回来不会收。
 const LEAVE_DELAY: f64 = 0.12;
 const SWELL: (f32, f32) = (1.075, 1.13);
-// 展开：欠阻尼，末段约 5% 过冲后回落；高度略软于宽度，像「垂落」下来。
-const OPEN_W: (f32, f32) = (330.0, 0.70);
-const OPEN_H: (f32, f32) = (290.0, 0.74);
-// 收起：临界阻尼，约 0.18 s 干净收回，无回弹。
+// 展开参数按 `model::OpenAnim` 的配置取，见 `OpenAnim::tuning()`；
+// CLOSE 仍用于弹簧初始化与非展开态的回位。
 const CLOSE: (f32, f32) = (620.0, 1.0);
 const SWELL_K: (f32, f32) = (420.0, 0.8);
 const PAGE_SLIDE: f32 = 46.0;
@@ -1420,8 +1418,8 @@ impl App {
         self.notice=None;
         self.go(page,1.0);
         self.open=true; self.forced_open_until=self.t+4.0;
-        self.w.tune(OPEN_W.0,OPEN_W.1);self.h.tune(OPEN_H.0,OPEN_H.1);
-        self.w.target=PW;self.h.target=self.expanded_height();
+        let target_h=self.expanded_height();
+        self.tune_open(PW,target_h);
     }
     pub fn open_settings(&mut self){
         self.settings_open=true;
@@ -2336,8 +2334,8 @@ impl App {
     pub(crate) fn reveal_unread(&mut self){
         self.notice=None;
         self.open=true; self.forced_open_until=self.t+4.0;
-        self.w.tune(OPEN_W.0,OPEN_W.1);self.h.tune(OPEN_H.0,OPEN_H.1);
-        self.w.target=PW;self.h.target=self.expanded_height();
+        let target_h=self.expanded_height();
+        self.tune_open(PW,target_h);
     }
     fn notice_rect(&self,cx:f32,top:f32)->Option<Rect>{
         if !self.compact_notices(){return None;}
@@ -2481,30 +2479,62 @@ impl App {
     }
 
     /// 悬停状态机：意图缓冲 → 弹簧展开 → 离开延迟 → 临界阻尼收起；全程可打断。
+    /// 按当前配置的动效启动展开；「瞬时」直接到位，不跑形变。
+    fn tune_open(&mut self,target_w:f32,target_h:f32){
+        if let Some(t)=self.settings.open_anim.tuning() {
+            self.w.tune(t.open_w.0,t.open_w.1);
+            self.h.tune(t.open_h.0,t.open_h.1);
+            self.w.target=target_w;self.h.target=target_h;
+        } else {
+            self.w.snap(target_w);self.h.snap(target_h);
+        }
+    }
+    /// 按当前配置的动效收起；「瞬时」直接到位。
+    fn tune_close(&mut self,bw:f32,bh:f32){
+        if let Some(t)=self.settings.open_anim.tuning() {
+            self.w.tune(t.close.0,t.close.1);
+            self.h.tune(t.close.0,t.close.1);
+            self.w.target=bw;self.h.target=bh;
+        } else {
+            self.w.snap(bw);self.h.snap(bh);
+        }
+    }
+
     fn morph(&mut self, want: bool, inside: bool, t: f64, dt: f32) {
         let (bw, bh) = self.base_size();
+        let tuning=self.settings.open_anim.tuning();
+        let instant=tuning.is_none();
+        // 非展开态每帧都会重新 tune，所以这里也要用配置里的收起参数，
+        // 否则 `tune_close` 设置的参数只在切换那一帧有效。
+        let close=tuning.map(|t|t.close).unwrap_or(CLOSE);
         if want {
             self.leave_since = None;
             let since = *self.hover_since.get_or_insert(t);
             let intent=if self.effective_minimal() {MINIMAL_HOVER_INTENT}else{HOVER_INTENT};
             if !self.open && (self.drag_hot || t - since >= intent) {
                 self.open = true;
-                self.w.tune(OPEN_W.0, OPEN_W.1);
-                self.h.tune(OPEN_H.0, OPEN_H.1);
-                self.w.target = PW;
-                self.h.target = self.expanded_height();
-                if self.drag_hot {
+                let target_h=self.expanded_height();
+                self.tune_open(PW,target_h);
+                if !instant && self.drag_hot {
                     // 拖入不等缓冲，直接给一点初速度，30 ms 内就能看到形变
                     self.w.vel = self.w.vel.max(600.0);
                     self.h.vel = self.h.vel.max(260.0);
                 }
             } else if !self.open {
-                self.w.tune(SWELL_K.0, SWELL_K.1);
-                self.h.tune(SWELL_K.0, SWELL_K.1);
-                // 悬停时轻微胀大：厚度方向胀得多一点（侧边停靠时厚度是宽度）。
-                let (sw,sh)=if self.side(){(SWELL.1,SWELL.0)}else{SWELL};
-                self.w.target = bw * sw;
-                self.h.target = bh * sh;
+                if instant {
+                    // 瞬时模式不做「悬停胀大」反馈，避免先跳一下再瞬间展开。
+                    self.w.tune(close.0, close.1);
+                    self.h.tune(close.0, close.1);
+                    self.w.target = bw;
+                    self.h.target = bh;
+                } else {
+                    self.w.tune(SWELL_K.0, SWELL_K.1);
+                    self.h.tune(SWELL_K.0, SWELL_K.1);
+                    // 悬停时轻微胀大：厚度方向胀得多一点（侧边停靠时厚度是宽度）。
+                    let (sw,sh)=if self.side(){(SWELL.1,SWELL.0)}else{SWELL};
+                    self.w.target = bw * sw;
+                    self.h.target = bh * sh;
+                }
             }
         } else {
             self.hover_since = None;
@@ -2513,16 +2543,13 @@ impl App {
                 if t - since >= LEAVE_DELAY {
                     self.open = false;
                     self.leave_since = None;
-                    self.w.tune(CLOSE.0, CLOSE.1);
-                    self.h.tune(CLOSE.0, CLOSE.1);
-                    self.w.target = bw;
-                    self.h.target = bh;
+                    self.tune_close(bw,bh);
                     self.cancel_edit();
                     self.confirm_clear = None;
                 }
             } else {
-                self.w.tune(CLOSE.0, CLOSE.1);
-                self.h.tune(CLOSE.0, CLOSE.1);
+                self.w.tune(close.0, close.1);
+                self.h.tune(close.0, close.1);
                 self.w.target = bw;
                 self.h.target = bh;
             }

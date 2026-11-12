@@ -226,6 +226,8 @@ pub struct Settings {
     /// 岛体皮肤、毛玻璃是否使用系统模糊、大小百分比、水平位置。
     pub skin: Skin,
     pub island_shape: IslandShape,
+    /// 收起 ↔ 展开的过渡动效。
+    pub open_anim: OpenAnim,
     pub glass_blur: bool,
     pub island_size: u32,
     pub island_offset: i32,
@@ -306,7 +308,63 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+/// 收起 ↔ 展开的过渡动效。刚度 k 越大越快，阻尼比 zeta < 1 会过冲、=1 为临界阻尼。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpenAnim {
+    /// 官方默认：欠阻尼垂落，末段约 5% 过冲。
+    #[default]
+    Elastic,
+    /// 临界阻尼，无回弹。
+    Smooth,
+    /// 更快的刚度 + 更低的阻尼，回弹更明显。
+    Snappy,
+    /// 低刚度、大阻尼，慢慢铺开。
+    Gentle,
+    /// 不做形变动画，直接切换大小。
+    Instant,
+}
+
+/// 一组动效的弹簧参数：(宽度刚度, 高度刚度, 收起刚度)，每项都是 `(k, zeta)`。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnimTuning {
+    pub open_w: (f32, f32),
+    pub open_h: (f32, f32),
+    pub close: (f32, f32),
+}
+
+impl OpenAnim {
+    pub const ALL: [OpenAnim; 5] = [Self::Elastic, Self::Smooth, Self::Snappy, Self::Gentle, Self::Instant];
+    pub fn key(self) -> &'static str {
+        match self { Self::Elastic => "elastic", Self::Smooth => "smooth", Self::Snappy => "snappy", Self::Gentle => "gentle", Self::Instant => "instant" }
+    }
+    pub fn parse(value: &str) -> Self {
+        match value { "smooth" => Self::Smooth, "snappy" => Self::Snappy, "gentle" => Self::Gentle, "instant" => Self::Instant, _ => Self::Elastic }
+    }
+    pub fn label(self) -> &'static str {
+        match self { Self::Elastic => "弹性", Self::Smooth => "平滑", Self::Snappy => "轻快", Self::Gentle => "柔和", Self::Instant => "瞬时" }
+    }
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Elastic => "默认。欠阻尼弹簧，末段约 5% 过冲后回落，高度略软于宽度，像垂落下来。",
+            Self::Smooth => "临界阻尼，没有回弹，展开和收起都干净利落。",
+            Self::Snappy => "刚度更高、阻尼更低，展开更快，回弹也更明显。",
+            Self::Gentle => "刚度低、阻尼大，慢慢铺开，适合不喜欢快速形变的时候。",
+            Self::Instant => "不做形变动画，直接切换大小；仍保留悬停防误触的短暂延迟。",
+        }
+    }
+    /// `None` 表示不做形变动画（瞬时切换）。
+    pub fn tuning(self) -> Option<AnimTuning> {
+        Some(match self {
+            Self::Elastic => AnimTuning { open_w: (330.0, 0.70), open_h: (290.0, 0.74), close: (620.0, 1.0) },
+            Self::Smooth  => AnimTuning { open_w: (300.0, 1.00), open_h: (260.0, 1.00), close: (620.0, 1.0) },
+            Self::Snappy  => AnimTuning { open_w: (560.0, 0.58), open_h: (500.0, 0.62), close: (760.0, 1.0) },
+            Self::Gentle  => AnimTuning { open_w: (170.0, 0.92), open_h: (150.0, 0.95), close: (320.0, 1.0) },
+            Self::Instant => return None,
+        })
     }
 }
 
@@ -356,6 +414,7 @@ impl Settings {
                     s.skin = Skin::parse(&v);
                 }
                 "island_shape" => s.island_shape = IslandShape::parse(&v),
+                "open_anim" => s.open_anim = OpenAnim::parse(&v),
                 "dock" => s.dock = Dock::parse(&v),
                 "glass_blur" => s.glass_blur = v != "0",
                 "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
@@ -438,6 +497,7 @@ impl Settings {
                 ("display_id".into(),self.display_id.clone()),
                 ("skin".into(),self.skin.key().into()),
                 ("island_shape".into(),self.island_shape.key().into()),
+                ("open_anim".into(),self.open_anim.key().into()),
                 ("dock".into(),self.dock.key().into()),
                 ("glass_blur".into(),(self.glass_blur as u8).to_string()),
                 ("island_size".into(),island_size_value(self.island_size).to_string()),
@@ -1201,5 +1261,60 @@ mod external_json_safety_tests {
             .collect();
         assert_eq!(again.len(), 2, "两次损坏应各留一份副本");
         for p in again { let _ = fs::remove_file(p); }
+    }
+}
+
+#[cfg(test)]
+mod open_anim_tests {
+    use super::*;
+    use crate::anim::Spring;
+
+    #[test]
+    fn 配置键往返且未知值回落到默认() {
+        for style in OpenAnim::ALL {
+            assert_eq!(OpenAnim::parse(style.key()), style);
+            assert!(!style.label().is_empty());
+            assert!(!style.description().is_empty());
+        }
+        assert_eq!(OpenAnim::parse(""), OpenAnim::Elastic);
+        assert_eq!(OpenAnim::parse("whatever"), OpenAnim::Elastic);
+        assert_eq!(OpenAnim::default(), OpenAnim::Elastic, "旧配置文件没有这个键时保持官方手感");
+    }
+
+    #[test]
+    fn 参数合法且瞬时不需要弹簧() {
+        assert!(OpenAnim::Instant.tuning().is_none());
+        for style in OpenAnim::ALL {
+            let Some(t) = style.tuning() else { continue; };
+            for (k, zeta) in [t.open_w, t.open_h, t.close] {
+                assert!(k > 0.0 && zeta > 0.0 && zeta <= 1.0, "{style:?} 参数越界: {k}/{zeta}");
+            }
+        }
+    }
+
+    #[test]
+    fn 各动效轨迹确实不同且都能收敛() {
+        let mut results = Vec::new();
+        for style in OpenAnim::ALL {
+            let Some(t) = style.tuning() else { continue; };
+            let mut spring = Spring::new(143.0, t.open_w.0, t.open_w.1);
+            spring.target = 419.0;
+            let (mut peak, mut frames) = (143.0f32, 0usize);
+            loop {
+                spring.step(1.0 / 60.0);
+                peak = peak.max(spring.pos);
+                frames += 1;
+                if (spring.pos - 419.0).abs() < 0.5 && spring.vel.abs() < 0.5 { break; }
+                assert!(frames < 600, "{style:?} 没有收敛");
+            }
+            results.push((style, frames, peak));
+        }
+        let peak_of = |style| results.iter().find(|r| r.0 == style).unwrap().2;
+        let frames_of = |style| results.iter().find(|r| r.0 == style).unwrap().1;
+        assert!(peak_of(OpenAnim::Elastic) > 419.0, "弹性要有过冲");
+        assert!(peak_of(OpenAnim::Snappy) > peak_of(OpenAnim::Elastic), "轻快回弹更明显");
+        assert!(peak_of(OpenAnim::Smooth) <= 419.5, "平滑不该过冲");
+        assert!(peak_of(OpenAnim::Gentle) <= 419.5, "柔和不该过冲");
+        assert!(frames_of(OpenAnim::Snappy) < frames_of(OpenAnim::Gentle), "轻快应比柔和更快到位");
     }
 }
