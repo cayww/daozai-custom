@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-54"
+PATCH_ID = "custom-55"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -8248,6 +8248,44 @@ fn bridge_card_body(_app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                         });
                         settings_label(ui,"下载提示");
                         settings_card(ui,|ui|{
+'''),
+
+    # custom-55：状态区右侧补 16px 边距，修复下载胶囊贴边不对称
+    ("src/bar_layout.rs",
+     '''    /// 只是把整体左移半个宽度，让常驻组件保持相对位置。
+    pub fn add_status(&mut self, width: f32) -> usize {
+        let gap = 12.0;
+        let slot = self.x.len();
+        self.x.push(None);
+        self.widths.push(width);
+        let old_w = self.width;
+        let shift = (width + gap) / 2.0;
+        for value in self.x.iter_mut().flatten() { *value -= shift; }
+        self.x[slot] = Some(old_w / 2.0 + gap / 2.0);
+        self.width = old_w + width + gap;
+        self.status = Some(slot);
+        slot
+    }
+''',
+     '''    /// 只是把整体左移半个宽度，让常驻组件保持相对位置。
+    pub fn add_status(&mut self, width: f32) -> usize {
+        let gap = 12.0;
+        // 状态区是胶囊最右侧的槽位，右侧要留与左侧一致的 16px 边距，
+        // 否则下载胶囊会贴到右边缘、与其他槽位左右不对称（custom-55 修复）。
+        let end_pad = 16.0;
+        let slot = self.x.len();
+        self.x.push(None);
+        self.widths.push(width);
+        let old_w = self.width;
+        // 状态区中心相对旧胶囊右边界的偏移：gap（左间距）+ width/2；
+        // 右侧再让出 end_pad，所以整体多占 end_pad，各槽位左移 shift 保证相对位置不变。
+        let shift = (width + gap + end_pad) / 2.0;
+        for value in self.x.iter_mut().flatten() { *value -= shift; }
+        self.x[slot] = Some(old_w / 2.0 + gap / 2.0 - end_pad / 2.0);
+        self.width = old_w + width + gap + end_pad;
+        self.status = Some(slot);
+        slot
+    }
 '''),
 ]
 
