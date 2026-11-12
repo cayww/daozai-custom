@@ -528,7 +528,9 @@ impl App {
         // 「重复查看」开启时普通通知也保留更久，方便多次悬停。
         let otp_bell=phone && !body.is_empty() && crate::otp::extract("",&body,&[]).is_some();
         // 测试构建保持官方 4.5 秒，避免时长类断言失效。
-        let keep_bell=if cfg!(test) {4.5} else if otp_bell {90.0} else if self.settings.notice_keep {60.0} else {4.5};
+        // 铃铛至少和卡片一样久；验证码多留一会儿，方便回看。
+        let stay=self.settings.notice_seconds as f64;
+        let keep_bell=if cfg!(test) {4.5} else if otp_bell {stay.max(90.0)} else {stay};
         // 勿扰期间不闪铃铛（横幅同样被 enqueue_alert 拦下），验证码仍照常提醒。
         if !self.muted() || otp_bell {
             self.notification_bell_at=self.t;
@@ -576,7 +578,7 @@ impl App {
             ("来电中".to_string(),format!("{caller} 正在呼叫"),60.0)
         }else if missed {
             ("未接来电".to_string(),format!("{} 通未接来电 · 点击关闭清除",self.missed_calls),30.0)
-        }else{(title,body,if !cfg!(test) && self.settings.notice_keep {60.0} else {4.5})};
+        }else{(title,body,if cfg!(test) {4.5} else {self.settings.notice_seconds as f64})};
         log_notice(&format!("SHOW {title} / {body}  <- {trace}"));
         self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:None},false);
     }
@@ -2068,7 +2070,8 @@ impl App {
                             ui.label(egui::RichText::new("QQ 需开启系统通知；新通知在岛上显示约 4.5 秒，默认隐藏正文。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             ui.separator();
                             setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
-                            setting_row(ui,"重复查看通知","通知保留 60 秒，可在铃铛上多次悬停查看；关闭则 4.5 秒后消失",&mut self.settings.notice_keep);
+                            setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
+                            settings_hint(ui,"通知卡片显示多久后自动收起（验证码卡片至少留 90 秒）。悬停不会打断计时，也可以随时点「关闭」。");
                             ui.label(egui::RichText::new("只接收 Windows 通知中心可见的内容；应用会在收到通知后出现在下方。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             let before_apps=self.notification_apps.items.clone();
                             for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
