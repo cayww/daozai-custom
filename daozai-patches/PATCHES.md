@@ -558,6 +558,24 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 76 个 src 文件逐字节一致。
 
 
+## 桥下载条目 TTL 过期修复（custom-48）
+
+用户报告岛上残留「下载完成 · note.txt」撤不掉。根因两层：
+
+1. **桥写条目只写 `seconds`（提示时长）没写 `ttl`（自动过期时间）**，而岛侧
+   只认 `ttl` 撤条目——同款 bug 在 python 版桥里就有，被移植到了 Rust 版。
+   修复：`bridge.rs` 的 progress/complete 条目都补 `ttl = now + seconds`，
+   通用状态白名单字段同步加 `ttl`、`priority`（白名单提为共享常量，单测同源）。
+2. **单测污染真实状态文件**：`status_path()` 读 `%APPDATA%`，跑 `cargo test`
+   会把测试条目写进真实 island_status.json（岛侧 Reader 有 `#[cfg(test)]`
+   防护，桥侧没有）。修复：测试环境（`DAOZAI_TEST_HOME`）改写到临时目录。
+
+**附修**：并行测试线程抢文件锁（200ms 重试预算饿死偶发失败）——
+`with_status_lock` 前面套进程内 `Mutex` 串行化（跨进程仍靠文件锁）。
+
+**验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
+六轮重跑无偶发失败；重放 357 处一致。
+
 ## 扩展原生消息权限缺失修复（custom-49）
 
 用户装好扩展后下载进度始终不上岛。逐环排查：桥 exe 手动拉起正常、注册表
