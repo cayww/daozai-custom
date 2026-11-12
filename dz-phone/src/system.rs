@@ -343,10 +343,11 @@ pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String
 }
 
 pub(crate) fn phone_channel(id:&str)->bool {
-    if !id.starts_with("Microsoft.YourPhone_"){return false;}
-    // WinRT 的 AppInfo 有时只报主 AUMID（!App），拿不到子通道包名，
-    // 实测伪造 Toast 就是这样；主通道也放行，避免真实通知被完全漏掉。
-    id.ends_with("!App") || PHONE_CHANNELS.iter().any(|(key,_)|id.contains(*key))
+    // 只要是手机连接（Phone Link）发出来的就归手机通道：
+    // WinRT 有时给主 AUMID（`!App`），有时给子通道（`YourPhoneMessages_…` /
+    // `YourPhoneNotifications_<uuid>`），开机后通道注册晚一步还会先走汇总通道。
+    // 白名单只用来起标签，是否上岛/静音交给 phone-apps.json 按正文判断。
+    id.starts_with("Microsoft.YourPhone_")
 }
 pub(crate) fn phone_label(id:&str)->&'static str {
     if id.ends_with("!App"){return "连接";}
@@ -358,11 +359,15 @@ mod phone_channel_tests {
     use super::{phone_app,phone_channel,phone_label};
     #[test]
     fn 只放行手机连接白名单通道(){
+        // 现在只要是手机连接的 AUMID 都算手机通道（白名单只管标签）；
+        // 真正决定「上不上岛 / 静不静音」的是正文 + phone-apps.json。
         assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.tencent.xin"));
         assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneMessages_9d62fe0c"));
         assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!App"));
+        // 开机后通道还没注册时，Win11 会先走汇总通道，这个也必须算手机通知。
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_9d62fe0c-7488-42c8-be15-0fbe4a087b7f"));
         assert_eq!(phone_label("Microsoft.YourPhone_x!App"),"连接");
-        assert!(!phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.valvesoftware.Steam"));
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.valvesoftware.Steam"));
         assert!(!phone_channel("QQ"));
         assert!(!phone_channel("mail.test"));
         assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.tencent.xin"),"微信");
@@ -418,14 +423,29 @@ impl ToastVersion {
     }
 }
 #[derive(Default)]
-struct NotificationBaseline { previous: Option<HashMap<u32,ToastVersion>> }
+struct NotificationBaseline {
+    previous: Option<HashMap<u32,ToastVersion>>,
+    /// 本线程开始监听时的时间（FILETIME，100ns）。首轮枚举里「比它还新」的通知
+    /// 是开机后才到的，必须补报；比它老的是历史，静默跳过。
+    started: i64,
+}
 impl NotificationBaseline {
     fn unchanged_other(&self,id:u32,created:i64)->Option<ToastVersion>{
         self.previous.as_ref()?.get(&id).copied().filter(|old|old.created==created && old.qq_body.is_none())
     }
     fn changed(&self,id:u32,version:ToastVersion)->bool{
-        self.previous.as_ref().is_some_and(|old|old.get(&id)!=Some(&version))
+        match &self.previous {
+            None=>version.created>self.started,
+            Some(old)=>old.get(&id)!=Some(&version),
+        }
     }
+}
+
+/// 当前时间转 FILETIME（100ns since 1601），用于和 `CreationTime` 比较。
+fn now_filetime()->i64{
+    let ticks=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d|d.as_secs() as i64*10_000_000+d.subsec_nanos() as i64/100).unwrap_or(0);
+    ticks+116_444_736_000_000_000
 }
 
 fn qq_channel_status()->String{
@@ -463,7 +483,7 @@ pub fn connect(ctx:eframe::egui::Context,qq_only:bool) -> Result<Notifications> 
             }
             let listener = UserNotificationListener::Current()?;
             let qq_status=qq_channel_status();
-            let mut baseline=NotificationBaseline::default();
+            let mut baseline=NotificationBaseline{previous:None,started:now_filetime()};
             let mut last_status=String::new();
             loop {
                 if stopped.try_recv()!=Err(mpsc::TryRecvError::Empty){return Ok(());}
@@ -484,10 +504,17 @@ pub fn connect(ctx:eframe::egui::Context,qq_only:bool) -> Result<Notifications> 
                     let (app,id)=notification_identity(&n,number,created,known_qq);
                     // 微信只走任务栏事件，即使客户端同时发送系统通知也不读取其正文。
                     let phone=phone_channel(&id);
-                    if (qq_only && id!="QQ" && !phone) || (!phone && is_wechat_toast(&app,&id)){current.insert(number,ToastVersion::new(created,None));continue;}
+                    if (qq_only && id!="QQ" && !phone) || (!phone && is_wechat_toast(&app,&id)){
+                        // 这一层在监听线程里，拦下的通知不会进 receive_notification，
+                        // 也就要单独记一行，否则「某条通知没上岛」会完全查不到。
+                        crate::extras::log_notice(&format!("DROP 监听线程过滤  app={app} id={id} phone={phone} qq_only={qq_only}"));
+                        current.insert(number,ToastVersion::new(created,None));
+                        continue;
+                    }
                     let qq=id=="QQ";
                     // QQ 可能原地更新同一条通知；其他应用的启动历史不需要读取正文。
-                    let body=if qq || baseline.previous.is_some(){notification_body(&n).unwrap_or_default()}else{String::new()};
+                    // 启动之后才出现的通知（首轮枚举前到达的）也要读正文，否则会被当成历史静默掉。
+                    let body=if qq || baseline.previous.is_some() || created>baseline.started{notification_body(&n).unwrap_or_default()}else{String::new()};
                     let version=ToastVersion::new(created,qq.then_some(body.as_str()));
                     current.insert(number,version);
                     if baseline.changed(number,version){
@@ -591,9 +618,11 @@ mod tests {
     use super::*;
     #[test]
     fn notifications_skip_history_but_detect_reused_ids_and_updated_content(){
-        let mut baseline=NotificationBaseline::default();
+        // started=100：比它老的是开机前的历史，比它新的是启动之后才到的。
+        let mut baseline=NotificationBaseline{previous:None,started:100};
         let first=ToastVersion::new(10,Some("第一条"));
-        assert!(!baseline.changed(1,first));
+        assert!(!baseline.changed(1,first),"开机前的历史通知不该补报");
+        assert!(baseline.changed(2,ToastVersion::new(200,None)),"启动之后到达的通知要补报（首轮枚举可能晚于它）");
         baseline.previous=Some(HashMap::from([(1,first),(2,ToastVersion::new(10,None))]));
         assert!(!baseline.changed(1,first));
         assert!(baseline.changed(1,ToastVersion::new(10,Some("第二条"))));
