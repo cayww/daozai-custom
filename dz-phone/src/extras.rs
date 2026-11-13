@@ -333,8 +333,29 @@ impl App {
         let exe=self.maa_exe()?;
         crate::maa::log_dir_from_exe(&exe).map(|dir|dir.join("asst.log"))
     }
-    /// 通知名单里登记的 MAA 可执行文件路径（用于取图标、定位日志）。
+    /// 直接打开某个设置分组（索引对应 SETTINGS_GROUPS），供命令行/快捷方式直达。
+    pub fn open_settings_group(&mut self,group:usize){
+        let last=SETTINGS_GROUPS.len()-1;
+        let (_,start,_)=SETTINGS_GROUPS[group.min(last)];
+        self.settings_category=group.min(last);
+        self.settings_tab=start;
+        self.open_settings();
+    }
+    /// 设置页选好 MAA 程序后写入偏好（换程序时顺便清掉图标缓存）。
+    pub fn set_maa_exe(&mut self,path:String){
+        self.maa_prefs.exe_path=path;
+        self.maa_prefs.save();
+        self.maa_icon=None;
+    }
+    /// 设置页选好日志目录后写入偏好。
+    pub fn set_maa_log_dir(&mut self,path:String){
+        self.maa_prefs.log_dir=path;
+        self.maa_prefs.save();
+    }
+    /// MAA 可执行文件路径：优先用设置里手选的，其次取通知名单里登记的那份。
     pub(crate) fn maa_exe(&self)->Option<String> {
+        let custom=self.maa_prefs.exe_path.trim();
+        if !custom.is_empty() { return Some(custom.to_string()); }
         self.notification_apps.items.iter()
             .find(|(id,name,_)| name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe"))
             .map(|(id,_,_)| id.clone())
@@ -2361,15 +2382,30 @@ impl App {
                             });
                         });
 
-                        settings_label(ui,"日志目录");
+                        settings_label(ui,"路径");
                         settings_card(ui,|ui|{
                             ui.add_enabled_ui(maa_on,|ui|{
-                                let before=self.maa_prefs.log_dir.clone();
-                                settings_control_row(ui,"MAA 目录",80.0,|ui|{
-                                    ui.add(egui::TextEdit::singleline(&mut self.maa_prefs.log_dir).vertical_align(egui::Align::Center).hint_text("留空自动识别（<MAA目录>\\debug）"))
+                                let before=self.maa_prefs.clone();
+                                settings_control_row(ui,"MAA 程序",80.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        let field=(ui.available_width()-70.0).max(90.0);
+                                        ui.add_sized([field,24.0],egui::TextEdit::singleline(&mut self.maa_prefs.exe_path)
+                                            .vertical_align(egui::Align::Center).hint_text("留空自动识别（MAA.exe）"));
+                                        if ui.button("选择…").clicked(){self.pending.push(Cmd::PickMaaExe);}
+                                    }).response
                                 });
-                                settings_hint(ui,"岛仔只读 MAA 的 debug\\asst.log 获取运行状态，不修改 MAA、不需要它开任何服务。留空时按通知名单里 MAA 的路径自动定位。");
-                                if before!=self.maa_prefs.log_dir{self.maa_prefs.save();}
+                                settings_hint(ui,"指向 MAA.exe。留空时用通知名单里登记的那一份。");
+                                ui.separator();
+                                settings_control_row(ui,"日志目录",80.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        let field=(ui.available_width()-70.0).max(90.0);
+                                        ui.add_sized([field,24.0],egui::TextEdit::singleline(&mut self.maa_prefs.log_dir)
+                                            .vertical_align(egui::Align::Center).hint_text("留空自动识别（<MAA目录>\\debug）"));
+                                        if ui.button("选择…").clicked(){self.pending.push(Cmd::PickMaaLogDir);}
+                                    }).response
+                                });
+                                settings_hint(ui,"岛仔只读这里的 debug\\asst.log 拿运行状态，不修改 MAA、不需要它开任何服务。留空时按 MAA 程序所在目录自动定位。");
+                                if before!=self.maa_prefs{self.maa_prefs.save();}
                             });
                         });
                     }

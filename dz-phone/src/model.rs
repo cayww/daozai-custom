@@ -1271,13 +1271,15 @@ pub struct MaaPrefs {
     pub resident_progress: bool,
     /// 提示停留秒数（4..=30）。
     pub seconds: u32,
+    /// MAA 可执行文件路径（空 = 用通知名单里登记的那份）。
+    pub exe_path: String,
     /// MAA 日志目录（空 = 从 MAA 可执行文件自动推导 <MAA目录>\debug）。
     pub log_dir: String,
 }
 
 impl Default for MaaPrefs {
     fn default() -> Self {
-        Self { notify_chain: true, notify_recruit_star: true, notify_error: true, resident_progress: true, seconds: 8, log_dir: String::new() }
+        Self { notify_chain: true, notify_recruit_star: true, notify_error: true, resident_progress: true, seconds: 8, exe_path: String::new(), log_dir: String::new() }
     }
 }
 

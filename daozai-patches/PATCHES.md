@@ -576,6 +576,22 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## MAA 路径改用系统对话框选择（custom-68）
+
+用户要求 MAA 的程序与日志路径用「打开文件夹窗口选择」而不是手打。
+
+**改动**：
+- `src/system.rs` 新增 `pick_folder(title)`（FOS_PICKFOLDERS）与 `pick_exe(title)`
+  （带 `*.exe` 过滤），复用已有的 `IFileOpenDialog`；用户取消返回 None。
+- `MaaPrefs` 新增 `exe_path`（空 = 用通知名单里登记的那份）；`maa_exe()` 优先用它。
+- 设置页「日志目录」卡片改为「路径」：MAA 程序、日志目录两行，各带「选择…」按钮，
+  按钮经 `Cmd::PickMaaExe` / `Cmd::PickMaaLogDir` 交给外壳弹框后写回偏好并保存。
+- `App::set_maa_exe` / `set_maa_log_dir` 供外壳调用（bin 拿不到 crate 私有字段）。
+- 顺带加 `--maa` 启动参数：直接打开设置并定位到 MAA 分组（方便直达与截图验证）。
+
+**验证**：814 passed；重放 custom-68 一致（EDITS 429）；`--maa` 实机确认 MAA 页
+「状态 / 上岛提醒 / 路径」三块正常渲染。
+
 ## MAA 进度胶囊内容居中（custom-66）
 
 用户要求让进度胶囊里的内容居中。

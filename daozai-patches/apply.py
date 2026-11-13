@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-66"
+PATCH_ID = "custom-68"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -9666,6 +9666,229 @@ pub(crate) fn thumbnail(path: &Path, size: i32) -> Option<(usize, usize, Vec<u8>
                         x+=w+6.0;
                     }
                 }
+'''),
+
+    # custom-68：MAA 程序/日志路径改为系统对话框选择
+    ("src/system.rs",
+     '''    pick_files_for("添加文件到置物架",true)
+}
+
+pub fn pick_files_for(title:&str,multiple:bool) -> Result<Vec<std::path::PathBuf>> {
+    unsafe {
+        use windows::Win32::UI::Shell::*;
+''',
+     '''    pick_files_for("添加文件到置物架",true)
+}
+
+/// 选择一个文件夹（返回 None = 用户取消）。
+pub fn pick_folder(title:&str) -> Result<Option<std::path::PathBuf>> {
+    unsafe {
+        use windows::Win32::UI::Shell::*;
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
+        // 只让选文件夹，且必须是已存在的文件系统路径。
+        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST)?;
+        dialog.SetTitle(&HSTRING::from(title))?;
+        if let Err(e) = dialog.Show(None) {
+            if e.code().0 as u32 == 0x800704c7 { return Ok(None); } // 用户取消
+            return Err(e);
+        }
+        let item = dialog.GetResult()?;
+        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let text = ptr.to_string()?;
+        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
+        Ok(Some(text.into()))
+    }
+}
+
+/// 选择一个程序文件（返回 None = 用户取消）。
+pub fn pick_exe(title:&str) -> Result<Option<std::path::PathBuf>> {
+    unsafe {
+        use windows::Win32::UI::Shell::*;
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
+        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST)?;
+        dialog.SetTitle(&HSTRING::from(title))?;
+        // 默认只列 .exe，用户仍可在文件名框里输入其它路径。
+        let name: Vec<u16> = "程序 (*.exe)\\0".encode_utf16().collect();
+        let spec: Vec<u16> = "*.exe\\0".encode_utf16().collect();
+        let filters = [Common::COMDLG_FILTERSPEC {
+            pszName: windows::core::PCWSTR(name.as_ptr()),
+            pszSpec: windows::core::PCWSTR(spec.as_ptr()),
+        }];
+        let _ = dialog.SetFileTypes(&filters);
+        if let Err(e) = dialog.Show(None) {
+            if e.code().0 as u32 == 0x800704c7 { return Ok(None); }
+            return Err(e);
+        }
+        let item = dialog.GetResult()?;
+        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let text = ptr.to_string()?;
+        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
+        Ok(Some(text.into()))
+    }
+}
+
+pub fn pick_files_for(title:&str,multiple:bool) -> Result<Vec<std::path::PathBuf>> {
+    unsafe {
+        use windows::Win32::UI::Shell::*;
+'''),
+    ("src/model.rs",
+     '''    pub resident_progress: bool,
+    /// 提示停留秒数（4..=30）。
+    pub seconds: u32,
+    /// MAA 日志目录（空 = 从 MAA 可执行文件自动推导 <MAA目录>\\debug）。
+    pub log_dir: String,
+}
+
+impl Default for MaaPrefs {
+    fn default() -> Self {
+        Self { notify_chain: true, notify_recruit_star: true, notify_error: true, resident_progress: true, seconds: 8, log_dir: String::new() }
+    }
+}
+
+''',
+     '''    pub resident_progress: bool,
+    /// 提示停留秒数（4..=30）。
+    pub seconds: u32,
+    /// MAA 可执行文件路径（空 = 用通知名单里登记的那份）。
+    pub exe_path: String,
+    /// MAA 日志目录（空 = 从 MAA 可执行文件自动推导 <MAA目录>\\debug）。
+    pub log_dir: String,
+}
+
+impl Default for MaaPrefs {
+    fn default() -> Self {
+        Self { notify_chain: true, notify_recruit_star: true, notify_error: true, resident_progress: true, seconds: 8, exe_path: String::new(), log_dir: String::new() }
+    }
+}
+
+'''),
+    ("src/app.rs",
+     '''    QuotaRefresh,
+    QuotaConnected,
+    QuotaChooseFile,
+    /// 把系统主音量设为 0..100（v0.5.4 音量条）。
+    SetVolume(u32),
+    /// 切换系统静音。
+''',
+     '''    QuotaRefresh,
+    QuotaConnected,
+    QuotaChooseFile,
+    /// 选择 MAA 可执行文件（设置页 MAA 分组）。
+    PickMaaExe,
+    /// 选择 MAA 日志目录（设置页 MAA 分组）。
+    PickMaaLogDir,
+    /// 把系统主音量设为 0..100（v0.5.4 音量条）。
+    SetVolume(u32),
+    /// 切换系统静音。
+'''),
+    ("src/extras.rs",
+     '''        let exe=self.maa_exe()?;
+        crate::maa::log_dir_from_exe(&exe).map(|dir|dir.join("asst.log"))
+    }
+    /// 通知名单里登记的 MAA 可执行文件路径（用于取图标、定位日志）。
+    pub(crate) fn maa_exe(&self)->Option<String> {
+        self.notification_apps.items.iter()
+            .find(|(id,name,_)| name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe"))
+            .map(|(id,_,_)| id.clone())
+''',
+     '''        let exe=self.maa_exe()?;
+        crate::maa::log_dir_from_exe(&exe).map(|dir|dir.join("asst.log"))
+    }
+    /// 设置页选好 MAA 程序后写入偏好（换程序时顺便清掉图标缓存）。
+    pub fn set_maa_exe(&mut self,path:String){
+        self.maa_prefs.exe_path=path;
+        self.maa_prefs.save();
+        self.maa_icon=None;
+    }
+    /// 设置页选好日志目录后写入偏好。
+    pub fn set_maa_log_dir(&mut self,path:String){
+        self.maa_prefs.log_dir=path;
+        self.maa_prefs.save();
+    }
+    /// MAA 可执行文件路径：优先用设置里手选的，其次取通知名单里登记的那份。
+    pub(crate) fn maa_exe(&self)->Option<String> {
+        let custom=self.maa_prefs.exe_path.trim();
+        if !custom.is_empty() { return Some(custom.to_string()); }
+        self.notification_apps.items.iter()
+            .find(|(id,name,_)| name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe"))
+            .map(|(id,_,_)| id.clone())
+'''),
+    ("src/extras.rs",
+     '''                            });
+                        });
+
+                        settings_label(ui,"日志目录");
+                        settings_card(ui,|ui|{
+                            ui.add_enabled_ui(maa_on,|ui|{
+                                let before=self.maa_prefs.log_dir.clone();
+                                settings_control_row(ui,"MAA 目录",80.0,|ui|{
+                                    ui.add(egui::TextEdit::singleline(&mut self.maa_prefs.log_dir).vertical_align(egui::Align::Center).hint_text("留空自动识别（<MAA目录>\\\\debug）"))
+                                });
+                                settings_hint(ui,"岛仔只读 MAA 的 debug\\\\asst.log 获取运行状态，不修改 MAA、不需要它开任何服务。留空时按通知名单里 MAA 的路径自动定位。");
+                                if before!=self.maa_prefs.log_dir{self.maa_prefs.save();}
+                            });
+                        });
+                    }
+''',
+     '''                            });
+                        });
+
+                        settings_label(ui,"路径");
+                        settings_card(ui,|ui|{
+                            ui.add_enabled_ui(maa_on,|ui|{
+                                let before=self.maa_prefs.clone();
+                                settings_control_row(ui,"MAA 程序",80.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        let field=(ui.available_width()-70.0).max(90.0);
+                                        ui.add_sized([field,24.0],egui::TextEdit::singleline(&mut self.maa_prefs.exe_path)
+                                            .vertical_align(egui::Align::Center).hint_text("留空自动识别（MAA.exe）"));
+                                        if ui.button("选择…").clicked(){self.pending.push(Cmd::PickMaaExe);}
+                                    }).response
+                                });
+                                settings_hint(ui,"指向 MAA.exe。留空时用通知名单里登记的那一份。");
+                                ui.separator();
+                                settings_control_row(ui,"日志目录",80.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        let field=(ui.available_width()-70.0).max(90.0);
+                                        ui.add_sized([field,24.0],egui::TextEdit::singleline(&mut self.maa_prefs.log_dir)
+                                            .vertical_align(egui::Align::Center).hint_text("留空自动识别（<MAA目录>\\\\debug）"));
+                                        if ui.button("选择…").clicked(){self.pending.push(Cmd::PickMaaLogDir);}
+                                    }).response
+                                });
+                                settings_hint(ui,"岛仔只读这里的 debug\\\\asst.log 拿运行状态，不修改 MAA、不需要它开任何服务。留空时按 MAA 程序所在目录自动定位。");
+                                if before!=self.maa_prefs{self.maa_prefs.save();}
+                            });
+                        });
+                    }
+'''),
+    ("src/main.rs",
+     '''                Cmd::QuotaChooseFile=>{
+                    #[cfg(windows)] match daozai::system::pick_files_for("选择 AI 账号的登录 JSON 文件",false){Ok(files)=>if let Some(path)=files.into_iter().next(){self.app.quota_set_source(path);},Err(_)=>self.app.say("无法选择登录文件")}
+                },
+                Cmd::QuotaRefresh=>{
+                    if self.quota_at.ready(Duration::from_secs(15)) {
+                        let config=self.app.quota_config();let accounts:Vec<_>=config.accounts.iter().filter(|a|config.enabled && a.enabled).cloned().collect();
+''',
+     '''                Cmd::QuotaChooseFile=>{
+                    #[cfg(windows)] match daozai::system::pick_files_for("选择 AI 账号的登录 JSON 文件",false){Ok(files)=>if let Some(path)=files.into_iter().next(){self.app.quota_set_source(path);},Err(_)=>self.app.say("无法选择登录文件")}
+                },
+                Cmd::PickMaaExe=>{
+                    #[cfg(windows)] match daozai::system::pick_exe("选择 MAA 程序（MAA.exe）"){
+                        Ok(Some(path))=>self.app.set_maa_exe(path.display().to_string()),
+                        Ok(None)=>{},
+                        Err(e)=>self.app.say(format!("无法选择程序：{}",e.code())),
+                    }
+                },
+                Cmd::PickMaaLogDir=>{
+                    #[cfg(windows)] match daozai::system::pick_folder("选择 MAA 日志目录（一般是 MAA 目录下的 debug）"){
+                        Ok(Some(path))=>self.app.set_maa_log_dir(path.display().to_string()),
+                        Ok(None)=>{},
+                        Err(e)=>self.app.say(format!("无法选择文件夹：{}",e.code())),
+                    }
+                },
+                Cmd::QuotaRefresh=>{
+                    if self.quota_at.ready(Duration::from_secs(15)) {
+                        let config=self.app.quota_config();let accounts:Vec<_>=config.accounts.iter().filter(|a|config.enabled && a.enabled).cloned().collect();
 '''),
 ]
 

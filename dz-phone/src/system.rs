@@ -551,6 +551,53 @@ pub fn pick_files() -> Result<Vec<std::path::PathBuf>> {
     pick_files_for("添加文件到置物架",true)
 }
 
+/// 选择一个文件夹（返回 None = 用户取消）。
+pub fn pick_folder(title:&str) -> Result<Option<std::path::PathBuf>> {
+    unsafe {
+        use windows::Win32::UI::Shell::*;
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
+        // 只让选文件夹，且必须是已存在的文件系统路径。
+        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST)?;
+        dialog.SetTitle(&HSTRING::from(title))?;
+        if let Err(e) = dialog.Show(None) {
+            if e.code().0 as u32 == 0x800704c7 { return Ok(None); } // 用户取消
+            return Err(e);
+        }
+        let item = dialog.GetResult()?;
+        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let text = ptr.to_string()?;
+        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
+        Ok(Some(text.into()))
+    }
+}
+
+/// 选择一个程序文件（返回 None = 用户取消）。
+pub fn pick_exe(title:&str) -> Result<Option<std::path::PathBuf>> {
+    unsafe {
+        use windows::Win32::UI::Shell::*;
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
+        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST)?;
+        dialog.SetTitle(&HSTRING::from(title))?;
+        // 默认只列 .exe，用户仍可在文件名框里输入其它路径。
+        let name: Vec<u16> = "程序 (*.exe)\0".encode_utf16().collect();
+        let spec: Vec<u16> = "*.exe\0".encode_utf16().collect();
+        let filters = [Common::COMDLG_FILTERSPEC {
+            pszName: windows::core::PCWSTR(name.as_ptr()),
+            pszSpec: windows::core::PCWSTR(spec.as_ptr()),
+        }];
+        let _ = dialog.SetFileTypes(&filters);
+        if let Err(e) = dialog.Show(None) {
+            if e.code().0 as u32 == 0x800704c7 { return Ok(None); }
+            return Err(e);
+        }
+        let item = dialog.GetResult()?;
+        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let text = ptr.to_string()?;
+        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
+        Ok(Some(text.into()))
+    }
+}
+
 pub fn pick_files_for(title:&str,multiple:bool) -> Result<Vec<std::path::PathBuf>> {
     unsafe {
         use windows::Win32::UI::Shell::*;

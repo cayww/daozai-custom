@@ -186,6 +186,10 @@ pub enum Cmd {
     QuotaRefresh,
     QuotaConnected,
     QuotaChooseFile,
+    /// 选择 MAA 可执行文件（设置页 MAA 分组）。
+    PickMaaExe,
+    /// 选择 MAA 日志目录（设置页 MAA 分组）。
+    PickMaaLogDir,
     /// 把系统主音量设为 0..100（v0.5.4 音量条）。
     SetVolume(u32),
     /// 切换系统静音。
