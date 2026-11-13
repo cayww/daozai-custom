@@ -611,7 +611,9 @@ impl App {
             if phone {"手机"} else {"其它"},
             if self.settings.qq_only {"是"} else {"否"},
             body.chars().take(60).collect::<String>());
-        if !self.settings.read_notifications || id.is_empty() || (self.settings.qq_only && id!="QQ" && !phone){
+        // 仅 QQ 模式：放行 QQ，以及「手机短信与来电」开关打开时的手机通道。
+        let phone_allowed=phone && self.settings.phone_alerts;
+        if !self.settings.read_notifications || id.is_empty() || (self.settings.qq_only && id!="QQ" && !phone_allowed){
             log_notice(&format!("DROP 未连接/非QQ  {trace}"));
             return;
         }
@@ -713,7 +715,7 @@ impl App {
         let allowed=|a:&Alert|match &a.source {
             AlertSource::Internal=>true,
             AlertSource::Wechat=>self.settings.wechat_notifications && self.settings.notifications,
-            AlertSource::External(id)=>self.settings.notifications && self.settings.read_notifications && (id=="island-status" || id.starts_with("island-status:") || ((!self.settings.qq_only || id=="QQ" || crate::system::phone_channel(id)) && self.notification_apps.items.iter().any(|(key,_,on)|key==id && *on))),
+            AlertSource::External(id)=>self.settings.notifications && self.settings.read_notifications && (id=="island-status" || id.starts_with("island-status:") || ((!self.settings.qq_only || id=="QQ" || (crate::system::phone_channel(id) && self.settings.phone_alerts)) && self.notification_apps.items.iter().any(|(key,_,on)|key==id && *on))),
         };
         self.alerts.retain(&allowed);
         if self.notice.as_ref().is_some_and(|a|!allowed(a)){self.notice=None;}
@@ -2292,29 +2294,45 @@ impl App {
                             if master && !self.wechat_status.is_empty(){ui.label(egui::RichText::new(&self.wechat_status).size(12.0));}
                             });
                         });
-                        settings_label(ui,"QQ 与 Windows 通知");
+                        settings_label(ui,"通知来源");
                         settings_card(ui,|ui|{
                             master_hint(ui);
                             ui.add_enabled_ui(master,|ui|{
-                            ui.label(egui::RichText::new(&self.listener_status).size(13.0));
-                            if self.settings.read_notifications {
-                                if ui.button(if self.settings.qq_only{"断开 QQ 通知"}else{"断开系统通知"}).clicked(){self.pending.push(Cmd::DisconnectNotifications);}
-                            }else{
-                                ui.horizontal_wrapped(|ui|{
-                                    if ui.button("只连接 QQ").clicked(){self.pending.push(Cmd::RequestQqNotifications);}
-                                    if ui.button("连接所有应用通知").clicked(){self.pending.push(Cmd::RequestNotifications);}
-                                });
+                            // 监听范围二选一：全部应用 / 仅 QQ，当前项高亮。
+                            let listening=self.settings.read_notifications;
+                            let all_mode=listening && !self.settings.qq_only;
+                            let qq_mode=listening && self.settings.qq_only;
+                            ui.horizontal_wrapped(|ui|{
+                                if ui.selectable_label(all_mode,"全部应用").clicked() && !all_mode {
+                                    self.pending.push(Cmd::RequestNotifications);
+                                }
+                                if ui.selectable_label(qq_mode,"仅 QQ").clicked() && !qq_mode {
+                                    self.pending.push(Cmd::RequestQqNotifications);
+                                }
+                                if listening && ui.button("停止监听").clicked() {
+                                    self.pending.push(Cmd::DisconnectNotifications);
+                                }
+                            });
+                            let status=self.listener_status.clone();
+                            ui.label(egui::RichText::new(status).size(13.0));
+                            settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
+                            ui.separator();
+                            // 手机通道独立开关：它经「手机连接」转发，不属于普通应用通知。
+                            setting_row(ui,"手机短信与来电","通过「手机连接」转发的短信与来电；关闭后即使选「仅 QQ」也不接收",&mut self.settings.phone_alerts);
+                            ui.separator();
+                            if qq_mode {
+                                ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else {
+                                ui.label(egui::RichText::new("应用列表：勾选后该应用的通知才会上岛；新发过通知的应用会自动出现在这里。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                let before_apps=self.notification_apps.items.clone();
+                                for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+                                if before_apps!=self.notification_apps.items{self.notification_apps.save();}
                             }
-                            ui.label(egui::RichText::new("QQ 需开启系统通知；新通知在岛上显示约 4.5 秒，默认隐藏正文。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             ui.separator();
                             setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
                             setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
                             setting_number(ui,"验证码停留",&mut self.settings.otp_seconds,10,300," 秒",1.0);
                             settings_hint(ui,"卡片显示多久后自动收起，按秒可调。验证码卡片有 10 秒下限、且不会短于「通知停留」，留时间回看和点「复制」。");
-                            ui.label(egui::RichText::new("只接收 Windows 通知中心可见的内容；应用会在收到通知后出现在下方。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
-                            let before_apps=self.notification_apps.items.clone();
-                            for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
-                            if before_apps!=self.notification_apps.items{self.notification_apps.save();}
                             });
                         });
                     }

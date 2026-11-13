@@ -268,6 +268,8 @@ pub struct Settings {
     /// 微信缩在托盘时，点提醒通过系统托盘按钮唤起微信（默认关闭）。
     pub wechat_tray_open:bool,
     pub qq_only:bool,
+    /// 接收「手机连接」转发的短信 / 来电（独立于 qq_only：仅 QQ 模式下也能单独关掉）。
+    pub phone_alerts:bool,
     pub notification_preview:bool,
     pub notifications: bool,
     pub sound: bool,
@@ -311,7 +313,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), hover_delay_ms: 200, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), hover_delay_ms: 200, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, phone_alerts:true, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
     }
 }
 
@@ -460,6 +462,7 @@ impl Settings {
                 "wechat_notifications" => s.wechat_notifications=v=="1",
                 "wechat_tray_open" => s.wechat_tray_open=v=="1",
                 "qq_only" => s.qq_only=v=="1",
+                "phone_alerts" => s.phone_alerts=v!="0",
                 "notification_preview" => s.notification_preview=v=="1",
                 "system_hud" => s.system_hud = v != "0",
                 "bluetooth_notifications" => s.bluetooth_notifications = v != "0",
@@ -535,6 +538,7 @@ impl Settings {
                 ("wechat_notifications".into(),(self.wechat_notifications as u8).to_string()),
                 ("wechat_tray_open".into(),(self.wechat_tray_open as u8).to_string()),
                 ("qq_only".into(),(self.qq_only as u8).to_string()),
+                ("phone_alerts".into(),(self.phone_alerts as u8).to_string()),
                 ("notification_preview".into(),(self.notification_preview as u8).to_string()),
                 ("system_hud".into(), (self.system_hud as u8).to_string()),
                 ("bluetooth_notifications".into(), (self.bluetooth_notifications as u8).to_string()),

@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-69"
+PATCH_ID = "custom-70"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -10006,6 +10006,225 @@ impl Default for MaaPrefs {
         // 直达 MAA 设置分组（SETTINGS_GROUPS 里 "MAA" 是第 9 项）。
         if std::env::args().any(|arg|arg=="--maa"){app.open_settings_group(8);}
         if std::env::args().any(|arg|arg=="--calendar"){app.open_calendar(None);}'''),
+
+    # custom-70：通知来源拆分：全部应用/仅QQ + 手机开关独立
+    ("src/model.rs",
+     '''    /// 微信缩在托盘时，点提醒通过系统托盘按钮唤起微信（默认关闭）。
+    pub wechat_tray_open:bool,
+    pub qq_only:bool,
+    pub notification_preview:bool,
+    pub notifications: bool,
+    pub sound: bool,
+''',
+     '''    /// 微信缩在托盘时，点提醒通过系统托盘按钮唤起微信（默认关闭）。
+    pub wechat_tray_open:bool,
+    pub qq_only:bool,
+    /// 接收「手机连接」转发的短信 / 来电（独立于 qq_only：仅 QQ 模式下也能单独关掉）。
+    pub phone_alerts:bool,
+    pub notification_preview:bool,
+    pub notifications: bool,
+    pub sound: bool,
+'''),
+    ("src/model.rs",
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), hover_delay_ms: 200, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+''',
+     '''
+impl Default for Settings {
+    fn default() -> Self {
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, open_anim: OpenAnim::default(), hover_delay_ms: 200, glass_blur: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 8], page_order: [0,1,2,3,4,5,6,7], show_battery: true, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wechat_tray_open:false, qq_only:false, phone_alerts:true, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+    }
+}
+
+'''),
+    ("src/model.rs",
+     '''                "wechat_notifications" => s.wechat_notifications=v=="1",
+                "wechat_tray_open" => s.wechat_tray_open=v=="1",
+                "qq_only" => s.qq_only=v=="1",
+                "notification_preview" => s.notification_preview=v=="1",
+                "system_hud" => s.system_hud = v != "0",
+                "bluetooth_notifications" => s.bluetooth_notifications = v != "0",
+''',
+     '''                "wechat_notifications" => s.wechat_notifications=v=="1",
+                "wechat_tray_open" => s.wechat_tray_open=v=="1",
+                "qq_only" => s.qq_only=v=="1",
+                "phone_alerts" => s.phone_alerts=v!="0",
+                "notification_preview" => s.notification_preview=v=="1",
+                "system_hud" => s.system_hud = v != "0",
+                "bluetooth_notifications" => s.bluetooth_notifications = v != "0",
+'''),
+    ("src/model.rs",
+     '''                ("wechat_notifications".into(),(self.wechat_notifications as u8).to_string()),
+                ("wechat_tray_open".into(),(self.wechat_tray_open as u8).to_string()),
+                ("qq_only".into(),(self.qq_only as u8).to_string()),
+                ("notification_preview".into(),(self.notification_preview as u8).to_string()),
+                ("system_hud".into(), (self.system_hud as u8).to_string()),
+                ("bluetooth_notifications".into(), (self.bluetooth_notifications as u8).to_string()),
+''',
+     '''                ("wechat_notifications".into(),(self.wechat_notifications as u8).to_string()),
+                ("wechat_tray_open".into(),(self.wechat_tray_open as u8).to_string()),
+                ("qq_only".into(),(self.qq_only as u8).to_string()),
+                ("phone_alerts".into(),(self.phone_alerts as u8).to_string()),
+                ("notification_preview".into(),(self.notification_preview as u8).to_string()),
+                ("system_hud".into(), (self.system_hud as u8).to_string()),
+                ("bluetooth_notifications".into(), (self.bluetooth_notifications as u8).to_string()),
+'''),
+    ("src/extras.rs",
+     '''            if phone {"手机"} else {"其它"},
+            if self.settings.qq_only {"是"} else {"否"},
+            body.chars().take(60).collect::<String>());
+        if !self.settings.read_notifications || id.is_empty() || (self.settings.qq_only && id!="QQ" && !phone){
+            log_notice(&format!("DROP 未连接/非QQ  {trace}"));
+            return;
+        }
+''',
+     '''            if phone {"手机"} else {"其它"},
+            if self.settings.qq_only {"是"} else {"否"},
+            body.chars().take(60).collect::<String>());
+        // 仅 QQ 模式：放行 QQ，以及「手机短信与来电」开关打开时的手机通道。
+        let phone_allowed=phone && self.settings.phone_alerts;
+        if !self.settings.read_notifications || id.is_empty() || (self.settings.qq_only && id!="QQ" && !phone_allowed){
+            log_notice(&format!("DROP 未连接/非QQ  {trace}"));
+            return;
+        }
+'''),
+    ("src/extras.rs",
+     '''        let allowed=|a:&Alert|match &a.source {
+            AlertSource::Internal=>true,
+            AlertSource::Wechat=>self.settings.wechat_notifications && self.settings.notifications,
+            AlertSource::External(id)=>self.settings.notifications && self.settings.read_notifications && (id=="island-status" || id.starts_with("island-status:") || ((!self.settings.qq_only || id=="QQ" || crate::system::phone_channel(id)) && self.notification_apps.items.iter().any(|(key,_,on)|key==id && *on))),
+        };
+        self.alerts.retain(&allowed);
+        if self.notice.as_ref().is_some_and(|a|!allowed(a)){self.notice=None;}
+''',
+     '''        let allowed=|a:&Alert|match &a.source {
+            AlertSource::Internal=>true,
+            AlertSource::Wechat=>self.settings.wechat_notifications && self.settings.notifications,
+            AlertSource::External(id)=>self.settings.notifications && self.settings.read_notifications && (id=="island-status" || id.starts_with("island-status:") || ((!self.settings.qq_only || id=="QQ" || (crate::system::phone_channel(id) && self.settings.phone_alerts)) && self.notification_apps.items.iter().any(|(key,_,on)|key==id && *on))),
+        };
+        self.alerts.retain(&allowed);
+        if self.notice.as_ref().is_some_and(|a|!allowed(a)){self.notice=None;}
+'''),
+    ("src/extras.rs",
+     '''                            if master && !self.wechat_status.is_empty(){ui.label(egui::RichText::new(&self.wechat_status).size(12.0));}
+                            });
+                        });
+                        settings_label(ui,"QQ 与 Windows 通知");
+                        settings_card(ui,|ui|{
+                            master_hint(ui);
+                            ui.add_enabled_ui(master,|ui|{
+                            ui.label(egui::RichText::new(&self.listener_status).size(13.0));
+                            if self.settings.read_notifications {
+                                if ui.button(if self.settings.qq_only{"断开 QQ 通知"}else{"断开系统通知"}).clicked(){self.pending.push(Cmd::DisconnectNotifications);}
+                            }else{
+                                ui.horizontal_wrapped(|ui|{
+                                    if ui.button("只连接 QQ").clicked(){self.pending.push(Cmd::RequestQqNotifications);}
+                                    if ui.button("连接所有应用通知").clicked(){self.pending.push(Cmd::RequestNotifications);}
+                                });
+                            }
+                            ui.label(egui::RichText::new("QQ 需开启系统通知；新通知在岛上显示约 4.5 秒，默认隐藏正文。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            ui.separator();
+                            setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
+                            setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
+                            setting_number(ui,"验证码停留",&mut self.settings.otp_seconds,10,300," 秒",1.0);
+                            settings_hint(ui,"卡片显示多久后自动收起，按秒可调。验证码卡片有 10 秒下限、且不会短于「通知停留」，留时间回看和点「复制」。");
+                            ui.label(egui::RichText::new("只接收 Windows 通知中心可见的内容；应用会在收到通知后出现在下方。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            let before_apps=self.notification_apps.items.clone();
+                            for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+                            if before_apps!=self.notification_apps.items{self.notification_apps.save();}
+                            });
+                        });
+                    }
+''',
+     '''                            if master && !self.wechat_status.is_empty(){ui.label(egui::RichText::new(&self.wechat_status).size(12.0));}
+                            });
+                        });
+                        settings_label(ui,"通知来源");
+                        settings_card(ui,|ui|{
+                            master_hint(ui);
+                            ui.add_enabled_ui(master,|ui|{
+                            // 监听范围二选一：全部应用 / 仅 QQ，当前项高亮。
+                            let listening=self.settings.read_notifications;
+                            let all_mode=listening && !self.settings.qq_only;
+                            let qq_mode=listening && self.settings.qq_only;
+                            ui.horizontal_wrapped(|ui|{
+                                if ui.selectable_label(all_mode,"全部应用").clicked() && !all_mode {
+                                    self.pending.push(Cmd::RequestNotifications);
+                                }
+                                if ui.selectable_label(qq_mode,"仅 QQ").clicked() && !qq_mode {
+                                    self.pending.push(Cmd::RequestQqNotifications);
+                                }
+                                if listening && ui.button("停止监听").clicked() {
+                                    self.pending.push(Cmd::DisconnectNotifications);
+                                }
+                            });
+                            let status=self.listener_status.clone();
+                            ui.label(egui::RichText::new(status).size(13.0));
+                            settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
+                            ui.separator();
+                            // 手机通道独立开关：它经「手机连接」转发，不属于普通应用通知。
+                            setting_row(ui,"手机短信与来电","通过「手机连接」转发的短信与来电；关闭后即使选「仅 QQ」也不接收",&mut self.settings.phone_alerts);
+                            ui.separator();
+                            if qq_mode {
+                                ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else {
+                                ui.label(egui::RichText::new("应用列表：勾选后该应用的通知才会上岛；新发过通知的应用会自动出现在这里。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                let before_apps=self.notification_apps.items.clone();
+                                for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+                                if before_apps!=self.notification_apps.items{self.notification_apps.save();}
+                            }
+                            ui.separator();
+                            setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
+                            setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
+                            setting_number(ui,"验证码停留",&mut self.settings.otp_seconds,10,300," 秒",1.0);
+                            settings_hint(ui,"卡片显示多久后自动收起，按秒可调。验证码卡片有 10 秒下限、且不会短于「通知停留」，留时间回看和点「复制」。");
+                            });
+                        });
+                    }
+'''),
+
+    # custom-70：通知来源页渲染测试
+    ("src/ui_tests.rs",
+     '''    }
+
+}
+''',
+     '''    }
+
+}
+
+
+/// 通知来源页两种模式都要能渲染：全部应用（显示应用列表）与仅 QQ（隐藏列表）。
+#[test]
+fn notification_source_page_renders_in_both_modes(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings_open=true;
+    h.app.settings_category=5; // 「通知、邮箱与日程」分组
+    h.app.settings_tab=6;
+    h.ctx.set_embed_viewports(false);
+    for qq_only in [false,true] {
+        h.app.settings.read_notifications=true;
+        h.app.settings.qq_only=qq_only;
+        for _ in 0..2 {
+            let time=h.t;
+            let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+                let id=viewport.ids.this;
+                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            });
+            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            assert!(output.lock().unwrap().is_some(),"qq_only={qq_only} 时设置页应完成渲染");
+            h.t+=1.0/60.0;
+        }
+    }
+}
+'''),
 ]
 
 

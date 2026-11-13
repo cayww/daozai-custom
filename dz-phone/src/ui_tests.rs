@@ -6376,3 +6376,30 @@ fn claude_local_only_settings_show_notice_without_manual_reset_controls(){
     }
 
 }
+
+
+/// 通知来源页两种模式都要能渲染：全部应用（显示应用列表）与仅 QQ（隐藏列表）。
+#[test]
+fn notification_source_page_renders_in_both_modes(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings_open=true;
+    h.app.settings_category=5; // 「通知、邮箱与日程」分组
+    h.app.settings_tab=6;
+    h.ctx.set_embed_viewports(false);
+    for qq_only in [false,true] {
+        h.app.settings.read_notifications=true;
+        h.app.settings.qq_only=qq_only;
+        for _ in 0..2 {
+            let time=h.t;
+            let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+                let id=viewport.ids.this;
+                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            });
+            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            assert!(output.lock().unwrap().is_some(),"qq_only={qq_only} 时设置页应完成渲染");
+            h.t+=1.0/60.0;
+        }
+    }
+}
