@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-85"
+PATCH_ID = "custom-86"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -3840,18 +3840,24 @@ impl App {
                             let auto_host=ctl::config().auto_host;
                             settings_label(ui,"网易云进度拖动");
                             settings_card(ui,|ui|{
-                                ui.small(if ctl::shortcut_fixed(){"已修改网易云快捷方式"}else{"未修改快捷方式"});
-                                if ui.button("选择快捷方式…").clicked(){
-                                    match crate::system::pick_files_for("选择网易云快捷方式",false){
-                                        Ok(files)=>if let Some(path)=files.first(){
-                                            match ctl::fix_shortcut(path){
-                                                Ok(message)=>self.say(message),
-                                                Err(error)=>self.say(error),
-                                            }
-                                        },
-                                        Err(_)=>self.say("未选择文件"),
+                                let fixed=ctl::shortcut_fixed();
+                                ui.add(egui::Label::new(egui::RichText::new(if fixed{"已修改网易云快捷方式"}else{"未修改快捷方式"}).size(12.5).strong()).wrap());
+                                ui.add_space(4.0);
+                                ui.horizontal(|ui|{
+                                    ui.small("快捷方式在其它位置：");
+                                    if ui.button("选择文件").clicked(){
+                                        match crate::system::pick_files_for("选择网易云快捷方式",false){
+                                            Ok(files)=>if let Some(path)=files.first(){
+                                                match ctl::fix_shortcut(path){
+                                                    Ok(message)=>self.say(message),
+                                                    Err(error)=>self.say(error),
+                                                }
+                                            },
+                                            Err(_)=>self.say("未选择文件"),
+                                        }
                                     }
-                                }
+                                });
+                                ui.separator();
                                 let mut auto=auto_host;
                                 setting_row(ui,"自动托管","网易云未生效时自动修复",&mut auto);
                                 if auto!=auto_host{
@@ -3860,7 +3866,8 @@ impl App {
                                         Err(error)=>self.say(format!("保存失败：{}",error)),
                                     }
                                 }
-                                if ui.button("以调试模式重启网易云").clicked(){
+                                ui.separator();
+                                if ui.button("重启网易云").clicked(){
                                     match ctl::restart_with_debug_port(){
                                         Ok(message)=>self.say(message),
                                         Err(error)=>self.say(format!("未能重启：{}",error)),

@@ -6,7 +6,7 @@
 
 #define MyAppName "岛仔 Daozai"
 #define MyAppVersion "0.6.64"
-#define MyAppBuild "custom-85"
+#define MyAppBuild "custom-86"
 
 [Setup]
 AppId={{A58C1D9E-4F02-4B6A-9C33-1E7B5D2F8A44}}
