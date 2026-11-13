@@ -3858,7 +3858,7 @@ impl App {
                                     }
                                 ui.separator();
                                 let mut auto=auto_host;
-                                setting_row(ui,"自动托管","此为开启后会重启未连接到岛仔的网易云进程",&mut auto);
+                                setting_row(ui,"自动托管","开启后会重启未连接到岛仔的网易云进程",&mut auto);
                                 if auto!=auto_host{
                                     match ctl::set_auto_host(auto){
                                         Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
@@ -3866,7 +3866,7 @@ impl App {
                                     }
                                 }
                                 ui.separator();
-                                ui.small("重启正在运行的网易云，立即生效。");
+                                ui.small("手动重启以连接到岛仔，并且补上开始菜单的快捷方式，立即生效。");
                                 if ui.button("重启网易云").clicked(){
                                     match ctl::restart_with_debug_port(){
                                         Ok(message)=>self.say(message),
