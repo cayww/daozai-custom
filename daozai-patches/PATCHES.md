@@ -614,7 +614,7 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **遗留 / 注意**：
 
 - 静默安装后岛仔已自动重启（`--restart-after`，exe 为 23:26 新版，PID 33404）；若之后被会话清理退出，
-  手动启动 `D://software//Daozai//daozai.exe` 即可。网易云仍要带 `--remote-debugging-port=9222`，
+  手动启动 `D:\software\Daozai\daozai.exe` 即可。网易云仍要带 `--remote-debugging-port=9222`，
   custom-80/81 的 CDP 跳转链（smtc.rs / netease_playback.rs / netease_control.rs）保持可用，
   实机拖拽进度条仍待用户确认。
 - `bump_version()` 会把重放后的 Cargo.toml 从 0.6.64 升到 0.6.65，而工作源码/安装包仍是
