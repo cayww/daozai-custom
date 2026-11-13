@@ -1566,8 +1566,8 @@ pub(crate) fn setting_row_locked(ui:&mut egui::Ui,title:&str,description:&str,va
         ui.vertical(|ui|{
             ui.set_width(text_w);
             ui.spacing_mut().item_spacing.y=2.0;
-            ui.add(egui::Label::new(egui::RichText::new(title).size(13.0).color(settings_color(ctx,Color32::from_gray(120),Color32::from_gray(150)))).wrap());
-            if !description.is_empty(){ui.add(egui::Label::new(egui::RichText::new(description).size(11.5).color(settings_color(ctx,Color32::from_gray(120),Color32::from_gray(125)))).wrap());}
+            ui.add(egui::Label::new(egui::RichText::new(title).size(13.5).color(settings_color(ctx,Color32::from_gray(130),Color32::from_gray(140)))).wrap());
+            if !description.is_empty(){ui.add(egui::Label::new(egui::RichText::new(description).size(12.0).color(settings_color(ctx,Color32::from_gray(118),Color32::from_gray(132)))).wrap());}
         });
         ui.add_space((ui.available_width()-SETTINGS_SWITCH_W-ui.spacing().item_spacing.x).max(0.0));
         let (rect,_)=ui.allocate_exact_size(egui::vec2(34.0,20.0),egui::Sense::hover());
@@ -1587,7 +1587,7 @@ fn switch(ui:&mut egui::Ui,value:&mut bool)->bool {
     ui.painter().circle_filled(egui::pos2(x,rect.center().y),7.0,Color32::WHITE);
     response.clicked()
 }
-/// 设置页版式：标签列宽、开关尺寸、控件与卡片右边缘之间的固定留白。
+/// 设置页版式常量。
 pub(crate) const SETTINGS_LABEL_W: f32 = 80.0;
 const SETTINGS_SWITCH_W: f32 = 34.0;
 const SETTINGS_ROW_GAP: f32 = 16.0;
@@ -1600,9 +1600,9 @@ pub(crate) fn setting_row(ui:&mut egui::Ui,title:&str,description:&str,value:&mu
         let text_w=(ui.available_width()-SETTINGS_SWITCH_W-SETTINGS_ROW_GAP).max(120.0);
         ui.vertical(|ui|{
             ui.set_width(text_w);
-            ui.spacing_mut().item_spacing.y=2.0;
-            ui.add(egui::Label::new(egui::RichText::new(title).size(13.0).color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41)))).wrap());
-            if !description.is_empty(){ui.add(egui::Label::new(egui::RichText::new(description).size(11.5).color(settings_color(ctx,Color32::from_gray(175),Color32::from_gray(90)))).wrap());}
+            ui.spacing_mut().item_spacing.y=3.0;
+            ui.add(egui::Label::new(egui::RichText::new(title).size(13.5).color(settings_color(ctx,Color32::from_rgb(238,240,244),Color32::from_rgb(24,27,32)))).wrap());
+            if !description.is_empty(){ui.add(egui::Label::new(egui::RichText::new(description).size(12.0).color(settings_color(ctx,Color32::from_gray(158),Color32::from_rgb(96,101,110)))).wrap());}
         });
         // add_space 之后还会再插入一次 item_spacing.x，这里一并扣掉，开关才不会每行往外挤一点。
         ui.add_space((ui.available_width()-SETTINGS_SWITCH_W-ui.spacing().item_spacing.x).max(0.0));
@@ -1655,19 +1655,30 @@ fn island_size_slider(ui:&mut egui::Ui,value:&mut u32)->egui::Response {
 
 pub(crate) fn settings_hint(ui:&mut egui::Ui,text:&str){
     let ctx=&ui.ctx().clone();
-    ui.add(egui::Label::new(egui::RichText::new(text).size(11.5).color(settings_color(ctx,Color32::from_gray(160),Color32::from_gray(105)))).wrap());
+    ui.add(egui::Label::new(egui::RichText::new(text).size(12.0).color(settings_color(ctx,Color32::from_gray(148),Color32::from_rgb(100,106,115)))).wrap());
 }
 pub(crate) fn settings_card(ui:&mut egui::Ui,add:impl FnOnce(&mut egui::Ui)) {
     let ctx=&ui.ctx().clone();
     egui::Frame::new().fill(settings_color(ctx,Color32::from_rgb(35,35,38),Color32::from_rgb(255,255,255)))
-        .corner_radius(10.0).inner_margin(egui::Margin::symmetric(16,12))
-        .show(ui,|ui|{ui.set_min_width(ui.available_width());ui.spacing_mut().item_spacing.y=8.0;add(ui);});
+        .stroke(egui::Stroke::new(1.0,settings_color(ctx,Color32::from_rgb(56,57,62),Color32::from_rgb(228,231,236))))
+        .corner_radius(12.0).inner_margin(egui::Margin::symmetric(16,13))
+        .show(ui,|ui|{
+            ui.set_min_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y=8.0;
+            // 卡内分隔线压淡：8px 行距已经够分隔，硬线太密会让卡片显得碎。
+            ui.style_mut().visuals.widgets.noninteractive.bg_stroke=egui::Stroke::new(1.0,settings_color(ctx,Color32::from_rgb(48,49,54),Color32::from_rgb(238,240,244)));
+            add(ui);
+        });
 }
 pub(crate) fn settings_label(ui:&mut egui::Ui,text:&str){
     let ctx=&ui.ctx().clone();
-    ui.add_space(9.0);
-    ui.label(egui::RichText::new(text).size(11.5).color(settings_color(ctx,Color32::from_gray(185),Color32::from_gray(70))));
-    ui.add_space(2.0);
+    ui.add_space(13.0);
+    // 分组标题：左侧补一条 3px accent 竖条当视觉锚点（不影响布局结构）。
+    let response=ui.label(egui::RichText::new(text).size(12.0).color(settings_color(ctx,Color32::from_gray(168),Color32::from_rgb(88,94,104))));
+    let r=response.rect;
+    let bar=egui::Rect::from_min_size(egui::pos2(r.left()-10.0,r.top()+1.5),egui::vec2(3.0,(r.height()-3.0).max(8.0)));
+    ui.painter().rect_filled(bar,1.5,settings_color(ctx,Color32::from_rgb(96,165,250),Color32::from_rgb(37,99,235)));
+    ui.add_space(4.0);
 }
 fn support_author(ui:&mut egui::Ui){
     let id=egui::Id::new("support-author-open");
@@ -1945,7 +1956,7 @@ impl App {
                         settings_card(ui,|ui|{
                             // 手机电量：从「手机连接」读取，与本机电量并排显示。
                             if crate::phone_battery::installed() {
-                                setting_row(ui,"手机电量","读取「手机连接」的电量，与本机电量各自独立、并排显示；手机断开时自动收起",&mut self.settings.phone_battery);
+                                setting_row(ui,"手机电量","手机电量，与本机分开显示",&mut self.settings.phone_battery);
                             } else {
                                 setting_row_locked(ui,"手机电量","未检测到「手机连接」，安装后才能开启",self.settings.phone_battery);
                             }
@@ -1956,7 +1967,7 @@ impl App {
                             let sms_ready=phone_on && notify_on;
                             let sms_before=self.settings.phone_alerts;
                             if sms_ready {
-                                setting_row(ui,"短信与来电","手机短信、来电转发的通知上岛；关闭后手机通知一律不接收",&mut self.settings.phone_alerts);
+                                setting_row(ui,"短信与来电","短信与来电上岛；关闭后手机通知全部忽略",&mut self.settings.phone_alerts);
                                 if sms_before!=self.settings.phone_alerts{self.settings.save();}
                             } else {
                                 // 只置灰不改值：等条件恢复后开关自动回到原状态。
@@ -1986,7 +1997,7 @@ impl App {
                         settings_card(ui,|ui|self.resident_order_settings(ui));
                         settings_label(ui,"状态组件");
                         settings_card(ui,|ui|{
-                            setting_row(ui,"电量","显示本机（电脑）的电量环；台式机没有电池时不显示",&mut self.settings.show_battery);
+                            setting_row(ui,"电量","本机电量环；没有电池时不显示",&mut self.settings.show_battery);
                             ui.separator();
                             setting_row(ui,"岛上歌词","收起时显示歌词，无歌词时显示封面和歌名",&mut self.settings.island_lyrics);
                         });
@@ -2039,7 +2050,7 @@ impl App {
                             settings_control_row_right(ui,"主题",|ui|{
                                 if settings_segmented(ui,&mut self.settings.settings_theme,&[(SettingsTheme::System,"跟随系统"),(SettingsTheme::Light,"浅色"),(SettingsTheme::Dark,"深色")],52.0) {ctx.request_repaint();}
                             });
-                            settings_hint(ui,"仅影响设置页，岛的外观保持不变。");
+                            settings_hint(ui,"只改设置页配色，岛体不变");
                         });
                         settings_label(ui,"启动");
                         settings_card(ui,|ui|{
@@ -2060,7 +2071,7 @@ impl App {
                             if self.settings.skin.is_glass() {
                                 ui.separator();
                                 let mut blur=self.settings.glass_blur;
-                                setting_row(ui,"背景模糊","使用 Windows 合成引擎的实时模糊，严格贴合岛体形状（需开启系统“透明效果”）；关闭后改为烟熏半透明",&mut blur);
+                                setting_row(ui,"背景模糊","实时模糊岛体背景；需系统开启透明效果",&mut blur);
                                 self.settings.glass_blur=blur;
                             }
                             ui.separator();
@@ -2071,14 +2082,14 @@ impl App {
                                     if ui.add_enabled(self.settings.island_size!=100,egui::Button::new("恢复默认")).clicked(){self.settings.island_size=100;}
                                 }).response
                             });
-                            settings_hint(ui,"文字、图标和吉祥物按实际像素重新绘制，放大后依旧清晰；只影响岛体，不影响设置窗口。");
+                            settings_hint(ui,"按实际像素渲染，放大不发虚");
                             ui.separator();
                             let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
                             settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
                             settings_hint(ui,self.settings.open_anim.description());
                             ui.separator();
                             setting_number(ui,"悬停触发延时",&mut self.settings.hover_delay_ms,0,500," ms",10.0);
-                            settings_hint(ui,"光标停在岛上多久才展开。0 = 一悬停就展开（划过也会触发）；建议 80–120 ms 过滤鼠标路过；180 ms 以上等待期间会有轻微胀大反馈。极简模式自动加倍。");
+                            settings_hint(ui,"悬停多久后展开；80–120 ms 可避开鼠标划过");
                         });
                         settings_label(ui,"岛体显示");
                         settings_card(ui,|ui|{
@@ -2091,7 +2102,7 @@ impl App {
                                 }).response
                             });
                             let edge=self.settings.dock.label();
-                            ui.label(egui::RichText::new(if !self.settings.display_id.is_empty()&&selected.is_none(){"暂时显示在主屏，重新连接所选屏幕后自动恢复。".to_string()}else{format!("显示在所选屏幕{edge}；断开时暂时回到主屏。")}).size(11.0).color(ui.visuals().weak_text_color()));
+                            ui.label(egui::RichText::new(if !self.settings.display_id.is_empty()&&selected.is_none(){"暂时显示在主屏，重连后自动恢复".to_string()}else{format!("所选屏幕{edge}；断开后回主屏")}).size(11.5).color(ui.visuals().weak_text_color()));
                             ui.add_space(4.0);
                             // 停靠边缘：顶部为横向；左右为竖向排列，展开面板从边缘滑出。
                             let docks:Vec<(crate::model::Dock,&str)>=crate::model::Dock::ALL.iter().map(|d|(*d,d.label())).collect();
@@ -2228,7 +2239,7 @@ impl App {
                         });
                         settings_label(ui,"剪贴板");
                         settings_card(ui,|ui|{
-                            setting_row(ui,"记录剪贴板","在置物架的「剪贴板」里查看最近复制的文字，点一下再次复制",&mut self.settings.clipboard_history);
+                            setting_row(ui,"记录剪贴板","在置物架里查看最近复制的文字",&mut self.settings.clipboard_history);
                             ui.label(egui::RichText::new(format!("本机保存最近 {} 条，重新打开后可继续使用。关闭记录会暂停收集，手动清空会保留固定条目。密码管理器标记为敏感的内容不会记录。",crate::clipboard::MAX_RECENT)).size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             ui.add_space(5.0);
                             if ui.add_sized([120.0,32.0],egui::Button::new("打开剪贴板")).clicked(){self.settings_open=false;self.shelf_tab=1;self.show_page(3);}
@@ -2241,17 +2252,17 @@ impl App {
                             ui.separator();
                             setting_row(ui,"蓝牙通知","设备连接与断开提醒；关闭后停止蓝牙监听",&mut self.settings.bluetooth_notifications);
                             ui.separator();
-                            setting_row(ui,"提醒总开关","关闭后饮水、专注、待办、微信和 QQ 提醒都不显示",&mut self.settings.notifications);
+                            setting_row(ui,"提醒总开关","关闭后所有提醒都不显示",&mut self.settings.notifications);
                             ui.separator();
                             ui.separator();
-                            setting_row(ui,"会议自动勿扰","日程开始时自动勿扰到散会（最多 2 小时），散会自动解除",&mut self.settings.quiet_meeting);
+                            setting_row(ui,"会议自动勿扰","日程期间自动勿扰，散会解除",&mut self.settings.quiet_meeting);
                             ui.separator();
                             // 最近通知：落盘的 100 条里取最新 8 条，点一行复制正文，右侧「稍后」5 分钟重弹。
                             settings_hint(ui,"最近通知 · 点击复制正文，或点「稍后」5 分钟后再提醒");
                             let recent=self.recent_notices();
                             let mut picked:Option<(String,String,bool)>=None;
                             if recent.is_empty() {
-                                settings_hint(ui,"还没有记录。收到通知后会写进 notices.json，重启也能回查。");
+                                settings_hint(ui,"还没有通知记录");
                             }
                             for (at,title,body) in recent.iter().rev().take(8) {
                                 let line=format!("{at}  {title} · {}",body.chars().take(26).collect::<String>());
@@ -2273,7 +2284,7 @@ impl App {
                                     }
                                 }).response
                             });
-                            settings_hint(ui,"跨过阈值只提醒一次，手机与本机共用；充满时也会提示。");
+                            settings_hint(ui,"低于阈值提醒一次，充满时也提示");
                             ui.separator();
                             settings_control_row(ui,"AI 额度提醒",SETTINGS_LABEL_W,|ui|{
                                 let mut value=self.settings.quota_alert;
@@ -2283,7 +2294,7 @@ impl App {
                                     }
                                 }).response
                             });
-                            settings_hint(ui,"任一额度窗口剩余跌破阈值时提醒一次，回升后下次还能再提醒。");
+                            settings_hint(ui,"跌破阈值提醒一次，回升后重新计数");
                             ui.separator();
                             // 勿扰：选时长立即生效，到点自动关闭；重启后恢复关闭。
                             let mut quiet=if self.quiet_until>self.t {self.settings.quiet_minutes.max(30)} else {0};
@@ -2296,10 +2307,10 @@ impl App {
                                 }).response
                             });
                             if let Some(minutes)=quiet_pick {self.set_quiet(minutes);}
-                            settings_hint(ui,"勿扰期间不弹横幅、不闪铃铛；验证码仍会提醒。");
+                            settings_hint(ui,"勿扰时不弹横幅和铃铛，验证码除外");
                             ui.separator();
                             let mut keywords_on=!self.settings.notice_keywords.trim().is_empty();
-                            setting_row(ui,"通知关键词高亮","命中关键词时卡片左侧亮起琥珀色竖条；词表改 settings.txt 的 notice_keywords",&mut keywords_on);
+                            setting_row(ui,"通知关键词高亮","命中时卡片左侧亮琥珀色竖条；词表见 settings.txt",&mut keywords_on);
                             if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
                                 self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
                             }
@@ -2311,7 +2322,7 @@ impl App {
                                     if ui.button("编辑规则").clicked(){self.pending.push(Cmd::Open(crate::model::NoticeRules::path()));}
                                 }).response
                             });
-                            settings_hint(ui,"notice-rules.json：pattern + action（mute 静音 / highlight 高亮 / copy 自动复制），按顺序第一条生效，改完约 1 秒生效。");
+                            settings_hint(ui,"规则文件：pattern + action（mute / highlight / copy），首条匹配生效");
                         });
                         // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
                         let master=self.settings.notifications;
@@ -2322,10 +2333,10 @@ impl App {
                         settings_card(ui,|ui|{
                             master_hint(ui);
                             ui.add_enabled_ui(master,|ui|{
-                            setting_row(ui,"微信新消息提醒","根据任务栏闪动提醒，不读取联系人或聊天正文",&mut self.settings.wechat_notifications);
+                            setting_row(ui,"微信新消息提醒","按任务栏闪动提醒，不读聊天内容",&mut self.settings.wechat_notifications);
                             if self.settings.wechat_notifications {
                                 ui.separator();
-                                setting_row(ui,"托盘一键唤起微信","微信缩在托盘时，点提醒由系统按下微信托盘图标；图标收在折叠区时托盘菜单会短暂弹出",&mut self.settings.wechat_tray_open);
+                                setting_row(ui,"托盘一键唤起微信","微信在托盘时点提醒直接唤起",&mut self.settings.wechat_tray_open);
                             }
                             if master && !self.wechat_status.is_empty(){ui.label(egui::RichText::new(&self.wechat_status).size(12.0));}
                             });
@@ -2351,7 +2362,7 @@ impl App {
                             });
                             let status=self.listener_status.clone();
                             ui.label(egui::RichText::new(status).size(13.0));
-                            settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
+                            settings_hint(ui,"全部应用：按应用逐个开关；仅 QQ：只收 QQ");
                             ui.separator();
                             if !listening {
                                 // 停止监听时不展示应用开关：勾选此刻没有意义，容易让人以为还在生效。
@@ -2368,7 +2379,7 @@ impl App {
                             setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
                             setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
                             setting_number(ui,"验证码停留",&mut self.settings.otp_seconds,10,300," 秒",1.0);
-                            settings_hint(ui,"卡片显示多久后自动收起，按秒可调。验证码卡片有 10 秒下限、且不会短于「通知停留」，留时间回看和点「复制」。");
+                            settings_hint(ui,"卡片停留时长；验证码至少 10 秒");
                             });
                         });
                     }
@@ -2382,7 +2393,7 @@ impl App {
                             let before=self.browser_prefs.clone();
                             setting_number(ui,"完成提示时长",&mut self.browser_prefs.done_seconds,3,60," 秒",1.0);
                             setting_number(ui,"进度显示门槛",&mut self.browser_prefs.min_progress_mb,0,500," MB",1.0);
-                            settings_hint(ui,"完成提示时长：下载完成后绿色胶囊显示多久（点击可打开文件）。进度显示门槛：小于该大小的下载不显示进度胶囊、只在完成时提示，避免小文件频繁打扰；0 = 全部显示进度。改动最迟 5 秒后生效。");
+                            settings_hint(ui,"完成提示停留时长；小于门槛的文件只提示完成，不给进度");
                             if before!=self.browser_prefs{self.browser_prefs.save();}
                         });
                         settings_label(ui,"工作原理");
@@ -2416,9 +2427,9 @@ impl App {
                                 ui.label(egui::RichText::new(format!("日志：{}",path.display())).size(11.5).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             }
                             if !maa_on {
-                                settings_hint(ui,"两种对接方式二选一：① 在「通知、邮箱与日程」分组底部勾选 MAA（它发过通知才会出现在那里）；② 在下方「路径」里直接选 MAA.exe。任选其一，本页配置即可生效。");
+                                settings_hint(ui,"勾选通知里的 MAA，或直接在下方指定程序");
                             } else if !log_ready {
-                                settings_hint(ui,"没找到 debug\\asst.log。确认 MAA 与岛仔在同一台机器上跑过任务；目录特殊时在下方填 MAA 安装目录。");
+                                settings_hint(ui,"没找到 debug\\asst.log，请指定 MAA 目录");
                             }
                         });
 
@@ -2426,16 +2437,16 @@ impl App {
                         settings_card(ui,|ui|{
                             ui.add_enabled_ui(maa_on,|ui|{
                                 let before=self.maa_prefs.clone();
-                                setting_row(ui,"常驻进度","任务运行时在岛上常驻一条进度胶囊（带 MAA 图标、像下载那样随任务完成填满），全部结束后自动收起",&mut self.maa_prefs.resident_progress);
+                                setting_row(ui,"常驻进度","运行时常驻，随任务完成填满",&mut self.maa_prefs.resident_progress);
                                 ui.separator();
-                                setting_row(ui,"任务进度","没有常驻胶囊时，任务开始/完成/全部跑完各弹一条提示；开了常驻进度就不再重复弹",&mut self.maa_prefs.notify_chain);
+                                setting_row(ui,"任务进度","关掉常驻时的单独提示",&mut self.maa_prefs.notify_chain);
                                 ui.separator();
                                 setting_row(ui,"公招高星","自动公招刷出 4 星以上 tag 时提示",&mut self.maa_prefs.notify_recruit_star);
                                 ui.separator();
                                 setting_row(ui,"任务出错","任务失败或中断时提示",&mut self.maa_prefs.notify_error);
                                 ui.separator();
                                 setting_number(ui,"提示停留",&mut self.maa_prefs.seconds,4,30," 秒",1.0);
-                                settings_hint(ui,"MAA 的任务提示与普通通知一样在岛上弹卡片，到时间自动收起。");
+                                settings_hint(ui,"任务提示和普通通知一样弹卡片");
                                 if before!=self.maa_prefs{self.maa_prefs.save();}
                             });
                         });
@@ -2453,7 +2464,7 @@ impl App {
                                         if ui.button("选择…").clicked(){self.pending.push(Cmd::PickMaaExe);}
                                     }).response
                                 });
-                                settings_hint(ui,"指向 MAA.exe。留空时用通知名单里登记的那一份。");
+                                settings_hint(ui,"留空则用通知名单里的 MAA");
                                 ui.separator();
                                 settings_control_row(ui,"日志目录",80.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2463,7 +2474,7 @@ impl App {
                                         if ui.button("选择…").clicked(){self.pending.push(Cmd::PickMaaLogDir);}
                                     }).response
                                 });
-                                settings_hint(ui,"岛仔只读这里的 debug\\asst.log 拿运行状态，不修改 MAA、不需要它开任何服务。留空时按 MAA 程序所在目录自动定位。");
+                                settings_hint(ui,"留空自动识别（MAA 程序旁的 debug 目录）");
                                 if before!=self.maa_prefs{self.maa_prefs.save();}
                             }
                         });
@@ -2471,11 +2482,11 @@ impl App {
                     7=>{
                         settings_label(ui,"邮件提醒");
                         settings_card(ui,|ui|{
-                            setting_row(ui,"新邮件提醒","新邮件到达时显示提醒；岛上歌词模式显示右侧图标",&mut self.settings.mail_enabled);
+                            setting_row(ui,"新邮件提醒","新邮件提醒；歌词模式下显示图标",&mut self.settings.mail_enabled);
                             ui.separator();
                             let sync_before=self.settings.mail_sync_operations;
                             ui.add_enabled_ui(self.mail.manage.pending.is_empty(),|ui|{
-                                setting_row(ui,"同步邮件操作到邮箱","开启后同步已读、删除和恢复；关闭时仅整理岛仔中的记录",&mut self.settings.mail_sync_operations);
+                                setting_row(ui,"同步邮件操作到邮箱","同步已读/删除到邮箱；关闭则只改本地",&mut self.settings.mail_sync_operations);
                             });
                             if sync_before!=self.settings.mail_sync_operations{self.mail_manage_mode_changed();}
                             ui.label(egui::RichText::new("切换开关不会补交之前的本机操作。").size(11.5).color(settings_color(ctx,Color32::from_gray(195),Color32::from_gray(60))));
@@ -2762,7 +2773,7 @@ impl App {
                                 ui.add_space(8.0);
                                 ui.vertical(|ui|self.updates.ui(ui,update_check));
                             });
-                            setting_row(ui,"检查更新","关闭后隐藏检查更新入口，避免官方安装包覆盖自定义修改",&mut self.settings.update_check);
+                            setting_row(ui,"检查更新","关掉后隐藏更新入口，避免被官方包覆盖",&mut self.settings.update_check);
                             ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             ui.horizontal_wrapped(|ui|{
                                 if ui.button("打开本地数据目录").clicked(){self.pending.push(Cmd::Open(crate::model::config_dir()));}

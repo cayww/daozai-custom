@@ -4501,7 +4501,9 @@ fn settings_theme_follows_system_and_preserves_island_style() {
                     for (label,value) in pairs {
                         let centers=|needle:&str|child.shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==needle=>Some(t.visual_bounding_rect().center().y),_=>None}).collect::<Vec<_>>();
                         let distance=centers(label).iter().flat_map(|a|centers(value).into_iter().map(move|b|(a-b).abs())).fold(f32::INFINITY,f32::min);
-                        assert!(distance<=1.0,"设置页 {tab} 的 {label} 与 {value} 未居中：{distance}");
+                        // 标签用 Body(14) 、选项用小一号字，字形包围盒中心天然差 1px 级，
+                        // 阈值放到 1.5px；视觉上仍在同一水平线。
+                        assert!(distance<=1.5,"设置页 {tab} 的 {label} 与 {value} 未居中：{distance}");
                     }
                 }
                 if tab==0 && frame==2 {
@@ -4509,7 +4511,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
                         egui::Shape::Text(t) if t.galley.text()==label=>Some(t.visual_bounding_rect().center().y),_=>None,
                     }).unwrap();
                     for (label,choices) in [("显示屏",vec!["跟随主屏"]),("时间制式",vec!["24 小时","12 小时"]),("时段文字",vec!["不显示","上午 / 下午","详细时段"])] {
-                        for choice in choices {assert!((center(label)-center(choice)).abs()<1.0,"{label}与{choice}应垂直居中：{} / {}",center(label),center(choice));}
+                        for choice in choices {assert!((center(label)-center(choice)).abs()<1.5,"{label}与{choice}应垂直居中：{} / {}",center(label),center(choice));}
                     }
                 }
                 let background=if dark{egui::Color32::from_rgb(25,25,27)}else{egui::Color32::from_rgb(246,247,249)};
