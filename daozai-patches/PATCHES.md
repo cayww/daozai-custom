@@ -576,6 +576,61 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## 修复 CDP 跳转后岛上进度/歌词不更新（custom-81）
+
+> **状态：已构建、已部署**（custom-81）；实机拖拽验证交由用户手动完成。
+
+### 问题
+
+custom-80 之后跳转本身已经成功（原生 `Seek` 回执 `code=0`、`position` 正确），
+但岛上的进度条和当前歌词停在原处不动。
+
+### 根因
+
+岛仔的网易云进度不是实时读播放器，而是 `netease_playback.rs` 解析 elog：
+
+```
+position(now) = elog 基准 position + (now - observed_at)/1000
+```
+
+只有 `setPlayingPosition` / `load完成` / `native state` 这类**日志事件**才重置基准。
+CDP 的 `audioplayer.seek` 是原生播放器命令，**不写 elog 事件**，所以基准永远不更新：
+
+- `pages.rs` 拖拽时进度条跟手（`seek_position` 来自指针），松手后回落到旧的 `np.position`
+- `lyric_position()` 取 `self.media.position` → 歌词同样停住
+- `main.rs` 的 seek 成功回执只用来判断要不要弹提示，成功时不写回任何状态
+
+### 改动
+
+- `netease_playback.rs`：新增全局 `SEEK_SYNC`（目标秒数 + 单调时刻 + song_id）。
+  `note_seek()` 由跳转成功后调用；`Reader::poll()` 用 `apply_seek_sync()` 覆盖
+  `NowPlaying.position` 并从该时刻继续外推（clamp 到 duration）。
+  换歌（song_id 变化）或客户端自己写 `setPlayingPosition` 时自动让位/清除。
+- `netease_control.rs::seek()`：`Outcome::Arrived` 时调用
+  `super::netease_playback::note_seek(seconds)`。
+- **只改数据源一层**，`pages.rs` / `app.rs` / `main.rs` 均未动；
+  进度条、歌词和其它消费者自动一起正确。
+
+### 验证
+
+- 新增单测 `seek_sync_drives_position_and_yields_to_real_events()`：覆盖跳转后继续外推、
+  换歌失效、clamp 到总时长、客户端自行同步位置时清除（全局槽位，断言合并在一个测试里
+  避免并行互相踩）。
+- 全量 **829 passed / 0 failed / 89 ignored**；release 构建通过；
+  干净源码重放 custom-81 一致（EDITS 496 / NEW_FILES 10，diff 空）。
+- 部署 `daozai-setup-custom-81.exe`，exe SHA256 `7f882c3e79f5c732`（与构建产物一致）。
+- **实机拖拽验证未完成**：自动化脚本受两重限制——工具启动的 GUI 进程在命令结束时
+  被会话清理；本机 125% DPI 缩放下 `SetCursorPos` 用逻辑坐标（2048×1152）而截图是
+  物理像素（2560×1440），命中区换算需同时缩放。交由用户手动验证。
+  （顺带解释了早先调研中「点击进度条无效」的错觉，那次也没真正命中。）
+
+### 用户验证步骤
+
+1. 手动启动 `D:/software/Daozai/daozai.exe`（custom-81）。
+2. 网易云保持带 `--remote-debugging-port=9222` 运行。
+3. 展开音乐页，拖动进度条到任意位置后松手。
+4. 预期：当前时间立刻跳到目标位置并继续走，歌词跳到对应行，不再弹「播放器未完成跳转」。
+
 ## 网易云音乐进度跳转：CDP 渐进增强（custom-80）
 
 > **状态：已实机验证、已部署**（部署目录与工作源码均为 `custom-80`）。

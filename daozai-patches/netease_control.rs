@@ -75,7 +75,9 @@ pub fn seek(seconds:f64)->bool{
     match seek_inner(seconds,&cfg,
         ||super::netease_timeline::timeline().map(|(position,_)|position),
         |delay|std::thread::sleep(delay)){
-        Outcome::Arrived=>true,
+        // 跳转成功后把新基准告诉 elog 状态机：客户端不会写 setPlayingPosition，
+        // 不注入的话岛上的进度条和歌词会停在旧位置继续外推。
+        Outcome::Arrived=>{super::netease_playback::note_seek(seconds);true},
         Outcome::Rejected=>false,
         Outcome::Unavailable=>{mark_unavailable();false},
     }
