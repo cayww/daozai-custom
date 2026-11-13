@@ -2402,19 +2402,23 @@ impl App {
                             let auto_host=ctl::config().auto_host;
                             settings_label(ui,"网易云进度拖动");
                             settings_card(ui,|ui|{
-                                let line=match ctl::port_status(){
-                                    Some(true)=>"调试端口：已就绪，拖动进度条可直接跳转".to_string(),
-                                    Some(false)=>"调试端口：未开启，进度拖动暂不可用".to_string(),
-                                    None=>"调试端口：检测中…".to_string(),
-                                };
-                                ui.add(egui::Label::new(egui::RichText::new(line).size(12.0)).wrap());
-                                ui.add_space(3.0);
-                                ui.small("客户端需带 --remote-debugging-port=9222 启动；一键修复会固化开始菜单入口与客户端路径。");
+                                ui.small(if ctl::shortcut_fixed(){"已修改网易云快捷方式"}else{"未修改快捷方式"});
+                                if ui.button("选择快捷方式…").clicked(){
+                                    match crate::system::pick_files_for("选择网易云快捷方式",false){
+                                        Ok(files)=>if let Some(path)=files.first(){
+                                            match ctl::fix_shortcut(path){
+                                                Ok(message)=>self.say(message),
+                                                Err(error)=>self.say(error),
+                                            }
+                                        },
+                                        Err(_)=>self.say("未选择文件"),
+                                    }
+                                }
                                 let mut auto=auto_host;
-                                setting_row(ui,"自动托管启动参数","网易云未带调试端口启动时由岛仔自动重启（会中断播放）；没有快捷方式时建议开启",&mut auto);
+                                setting_row(ui,"自动托管","网易云未生效时自动修复",&mut auto);
                                 if auto!=auto_host{
                                     match ctl::set_auto_host(auto){
-                                        Ok(())=>self.say(if auto{"已开启网易云启动参数自动托管"}else{"已关闭自动托管"}),
+                                        Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
                                         Err(error)=>self.say(format!("保存失败：{}",error)),
                                     }
                                 }

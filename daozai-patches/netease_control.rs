@@ -152,6 +152,32 @@ fn persist_launch(exe:&str,port:u16)->bool{
     ensure_shortcut(port)
 }
 
+/// 用户手动指定的快捷方式：检查扩展名后幂等写入调试端口参数。
+pub fn fix_shortcut(path:&std::path::Path)->Result<String,String>{
+    if path.extension().and_then(|e|e.to_str()).map_or(true,|e|!e.eq_ignore_ascii_case("lnk")){
+        return Err("请选择 .lnk 快捷方式".to_string());
+    }
+    let arg=format!("--remote-debugging-port={}",config().port);
+    if patch_shortcut(path,&arg){Ok("已修改网易云快捷方式".to_string())}
+    else{Err("修改失败，请检查快捷方式文件".to_string())}
+}
+
+/// 开始菜单里是否已有带调试端口参数的快捷方式（纯字节查找，不解析结构）。
+pub fn shortcut_fixed()->bool{
+    let needle_u16:Vec<u8>="--remote-debugging-port".encode_utf16().flat_map(|c|c.to_le_bytes()).collect();
+    let needle_ascii=b"--remote-debugging-port".to_vec();
+    let mut paths=Vec::new();
+    if let Some(appdata)=std::env::var_os("APPDATA"){
+        paths.push(std::path::PathBuf::from(appdata)
+            .join("Microsoft/Windows/Start Menu/Programs/网易云音乐.lnk"));
+    }
+    paths.push(std::path::PathBuf::from("C:/ProgramData/Microsoft/Windows/Start Menu/Programs/网易云音乐.lnk"));
+    paths.iter().any(|path|std::fs::read(path).is_ok_and(|bytes|{
+        bytes.windows(needle_u16.len()).any(|w|w==needle_u16.as_slice())
+            || bytes.windows(needle_ascii.len()).any(|w|w==needle_ascii.as_slice())
+    }))
+}
+
 static HOST_LAST:Mutex<Option<Instant>>=Mutex::new(None);
 static HOST_RESTART_AT:Mutex<Option<Instant>>=Mutex::new(None);
 /// 每帧调用：开关打开时，检测到网易云在跑但调试端口不通就自动带参数重启。
@@ -239,8 +265,7 @@ pub fn restart_with_debug_port()->Result<String,String>{
         .map_err(|error|format!("重新启动失败：{error}"))?;
     if let Ok(mut guard)=READY_CACHE.lock(){*guard=None;}
     let persisted=persist_launch(&path,cfg.port);
-    Ok(format!("已重启网易云，调试端口 {}{}",cfg.port,
-        if persisted{"（启动入口已固化）"}else{"（未找到快捷方式，请开启自动托管）"}))
+    Ok(if persisted{"已修改网易云快捷方式".to_string()}else{"已重启网易云".to_string()})
 }
 
 fn valid(seconds:f64)->bool{seconds.is_finite() && (0.0..86400.0).contains(&seconds)}
