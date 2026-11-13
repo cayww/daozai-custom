@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-84"
+PATCH_ID = "custom-85"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -56,7 +56,6 @@ pub(crate) const LYRIC_BAR_W: f32 = 300.0;
 pub(crate) const LANE_PET_HALF: f32 = 24.0;   // 宠物表情贴图半宽（实际 48px）
 pub(crate) const LANE_ART_GAP: f32 = 4.0;     // 封面右缘 → 宠物左缘
 pub(crate) const LANE_TEXT_GAP: f32 = 4.0;    // 宠物右缘 → 歌词通道（硬余量，保证不重叠）
-pub(crate) const LANE_CENTER_CAP: f32 = 16.0; // 歌词在通道内居中的最大偏移，避免短歌词离宠物太远
 // 播放指示 5 根竖条以 content_width-21 为中心、向左占 7.8，左缘在 content_width-28.8；
 // 42 = 文字与竖条之间留出约 13px 空隙，避免两者贴在一起。
 pub(crate) const LANE_RIGHT_PAD: f32 = 48.0;  // 歌词通道右侧留给播放指示
@@ -642,6 +641,53 @@ impl App {
     pub fn say(&mut self, msg: impl Into<String>) {
         self.toast = Some((msg.into(), self.t));
         self.toast_below = false;
+'''),
+    ("src/app.rs",
+     '''                    .retain(|m| !(m.account.eq_ignore_ascii_case(&item.account) && m.uid == item.uid));
+                self.mail.recent.insert(0, item);
+                self.mail.recent.truncate(60);
+                if new{self.mail.manage.next_refresh=0.0;}
+                self.mail.privacy.retain(self.mail.recent.iter().chain(&self.mail.manage.trash).chain(&self.mail.reading));
+                if new && self.mail_active() {
+                    let item=&self.mail.recent[0];
+                    let body=format!("{} · {}",item.from,item.subject);
+                    let body=item.code.as_ref().map(|code|crate::mail_privacy::mask(&body,code)).unwrap_or(body);
+                    self.alert("新邮件",body,5,false);
+                    self.notification_bell_at = self.t;
+                    self.notification_bell_until = self.t + 6.0;
+                }
+            }
+            mail::Event::Test { account, ok, note } => {
+                self.mail.testing = None;
+                let detail = if ok { "连接成功".to_string() } else { note };
+                let detail = if detail.chars().count() > 120 {
+''',
+     '''                    .retain(|m| !(m.account.eq_ignore_ascii_case(&item.account) && m.uid == item.uid));
+                self.mail.recent.insert(0, item);
+                self.mail.recent.truncate(60);
+                if new{self.mail.manage.next_refresh=0.0;}
+                self.mail.privacy.retain(self.mail.recent.iter().chain(&self.mail.manage.trash).chain(&self.mail.reading));
+                if new && self.mail_active() {
+                    let (from,subject,code)={
+                        let item=&self.mail.recent[0];
+                        (item.from.clone(),item.subject.clone(),item.code.clone())
+                    };
+                    if let Some(code)=code{
+                        self.mail_code_alert(&code,&from,5);
+                        self.notification_bell_at=self.t;
+                        self.notification_bell_until=self.t+if cfg!(test){4.5}else{self.settings.otp_seconds as f64};
+                    }else{
+                        let body=format!("{} · {}",from,subject);
+                        self.alert("新邮件",body,5,false);
+                        self.notification_bell_at = self.t;
+                        self.notification_bell_until = self.t + 6.0;
+                    }
+                }
+            }
+            mail::Event::Test { account, ok, note } => {
+                self.mail.testing = None;
+                let detail = if ok { "连接成功".to_string() } else { note };
+                let detail = if detail.chars().count() > 120 {
 '''),
     ("src/app.rs",
      '''        self.mail.manage.data.retain(|(email,_),_|active(email));
@@ -1547,9 +1593,8 @@ impl App {
             let lyric_left=match self.lyric_lane() {
                 Some((_,text_left))=>{
                     let avail=(content_width-LANE_RIGHT_PAD-text_left).max(90.0);
-                    // 居中偏移设上限：短歌词不会被推到通道正中间、与宠物之间空出一大片。
-                    // 间隙因此稳定在 LANE_TEXT_GAP ~ LANE_TEXT_GAP+LANE_CENTER_CAP。
-                    let centering=((avail-galley.size().x/c.s).max(0.0)/2.0).min(LANE_CENTER_CAP);
+                    // 短歌词在歌词通道内完整居中；长歌词放不下时由后面的横向滚动接管。
+                    let centering=((avail-galley.size().x/c.s).max(0.0)/2.0);
                     text_left+centering
                 },
                 None=>content_width-LYRIC_BAR_W/2.0,
@@ -2410,6 +2455,18 @@ impl Alert {
        };
         self.enqueue_alert(a, system);
     }
+    /// 邮件验证码上岛：标题带「邮件」标识，正文留明文数字供通知卡片显示；
+    /// 不走手机短信的 auto_copy_otp，也不推 Cmd::Copy，只允许用户手动点复制。
+    pub fn mail_code_alert(&mut self, _code:&str, from:&str, page:usize){
+        let duration=if cfg!(test){4.5}else{(self.settings.otp_seconds as f64).max(10.0)};
+        self.enqueue_alert(Alert{
+            source:AlertSource::External("mail-code".into()),
+            title:format!("邮件验证码 · {}",from),
+            body:"邮件验证码".to_string(),
+            page,at:self.t,duration,
+            bluetooth:None,meeting:None,status:None,unread:None,
+        },false);
+    }
     pub(crate) fn meeting_alert(&mut self, meeting: crate::mail::Meeting, source: String, page: usize) {
         self.enqueue_alert(Alert {
             source: AlertSource::Internal,
@@ -2445,7 +2502,7 @@ impl Alert {
     }
     fn enqueue_alert(&mut self, a: Alert, system: bool) {
         // 通知仅保存在本次运行的内存中。
-        if a.source==AlertSource::Internal {self.history.push_front(a.clone());}
+        if a.source==AlertSource::Internal || matches!(&a.source,AlertSource::External(id) if id=="mail-code") {self.history.push_front(a.clone());}
         self.history.truncate(50);
         // 落盘一份历史：岛仔重启或当时没看到时，还能在设置里回查。
         let status_bus=matches!(&a.source,AlertSource::External(id) if id.starts_with("island-status"));
@@ -3298,9 +3355,12 @@ impl App {
             let text_w=if icon{170.0}else{198.0};
             nc.centered_text(text_x,14.0,&nc.fit(&a.title,11.0,W::Semibold,text_w),11.0,W::Semibold,theme::WHITE,H::Left);
             // 验证码卡片：大号数字 + 一键复制（otp::extract 有打分门槛，普通消息不会误判）。
-            if let Some(code)=crate::otp::extract("",&a.body,&[]) {
-                nc.centered_text(text_x,30.0,&code.text,20.0,W::Bold,theme::WHITE,H::Left);
-                if notice_button(&nc,160.0,12.0,60.0,"复制","phone-code-copy"){_cmds.push(Cmd::Copy(code.text.clone()));}
+            // 短信从正文提取；邮件验证码只从邮件数据读，通知与历史都不留明文。
+            let mail_code=matches!(&a.source,AlertSource::External(id) if id=="mail-code")
+                .then(||self.mail.code_item().and_then(|m|m.code.clone())).flatten();
+            if let Some(code)=mail_code.or_else(||crate::otp::extract("",&a.body,&[]).map(|c|c.text)) {
+                nc.centered_text(text_x,30.0,&code,20.0,W::Bold,theme::WHITE,H::Left);
+                if notice_button(&nc,160.0,12.0,60.0,"复制","phone-code-copy"){_cmds.push(Cmd::Copy(code));}
             } else {
                 nc.centered_text(text_x,30.0,&nc.fit(&a.body,10.5,W::Regular,text_w),10.5,W::Regular,theme::GRAY,H::Left);
             }
@@ -3780,19 +3840,23 @@ impl App {
                             let auto_host=ctl::config().auto_host;
                             settings_label(ui,"网易云进度拖动");
                             settings_card(ui,|ui|{
-                                let line=match ctl::port_status(){
-                                    Some(true)=>"调试端口：已就绪，拖动进度条可直接跳转".to_string(),
-                                    Some(false)=>"调试端口：未开启，进度拖动暂不可用".to_string(),
-                                    None=>"调试端口：检测中…".to_string(),
-                                };
-                                ui.add(egui::Label::new(egui::RichText::new(line).size(12.0)).wrap());
-                                ui.add_space(3.0);
-                                ui.small("客户端需带 --remote-debugging-port=9222 启动；一键修复会固化开始菜单入口与客户端路径。");
+                                ui.small(if ctl::shortcut_fixed(){"已修改网易云快捷方式"}else{"未修改快捷方式"});
+                                if ui.button("选择快捷方式…").clicked(){
+                                    match crate::system::pick_files_for("选择网易云快捷方式",false){
+                                        Ok(files)=>if let Some(path)=files.first(){
+                                            match ctl::fix_shortcut(path){
+                                                Ok(message)=>self.say(message),
+                                                Err(error)=>self.say(error),
+                                            }
+                                        },
+                                        Err(_)=>self.say("未选择文件"),
+                                    }
+                                }
                                 let mut auto=auto_host;
-                                setting_row(ui,"自动托管启动参数","网易云未带调试端口启动时由岛仔自动重启（会中断播放）；没有快捷方式时建议开启",&mut auto);
+                                setting_row(ui,"自动托管","网易云未生效时自动修复",&mut auto);
                                 if auto!=auto_host{
                                     match ctl::set_auto_host(auto){
-                                        Ok(())=>self.say(if auto{"已开启网易云启动参数自动托管"}else{"已关闭自动托管"}),
+                                        Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
                                         Err(error)=>self.say(format!("保存失败：{}",error)),
                                     }
                                 }
@@ -5626,9 +5690,9 @@ mod tests{
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
             };
-            c.fill(148.0,33.0,140.0,19.0,6.0,theme::CARD);
-            c.text(218.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,128.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
-            if c.hit(148.0,33.0,140.0,19.0,"mail-account-filter").on_hover_text("选择要看的邮箱账号").clicked(){
+            c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD);
+            c.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
+            if c.hit(182.0,33.0,100.0,19.0,"mail-account-filter").on_hover_text("选择要看的邮箱账号").clicked(){
                 self.mail.manage.account_menu=!self.mail.manage.account_menu;
             }
             c.text(375.0,47.0,"返回邮件",10.0,W::Regular,theme::BLUE,H::Right);
@@ -5656,9 +5720,9 @@ mod tests{
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
             };
-            c.fill(148.0,33.0,140.0,19.0,6.0,theme::CARD);
-            c.text(218.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,128.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
-            if c.hit(148.0,33.0,140.0,19.0,"mail-account-filter").on_hover_text(format!("选择要看的邮箱账号\\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){
+            c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD);
+            c.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
+            if c.hit(182.0,33.0,100.0,19.0,"mail-account-filter").on_hover_text(format!("选择要看的邮箱账号\\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){
                 self.mail.manage.account_menu=!self.mail.manage.account_menu;
             }
             let data_ready=self.mail_read_all_ready();
@@ -5725,17 +5789,17 @@ mod tests{
             if c.hit(36.0,54.0,344.0,68.0,"mail-account-dismiss").clicked(){self.mail.manage.account_menu=false;}
             let accounts:Vec<String>=self.mail.accounts.iter().map(|a|a.email.clone()).take(6).collect();
             let rows=accounts.len()+1;
-            c.fill(148.0,54.0,140.0,17.0*rows as f32,8.0,Color32::from_gray(24));
+            c.fill(182.0,54.0,100.0,17.0*rows as f32,8.0,Color32::from_gray(24));
             let current=self.mail.manage.account_filter.clone();
             let mut pick=None;
             for (i,email) in std::iter::once(None).chain(accounts.iter().map(Some)).enumerate(){
                 let y=54.0+17.0*i as f32;
                 let selected=match (&current,email){(None,None)=>true,(Some(a),Some(b))=>a.eq_ignore_ascii_case(b),_=>false};
                 let label=match email{Some(e)=>e.clone(),None=>"全部账号".to_string()};
-                let item_hit=c.hit(148.0,y,140.0,17.0,("mail-account-pick",i));
-                if item_hit.hovered(){c.fill(150.0,y+1.0,136.0,15.0,5.0,Color32::from_gray(52));}
+                let item_hit=c.hit(182.0,y,100.0,17.0,("mail-account-pick",i));
+                if item_hit.hovered(){c.fill(184.0,y+1.0,96.0,15.0,5.0,Color32::from_gray(52));}
                 if item_hit.clicked(){pick=Some(email.cloned());}
-                c.text(156.0,y+11.5,&c.fit(&label,9.5,W::Regular,124.0),9.5,W::Regular,if selected{theme::BLUE}else{theme::WHITE},H::Left);
+                c.text(190.0,y+11.5,&c.fit(&label,9.5,W::Regular,92.0),9.5,W::Regular,if selected{theme::BLUE}else{theme::WHITE},H::Left);
             }
             if let Some(choice)=pick{
                 // 记住上次选的账号，重启后沿用（空 = 全部账号）。
@@ -6437,6 +6501,23 @@ fn clicking_the_active_clipboard_tab_no_longer_opens_search() {
 }
 
 fn editing_local_calendar_clears_outdated_reminders() {
+'''),
+    ("src/ui_tests.rs",
+     '''        new: true,
+    });
+    assert!(h.app.notification_bell_until > 0.0, "新邮件应点亮铃铛");
+    assert!(h.app.alerts.iter().any(|a|a.title=="新邮件"&&a.page==5),"新邮件应进入通知队列，不能只有收起时才可见的铃铛");
+    h.app.show_page(5);
+    h.hover(Pos2::new(WIN_W / 2.0, 12.0), 0.6);
+    h.hover(H::local(300.0, 60.0), 0.4);
+''',
+     '''        new: true,
+    });
+    assert!(h.app.notification_bell_until > 0.0, "新邮件应点亮铃铛");
+    assert!(h.app.alerts.iter().any(|a|a.title.starts_with("邮件验证码")&&a.page==5),"新邮件应进入通知队列，不能只有收起时才可见的铃铛");
+    h.app.show_page(5);
+    h.hover(Pos2::new(WIN_W / 2.0, 12.0), 0.6);
+    h.hover(H::local(300.0, 60.0), 0.4);
 '''),
     ("src/ui_tests.rs",
      '''#[test]
