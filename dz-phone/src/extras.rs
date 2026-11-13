@@ -227,6 +227,18 @@ impl App {
        };
         self.enqueue_alert(a, system);
     }
+    /// 邮件验证码上岛：标题带「邮件」标识，正文留明文数字供通知卡片显示；
+    /// 不走手机短信的 auto_copy_otp，也不推 Cmd::Copy，只允许用户手动点复制。
+    pub fn mail_code_alert(&mut self, code:&str, from:&str, page:usize){
+        let duration=if cfg!(test){4.5}else{(self.settings.otp_seconds as f64).max(10.0)};
+        self.enqueue_alert(Alert{
+            source:AlertSource::External("mail-code".into()),
+            title:format!("邮件验证码 · {}",from),
+            body:format!("邮件验证码 {}",code),
+            page,at:self.t,duration,
+            bluetooth:None,meeting:None,status:None,unread:None,
+        },false);
+    }
     pub(crate) fn meeting_alert(&mut self, meeting: crate::mail::Meeting, source: String, page: usize) {
         self.enqueue_alert(Alert {
             source: AlertSource::Internal,

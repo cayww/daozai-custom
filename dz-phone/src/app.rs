@@ -1210,12 +1210,20 @@ impl App {
                 if new{self.mail.manage.next_refresh=0.0;}
                 self.mail.privacy.retain(self.mail.recent.iter().chain(&self.mail.manage.trash).chain(&self.mail.reading));
                 if new && self.mail_active() {
-                    let item=&self.mail.recent[0];
-                    let body=format!("{} · {}",item.from,item.subject);
-                    let body=item.code.as_ref().map(|code|crate::mail_privacy::mask(&body,code)).unwrap_or(body);
-                    self.alert("新邮件",body,5,false);
-                    self.notification_bell_at = self.t;
-                    self.notification_bell_until = self.t + 6.0;
+                    let (from,subject,code)={
+                        let item=&self.mail.recent[0];
+                        (item.from.clone(),item.subject.clone(),item.code.clone())
+                    };
+                    if let Some(code)=code{
+                        self.mail_code_alert(&code,&from,5);
+                        self.notification_bell_at=self.t;
+                        self.notification_bell_until=self.t+if cfg!(test){4.5}else{self.settings.otp_seconds as f64};
+                    }else{
+                        let body=format!("{} · {}",from,subject);
+                        self.alert("新邮件",body,5,false);
+                        self.notification_bell_at = self.t;
+                        self.notification_bell_until = self.t + 6.0;
+                    }
                 }
             }
             mail::Event::Test { account, ok, note } => {

@@ -1199,9 +1199,9 @@ impl App {
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
             };
-            c.fill(148.0,33.0,140.0,19.0,6.0,theme::CARD);
-            c.text(218.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,128.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
-            if c.hit(148.0,33.0,140.0,19.0,"mail-account-filter").on_hover_text("选择要看的邮箱账号").clicked(){
+            c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD);
+            c.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
+            if c.hit(182.0,33.0,100.0,19.0,"mail-account-filter").on_hover_text("选择要看的邮箱账号").clicked(){
                 self.mail.manage.account_menu=!self.mail.manage.account_menu;
             }
             c.text(375.0,47.0,"返回邮件",10.0,W::Regular,theme::BLUE,H::Right);
@@ -1220,9 +1220,9 @@ impl App {
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
             };
-            c.fill(148.0,33.0,140.0,19.0,6.0,theme::CARD);
-            c.text(218.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,128.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
-            if c.hit(148.0,33.0,140.0,19.0,"mail-account-filter").on_hover_text(format!("选择要看的邮箱账号\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){
+            c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD);
+            c.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
+            if c.hit(182.0,33.0,100.0,19.0,"mail-account-filter").on_hover_text(format!("选择要看的邮箱账号\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){
                 self.mail.manage.account_menu=!self.mail.manage.account_menu;
             }
             let data_ready=self.mail_read_all_ready();
@@ -1301,17 +1301,17 @@ impl App {
             if c.hit(36.0,54.0,344.0,68.0,"mail-account-dismiss").clicked(){self.mail.manage.account_menu=false;}
             let accounts:Vec<String>=self.mail.accounts.iter().map(|a|a.email.clone()).take(6).collect();
             let rows=accounts.len()+1;
-            c.fill(148.0,54.0,140.0,17.0*rows as f32,8.0,Color32::from_gray(24));
+            c.fill(182.0,54.0,100.0,17.0*rows as f32,8.0,Color32::from_gray(24));
             let current=self.mail.manage.account_filter.clone();
             let mut pick=None;
             for (i,email) in std::iter::once(None).chain(accounts.iter().map(Some)).enumerate(){
                 let y=54.0+17.0*i as f32;
                 let selected=match (&current,email){(None,None)=>true,(Some(a),Some(b))=>a.eq_ignore_ascii_case(b),_=>false};
                 let label=match email{Some(e)=>e.clone(),None=>"全部账号".to_string()};
-                let item_hit=c.hit(148.0,y,140.0,17.0,("mail-account-pick",i));
-                if item_hit.hovered(){c.fill(150.0,y+1.0,136.0,15.0,5.0,Color32::from_gray(52));}
+                let item_hit=c.hit(182.0,y,100.0,17.0,("mail-account-pick",i));
+                if item_hit.hovered(){c.fill(184.0,y+1.0,96.0,15.0,5.0,Color32::from_gray(52));}
                 if item_hit.clicked(){pick=Some(email.cloned());}
-                c.text(156.0,y+11.5,&c.fit(&label,9.5,W::Regular,124.0),9.5,W::Regular,if selected{theme::BLUE}else{theme::WHITE},H::Left);
+                c.text(190.0,y+11.5,&c.fit(&label,9.5,W::Regular,92.0),9.5,W::Regular,if selected{theme::BLUE}else{theme::WHITE},H::Left);
             }
             if let Some(choice)=pick{
                 // 记住上次选的账号，重启后沿用（空 = 全部账号）。
