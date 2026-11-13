@@ -477,6 +477,14 @@ pub fn control(cmd: Transport,source:&str) {
 #[cfg(not(windows))]
 pub fn control(_cmd: Transport,_source:&str) {}
 
+/// QQ 音乐在不同入口下会给出不同的来源标识：进程名 `QQMusic.exe`，系统会话里则是
+/// AUMID `Tencent.QQMusic`。两者都要认，否则跳转会被当成普通播放器而走错分支。
+#[cfg(windows)]
+pub(crate) fn qq_music(source:&str)->bool{
+    let lower=source.to_ascii_lowercase();
+    lower=="qqmusic" || lower=="qqmusic.exe" || (lower.contains("tencent") && lower.contains("qqmusic"))
+}
+
 /// 跳转在工作线程执行；专用回退必须回读实际位置，避免播放器接口假成功。
 #[cfg(windows)]
 pub fn seek(seconds:f64,source:&str)->bool {
@@ -492,7 +500,7 @@ pub fn seek(seconds:f64,source:&str)->bool {
     let session=media_result(Manager::RequestAsync).and_then(|mgr|mgr.GetSessions().ok())
         .and_then(|sessions|sessions.into_iter().find(|s|s.SourceAppUserModelId().ok().is_some_and(|id|id.to_string().eq_ignore_ascii_case(source))));
     if apple_music::is_source(source){return session.as_ref().is_some_and(|session|seek_apple(session,source,seconds));}
-    let native=source.eq_ignore_ascii_case("qqmusic.exe");
+    let native=qq_music(source);
     let timeline=||->Option<(f64,f64)>{
         let tl=session.as_ref()?.GetTimelineProperties().ok()?;
         Some((tl.Position().ok()?.Duration as f64/10_000_000.0,tl.EndTime().ok()?.Duration as f64/10_000_000.0))
@@ -501,7 +509,7 @@ pub fn seek(seconds:f64,source:&str)->bool {
     let target=if duration>0.0{seconds.min(duration)}else{seconds};
     let enabled=session.as_ref().and_then(|s|s.GetPlaybackInfo().ok()).and_then(|i|i.Controls().ok())
         .and_then(|c|c.IsPlaybackPositionEnabled().ok()).unwrap_or(false);
-    let paused_qq=source.eq_ignore_ascii_case("qqmusic.exe") && session.as_ref().and_then(|s|s.GetPlaybackInfo().ok())
+    let paused_qq=qq_music(source) && session.as_ref().and_then(|s|s.GetPlaybackInfo().ok())
         .and_then(|info|info.PlaybackStatus().ok()).is_some_and(|status|status!=windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
     let accepted=(!native || enabled) && session.as_ref().and_then(|s|media_result(||s.TryChangePlaybackPositionAsync((target*10_000_000.0)as i64)))==Some(true);
     if !native{return accepted;}
@@ -590,6 +598,13 @@ fn seek_confirmation_rejects_unchanged_position_and_accepts_playback_advance(){
     assert!(seek_arrived(60.0,60.0,0.2));
     assert!(seek_arrived(62.0,60.0,2.0));
     assert!(!seek_arrived(f64::NAN,60.0,2.0));
+}
+
+#[cfg(windows)]
+#[test]
+fn qq_source_matches_process_name_and_aumid(){
+    for source in ["QQMusic.exe","qqmusic","Tencent.QQMusic","Tencent.QQMusic.1"]{assert!(qq_music(source),"应识别为 QQ 音乐：{source}");}
+    for source in ["cloudmusic.exe","Spotify.exe","AppleInc.AppleMusicWin_nzyj5cx40ttqa!App","","qq"]{assert!(!qq_music(source),"不应识别为 QQ 音乐：{source}");}
 }
 
 #[cfg(windows)]

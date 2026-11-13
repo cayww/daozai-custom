@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-88"
+PATCH_ID = "custom-89"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5189,6 +5189,23 @@ mod tests {
 
     #[test]
 '''),
+    ("src/music_volume.rs",
+     '''        "qqmusic"=>Some("qqmusic.exe".into()),
+        "spotify"=>Some("spotify.exe".into()),
+        "汽水音乐"=>Some("sodamusic.exe".into()),
+        _ if source.ends_with(".exe") && !source.contains(['\\\\','/'])=>Some(source),
+        _=>None,
+    }
+''',
+     '''        "qqmusic"=>Some("qqmusic.exe".into()),
+        "spotify"=>Some("spotify.exe".into()),
+        "汽水音乐"=>Some("sodamusic.exe".into()),
+        // QQ 音乐的系统会话用 AUMID `Tencent.QQMusic`，进程名是 qqmusic.exe。
+        _ if source.contains("tencent") && source.contains("qqmusic")=>Some("qqmusic.exe".into()),
+        _ if source.ends_with(".exe") && !source.contains(['\\\\','/'])=>Some(source),
+        _=>None,
+    }
+'''),
     ("src/netease_playback.rs",
      '''//! 网易云原生播放事件：只读增量日志，不依赖 SMTC 或特定 DLL 版本。
 use super::{MediaKind,NowPlaying};
@@ -5820,6 +5837,178 @@ mod tests{
 
     /// 岛内邮件详情可滚动，也可以进入独立窗口阅读全文。
 '''),
+    ("src/player_seek.rs",
+     '''//! 系统跳转不可用时，定位播放器自己的进度控件并向该窗口发送消息。
+use windows::{core::{Interface,VARIANT},Win32::{Foundation::*,System::{Com::*,Threading::*},UI::{Accessibility::*,WindowsAndMessaging::*},Graphics::Gdi::ScreenToClient}};
+use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext,DPI_AWARENESS_CONTEXT,DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+
+''',
+     '''//! 系统跳转不可用时，定位播放器自己的进度控件并向该窗口发送消息。
+use windows::{core::{Interface,VARIANT},Win32::{Foundation::*,System::{Com::*,Threading::*},UI::{Accessibility::*,WindowsAndMessaging::*},Graphics::Gdi::{ClientToScreen,ScreenToClient}}};
+use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext,DPI_AWARENESS_CONTEXT,DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+
+'''),
+    ("src/player_seek.rs",
+     '''    let mut search=Search{source:if apple{"AppleMusic.exe"}else{source},apple,found:None};let _=EnumWindows(Some(visit),LPARAM(&mut search as *mut _ as isize));search.found
+}
+
+unsafe fn qq_bar(ui:&IUIAutomation,root:&IUIAutomationElement,duration:f64)->Option<IUIAutomationElement>{
+    let condition=ui.CreatePropertyCondition(UIA_ControlTypePropertyId,&VARIANT::from(UIA_TextControlTypeId.0)).ok()?;
+    let texts=root.FindAll(TreeScope_Descendants,&condition).ok()?;
+    let walker=ui.ControlViewWalker().ok()?;let all=ui.CreateTrueCondition().ok()?;
+    for i in 0..texts.Length().ok()? {
+        let text=texts.GetElement(i).ok()?;
+        if !seconds(&text.CurrentName().ok()?.to_string()).is_some_and(|v|(v-duration).abs()<1.5){continue;}
+        let parent=walker.GetParentElement(&text).ok()?;
+        let children=parent.FindAll(TreeScope_Children,&all).ok()?;
+        if children.Length().ok()?!=3{continue;}
+''',
+     '''    let mut search=Search{source:if apple{"AppleMusic.exe"}else{source},apple,found:None};let _=EnumWindows(Some(visit),LPARAM(&mut search as *mut _ as isize));search.found
+}
+
+unsafe fn qq_bar(ui:&IUIAutomation,root:&IUIAutomationElement,expected:Option<f64>)->Option<(IUIAutomationElement,f64,IUIAutomationElement)>{
+    let condition=ui.CreatePropertyCondition(UIA_ControlTypePropertyId,&VARIANT::from(UIA_TextControlTypeId.0)).ok()?;
+    let texts=root.FindAll(TreeScope_Descendants,&condition).ok()?;
+    let walker=ui.ControlViewWalker().ok()?;let all=ui.CreateTrueCondition().ok()?;
+    let mut best:Option<(IUIAutomationElement,f64,IUIAutomationElement)>=None;
+    for i in 0..texts.Length().ok()? {
+        let text=texts.GetElement(i).ok()?;
+        let total=match seconds(&text.CurrentName().ok()?.to_string()){Some(value)=>value,None=>continue};
+        // 系统会话给的总时长偶尔与界面显示差几秒，只做宽松校验，实际时长以控件为准。
+        if expected.is_some_and(|value|(value-total).abs()>8.0){continue;}
+        let parent=walker.GetParentElement(&text).ok()?;
+        let children=parent.FindAll(TreeScope_Children,&all).ok()?;
+        if children.Length().ok()?!=3{continue;}
+'''),
+    ("src/player_seek.rs",
+     '''        let bar=children.GetElement(1).ok()?;
+        let r=bar.CurrentBoundingRectangle().ok()?;
+        let left=first.CurrentBoundingRectangle().ok()?;let right=last.CurrentBoundingRectangle().ok()?;
+        if r.left>=left.right && r.right<=right.left && r.bottom-r.top<=60 && r.right-r.left>40{return Some(bar);}
+    }
+    None
+}
+
+unsafe fn automation()->Option<IUIAutomation>{
+''',
+     '''        let bar=children.GetElement(1).ok()?;
+        let r=bar.CurrentBoundingRectangle().ok()?;
+        let left=first.CurrentBoundingRectangle().ok()?;let right=last.CurrentBoundingRectangle().ok()?;
+        if r.left>=left.right && r.right<=right.left && r.bottom-r.top<=60 && r.right-r.left>40{
+            let delta=expected.map(|value|(value-total).abs()).unwrap_or(0.0);
+            if delta==0.0{return Some((bar,total,parent));}
+            if best.as_ref().map_or(true,|(_,best_delta,_):&(IUIAutomationElement,f64,IUIAutomationElement)|delta<*best_delta){best=Some((bar,total,parent));}
+        }
+    }
+    best
+}
+
+/// 从进度条那一组控件读当前播放时间；读不到时返回 None，由调用方决定是否继续。
+unsafe fn qq_position(group:&IUIAutomationElement,ui:&IUIAutomation)->Option<f64>{
+    let all=ui.CreateTrueCondition().ok()?;
+    let children=group.FindAll(TreeScope_Children,&all).ok()?;
+    if children.Length().ok()?<3{return None;}
+    seconds(&children.GetElement(0).ok()?.CurrentName().ok()?.to_string())
+}
+
+unsafe fn automation()->Option<IUIAutomation>{
+'''),
+    ("src/player_seek.rs",
+     '''    }
+}
+pub(super) fn seek(source:&str,position:f64,duration:f64)->bool{
+    let apple=super::apple_music::is_source(source);
+    if !apple && !source.eq_ignore_ascii_case("qqmusic.exe"){return false;}
+    unsafe { (||->Option<()> {
+        let _dpi=DpiContext(SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
+        let hwnd=window(source)?;
+        if !IsWindowEnabled(hwnd).as_bool(){return None;}
+        let ui=automation()?;
+        let root=ui.ElementFromHandle(hwnd).ok()?;
+''',
+     '''    }
+}
+pub(super) fn seek(source:&str,position:f64,duration:f64)->bool{
+    use std::time::{Duration,Instant};
+    let apple=super::apple_music::is_source(source);
+    let qq=super::qq_music(source);
+    if !apple && !qq{return false;}
+    // 系统会话里的 AUMID 与进程名不一致，窗口匹配统一用映像名。
+    let exe=if apple{"AppleMusic.exe"}else{"qqmusic.exe"};
+    unsafe { (||->Option<()> {
+        let _dpi=DpiContext(SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
+        let hwnd=window(exe)?;
+        if !IsWindowEnabled(hwnd).as_bool(){return None;}
+        let ui=automation()?;
+        let root=ui.ElementFromHandle(hwnd).ok()?;
+'''),
+    ("src/player_seek.rs",
+     '''            // 直接设置原生滑块；无需移动鼠标、激活窗口或扫描歌词区域。
+            return range.SetValue(position).ok();
+        }
+        let bar=qq_bar(&ui,&root,duration)?;
+        let target=hwnd;
+        // 坐标来自无障碍控件，不依赖窗口位置；不移动鼠标，也不激活播放器。
+        let mut p=point(bar.CurrentBoundingRectangle().ok()?,position,duration,5.0)?;
+        if !ScreenToClient(target,&mut p).as_bool(){return None;}
+        let mut client=RECT::default();GetClientRect(target,&mut client).ok()?;
+        if p.x<0 || p.y<0 || (!IsIconic(hwnd).as_bool() && (p.x>=client.right || p.y>=client.bottom)){return None;}
+        let lp=LPARAM(((p.y as u32&0xffff)<<16 | (p.x as u32&0xffff))as isize);
+        let send=|msg,buttons|SendMessageTimeoutW(target,msg,WPARAM(buttons),lp,SMTO_ABORTIFHUNG|SMTO_ERRORONEXIT,500,None).0!=0;
+        if !send(WM_MOUSEMOVE,0){return None;}
+        let down=send(WM_LBUTTONDOWN,1);
+        let up=send(WM_LBUTTONUP,0);
+        (down&&up).then_some(())
+    })().is_some() }
+}
+
+''',
+     '''            // 直接设置原生滑块；无需移动鼠标、激活窗口或扫描歌词区域。
+            return range.SetValue(position).ok();
+        }
+        let (bar,total,group)=qq_bar(&ui,&root,(duration>0.0).then_some(duration))?;
+        let rect=bar.CurrentBoundingRectangle().ok()?;
+        let mut client=RECT::default();GetClientRect(hwnd,&mut client).ok()?;
+        let origin=if IsIconic(hwnd).as_bool(){
+            // 最小化时窗口被移到 -32000，屏幕坐标不可用；用窗口矩形推算客户区原点。
+            let mut window_rect=RECT::default();GetWindowRect(hwnd,&mut window_rect).ok()?;
+            (window_rect.left,window_rect.top)
+        }else{
+            let mut point=POINT{x:0,y:0};
+            if !ClientToScreen(hwnd,&mut point).as_bool(){return None;}
+            (point.x,point.y)
+        };
+        let mut aim=position.clamp(0.0,total);
+        let mut delivered=false;
+        // QQ 的进度条有内边距，按比例点击会差几秒；点完读回进度再校正，最多三次。
+        for _ in 0..3 {
+            let p=point(rect,aim,total,5.0)?;
+            let (cx,cy)=(p.x-origin.0,p.y-origin.1);
+            if cx<0 || cy<0 || cx>=client.right || cy>=client.bottom{return None;}
+            let lp=LPARAM(((cy as u32&0xffff)<<16 | (cx as u32&0xffff))as isize);
+            let send=|msg,buttons|SendMessageTimeoutW(hwnd,msg,WPARAM(buttons),lp,SMTO_ABORTIFHUNG|SMTO_ERRORONEXIT,500,None).0!=0;
+            if !send(WM_MOUSEMOVE,0){return None;}
+            let down=send(WM_LBUTTONDOWN,1);
+            let up=send(WM_LBUTTONUP,0);
+            if !(down&&up){return None;}
+            delivered=true;
+            let deadline=Instant::now()+Duration::from_millis(400);
+            let mut current=None;
+            while Instant::now()<deadline{
+                std::thread::sleep(Duration::from_millis(80));
+                if let Some(value)=qq_position(&group,&ui){current=Some(value);if (value-aim).abs()<=2.0{break;}}
+            }
+            let Some(current)=current else{break};
+            if (current-position).abs()<=2.0{return Some(());}
+            aim=(aim+(position-current)).clamp(0.0,total);
+        }
+        delivered.then_some(())
+    })().is_some() }
+}
+
+'''),
     ("src/resident_settings.rs",
      '''            let dx=if is_dragged{pointer.map(|p|((p.x-origin.x)/scale-(left+width/2.0)).clamp(-left,layout.width-left-width)).unwrap_or(0.0)}else{0.0};
             if is_dragged {ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);}
@@ -6232,12 +6421,41 @@ pub(crate) mod netease_control;
 mod player_seek;
 '''),
     ("src/smtc.rs",
+     '''#[cfg(not(windows))]
+pub fn control(_cmd: Transport,_source:&str) {}
+
+/// 跳转在工作线程执行；专用回退必须回读实际位置，避免播放器接口假成功。
+#[cfg(windows)]
+pub fn seek(seconds:f64,source:&str)->bool {
+''',
+     '''#[cfg(not(windows))]
+pub fn control(_cmd: Transport,_source:&str) {}
+
+/// QQ 音乐在不同入口下会给出不同的来源标识：进程名 `QQMusic.exe`，系统会话里则是
+/// AUMID `Tencent.QQMusic`。两者都要认，否则跳转会被当成普通播放器而走错分支。
+#[cfg(windows)]
+pub(crate) fn qq_music(source:&str)->bool{
+    let lower=source.to_ascii_lowercase();
+    lower=="qqmusic" || lower=="qqmusic.exe" || (lower.contains("tencent") && lower.contains("qqmusic"))
+}
+
+/// 跳转在工作线程执行；专用回退必须回读实际位置，避免播放器接口假成功。
+#[cfg(windows)]
+pub fn seek(seconds:f64,source:&str)->bool {
+'''),
+    ("src/smtc.rs",
      '''    let Ok(_lock)=LOCK.lock()else{return false;};
     if source.eq_ignore_ascii_case("kwmusic.exe"){return kuwo::seek(seconds);}
     if matches!(source.to_ascii_lowercase().as_str(),"kugou"|"kugou.exe") && kugou_control::seek(seconds){return true;}
     let _apartment=init_winrt();
     use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager as Manager;
     let session=media_result(Manager::RequestAsync).and_then(|mgr|mgr.GetSessions().ok())
+        .and_then(|sessions|sessions.into_iter().find(|s|s.SourceAppUserModelId().ok().is_some_and(|id|id.to_string().eq_ignore_ascii_case(source))));
+    if apple_music::is_source(source){return session.as_ref().is_some_and(|session|seek_apple(session,source,seconds));}
+    let native=source.eq_ignore_ascii_case("qqmusic.exe");
+    let timeline=||->Option<(f64,f64)>{
+        let tl=session.as_ref()?.GetTimelineProperties().ok()?;
+        Some((tl.Position().ok()?.Duration as f64/10_000_000.0,tl.EndTime().ok()?.Duration as f64/10_000_000.0))
 ''',
      '''    let Ok(_lock)=LOCK.lock()else{return false;};
     if source.eq_ignore_ascii_case("kwmusic.exe"){return kuwo::seek(seconds);}
@@ -6247,6 +6465,51 @@ mod player_seek;
     let _apartment=init_winrt();
     use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager as Manager;
     let session=media_result(Manager::RequestAsync).and_then(|mgr|mgr.GetSessions().ok())
+        .and_then(|sessions|sessions.into_iter().find(|s|s.SourceAppUserModelId().ok().is_some_and(|id|id.to_string().eq_ignore_ascii_case(source))));
+    if apple_music::is_source(source){return session.as_ref().is_some_and(|session|seek_apple(session,source,seconds));}
+    let native=qq_music(source);
+    let timeline=||->Option<(f64,f64)>{
+        let tl=session.as_ref()?.GetTimelineProperties().ok()?;
+        Some((tl.Position().ok()?.Duration as f64/10_000_000.0,tl.EndTime().ok()?.Duration as f64/10_000_000.0))
+'''),
+    ("src/smtc.rs",
+     '''    let target=if duration>0.0{seconds.min(duration)}else{seconds};
+    let enabled=session.as_ref().and_then(|s|s.GetPlaybackInfo().ok()).and_then(|i|i.Controls().ok())
+        .and_then(|c|c.IsPlaybackPositionEnabled().ok()).unwrap_or(false);
+    let paused_qq=source.eq_ignore_ascii_case("qqmusic.exe") && session.as_ref().and_then(|s|s.GetPlaybackInfo().ok())
+        .and_then(|info|info.PlaybackStatus().ok()).is_some_and(|status|status!=windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
+    let accepted=(!native || enabled) && session.as_ref().and_then(|s|media_result(||s.TryChangePlaybackPositionAsync((target*10_000_000.0)as i64)))==Some(true);
+    if !native{return accepted;}
+''',
+     '''    let target=if duration>0.0{seconds.min(duration)}else{seconds};
+    let enabled=session.as_ref().and_then(|s|s.GetPlaybackInfo().ok()).and_then(|i|i.Controls().ok())
+        .and_then(|c|c.IsPlaybackPositionEnabled().ok()).unwrap_or(false);
+    let paused_qq=qq_music(source) && session.as_ref().and_then(|s|s.GetPlaybackInfo().ok())
+        .and_then(|info|info.PlaybackStatus().ok()).is_some_and(|status|status!=windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
+    let accepted=(!native || enabled) && session.as_ref().and_then(|s|media_result(||s.TryChangePlaybackPositionAsync((target*10_000_000.0)as i64)))==Some(true);
+    if !native{return accepted;}
+'''),
+    ("src/smtc.rs",
+     '''    assert!(seek_arrived(60.0,60.0,0.2));
+    assert!(seek_arrived(62.0,60.0,2.0));
+    assert!(!seek_arrived(f64::NAN,60.0,2.0));
+}
+
+#[cfg(windows)]
+''',
+     '''    assert!(seek_arrived(60.0,60.0,0.2));
+    assert!(seek_arrived(62.0,60.0,2.0));
+    assert!(!seek_arrived(f64::NAN,60.0,2.0));
+}
+
+#[cfg(windows)]
+#[test]
+fn qq_source_matches_process_name_and_aumid(){
+    for source in ["QQMusic.exe","qqmusic","Tencent.QQMusic","Tencent.QQMusic.1"]{assert!(qq_music(source),"应识别为 QQ 音乐：{source}");}
+    for source in ["cloudmusic.exe","Spotify.exe","AppleInc.AppleMusicWin_nzyj5cx40ttqa!App","","qq"]{assert!(!qq_music(source),"不应识别为 QQ 音乐：{source}");}
+}
+
+#[cfg(windows)]
 '''),
     ("src/system.rs",
      '''    pick_files_for("添加文件到置物架",true)

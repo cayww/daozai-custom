@@ -23,6 +23,8 @@ fn executable(source:&str)->Option<String> {
         "qqmusic"=>Some("qqmusic.exe".into()),
         "spotify"=>Some("spotify.exe".into()),
         "汽水音乐"=>Some("sodamusic.exe".into()),
+        // QQ 音乐的系统会话用 AUMID `Tencent.QQMusic`，进程名是 qqmusic.exe。
+        _ if source.contains("tencent") && source.contains("qqmusic")=>Some("qqmusic.exe".into()),
         _ if source.ends_with(".exe") && !source.contains(['\\','/'])=>Some(source),
         _=>None,
     }
