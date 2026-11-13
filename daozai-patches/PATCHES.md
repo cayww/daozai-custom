@@ -1,6 +1,6 @@
 # 岛仔自定义补丁
 
-基于 `Renly1994/xiaotang-daozai` v0.6.63，自定义版本号自动升到 v0.6.64。
+基于 `Renly1994/xiaotang-daozai` v0.6.64（custom-82 起），`apply.py` 重放时版本号自动升到 v0.6.65。
 所有改动都集中在 `apply.py`，可以重放到以后的官方版本，不必手工比对。
 
 ## 这次改了什么
@@ -575,6 +575,52 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
+
+## 上游 v0.6.64 增量合并（custom-82）
+
+**问题**：官方从 v0.6.63 升到 v0.6.64，新增天气页、健康提醒、豆包等 AI 额度、企微/飞书/钉钉提醒、
+拖动停靠、设置窗口记忆、表情按需加载、tungstenite 依赖。原 496 条补丁链基于 v0.6.63 干净基线，
+直接重放会大面积失配，必须换基线并保留全部定制。
+
+**做法**：
+
+- 三方合并：`0389070`（custom-81 干净基线 + 496 EDITS）与 `6e3150b`（v0.6.64 官方源码）
+  → `8bb61d8`，45 个冲突；决策是**架构取上游、界面视觉/文案/三卡取我们、互补取并集**。
+  合并前打 tag `backup-custom81-before-upstream-v0664`，v0.6.63 基线包另存 Temp 与 merge-work。
+- 编译修复：app.rs 双逗号、clipboard.rs 多余 `}`、extras.rs 12 个冲突块 + tab 重排
+  （12 天气 / 13 手机连接 / 14 浏览器下载 / 15 MAA）+ Alert 初始化补字段、system.rs 架构合并、
+  ui_tests.rs 3 处闭合；`model.rs` 用 `merge-work/build_model.py` 从上游文件**程序化重建**
+  （merge-file 的冲突对齐与 git 原生合并不同，不能拿冲突态修）。
+- `settings_theme_follows_system_and_preserves_island_style`：上游给「常规」页加了一大批设置项，
+  690×1100 测试子视口装不下，egui 直接跳过视口外控件绘制，分段选项文本消失导致 unwrap None。
+  打印全部 Text shape 确认 1100 高只有 69 条、2000 高有 96 条；视口改 690×2000
+  （同步 Raster 与预览导出尺寸）。
+- **bin target 盲区**：`cargo test --lib` 不编译 `src/main.rs`。合并时 system.rs 架构取上游，
+  丢了定制的 `pick_exe` / `pick_folder`，直到 `cargo build --bin daozai` 才报 E0425。
+  从 custom-81 原样补回 47 行；以后交付前必须 build 两个 bin + 全量 test 一起跑。
+- 补丁链重建：用 v0.6.64 干净源码替换 `dz-phone.tar.gz`；写 `merge-work/rebuild_chain.py`
+  按「基线 → 工作源码」净差异生成 EDITS（逐 hunk 模拟 apply.py 顺序替换，要求 old 当下唯一、
+  应用后逐字节还原），**496 → 137 条 / 20 个文件**；`NEW_FILES` 10 个副本与工作源码一致。
+  `replay_check.py`：应用 137 处、跳过 0、diff 空、marker custom-82。
+- 版本标记 custom-82：`apply.py` PATCH_ID、`installer/daozai.iss` MyAppBuild、
+  `INSTALL-NOTES.txt`、`dz-phone/CUSTOM_BUILD.txt`；分支 fast-forward 合回 main。
+
+**验证**：串行全量 `1164 passed / 0 failed / 119 ignored`（并行下 4 个 QQ/豆包/微信共享状态
+用例偶发失败，串行全过）；`cargo build --locked --release --bin daozai --bin daozai-bridge`
+通过；`ISCC.exe` 出包 `daozai-setup-custom-82.exe`（9,690,403 B），`/VERYSILENT` 装到
+`D:\software\Daozai`，exe SHA256 `59ee88c240ddcbe4`（与构建产物一致），旧 exe 备份
+`daozai.exe.bak-custom81`。
+
+**遗留 / 注意**：
+
+- 岛仔进程部署时已退出，静默安装后没有自动拉起，**需用户手动启动**；网易云仍要带
+  `--remote-debugging-port=9222`，custom-80/81 的 CDP 跳转链（smtc.rs / netease_playback.rs /
+  netease_control.rs）保持可用，实机拖拽进度条仍待用户确认。
+- `bump_version()` 会把重放后的 Cargo.toml 从 0.6.64 升到 0.6.65，而工作源码/安装包仍是
+  0.6.64（补丁链只保证 src 逐字节一致，历来如此）。若以后要统一，需同步 Cargo.lock / app.rc，
+  并把 version 行排除出 EDITS。
+- 并行测试里 `qq_*` / `encrypted_storage_and_duplicate` / `all_taskbar_clients_first_flash`
+  偶发失败是测试共享状态导致，串行复跑全绿，不是回归。
 
 ## 修复 CDP 跳转后岛上进度/歌词不更新（custom-81）
 
