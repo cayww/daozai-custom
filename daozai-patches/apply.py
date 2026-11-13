@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-79"
+PATCH_ID = "custom-80"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -26,6 +26,7 @@ NEW_FILES = [
     ("maa.svg", "assets/settings-icons/system/maa.svg"),
     ("maa-icon.png", "assets/maa-icon.png"),
     ("phone.svg", "assets/settings-icons/system/phone.svg"),
+    ("netease_control.rs", "src/netease_control.rs"),
 ]
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
@@ -11304,6 +11305,43 @@ fn support_author(ui:&mut egui::Ui){
                         // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
                         let master=self.settings.notifications;
                         let master_hint=|ui:&mut egui::Ui|if !master {
+'''),
+
+    # custom-80：网易云进度跳转 CDP 渐进增强
+    ("src/smtc.rs",
+     '''#[path="kugou_control.rs"]
+mod kugou_control;
+#[cfg(windows)]
+#[path="player_seek.rs"]
+mod player_seek;
+
+''',
+     '''#[path="kugou_control.rs"]
+mod kugou_control;
+#[cfg(windows)]
+#[path="netease_control.rs"]
+mod netease_control;
+#[cfg(windows)]
+#[path="player_seek.rs"]
+mod player_seek;
+
+'''),
+    ("src/smtc.rs",
+     '''    static LOCK:Mutex<()>=Mutex::new(());
+    let Ok(_lock)=LOCK.lock()else{return false;};
+    if matches!(source.to_ascii_lowercase().as_str(),"kugou"|"kugou.exe") && kugou_control::seek(seconds){return true;}
+    let _apartment=init_winrt();
+    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager as Manager;
+    let session=media_result(Manager::RequestAsync).and_then(|mgr|mgr.GetSessions().ok())
+''',
+     '''    static LOCK:Mutex<()>=Mutex::new(());
+    let Ok(_lock)=LOCK.lock()else{return false;};
+    if matches!(source.to_ascii_lowercase().as_str(),"kugou"|"kugou.exe") && kugou_control::seek(seconds){return true;}
+    // 网易云关掉了系统媒体会话；客户端开了 CDP 调试端口时接管跳转（不开则立刻失败，不空等）。
+    if source.eq_ignore_ascii_case("cloudmusic.exe") && netease_control::seek(seconds){return true;}
+    let _apartment=init_winrt();
+    use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager as Manager;
+    let session=media_result(Manager::RequestAsync).and_then(|mgr|mgr.GetSessions().ok())
 '''),
 ]
 

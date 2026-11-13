@@ -576,6 +576,73 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## 网易云音乐进度跳转：CDP 渐进增强（custom-80）
+
+> **状态：代码与自动化测试已完成，尚未部署、尚未实机验证。**
+> 需要把网易云客户端带 `--remote-debugging-port=9222` 重启一次才能做实机确认；
+> 部署目录当前仍是 custom-79。
+
+### 问题
+
+拖岛上的音乐进度条会弹「播放器未完成跳转，请打开客户端后重试」。根因不是拖拽交互：
+网易云 3.1.41 启动参数带 `--disable-features=...,MediaSessionService`，不注册系统媒体会话
+（实测 `GetSessions().Size() == 0`），而 `smtc.rs::seek()` 只能走
+`TryChangePlaybackPositionAsync`，必然失败。暂停/切歌能用，是因为 `control()` 另有
+`netease_playback::control()` 热键兜底；Seek 没有。
+
+QQ 音乐（`player_seek.rs`，UIA 找控件后按坐标点击）和酷狗（`kugou_control.rs`，本机 HTTP
+端点）各有专用回退。用户明确要求**不采用坐标方式**，且网易云 UIA 树的 646 个控件里
+没有进度条节点，QQ 那套不可复刻；酷狗的「客户端吐端点 → 岛仔发命令」架构可复刻。
+
+### 关键发现：前端里本来就有跳转能力
+
+`D:/software/CloudMusic/package/orpheus.ntpk` 是标准 ZIP（前 100 字节自定义头），
+1411 条目 / 247 个明文 JS，可静态逆向，无需重启客户端：
+
+- `window.legacyNativeCmder` 是全局 `OrpheusCommand` 实例；sourcemap 里带 TS 源码，
+  `call(cmd, ...args)` 为 Promise 风格，底层 `window.channel.call(command, callback, params)`。
+- 原生命令白名单含 `nh.player.seek`、`nm.play.playerSeek`、`nh.player.getCurrentTime`、
+  `nm.play.getPlayerProgress`、`player.setCurrentTime`。
+- `pub/hybrid/app.chunk.83304b1.js` 里有 `Nt.call("audioplayer.seek", playId, seekId, value)`
+  和 `Seek` 回调注册。
+
+即：**不是做不到跳转，是没把跳转开放给外部进程**。CDP 就是那个可连接的端点。
+
+### 改动
+
+- 新增 `src/netease_control.rs`（登记进 `NEW_FILES`，副本在 `daozai-patches/`）：
+  纯 `std::net::TcpStream` 手写 HTTP `/json/list` → WebSocket 握手/帧编解码（客户端帧掩码、
+  126/127 扩展长度、ping→pong）→ CDP `Runtime.evaluate`。**不加依赖、不动 `Cargo.lock`**。
+- 注入表达式调 `legacyNativeCmder.call(cmd, 秒数)`，fire-and-forget（原生桥的 Promise
+  等 CEF 回调，不能用 `awaitPromise`）；**成功与否以 `netease_timeline::timeline()`
+  回读的真实播放位置为准**，不靠返回值猜。候选命令按把握排序，前一条不生效就试下一条。
+- `smtc.rs::seek()` 在酷狗分支后加 `cloudmusic.exe` 兜底，与 QQ/酷狗并列。
+- 渐进增强：端口连不上立即返回 false 并冷却 20 秒，拖动时不会每帧都做连接尝试；
+  未开调试端口时行为与之前完全一致（仍会走 SMTC 失败提示，交互层本版未改）。
+- 安全：只连 `127.0.0.1` / `localhost` 的 `page` target；命令名只允许
+  `[A-Za-z0-9._-]`，防注入；表达式整体经 `serde_json` 转义。
+- 配置覆盖 `%APPDATA%/Daozai/netease-cdp.json`：
+  `{"port":9222,"commands":["nm.play.playerSeek"]}`，实机确认有效命令后不必改代码。
+
+### 验证
+
+- 9 个新单测：起假 CDP 服务器跑通「端点发现 → WS 握手 → Runtime.evaluate → 位置回读」，
+  覆盖命令回退、位置不变判失败、注入过滤、扩展长度帧、端口不通快速失败等。
+- 2 个 `#[ignore]` 手动实机探针：`live_cdp_bridge_probe`（只读，看桥在不在）、
+  `live_cdp_seek_probe`（逐条试命令并打印前后位置，会真实跳到 20 秒）。
+- 全量 **826 passed / 0 failed / 88 ignored**；`cargo build --locked --release` 通过；
+  干净源码重放 custom-80 一致（EDITS 491 / NEW_FILES 10，diff 为空）。
+
+### 实机验证步骤（未完成）
+
+1. 退出网易云，用 `cloudmusic.exe --remote-debugging-port=9222` 启动（会打断当前播放）。
+2. `cargo test --locked --release --lib live_cdp_bridge_probe -- --ignored --nocapture`
+   确认 `legacyNativeCmder.call` 是 function。
+3. `cargo test --locked --release --lib live_cdp_seek_probe -- --ignored --nocapture`
+   看哪条命令的 after 位置真的变了，把命令名写进 `netease-cdp.json`。
+4. 再部署 custom-80，拖进度条实测。若三条都无效，需继续挖 `audioplayer.seek`
+   的 `playId/seekId` 参数（可用 `nm.play.getPlayerProgress` 取）。
+
 ## 通知页按语义拆成三张卡（custom-79）
 
 custom-78 之后通知页仍是一张巨型卡片（6 个开关 + 通知列表 + 3 组阈值 + 勿扰 +
