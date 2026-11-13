@@ -576,6 +576,43 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## 网易云调试端口免手动配置（custom-83）
+
+**问题**：custom-80/81 的 CDP 进度跳转要求网易云带 `--remote-debugging-port=9222` 启动。
+CEF 的调试端口只能在进程启动时打开，运行时无法补开；客户端又用
+`--disable-features=...,MediaSessionService` 关掉了系统媒体会话，
+`TryChangePlaybackPositionAsync` 必然失败，坐标点击也按用户约定不做。
+剩下唯一路径就是让启动方式自动带参数。
+
+**改动**：
+
+- 一次性配置（仓库外）：把开始菜单
+  `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\网易云音乐.lnk`
+  的命令行参数段写成 `--remote-debugging-port=9222`。纯二进制改写 LinkFlags
+  `0x97 -> 0xB7`，NAME / WORKINGDIR / ExtraData 原样保留；原文件备份为同目录
+  `网易云音乐.lnk.bak-before-cdp`。
+- `netease_control.rs`（NEW_FILES，副本已同步）新增：
+  - `port_status()`：后台线程探测 `/json/version`，5 秒缓存，`None` 表示首次探测未完成，
+    UI 线程零阻塞；
+  - `restart_with_debug_port()`：用 `player_process::pids_named` 找同名进程、
+    `QueryFullProcessImageNameW` 取映像路径，结束所有 `cloudmusic.exe` 后以带参数方式重新拉起。
+    **只由设置页手动点击触发，不自动重启用户的播放器**。
+- 设置 →「音乐与歌词」新增「网易云进度拖动」卡片：显示调试端口状态
+  （已就绪 / 未开启 / 检测中…）与「以调试模式重启网易云」按钮，结果用岛上提示反馈。
+- `smtc.rs` 把 `netease_control` 从私有模块开放为 `pub(crate)`，供设置页调用。
+
+**为什么由岛仔重启可行**：此前 HANDOFF 里「工具启动的 GUI 进程会被会话清理」指的是
+agent 工具直接启动的进程；岛仔是用户手动启动的常驻进程，它派生的网易云不受该限制。
+
+**验证**：release 两个 bin 构建通过；串行全量 `1164 passed / 0 failed / 119 ignored`；
+EDITS 137 → 138，干净重放应用 138 处、跳过 0、diff 空、marker custom-83；
+ISCC 出包 `daozai-setup-custom-83.exe`，`/VERYSILENT` 部署，
+exe SHA256 `c42c6e4a53b450e3`，旧版备份 `daozai.exe.bak-custom82`。
+
+**使用前提**：部署时正在运行的网易云仍是**不带参数的旧实例**，需要重启一次（会中断播放）：
+从开始菜单重新启动即可自动带上参数；或启动岛仔后在设置 → 音乐与歌词点
+「以调试模式重启网易云」一键修复。之后拖动进度条才走原生 `audioplayer.seek`。
+
 ## 上游 v0.6.64 增量合并（custom-82）
 
 **问题**：官方从 v0.6.63 升到 v0.6.64，新增天气页、健康提醒、豆包等 AI 额度、企微/飞书/钉钉提醒、
