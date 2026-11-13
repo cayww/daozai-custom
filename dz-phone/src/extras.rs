@@ -1849,12 +1849,13 @@ impl App {
                         4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
                         6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
                         13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
-                        14=>egui::include_image!("../assets/settings-icons/system/maa.svg"),
+                        14=>egui::include_image!("../assets/maa-icon.png"),
                         12=>egui::include_image!("../assets/settings-icons/system/phone.svg"),
                         _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
                     };
                     let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(25.0,25.0));
-                    egui::Image::new(icon).paint_at(ui,icon_bg);
+                    // 统一裁成圆角方块：PNG 图标（MAA）和矢量图标看起来一致。
+                    egui::Image::new(icon).rounding(7.0).paint_at(ui,icon_bg);
                     ui.painter().text(egui::pos2(rect.left()+40.0,rect.center().y),egui::Align2::LEFT_CENTER,name,egui::FontId::proportional(13.0),if selected{settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))}else{settings_color(ctx,Color32::from_gray(225),Color32::from_gray(55))});
                     ui.add_space(3.0);
                 }
