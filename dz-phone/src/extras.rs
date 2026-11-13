@@ -602,6 +602,13 @@ impl App {
         }
     }
 
+    /// 这条通知是否进入处理流程。两个互不相干的维度：
+    /// 手机短信/来电只看 `phone_alerts`，其它应用只看监听范围（全部应用 / 仅 QQ）。
+    pub(crate) fn accepts_notification(&self,id:&str,phone:bool)->bool{
+        if !self.settings.read_notifications || id.is_empty(){return false;}
+        if phone {return self.settings.phone_alerts;}
+        !self.settings.qq_only || id=="QQ"
+    }
     pub fn receive_notification(&mut self, app:String, id:String, body:String){
         let phone=crate::system::phone_channel(&id);
         // 手机 App 名单是外部 JSON，改完约 1 秒内生效，不用重启岛仔。
@@ -611,10 +618,9 @@ impl App {
             if phone {"手机"} else {"其它"},
             if self.settings.qq_only {"是"} else {"否"},
             body.chars().take(60).collect::<String>());
-        // 仅 QQ 模式：放行 QQ，以及「手机短信与来电」开关打开时的手机通道。
-        let phone_allowed=phone && self.settings.phone_alerts;
-        if !self.settings.read_notifications || id.is_empty() || (self.settings.qq_only && id!="QQ" && !phone_allowed){
-            log_notice(&format!("DROP 未连接/非QQ  {trace}"));
+        // 手机只看手机开关，其它应用只看监听范围——两者互不影响。
+        if !self.accepts_notification(&id,phone) {
+            log_notice(&format!("DROP 未连接/范围外/手机关  {trace}"));
             return;
         }
         // 真实手机连接通知只报主 AUMID，改由正文识别来源；
@@ -712,10 +718,21 @@ impl App {
             crate::app::Messenger::Wechat=>self.settings.wechat_notifications,
             crate::app::Messenger::Qq=>self.settings.read_notifications && self.notification_apps.items.iter().any(|(key,_,on)|key=="QQ" && *on),
         });
+        // 先把开关读成局部值：闭包只借用 settings 之外的状态，避免与后面的 alerts 可变借用冲突。
+        let notif_on=self.settings.notifications;
+        let read_on=self.settings.read_notifications;
+        let qq_only=self.settings.qq_only;
+        let phone_alerts=self.settings.phone_alerts;
         let allowed=|a:&Alert|match &a.source {
             AlertSource::Internal=>true,
             AlertSource::Wechat=>self.settings.wechat_notifications && self.settings.notifications,
-            AlertSource::External(id)=>self.settings.notifications && self.settings.read_notifications && (id=="island-status" || id.starts_with("island-status:") || ((!self.settings.qq_only || id=="QQ" || (crate::system::phone_channel(id) && self.settings.phone_alerts)) && self.notification_apps.items.iter().any(|(key,_,on)|key==id && *on))),
+            AlertSource::External(id)=>{
+                // 与 accepts_notification 同一套规则：手机只看手机开关，其它应用看监听范围。
+                let phone=crate::system::phone_channel(id);
+                let scope_ok=if phone { phone_alerts } else { !qq_only || id=="QQ" };
+                notif_on && read_on && (id=="island-status" || id.starts_with("island-status:")
+                    || (scope_ok && self.notification_apps.items.iter().any(|(key,_,on)|key==id && *on)))
+            },
         };
         self.alerts.retain(&allowed);
         if self.notice.as_ref().is_some_and(|a|!allowed(a)){self.notice=None;}

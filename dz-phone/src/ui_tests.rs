@@ -6403,3 +6403,28 @@ fn notification_source_page_renders_in_both_modes(){
         }
     }
 }
+
+
+/// 「仅 QQ」与「手机短信与来电」必须互相独立：手机只看自己的开关，其它应用只看监听范围。
+#[test]
+fn phone_alerts_is_independent_of_listen_scope(){
+    let mut h=H::new();
+    h.app.settings.read_notifications=true;
+    let phone_id="Microsoft.YourPhone_8wekyb3d8bbwe!App";
+    for &(qq_only,phone_alerts) in &[(false,false),(false,true),(true,false),(true,true)] {
+        h.app.settings.qq_only=qq_only;
+        h.app.settings.phone_alerts=phone_alerts;
+        // 手机：只由「手机短信与来电」决定，与监听范围无关。
+        assert_eq!(h.app.accepts_notification(phone_id,true),phone_alerts,
+            "qq_only={qq_only} phone_alerts={phone_alerts}：手机应只受手机开关控制");
+        // QQ：两种范围下都接收。
+        assert!(h.app.accepts_notification("QQ",false));
+        // 其它应用：只由监听范围决定。
+        assert_eq!(h.app.accepts_notification("D:/x/Steam.exe",false),!qq_only,
+            "qq_only={qq_only}：非 QQ 应用应只受监听范围控制");
+    }
+    // 没连上就一律不接收，手机开关开着也没用。
+    h.app.settings.read_notifications=false;
+    h.app.settings.phone_alerts=true;
+    assert!(!h.app.accepts_notification(phone_id,true),"未连接时手机通知也不应接收");
+}
