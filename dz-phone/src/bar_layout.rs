@@ -37,6 +37,8 @@ pub(crate) struct Layout {
     pub x: Vec<Option<f32>>,
     pub widths:Vec<f32>,
     quotas:usize,
+    /// 状态总线占用的槽位（在末尾动态追加，不参与 resident_order 重排）。
+    pub status: Option<usize>,
 }
 
 impl Layout {
@@ -66,7 +68,26 @@ impl Layout {
         }
         let width=cursor-12.0+16.0;
         for value in x.iter_mut().flatten() {*value-=width/2.0;}
-        Self {width:width.max(96.0),x,widths,quotas}
+        Self {width:width.max(96.0),x,widths,quotas,status:None}
+    }
+    /// 在胶囊最右侧追加一条状态区：不影响 resident_order 的既有槽位，
+    /// 只是把整体左移半个宽度，让常驻组件保持相对位置。
+    pub fn add_status(&mut self, width: f32) -> usize {
+        let gap = 12.0;
+        // 状态区是胶囊最右的槽位，右侧留与左侧一致的 16px 边距，避免胶囊贴边、左右不对称。
+        let end_pad = 16.0;
+        let slot = self.x.len();
+        self.x.push(None);
+        self.widths.push(width);
+        let old_w = self.width;
+        // 状态区中心相对旧胶囊右边界的偏移：gap（左间距）+ width/2；
+        // 右侧再让出 end_pad，所以整体多占 end_pad，各槽位左移 shift 保证相对位置不变。
+        let shift = (width + gap + end_pad) / 2.0;
+        for value in self.x.iter_mut().flatten() { *value -= shift; }
+        self.x[slot] = Some(old_w / 2.0 + gap / 2.0 - end_pad / 2.0);
+        self.width = old_w + width + gap + end_pad;
+        self.status = Some(slot);
+        slot
     }
     pub fn quota_slots(&self)->impl Iterator<Item=usize> { (0..self.quotas).map(quota_slot) }
     pub fn balance_tail(&mut self,position:usize,extra:f32){
@@ -74,6 +95,15 @@ impl Layout {
         let Some(center)=self.x[slot] else{return;};
         for (i,x) in self.x.iter_mut().enumerate(){if i!=slot{if let Some(x)=x{*x+=if *x<center{-extra/2.0}else{extra/2.0};}}}
         self.widths[slot]+=extra;self.width+=extra;
+    }
+    /// 本机与手机电量同时显示时把电池槽加宽，两个环并排；其余槽位左右让开。
+    pub fn widen_battery(&mut self, extra:f32) {
+        let Some(battery)=self.x[BATTERY] else{return;};
+        for (slot,x) in self.x.iter_mut().enumerate() {
+            if slot!=BATTERY { if let Some(x)=x { *x+=if *x<battery {-extra/2.0}else{extra/2.0}; } }
+        }
+        self.widths[BATTERY]+=extra;
+        self.width+=extra;
     }
     pub fn widen_clock(&mut self, extra:f32) {
         let clock=self.x[CLOCK].unwrap();
@@ -195,6 +225,21 @@ mod tests {
             assert_eq!(layout.clearance(CLOCK),1.0);
         }}}}}}
     }
+    #[test]
+    fn widening_the_battery_slot_keeps_neighbours_apart(){
+        // 本机与手机电量同时显示时，电池槽加宽 20px，其余组件必须自动让开。
+        let one=Layout::new(true,2,true,false,false,true);
+        let mut two=Layout::new(true,2,true,false,false,true);
+        two.widen_battery(20.0);
+        assert!((two.width-one.width-20.0).abs()<0.01,"整体宽度应增加 20");
+        assert!((two.widths[BATTERY]-one.widths[BATTERY]-20.0).abs()<0.01);
+        let mut boxes:Vec<_>=two.x.iter().enumerate().filter_map(|(i,x)|x.map(|x|(x-two.widths[i]/2.0,x+two.widths[i]/2.0))).collect();
+        boxes.sort_by(|a,b|a.0.total_cmp(&b.0));
+        assert!(boxes.windows(2).all(|p|p[1].0-p[0].1>=6.9),"加宽后不能和邻居挤在一起");
+        assert!(boxes.first().unwrap().0>=-two.width/2.0+15.9);
+        assert!(boxes.last().unwrap().1<=two.width/2.0-15.9);
+    }
+
     #[test]
     fn replacing_battery_moves_continuously_and_supports_an_instant_state(){
         let before=Layout::new(true,1,true,false,false,true);let after=Layout::new(false,1,true,false,false,true);

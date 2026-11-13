@@ -1,3 +1,7 @@
+> **本目录是二次开发版的源码，不是官方仓库。**
+> 官方项目：<https://github.com/Renly1994/xiaotang-daozai>　｜　本仓库说明见根目录 [README.md](../README.md)
+> 下面这份 README 来自上游，功能描述以原版为准；本仓库的改动见 [PATCHES.md](../daozai-patches/PATCHES.md)。
+
 <div align="center">
 
 <img src="assets/daozai-logo.png" width="112" alt="岛仔" />

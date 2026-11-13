@@ -1,6 +1,6 @@
 [package]
 name = "daozai"
-version = "0.6.63"
+version = "0.6.64"
 edition = "2021"
 license = "MIT"
 description = "岛仔：Windows 顶部的桌面伙伴与信息岛"
@@ -14,6 +14,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "daozai"
 path = "src/main.rs"
+
+# 独立精简的浏览器扩展桥宿主：不链接 GUI 栈，只做下载事件 → island_status.json 的翻译。
+# 安装包把编译出的 daozai-bridge.exe 复制为 daozai_bridge.exe（见 installer/daozai.iss）。
+[[bin]]
+name = "daozai-bridge"
+path = "src/bin/daozai-bridge/main.rs"
 
 # 无窗口演示录制器：脚本驱动 + 软件光栅化，输出 RGBA 帧流给 ffmpeg。
 [[bin]]
@@ -71,6 +77,7 @@ windows = { version = "0.58", features = [
   "Win32_Security_Cryptography",
   "Win32_System_Power",
   "Win32_System_Registry",
+  "Win32_System_IO",
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_System_Diagnostics_ToolHelp",

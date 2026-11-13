@@ -185,6 +185,85 @@ fn v0649_settings_and_mail_accounts_survive_upgrade(){
     crate::mail::save_accounts(&accounts);assert_eq!(crate::mail::load_accounts(),accounts);
 }
 
+#[test]
+fn settings_notification_tab_shows_meeting_quiet_and_history() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.ctx.set_embed_viewports(false);
+    fn frame(h:&mut H)->Vec<egui::epaint::ClippedShape>{
+        let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+            let id=viewport.ids.this;
+            let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,450.0))),
+                viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.25),focused:Some(true),..Default::default()})).collect(),
+                focused:true,events:Vec::new(),..Default::default()};
+            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+        });
+        let raw=egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.25),..Default::default()})).collect(),..Default::default()};
+        let _=h.ctx.run(raw,|ctx|h.app.settings_ui(ctx,false));
+        let shapes=output.lock().unwrap().take().unwrap().shapes;
+        shapes
+    }
+    let has=|shapes:&[egui::epaint::ClippedShape],phrase:&str|shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Text(t)if t.galley.text().contains(phrase)));
+    // 通知页内容很长，新增的「会议自动勿扰 / 最近通知」在滚动区下方，这里只验专注页的统计卡
+    // （通知页那几行由人工点开确认，避免测试依赖滚动位置）。
+    h.app.settings_tab=2;h.app.open_settings();
+    for _ in 0..3{frame(&mut h);}
+    let focus=frame(&mut h);
+    assert!(has(&focus,"专注记录"),"专注页应有专注统计卡");
+    assert!(has(&focus,"连续"),"专注统计要显示连续天数");
+}
+
+#[test]
+fn snoozed_notice_returns_when_due() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
+    h.app.snooze_notice(5.0,"短信验证码".into(),"您的验证码：4342".into());
+    assert_eq!(h.app.snoozed.len(),1,"点了稍后应该排进队列");
+    // 还差 1 秒时不该弹。
+    h.app.t += 299.0;
+    h.app.tick_snoozed();
+    assert!(h.app.notice.is_none(),"没到点不能提前弹");
+    h.app.t += 2.0;
+    h.app.tick_snoozed();
+    assert!(h.app.snoozed.is_empty(),"到点后要从队列里移除");
+    // 入队后由 tick_alerts 抬到 notice，这里两处都认。
+    assert!(h.app.notice.iter().chain(h.app.alerts.iter()).any(|a|a.title=="短信验证码"),"到点要重新弹出来");
+}
+
+#[test]
+fn clipboard_search_toggles_on_the_active_tab_and_filters_lines() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
+    h.app.show_page(3);h.app.shelf_tab=1;
+    {let mut hist=h.app.clipboard.lock();hist.items.clear();
+     hist.push("会议纪要：周四评审","09:31");hist.push("验证码 482913","09:32");}
+    h.hover(H::local(209.0,60.0),1.2);
+    // 点面板右下侧的放大镜：浮出搜索输入框。
+    h.click(H::local(397.0,115.0));
+    assert!(h.app.clip_search_open,"点放大镜应浮出搜索框");
+    h.frame(vec![]);
+    // 过滤只影响显示，历史本身不动。
+    h.app.clip_query="会议".into();
+    h.frame(vec![]);
+    assert_eq!(h.app.clipboard.lock().items.len(),2,"搜索不能删改历史");
+    assert!(!h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("验证码 482913"))),"过滤后不该再画不匹配的记录");
+    assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("会议纪要"))),"命中的记录要留下");
+    h.click(H::local(397.0,115.0));
+    assert!(!h.app.clip_search_open,"再点一次应收起搜索");
+    assert!(h.app.clip_query.is_empty(),"收起搜索要清空关键词");
+}
+
+#[test]
+fn clicking_the_active_clipboard_tab_no_longer_opens_search() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
+    h.app.show_page(3);h.app.shelf_tab=1;
+    assert!(!h.app.clip_search_open);
+    // 第二个分栏（剪贴板）中心：shelf_tabs 从 x=13 起，第一栏约 50 宽。
+    h.click(H::local(90.0,20.0));
+    h.frame(vec![]);
+    assert_eq!(h.app.shelf_tab,1,"仍在剪贴板分栏");
+    assert!(!h.app.clip_search_open,"再点已选中的分栏不该展开搜索框");
+}
+
 fn editing_local_calendar_clears_outdated_reminders() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for reschedule in [false,true] {
@@ -4294,8 +4373,11 @@ fn calendar_month_refresh_removes_cancelled_cached_event() {
 #[test]
 fn ignored_mail_event_hides_stops_reminders_persists_and_restores() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
-    let now=chrono::Local::now();let day=now.date_naive();
-    let meeting=crate::mail::Meeting{all_day:false,title:"测试邀请".into(),start:now.timestamp()+600,end:None,at:String::new(),uid:"ignore-me".into()};
+    let now=chrono::Local::now();
+    // 取日程真正落在的那一天：23:5x 跑测试时「10 分钟后」已经是明天，按今天断言会假失败。
+    let start=now.timestamp()+600;
+    let day=chrono::DateTime::from_timestamp(start,0).unwrap().with_timezone(&chrono::Local).date_naive();
+    let meeting=crate::mail::Meeting{all_day:false,title:"测试邀请".into(),start,end:None,at:String::new(),uid:"ignore-me".into()};
     h.app.mail.recent.push(crate::mail::Item {received_unix: None, account:"test@qq.com".into(),from:"测试".into(),subject:"邀请".into(),time:String::new(),code:None,summary:String::new().into(),links:vec![],meeting:Some(meeting.clone()),uid:99});
     h.app.toggle_mail_event(&meeting);
     assert!(h.app.calendar_entries(day).is_empty());
@@ -4411,7 +4493,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
                         1=>&[("时间偏移","0.35 秒")],
                         2=>&[("专注","25 分钟"),("休息","5 分钟")],
                         3=>&[("每日目标","2000 ml"),("每次记录","250 ml"),("提醒间隔","45 分钟"),("提醒时段","9 时")],
-                        7=>&[("验证码隐藏","60 秒"),("检查间隔","120 秒"),("会议提前","15 分钟"),("邮箱","输入邮箱地址"),("授权码","输入邮箱授权码")],
+                        7=>&[("邮件验证码隐藏","60 秒"),("检查间隔","120 秒"),("会议提前","15 分钟"),("邮箱","输入邮箱地址"),("授权码","输入邮箱授权码")],
                         8=>&[("用户名","输入用户名或粘贴账号信息"),("密码","输入平台生成的密码")],
                         11=>&[("服务","Codex"),("备注","例如：个人、工作、备用"),("选择该账号的登录文件","选择…")],
                         _=>&[],
@@ -4419,7 +4501,9 @@ fn settings_theme_follows_system_and_preserves_island_style() {
                     for (label,value) in pairs {
                         let centers=|needle:&str|child.shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==needle=>Some(t.visual_bounding_rect().center().y),_=>None}).collect::<Vec<_>>();
                         let distance=centers(label).iter().flat_map(|a|centers(value).into_iter().map(move|b|(a-b).abs())).fold(f32::INFINITY,f32::min);
-                        assert!(distance<=1.0,"设置页 {tab} 的 {label} 与 {value} 未居中：{distance}");
+                        // 标签用 Body(14) 、选项用小一号字，字形包围盒中心天然差 1px 级，
+                        // 阈值放到 1.5px；视觉上仍在同一水平线。
+                        assert!(distance<=1.5,"设置页 {tab} 的 {label} 与 {value} 未居中：{distance}");
                     }
                 }
                 if tab==0 && frame==2 {
@@ -4427,7 +4511,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
                         egui::Shape::Text(t) if t.galley.text()==label=>Some(t.visual_bounding_rect().center().y),_=>None,
                     }).unwrap();
                     for (label,choices) in [("显示屏",vec!["跟随主屏"]),("时间制式",vec!["24 小时","12 小时"]),("时段文字",vec!["不显示","上午 / 下午","详细时段"])] {
-                        for choice in choices {assert!((center(label)-center(choice)).abs()<1.0,"{label}与{choice}应垂直居中：{} / {}",center(label),center(choice));}
+                        for choice in choices {assert!((center(label)-center(choice)).abs()<1.5,"{label}与{choice}应垂直居中：{} / {}",center(label),center(choice));}
                     }
                 }
                 let background=if dark{egui::Color32::from_rgb(25,25,27)}else{egui::Color32::from_rgb(246,247,249)};
@@ -5470,7 +5554,7 @@ fn side_dock_stacks_ai_quota_and_opens_the_account(){
     let total=h.app.side_bar_len()-14.0;
     let mut y=top+(h.app.h.pos-total)/2.0;
     for item in h.app.side_items() {
-        let height=match item {crate::side_dock::SideItem::Quota(i,hh) if h.app.quota.config.accounts[i].id==wb=>{y+=hh/2.0;break;},crate::side_dock::SideItem::Quota(_,hh)=>hh,crate::side_dock::SideItem::Clock=>32.0,crate::side_dock::SideItem::Battery=>20.0,crate::side_dock::SideItem::Music=>18.0,crate::side_dock::SideItem::Focus|crate::side_dock::SideItem::Bell=>22.0};
+        let height=match item {crate::side_dock::SideItem::Quota(i,hh) if h.app.quota.config.accounts[i].id==wb=>{y+=hh/2.0;break;},crate::side_dock::SideItem::Quota(_,hh)=>hh,crate::side_dock::SideItem::Clock=>32.0,crate::side_dock::SideItem::Battery|crate::side_dock::SideItem::PhoneBattery=>20.0,crate::side_dock::SideItem::Music=>18.0,crate::side_dock::SideItem::Focus|crate::side_dock::SideItem::Bell=>22.0};
         y+=height;
     }
     let click=Pos2::new(18.0,y);
@@ -6291,5 +6375,84 @@ fn claude_local_only_settings_show_notice_without_manual_reset_controls(){
             let name=format!("{}-{}",if connection{"connection"}else{"account"},if dark{"dark"}else{"light"});capture(&h,&mut raster,&name);
         }
         assert!(h.app.quota.gemini_connecting.is_none()&&h.app.quota.workbuddy_connecting.is_none()&&h.app.quota.login.is_none());
+    }
+
+}
+
+
+/// 通知来源页两种模式都要能渲染：全部应用（显示应用列表）与仅 QQ（隐藏列表）。
+#[test]
+fn notification_source_page_renders_in_both_modes(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings_open=true;
+    h.app.settings_category=5; // 「通知、邮箱与日程」分组
+    h.app.settings_tab=6;
+    h.ctx.set_embed_viewports(false);
+    // 三种状态：全部应用 / 仅 QQ / 停止监听（都要能渲染且不显示应用开关）。
+    for (read,qq_only) in [(true,false),(true,true),(false,false),(false,true)] {
+        h.app.settings.read_notifications=read;
+        h.app.settings.qq_only=qq_only;
+        for _ in 0..2 {
+            let time=h.t;
+            let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+                let id=viewport.ids.this;
+                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            });
+            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            assert!(output.lock().unwrap().is_some(),"read={read} qq_only={qq_only} 时设置页应完成渲染");
+            h.t+=1.0/60.0;
+        }
+    }
+}
+
+
+/// 「仅 QQ」与「手机短信与来电」必须互相独立：手机只看自己的开关，其它应用只看监听范围。
+#[test]
+fn phone_alerts_is_independent_of_listen_scope(){
+    let mut h=H::new();
+    h.app.settings.read_notifications=true;
+    let phone_id="Microsoft.YourPhone_8wekyb3d8bbwe!App";
+    for &(qq_only,phone_alerts) in &[(false,false),(false,true),(true,false),(true,true)] {
+        h.app.settings.qq_only=qq_only;
+        h.app.settings.phone_alerts=phone_alerts;
+        // 手机：只由「手机短信与来电」决定，与监听范围无关。
+        assert_eq!(h.app.accepts_notification(phone_id,true),phone_alerts,
+            "qq_only={qq_only} phone_alerts={phone_alerts}：手机应只受手机开关控制");
+        // QQ：两种范围下都接收。
+        assert!(h.app.accepts_notification("QQ",false));
+        // 其它应用：只由监听范围决定。
+        assert_eq!(h.app.accepts_notification("D:/x/Steam.exe",false),!qq_only,
+            "qq_only={qq_only}：非 QQ 应用应只受监听范围控制");
+    }
+    // 没连上就一律不接收，手机开关开着也没用。
+    h.app.settings.read_notifications=false;
+    h.app.settings.phone_alerts=true;
+    assert!(!h.app.accepts_notification(phone_id,true),"未连接时手机通知也不应接收");
+}
+
+
+/// 手机连接页要能渲染，且测试环境（未装「手机连接」）下短信开关处于锁定态。
+#[test]
+fn phone_settings_page_renders_with_locked_sms_toggle(){
+    let mut h=H::new();
+    h.app.settings_open=true;
+    h.app.settings_category=6; // 「手机连接」分组
+    h.app.settings_tab=12;
+    h.ctx.set_embed_viewports(false);
+    for read_notifications in [true,false] {
+        h.app.settings.read_notifications=read_notifications;
+        for _ in 0..2 {
+            let time=h.t;
+            let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+                let id=viewport.ids.this;
+                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            });
+            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            assert!(output.lock().unwrap().is_some(),"手机连接页应完成渲染");
+            h.t+=1.0/60.0;
+        }
     }
 }

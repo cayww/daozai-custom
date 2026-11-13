@@ -90,6 +90,8 @@ impl Shell {
         diagnostics::startup("启动剪贴板记录");
         {let ctx=cc.egui_ctx.clone();daozai::clipboard::watch(app.clipboard.clone(),move||ctx.request_repaint());}
         if std::env::args().any(|arg|arg=="--settings"){app.open_settings();}
+        // 直达 MAA 设置分组（SETTINGS_GROUPS 里 "MAA" 是第 9 项）。
+        if std::env::args().any(|arg|arg=="--maa"){app.open_settings_group(8);}
         if std::env::args().any(|arg|arg=="--calendar"){app.open_calendar(None);}
         #[cfg(feature="record")]
         if std::env::var("DAOZAI_MAIL_DEMO").is_ok(){app.mail_demo();}
@@ -552,6 +554,20 @@ impl eframe::App for Shell {
                 Cmd::QuotaChooseFile=>{
                     #[cfg(windows)] match daozai::system::pick_files_for("选择 AI 账号的登录 JSON 文件",false){Ok(files)=>if let Some(path)=files.into_iter().next(){self.app.quota_set_source(path);},Err(_)=>self.app.say("无法选择登录文件")}
                 },
+                Cmd::PickMaaExe=>{
+                    #[cfg(windows)] match daozai::system::pick_exe("选择 MAA 程序（MAA.exe）"){
+                        Ok(Some(path))=>self.app.set_maa_exe(path.display().to_string()),
+                        Ok(None)=>{},
+                        Err(e)=>self.app.say(format!("无法选择程序：{}",e.code())),
+                    }
+                },
+                Cmd::PickMaaLogDir=>{
+                    #[cfg(windows)] match daozai::system::pick_folder("选择 MAA 日志目录（一般是 MAA 目录下的 debug）"){
+                        Ok(Some(path))=>self.app.set_maa_log_dir(path.display().to_string()),
+                        Ok(None)=>{},
+                        Err(e)=>self.app.say(format!("无法选择文件夹：{}",e.code())),
+                    }
+                },
                 Cmd::QuotaRefresh=>{
                     if self.quota_at.ready(Duration::from_secs(15)) {
                         let config=self.app.quota_config();let accounts:Vec<_>=config.accounts.iter().filter(|a|config.enabled && a.enabled).cloned().collect();
@@ -775,6 +791,8 @@ mod open_path_tests {
 }
 
 fn main() -> std::process::ExitCode {
+    // 浏览器扩展桥宿主已拆成独立二进制 daozai-bridge.exe（见 src/bin/daozai-bridge），
+    // 不再复用本 exe，这里直接进入主程序。
     diagnostics::install();
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
