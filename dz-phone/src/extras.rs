@@ -2399,6 +2399,7 @@ impl App {
                         #[cfg(windows)]
                         {
                             use crate::smtc::netease_control as ctl;
+                            let auto_host=ctl::config().auto_host;
                             settings_label(ui,"网易云进度拖动");
                             settings_card(ui,|ui|{
                                 let line=match ctl::port_status(){
@@ -2408,7 +2409,15 @@ impl App {
                                 };
                                 ui.add(egui::Label::new(egui::RichText::new(line).size(12.0)).wrap());
                                 ui.add_space(3.0);
-                                ui.small("客户端需带 --remote-debugging-port=9222 启动；从开始菜单的快捷方式启动会自动带上该参数。");
+                                ui.small("客户端需带 --remote-debugging-port=9222 启动；一键修复会固化开始菜单入口与客户端路径。");
+                                let mut auto=auto_host;
+                                setting_row(ui,"自动托管启动参数","网易云未带调试端口启动时由岛仔自动重启（会中断播放）；没有快捷方式时建议开启",&mut auto);
+                                if auto!=auto_host{
+                                    match ctl::set_auto_host(auto){
+                                        Ok(())=>self.say(if auto{"已开启网易云启动参数自动托管"}else{"已关闭自动托管"}),
+                                        Err(error)=>self.say(format!("保存失败：{}",error)),
+                                    }
+                                }
                                 if ui.button("以调试模式重启网易云").clicked(){
                                     match ctl::restart_with_debug_port(){
                                         Ok(message)=>self.say(message),
