@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-82"
+PATCH_ID = "custom-83"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -3745,6 +3745,42 @@ impl App {
                         settings_label(ui,"歌词");
 '''),
     ("src/extras.rs",
+     '''                            ui.add_space(3.0);
+                            ui.small("正数提前，负数延后；默认提前 0.35 秒。");
+                        });
+                    }
+                    2=>{
+                        settings_label(ui,"计时时长");
+''',
+     '''                            ui.add_space(3.0);
+                            ui.small("正数提前，负数延后；默认提前 0.35 秒。");
+                        });
+                        #[cfg(windows)]
+                        {
+                            use crate::smtc::netease_control as ctl;
+                            settings_label(ui,"网易云进度拖动");
+                            settings_card(ui,|ui|{
+                                let line=match ctl::port_status(){
+                                    Some(true)=>"调试端口：已就绪，拖动进度条可直接跳转".to_string(),
+                                    Some(false)=>"调试端口：未开启，进度拖动暂不可用".to_string(),
+                                    None=>"调试端口：检测中…".to_string(),
+                                };
+                                ui.add(egui::Label::new(egui::RichText::new(line).size(12.0)).wrap());
+                                ui.add_space(3.0);
+                                ui.small("客户端需带 --remote-debugging-port=9222 启动；从开始菜单的快捷方式启动会自动带上该参数。");
+                                if ui.button("以调试模式重启网易云").clicked(){
+                                    match ctl::restart_with_debug_port(){
+                                        Ok(message)=>self.say(message),
+                                        Err(error)=>self.say(format!("未能重启：{}",error)),
+                                    }
+                                }
+                            });
+                        }
+                    }
+                    2=>{
+                        settings_label(ui,"计时时长");
+'''),
+    ("src/extras.rs",
      '''                            setting_number(ui,"休息",&mut self.settings.rest_minutes,1,60," 分钟",1.0);
                             ui.add_space(3.0);
                             ui.small("调整后从下一阶段开始生效。");
@@ -6091,7 +6127,7 @@ mod player_seek;
 mod kugou_control;
 #[cfg(windows)]
 #[path="netease_control.rs"]
-mod netease_control;
+pub(crate) mod netease_control;
 #[cfg(windows)]
 #[path="player_seek.rs"]
 mod player_seek;

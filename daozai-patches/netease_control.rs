@@ -58,6 +58,71 @@ pub fn config()->Config{
     cfg
 }
 
+/// 设置页用：CDP 调试端口状态。探测放在后台线程，绝不阻塞 UI 线程；
+/// `None` 表示第一次探测还没回来。
+static READY_CACHE:Mutex<Option<(Instant,bool)>>=Mutex::new(None);
+static PROBE_BUSY:Mutex<bool>=Mutex::new(false);
+pub fn port_status()->Option<bool>{
+    let stale=match READY_CACHE.lock(){
+        Ok(guard)=>match *guard{Some((at,_))=>at.elapsed()>=Duration::from_secs(5),None=>true},
+        Err(_)=>false,
+    };
+    if stale{
+        if let Ok(mut busy)=PROBE_BUSY.lock(){
+            if !*busy{
+                *busy=true;
+                std::thread::spawn(||{
+                    let ready=http_get(config().port,"/json/version").is_some();
+                    if let Ok(mut guard)=READY_CACHE.lock(){*guard=Some((Instant::now(),ready));}
+                    if let Ok(mut flag)=PROBE_BUSY.lock(){*flag=false;}
+                });
+            }
+        }
+    }
+    READY_CACHE.lock().ok().and_then(|guard|guard.map(|(_,ready)|ready))
+}
+
+/// 已运行的网易云没带调试端口时，结束它并用同一映像路径带参数重新拉起。
+/// 只由设置页手动触发；岛仔是常驻进程，它派生的客户端不受会话清理影响。
+pub fn restart_with_debug_port()->Result<String,String>{
+    use windows::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{OpenProcess,TerminateProcess,QueryFullProcessImageNameW,
+            PROCESS_NAME_WIN32,PROCESS_QUERY_LIMITED_INFORMATION,PROCESS_TERMINATE},
+    };
+    let cfg=config();
+    let pids=super::player_process::pids_named("cloudmusic.exe");
+    // 主进程与 CEF 子进程的映像路径相同，取任意一个即可。
+    let mut path=None;
+    for pid in &pids{
+        if !super::player_process::image_is(*pid,"cloudmusic.exe"){continue;}
+        unsafe{
+            let Ok(process)=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,*pid) else{continue};
+            let mut buffer=[0u16;1024];let mut length=buffer.len() as u32;
+            let ok=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,
+                windows::core::PWSTR(buffer.as_mut_ptr()),&mut length).is_ok();
+            let _=CloseHandle(process);
+            if ok{path=Some(String::from_utf16_lossy(&buffer[..length as usize]));break;}
+        }
+    }
+    let path=path.ok_or_else(||"未检测到运行中的网易云，请先启动客户端".to_string())?;
+    let mut killed=0;
+    for pid in &pids{
+        unsafe{
+            let Ok(process)=OpenProcess(PROCESS_TERMINATE,false,*pid) else{continue};
+            if TerminateProcess(process,1).is_ok(){killed+=1;}
+            let _=CloseHandle(process);
+        }
+    }
+    if killed==0{return Err("无法结束网易云进程，可能权限不足".to_string());}
+    std::process::Command::new(&path)
+        .arg(format!("--remote-debugging-port={}",cfg.port))
+        .spawn()
+        .map_err(|error|format!("重新启动失败：{error}"))?;
+    if let Ok(mut guard)=READY_CACHE.lock(){*guard=None;}
+    Ok(format!("已重启网易云，调试端口 {}",cfg.port))
+}
+
 fn valid(seconds:f64)->bool{seconds.is_finite() && (0.0..86400.0).contains(&seconds)}
 
 static UNAVAILABLE_UNTIL:Mutex<Option<Instant>>=Mutex::new(None);
