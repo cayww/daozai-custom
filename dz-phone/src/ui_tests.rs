@@ -6428,3 +6428,28 @@ fn phone_alerts_is_independent_of_listen_scope(){
     h.app.settings.phone_alerts=true;
     assert!(!h.app.accepts_notification(phone_id,true),"未连接时手机通知也不应接收");
 }
+
+
+/// 手机连接页要能渲染，且测试环境（未装「手机连接」）下短信开关处于锁定态。
+#[test]
+fn phone_settings_page_renders_with_locked_sms_toggle(){
+    let mut h=H::new();
+    h.app.settings_open=true;
+    h.app.settings_category=6; // 「手机连接」分组
+    h.app.settings_tab=12;
+    h.ctx.set_embed_viewports(false);
+    for read_notifications in [true,false] {
+        h.app.settings.read_notifications=read_notifications;
+        for _ in 0..2 {
+            let time=h.t;
+            let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+                let id=viewport.ids.this;
+                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            });
+            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            assert!(output.lock().unwrap().is_some(),"手机连接页应完成渲染");
+            h.t+=1.0/60.0;
+        }
+    }
+}

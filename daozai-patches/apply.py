@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-71"
+PATCH_ID = "custom-72"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -10343,6 +10343,97 @@ fn phone_alerts_is_independent_of_listen_scope(){
     h.app.settings.read_notifications=false;
     h.app.settings.phone_alerts=true;
     assert!(!h.app.accepts_notification(phone_id,true),"未连接时手机通知也不应接收");
+}
+'''),
+
+    # custom-72：短信与来电移到手机连接页，仅在手机连接可用时可配置
+    ("src/extras.rs",
+     '''                                setting_row_locked(ui,"手机电量","未检测到「手机连接」，安装后才能开启",self.settings.phone_battery);
+                            }
+                            ui.separator();
+                            ui.label(egui::RichText::new("手机短信通过「手机连接」转发。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
+                            ui.separator();
+                            ui.label(egui::RichText::new("手机 App 名单：勾选立即生效；增删条目改 %APPDATA%\\\\Daozai\\\\phone-apps.json。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            let before_phone_apps=self.phone_apps.items.clone();
+''',
+     '''                                setting_row_locked(ui,"手机电量","未检测到「手机连接」，安装后才能开启",self.settings.phone_battery);
+                            }
+                            ui.separator();
+                            // 短信/来电经「手机连接」转发：手机连接没装、或没给通知读取权限时不可配置。
+                            let phone_on=crate::phone_battery::installed();
+                            let notify_on=self.settings.read_notifications;
+                            let sms_ready=phone_on && notify_on;
+                            let sms_before=self.settings.phone_alerts;
+                            if sms_ready {
+                                setting_row(ui,"短信与来电","手机短信、来电转发的通知上岛；关闭后手机通知一律不接收",&mut self.settings.phone_alerts);
+                                if sms_before!=self.settings.phone_alerts{self.settings.save();}
+                            } else {
+                                // 只置灰不改值：等条件恢复后开关自动回到原状态。
+                                setting_row_locked(ui,"短信与来电",
+                                    if !phone_on {"未检测到「手机连接」，安装后才能开启"} else {"需要先开启通知读取（在「通知、邮箱与日程」里连接）"},
+                                    self.settings.phone_alerts);
+                            }
+                            ui.separator();
+                            ui.label(egui::RichText::new("手机短信通过「手机连接」转发。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            // 短信总开关关掉后，验证码自动复制没有意义，一并置灰。
+                            ui.add_enabled_ui(self.settings.phone_alerts,|ui|{
+                                setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
+                            });
+                            ui.separator();
+                            ui.label(egui::RichText::new("手机 App 名单：勾选立即生效；增删条目改 %APPDATA%\\\\Daozai\\\\phone-apps.json。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            let before_phone_apps=self.phone_apps.items.clone();
+'''),
+    ("src/extras.rs",
+     '''                            ui.label(egui::RichText::new(status).size(13.0));
+                            settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
+                            ui.separator();
+                            // 手机通道独立开关：它经「手机连接」转发，不属于普通应用通知。
+                            setting_row(ui,"手机短信与来电","通过「手机连接」转发的短信与来电；关闭后即使选「仅 QQ」也不接收",&mut self.settings.phone_alerts);
+                            ui.separator();
+                            if qq_mode {
+                                ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else {
+''',
+     '''                            ui.label(egui::RichText::new(status).size(13.0));
+                            settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
+                            ui.separator();
+                            if qq_mode {
+                                ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else {
+'''),
+    ("src/ui_tests.rs",
+     '''    h.app.settings.phone_alerts=true;
+    assert!(!h.app.accepts_notification(phone_id,true),"未连接时手机通知也不应接收");
+}
+''',
+     '''    h.app.settings.phone_alerts=true;
+    assert!(!h.app.accepts_notification(phone_id,true),"未连接时手机通知也不应接收");
+}
+
+
+/// 手机连接页要能渲染，且测试环境（未装「手机连接」）下短信开关处于锁定态。
+#[test]
+fn phone_settings_page_renders_with_locked_sms_toggle(){
+    let mut h=H::new();
+    h.app.settings_open=true;
+    h.app.settings_category=6; // 「手机连接」分组
+    h.app.settings_tab=12;
+    h.ctx.set_embed_viewports(false);
+    for read_notifications in [true,false] {
+        h.app.settings.read_notifications=read_notifications;
+        for _ in 0..2 {
+            let time=h.t;
+            let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+                let id=viewport.ids.this;
+                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            });
+            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            assert!(output.lock().unwrap().is_some(),"手机连接页应完成渲染");
+            h.t+=1.0/60.0;
+        }
+    }
 }
 '''),
 ]

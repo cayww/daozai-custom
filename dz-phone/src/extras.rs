@@ -1949,8 +1949,26 @@ impl App {
                                 setting_row_locked(ui,"手机电量","未检测到「手机连接」，安装后才能开启",self.settings.phone_battery);
                             }
                             ui.separator();
+                            // 短信/来电经「手机连接」转发：手机连接没装、或没给通知读取权限时不可配置。
+                            let phone_on=crate::phone_battery::installed();
+                            let notify_on=self.settings.read_notifications;
+                            let sms_ready=phone_on && notify_on;
+                            let sms_before=self.settings.phone_alerts;
+                            if sms_ready {
+                                setting_row(ui,"短信与来电","手机短信、来电转发的通知上岛；关闭后手机通知一律不接收",&mut self.settings.phone_alerts);
+                                if sms_before!=self.settings.phone_alerts{self.settings.save();}
+                            } else {
+                                // 只置灰不改值：等条件恢复后开关自动回到原状态。
+                                setting_row_locked(ui,"短信与来电",
+                                    if !phone_on {"未检测到「手机连接」，安装后才能开启"} else {"需要先开启通知读取（在「通知、邮箱与日程」里连接）"},
+                                    self.settings.phone_alerts);
+                            }
+                            ui.separator();
                             ui.label(egui::RichText::new("手机短信通过「手机连接」转发。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
-                            setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
+                            // 短信总开关关掉后，验证码自动复制没有意义，一并置灰。
+                            ui.add_enabled_ui(self.settings.phone_alerts,|ui|{
+                                setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
+                            });
                             ui.separator();
                             ui.label(egui::RichText::new("手机 App 名单：勾选立即生效；增删条目改 %APPDATA%\\Daozai\\phone-apps.json。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             let before_phone_apps=self.phone_apps.items.clone();
@@ -2333,9 +2351,6 @@ impl App {
                             let status=self.listener_status.clone();
                             ui.label(egui::RichText::new(status).size(13.0));
                             settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
-                            ui.separator();
-                            // 手机通道独立开关：它经「手机连接」转发，不属于普通应用通知。
-                            setting_row(ui,"手机短信与来电","通过「手机连接」转发的短信与来电；关闭后即使选「仅 QQ」也不接收",&mut self.settings.phone_alerts);
                             ui.separator();
                             if qq_mode {
                                 ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
