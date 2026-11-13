@@ -1850,6 +1850,7 @@ impl App {
                         6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
                         13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
                         14=>egui::include_image!("../assets/settings-icons/system/maa.svg"),
+                        12=>egui::include_image!("../assets/settings-icons/system/phone.svg"),
                         _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
                     };
                     let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(25.0,25.0));

@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-73"
+PATCH_ID = "custom-74"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -25,6 +25,7 @@ NEW_FILES = [
     ("maa.rs", "src/maa.rs"),
     ("maa.svg", "assets/settings-icons/system/maa.svg"),
     ("maa-icon.png", "assets/maa-icon.png"),
+    ("phone.svg", "assets/settings-icons/system/phone.svg"),
 ]
 PATCH_DIR = pathlib.Path(__file__).resolve().parent
 
@@ -10494,6 +10495,24 @@ fn phone_settings_page_renders_with_locked_sms_toggle(){
             h.t+=1.0/60.0;
         }
     }
+'''),
+
+    # custom-74：手机连接分组换手机图标
+    ("src/extras.rs",
+     '''                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+                        13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        14=>egui::include_image!("../assets/settings-icons/system/maa.svg"),
+                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
+                    };
+                    let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(25.0,25.0));
+''',
+     '''                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+                        13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        14=>egui::include_image!("../assets/settings-icons/system/maa.svg"),
+                        12=>egui::include_image!("../assets/settings-icons/system/phone.svg"),
+                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
+                    };
+                    let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(25.0,25.0));
 '''),
 ]
 
