@@ -576,6 +576,54 @@ Rust **字符串**里要 2 个（`\\` 写入后解析成 `\`），Rust **注释*
 **验证**：815 passed（新增/改动桥单测，含「下载条目必须带 ttl」断言），
 六轮重跑无偶发失败；重放 357 处一致。
 
+## 一键修复固化入口 + 自动托管（custom-84）
+
+**背景**：用户确认 custom-83 的「以调试模式重启网易云」只是一次性带参数启动，
+不写任何持久配置；在「没有开始菜单快捷方式」的机器上，每次启动网易云都得再点一次。
+要求把「修复时固化入口」与「岛仔后台托管」两条都补上。
+
+**功能 1：一键修复时固化启动入口**
+
+- `netease-cdp.json` 的 `Config` 扩展 `auto_host: bool` 与 `exe_path: Option<String>`；
+  `set_flag()` 保留已有 `port` / `commands` 键写回配置（目录不存在时创建）。
+- `patch_shortcut()`：纯字节、幂等地改写 `.lnk` 的 `COMMAND_LINE_ARGUMENTS` 段，
+  其余 IDList / LinkInfo / ExtraData 原样保留，改前备份 `.lnk.bak-cdp`。
+  **不新建快捷方式**：`ensure_shortcut()` 只修正用户级与全局开始菜单里已有的
+  `网易云音乐.lnk`；都不存在时返回 false，由功能 2 兜底。
+- `restart_with_debug_port()` 成功后调用 `persist_launch()`：写 `exe_path` + 修正快捷方式，
+  并把结果附在岛上提示里（「启动入口已固化」/「未找到快捷方式，请开启自动托管」）。
+- 字节级自检：用 custom-83 改造前的 `.lnk.bak-before-cdp` 跑同一算法，结果与当前快捷方式
+  逐字节一致，且再次运行不变（幂等）。
+
+**功能 2：自动托管开关（默认关）**
+
+- `App::tick` 每帧调用 `auto_host_tick()`：5 秒节流；开关关闭时直接返回；
+  网易云在跑且后台端口缓存明确为「未开启」时，自动带参数重启，重启后 30 秒冷却，
+  避免客户端启动慢导致反复重启。端口判定走 `port_status()` 的后台缓存，不阻塞 UI。
+- 设置 →「音乐与歌词」新增「自动托管启动参数」开关，写明「会中断播放」；
+  没有快捷方式的机器打开它即可覆盖任何启动入口。
+- 由岛仔（常驻进程）派生网易云，不受 agent 工具启动 GUI 进程被会话清理的限制。
+
+**测试期两个坑**
+
+1. `port_status()` 异步探测会让同一设置页两次绘制的文本从「检测中…」变成「未开启」，
+   `compact_font_atlas_preserves_settings_pixels_at_multiple_scales` 的像素对比因此失败。
+   按项目惯例用 `cfg!(test)` 固定返回 `Some(false)`（release 不受影响）。
+2. 用户真实 `%APPDATA%\Daozai\settings.txt` 里出现 `mail_filter=cayww9@gmail.com`，
+   使 `account_filter_only_matches_selected_mailbox` 读到的默认筛选不再是「全部账号」。
+   **不改用户数据**，测试统一用 `DAOZAI_DATA_DIR=<workspace>/merge-work/test-data` 隔离；
+   另补齐两处测试用 `Config{..}` 字面量缺少的新字段。
+
+**验证**：release 两个 bin 构建通过；隔离目录串行全量
+`1164 passed / 0 failed / 119 ignored`；EDITS 138，干净重放应用 138 处、跳过 0、
+diff 空、marker custom-84；ISCC 出包 `daozai-setup-custom-84.exe`，`/VERYSILENT` 部署，
+exe SHA256 `50697b57162a8443`，旧版备份 `daozai.exe.bak-custom83`。
+
+**使用**：托管开关默认关，需要用户在设置页手动打开；打开后若网易云以无参数方式启动，
+岛仔会在约 10 秒内检测并自动重启（会中断播放）。一键修复仍可随时手动触发。
+CEF 调试端口只能启动时打开，所以「持久化」只能落在启动入口或由岛仔代启动，
+本版不新建 `.lnk`，无快捷方式的机器靠托管保证效果。
+
 ## 网易云调试端口免手动配置（custom-83）
 
 **问题**：custom-80/81 的 CDP 进度跳转要求网易云带 `--remote-debugging-port=9222` 启动。
