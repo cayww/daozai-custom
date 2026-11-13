@@ -2246,36 +2246,20 @@ impl App {
                         });
                     }
                     6=>{
+                        // ① 基础开关：总闸 + 系统类提示
                         settings_label(ui,"系统提示");
                         settings_card(ui,|ui|{
+                            setting_row(ui,"提醒总开关","关闭后所有提醒都不显示",&mut self.settings.notifications);
+                            ui.separator();
                             setting_row(ui,"系统状态","音量、充电、网络和键盘状态",&mut self.settings.system_hud);
                             ui.separator();
                             setting_row(ui,"蓝牙通知","设备连接与断开提醒；关闭后停止蓝牙监听",&mut self.settings.bluetooth_notifications);
                             ui.separator();
-                            setting_row(ui,"提醒总开关","关闭后所有提醒都不显示",&mut self.settings.notifications);
-                            ui.separator();
-                            ui.separator();
                             setting_row(ui,"会议自动勿扰","日程期间自动勿扰，散会解除",&mut self.settings.quiet_meeting);
-                            ui.separator();
-                            // 最近通知：落盘的 100 条里取最新 8 条，点一行复制正文，右侧「稍后」5 分钟重弹。
-                            settings_hint(ui,"最近通知 · 点击复制正文，或点「稍后」5 分钟后再提醒");
-                            let recent=self.recent_notices();
-                            let mut picked:Option<(String,String,bool)>=None;
-                            if recent.is_empty() {
-                                settings_hint(ui,"还没有通知记录");
-                            }
-                            for (at,title,body) in recent.iter().rev().take(8) {
-                                let line=format!("{at}  {title} · {}",body.chars().take(26).collect::<String>());
-                                ui.horizontal(|ui|{
-                                    let resp=ui.add(egui::Label::new(egui::RichText::new(line).size(11.5)).sense(egui::Sense::click()));
-                                    if resp.on_hover_text(body.as_str()).clicked(){picked=Some((title.clone(),body.clone(),false));}
-                                    if ui.small_button("稍后").on_hover_text("5 分钟后再提醒一次").clicked(){picked=Some((title.clone(),body.clone(),true));}
-                                });
-                            }
-                            if let Some((title,body,snooze))=picked {
-                                if snooze {self.snooze_notice(5.0,title,body);}
-                                else {self.pending.push(Cmd::Copy(body));self.say("已复制通知正文");}
-                            }
+                        });
+                        // ② 提醒条件：什么情况下打断你
+                        settings_label(ui,"提醒条件");
+                        settings_card(ui,|ui|{
                             settings_control_row(ui,"低电提醒",SETTINGS_LABEL_W,|ui|{
                                 let mut value=self.settings.battery_alert;
                                 ui.horizontal(|ui|{
@@ -2323,6 +2307,28 @@ impl App {
                                 }).response
                             });
                             settings_hint(ui,"规则文件：pattern + action（mute / highlight / copy），首条匹配生效");
+                        });
+                        // ③ 最近通知：设置放在前，记录放在最后
+                        settings_label(ui,"最近通知");
+                        settings_card(ui,|ui|{
+                            settings_hint(ui,"点击一行复制正文，或点「稍后」5 分钟后再提醒");
+                            let recent=self.recent_notices();
+                            let mut picked:Option<(String,String,bool)>=None;
+                            if recent.is_empty() {
+                                settings_hint(ui,"还没有通知记录");
+                            }
+                            for (at,title,body) in recent.iter().rev().take(8) {
+                                let line=format!("{at}  {title} · {}",body.chars().take(26).collect::<String>());
+                                ui.horizontal(|ui|{
+                                    let resp=ui.add(egui::Label::new(egui::RichText::new(line).size(12.0).color(settings_color(ctx,Color32::from_gray(190),Color32::from_rgb(58,64,74)))).sense(egui::Sense::click()));
+                                    if resp.on_hover_text(body.as_str()).clicked(){picked=Some((title.clone(),body.clone(),false));}
+                                    if ui.small_button("稍后").on_hover_text("5 分钟后再提醒一次").clicked(){picked=Some((title.clone(),body.clone(),true));}
+                                });
+                            }
+                            if let Some((title,body,snooze))=picked {
+                                if snooze {self.snooze_notice(5.0,title,body);}
+                                else {self.pending.push(Cmd::Copy(body));self.say("已复制通知正文");}
+                            }
                         });
                         // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
                         let master=self.settings.notifications;
