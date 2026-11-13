@@ -164,6 +164,35 @@ pub fn toggle_mute() -> Option<bool> {
     }
 }
 
+/// 当前会话是否锁屏。查询走 WTS（一次本机 RPC），按 2 秒缓存，避免每帧都查。
+pub fn screen_locked() -> bool {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    use windows::Win32::System::RemoteDesktop::{
+        WTSFreeMemory, WTSQuerySessionInformationW, WTSSessionInfoEx, WTSINFOEXW, WTS_CURRENT_SERVER_HANDLE,
+        WTS_CURRENT_SESSION, WTS_SESSIONSTATE_LOCK,
+    };
+    static CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, locked)) = *cache {
+        if at.elapsed() < Duration::from_secs(2) { return locked; }
+    }
+    let locked = unsafe {
+        let mut buf = windows::core::PWSTR::null();
+        let mut len = 0u32;
+        if WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSSessionInfoEx, &mut buf, &mut len).is_ok() && !buf.is_null() {
+            let info = &*(buf.0 as *const WTSINFOEXW);
+            let locked = info.Level == 1 && info.Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK as i32;
+            WTSFreeMemory(buf.0 as *mut core::ffi::c_void);
+            locked
+        } else {
+            false
+        }
+    };
+    *cache = Some((Instant::now(), locked));
+    locked
+}
+
 pub fn idle_seconds() -> f64 {
     unsafe {
         let mut info = LASTINPUTINFO {
@@ -252,7 +281,7 @@ pub fn browser_at_top(island:HWND,settings:&crate::model::Settings)->Option<bool
         if foreground.0.is_null(){return None;}
         let mut pid=0;
         GetWindowThreadProcessId(foreground,Some(&mut pid));
-        // 自身窗口（设置、托盘、岛内输入）不计入避让，保持当前避让状态，避免反复切换。
+        // 设置、托盘和岛内输入沿用此前的避让状态，避免自身窗口引起反复切换。
         if pid==0 || pid==GetCurrentProcessId(){return None;}
         let mut browser_rect=RECT::default();let mut island_rect=RECT::default();
         if GetWindowRect(foreground,&mut browser_rect).is_err() || GetWindowRect(island,&mut island_rect).is_err(){return None;}
@@ -270,18 +299,18 @@ pub fn browser_at_top(island:HWND,settings:&crate::model::Settings)->Option<bool
 pub enum Incoming {
     Revoked,
     Status(String),
-    Message(String, String, String),
+    Message(String, String, String, Option<crate::messenger::Target>),
 }
-#[path="qq_toast_source.rs"]
-mod qq_toast_source;
+#[path="toast_source.rs"]
+mod toast_source;
 
-fn notification_identity(n:&UserNotification, number:u32, created:i64, known_qq:bool)->(String,String){
-    if known_qq{return ("QQ".into(),"QQ".into());}
+fn notification_identity(n:&UserNotification,number:u32,created:i64,known:Option<crate::messenger::Messenger>)->(String,String){
+    use crate::messenger::Messenger;
     let info=n.AppInfo().ok();
     let id=info.as_ref().and_then(|app|app.AppUserModelId().ok()).map(|id|id.to_string()).unwrap_or_default();
-    if id.eq_ignore_ascii_case("QQ") || (id.is_empty() && qq_toast_source::matches(number,created)){
-        return ("QQ".into(),"QQ".into());
-    }
+    let client=if !id.is_empty(){Messenger::from_notification_id(&id)}
+        else{known.or_else(||toast_source::sender(number,created).and_then(|id|Messenger::from_notification_id(&id)))};
+    if let Some(client)=client{return (client.name().into(),client.adapter().notification_id.into());}
     let name=info.and_then(|app|app.DisplayInfo().ok()).and_then(|display|display.DisplayName().ok())
         .map(|name|name.to_string()).filter(|name|!name.trim().is_empty()).unwrap_or_else(||"Windows 通知".into());
     let id=if id.is_empty(){name.clone()}else{id};
@@ -299,172 +328,93 @@ fn notification_body(n: &UserNotification) -> Result<String> {
     }
     Ok(parts.join(" · "))
 }
-/// 手机上岛后从通知中心移除；岛仔没运行时不会执行，通知仍留在通知中心。
-/// 想保留通知中心副本，把它改成 false 即可。
-const PHONE_CLEAR: bool = true;
-
-/// 手机连接（Phone Link）通知白名单通道。
-/// 这些 AUMID 的系统横幅由外部关掉（ShowBanner=0），通知仍进通知中心，
-/// 岛仔读取后只在岛上显示；其余应用继续受 qq_only / notification_preview 约束。
-const PHONE_CHANNELS: &[(&str,&str)] = &[
-    ("YourPhoneMessages_","短信"),
-    ("YourPhoneCalling","通话"),
-    ("YourPhoneDeviceStatus","手机状态"),
-    ("com.apple.mobilephone","电话"),
-    ("com.tencent.xin","微信"),
-    ("com.tencent.mqq","QQ"),
-    ("com.alipay.iphoneclient","支付宝"),
-    ("com.google.Gmail","Gmail"),
-];
-/// 手机连接 Toast 的来源判定。
-///
-/// WinRT 只报主 AUMID（`!App`），拿不到通道信息，所以只能看正文：
-/// 正文格式是「来源 · 内容…」，但短信用**手机号**当来源（`+8610… · 【xx】验证码…`），
-/// 电话是「号码 · 传入呼叫 / 未接来电」，普通 App 才是「微信 · 张三 · 内容」。
-///
-/// 判定顺序：名单命中 → 来电标记 → 短信特征 → 用首段当标签兜底。
-/// 名单放在 `%APPDATA%\Daozai\phone-apps.json`，加新 App 不用改代码重编译。
-/// 返回 (标签, 是否允许上岛)；None = 无法识别，由调用方按「连接」放行。
-pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String,bool)> {
-    let head=body.split('·').next().unwrap_or("").trim();
-    if head.is_empty() {return None;}
-    // 1. 名单优先：微信 / QQ / 支付宝 / Gmail 等。
-    if let Some(hit)=apps.lookup(head){return Some(hit);}
-    // 2. 来电：号码当来源，正文带这两个词。
-    if body.contains("传入呼叫")||body.contains("未接来电"){return Some(("电话".to_string(),true));}
-    // 3. 短信：来源是手机号，或正文有【签名】/验证码字样。
-    let digits=head.chars().all(|c|c.is_ascii_digit()||matches!(c,'+'|'-'|' '|'('|')'));
-    if digits||body.contains("验证码")||body.contains('【')||body.contains("短信"){
-        return Some(("短信".to_string(),true));
-    }
-    // 4. 兜底：短名字直接当标签（例如 WorkBuddy），过长才交给调用方。
-    if head.chars().count()<=12 {return Some((head.to_string(),true));}
-    None
-}
-
-pub(crate) fn phone_channel(id:&str)->bool {
-    // 只要是手机连接（Phone Link）发出来的就归手机通道：
-    // WinRT 有时给主 AUMID（`!App`），有时给子通道（`YourPhoneMessages_…` /
-    // `YourPhoneNotifications_<uuid>`），开机后通道注册晚一步还会先走汇总通道。
-    // 白名单只用来起标签，是否上岛/静音交给 phone-apps.json 按正文判断。
-    id.starts_with("Microsoft.YourPhone_")
-}
-pub(crate) fn phone_label(id:&str)->&'static str {
-    if id.ends_with("!App"){return "连接";}
-    PHONE_CHANNELS.iter().find(|(key,_)|id.contains(*key)).map(|(_,label)|*label).unwrap_or("手机")
-}
-
-#[cfg(test)]
-mod phone_channel_tests {
-    use super::{phone_app,phone_channel,phone_label};
-    #[test]
-    fn 只放行手机连接白名单通道(){
-        // 现在只要是手机连接的 AUMID 都算手机通道（白名单只管标签）；
-        // 真正决定「上不上岛 / 静不静音」的是正文 + phone-apps.json。
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.tencent.xin"));
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneMessages_9d62fe0c"));
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!App"));
-        // 开机后通道还没注册时，Win11 会先走汇总通道，这个也必须算手机通知。
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_9d62fe0c-7488-42c8-be15-0fbe4a087b7f"));
-        assert_eq!(phone_label("Microsoft.YourPhone_x!App"),"连接");
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.valvesoftware.Steam"));
-        assert!(!phone_channel("QQ"));
-        assert!(!phone_channel("mail.test"));
-        assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.tencent.xin"),"微信");
-        assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.google.Gmail"),"Gmail");
-    }
-    #[test]
-    fn 从正文首段识别手机应用与黑名单(){
-        let apps=crate::model::PhoneApps::builtin();
-        assert_eq!(crate::system::phone_app("QQ · 小号 · 这是一条测试正文内容",&apps),Some(("QQ".to_string(),true)));
-        assert_eq!(crate::system::phone_app("微信 · 某人 · 晚上好",&apps),Some(("微信".to_string(),true)));
-        assert_eq!(crate::system::phone_app("来电 · 138xxxx",&apps),Some(("电话".to_string(),true)));
-        assert_eq!(crate::system::phone_app("Steam · 夏季特惠",&apps),Some(("连接".to_string(),false)));
-        assert_eq!(crate::system::phone_app("",&apps),None);
-        assert_eq!(crate::system::phone_app("一条很长的普通消息内容里没有应用名",&apps),None);
-        // 名单是外部配置：加新 App 只需往 JSON 里加一条，不改代码。
-        let mut custom=crate::model::PhoneApps::builtin();
-        custom.items.push(("小红书".to_string(),"小红书".to_string(),true));
-        assert_eq!(crate::system::phone_app("小红书 · 有人回复了你",&custom),Some(("小红书".to_string(),true)));
-    }
-    #[test]
-    fn 短信与来电按正文特征识别(){
-        let apps=crate::model::PhoneApps::builtin();
-        // 短信用手机号当来源：认不出号码也要归到「短信」，不能退化成「连接」。
-        assert_eq!(phone_app("+86106826974003139 · 【清枫北京科技】您的验证码：4342，如非本人操作",&apps),Some(("短信".to_string(),true)));
-        assert_eq!(phone_app("10691234 · 您的验证码 8899",&apps),Some(("短信".to_string(),true)));
-        // 响铃与未接都先归到「电话」，再由正文区分「来电中 / 未接来电」。
-        assert_eq!(phone_app("130 8646 4686 · 传入呼叫",&apps),Some(("电话".to_string(),true)));
-        assert_eq!(phone_app("电话 · 130 8646 4686 · 未接来电",&apps),Some(("电话".to_string(),true)));
-        // 名单外的短名字直接用名字当标签。
-        assert_eq!(phone_app("WorkBuddy · 任务已完成",&apps),Some(("WorkBuddy".to_string(),true)));
-    }
-}
-
-fn is_wechat_toast(app:&str,id:&str)->bool{
-    ["微信","WeChat","Weixin"].iter().any(|name|app.trim().eq_ignore_ascii_case(name))
-        || ["WeChat","Weixin","Tencent.WeChat","Tencent.Weixin"].iter().any(|name|id.eq_ignore_ascii_case(name))
-}
 /// 停止信号独立于消息队列，断开后结束等待，不再读取通知。
 pub struct Notifications {
     incoming: Receiver<Incoming>,
     stop: mpsc::Sender<()>,
+    taskbar_mask:std::sync::Arc<std::sync::atomic::AtomicU8>,
 }
 impl Notifications {
     pub fn try_recv(&self)->std::result::Result<Incoming,mpsc::TryRecvError>{self.incoming.try_recv()}
+    pub fn taskbar_settings(&self,settings:&crate::model::Settings){self.taskbar_mask.store(crate::messenger::toast_suppression(settings),std::sync::atomic::Ordering::Relaxed);}
 }
 impl Drop for Notifications {fn drop(&mut self){let _=self.stop.send(());}}
 
 #[derive(Clone,Copy,PartialEq,Eq)]
-struct ToastVersion { created:i64, qq_body:Option<u64> }
+enum ToastBody {Skipped,Unavailable,Read(u64)}
+#[derive(Clone,Copy,PartialEq,Eq)]
+struct ToastVersion { created:i64, client:Option<crate::messenger::Messenger>, body:ToastBody }
 impl ToastVersion {
-    fn new(created:i64,qq_body:Option<&str>)->Self{
-        Self{created,qq_body:qq_body.map(|body|{let mut hash=std::collections::hash_map::DefaultHasher::new();body.hash(&mut hash);hash.finish()})}
+    fn new(created:i64,client:Option<crate::messenger::Messenger>,body:Option<&str>)->Self{
+        Self{created,client,body:body.map(|body|{let mut hash=std::collections::hash_map::DefaultHasher::new();body.hash(&mut hash);ToastBody::Read(hash.finish())}).unwrap_or(ToastBody::Skipped)}
     }
 }
-#[derive(Default)]
-struct NotificationBaseline {
-    previous: Option<HashMap<u32,ToastVersion>>,
-    /// 本线程开始监听时的时间（FILETIME，100ns）。首轮枚举里「比它还新」的通知
-    /// 是开机后才到的，必须补报；比它老的是历史，静默跳过。
-    started: i64,
+struct NotificationBaseline { previous:Option<HashMap<u32,ToastVersion>>,started:i64,primed:bool }
+impl Default for NotificationBaseline {
+    fn default()->Self{
+        let started=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()
+            .and_then(|time|i64::try_from(time.as_nanos()/100+116444736000000000).ok()).unwrap_or(i64::MAX);
+        Self{previous:None,started,primed:false}
+    }
 }
 impl NotificationBaseline {
     fn unchanged_other(&self,id:u32,created:i64)->Option<ToastVersion>{
-        self.previous.as_ref()?.get(&id).copied().filter(|old|old.created==created && old.qq_body.is_none())
+        self.previous.as_ref()?.get(&id).copied().filter(|old|old.created==created && old.client.is_none() && old.body==ToastBody::Skipped)
     }
     fn changed(&self,id:u32,version:ToastVersion)->bool{
-        match &self.previous {
-            None=>version.created>self.started,
-            Some(old)=>old.get(&id)!=Some(&version),
-        }
+        let Some(previous)=&self.previous else{return version.created>self.started;};
+        let Some(old)=previous.get(&id) else{return self.primed || version.created>self.started;};
+        if old.created!=version.created{return true;}
+        // 未读取、读取失败后的首次成功只建立指纹，避免通道切换和恢复读取时重放旧通知。
+        matches!((old.body,version.body),(ToastBody::Read(before),ToastBody::Read(after)) if before!=after)
+    }
+    fn finish(&mut self,mut current:HashMap<u32,ToastVersion>,complete:bool){
+        if !complete{if let Some(previous)=&self.previous{for (&id,&old) in previous{current.entry(id).or_insert(old);}}}
+        self.previous=Some(current);self.primed|=complete;
+    }
+    fn observe(&self,id:u32,created:i64,client:Option<crate::messenger::Messenger>,tracked:bool,body:Result<String>)->(ToastVersion,Option<String>){
+        let body=match body{
+            Ok(body)=>body,
+            Err(_)=>{
+                if let Some(old)=self.previous.as_ref().and_then(|items|items.get(&id)).filter(|old|old.created==created && old.client==client){return (*old,None);}
+                let version=ToastVersion{created,client,body:ToastBody::Unavailable};
+                // 已确认是新通知时仍给通用提醒；恢复正文后只补指纹，不重复弹出。
+                let message=self.changed(id,version).then(||if tracked{"有新消息".into()}else{"收到新通知".into()});
+                return (version,message);
+            }
+        };
+        let version=ToastVersion::new(created,client,tracked.then_some(body.as_str()));
+        let message=self.changed(id,version).then(||if tracked && body.trim().is_empty(){"有新消息".into()}else{body});
+        (version,message)
     }
 }
 
-/// 当前时间转 FILETIME（100ns since 1601），用于和 `CreationTime` 比较。
-fn now_filetime()->i64{
-    let ticks=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-        .map(|d|d.as_secs() as i64*10_000_000+d.subsec_nanos() as i64/100).unwrap_or(0);
-    ticks+116_444_736_000_000_000
-}
-
-fn qq_channel_status()->String{
+fn channel_status(client:crate::messenger::Messenger)->String{
     use windows::UI::Notifications::{NotificationSetting,ToastNotificationManager};
-    match ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from("QQ")).and_then(|notifier|notifier.Setting()){
-        Ok(NotificationSetting::Enabled)=>"QQ 系统通知通道可用".into(),
-        Ok(NotificationSetting::DisabledForApplication)=>"QQ 系统通知已关闭，请在 Windows 通知设置中开启后重新连接".into(),
+    let name=client.name();
+    match ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(client.adapter().notification_id)).and_then(|notifier|notifier.Setting()){
+        Ok(NotificationSetting::Enabled)=>format!("{name} 系统通知通道可用"),
+        Ok(NotificationSetting::DisabledForApplication)=>format!("{name} 系统通知已关闭，请在 Windows 通知设置中开启后重新连接"),
         Ok(NotificationSetting::DisabledForUser)=>"Windows 系统通知已关闭，请开启后重新连接".into(),
         Ok(NotificationSetting::DisabledByGroupPolicy)=>"系统策略禁止通知".into(),
-        _=>"QQ 系统通知通道未就绪，请检查 QQ 安装和通知设置后重新连接".into(),
+        _=>format!("{name} 系统通知通道未就绪，请检查安装和通知设置后重新连接"),
     }
 }
 
 /// 必须由窗口线程发起权限请求，后台仅读取新增或更新的通知。
-pub fn connect(ctx:eframe::egui::Context,qq_only:bool) -> Result<Notifications> {
+pub fn connect(ctx:eframe::egui::Context,filter:crate::messenger::NotificationFilter) -> Result<Notifications> {
+    connect_inner(ctx,filter,crate::messenger::toast_suppression(&crate::model::Settings::default()))
+}
+pub fn connect_with_settings(ctx:eframe::egui::Context,settings:&crate::model::Settings)->Result<Notifications>{
+    connect_inner(ctx,crate::messenger::NotificationFilter::for_settings(settings),crate::messenger::toast_suppression(settings))
+}
+fn connect_inner(ctx:eframe::egui::Context,filter:crate::messenger::NotificationFilter,mask:u8)->Result<Notifications>{
+    let baseline=NotificationBaseline::default();
     let listener = UserNotificationListener::Current()?;
     let request = listener.RequestAccessAsync()?;
     let (tx, rx) = mpsc::sync_channel(32);
     let (stop, stopped)=mpsc::channel();
+    let taskbar_mask=std::sync::Arc::new(std::sync::atomic::AtomicU8::new(mask));let worker_mask=taskbar_mask.clone();
     std::thread::Builder::new().name("daozai-notifications".into()).spawn(move || {
         let send=|event|{
             let result=tx.send(event);
@@ -482,57 +432,58 @@ pub fn connect(ctx:eframe::egui::Context,qq_only:bool) -> Result<Notifications> 
                 return Ok(());
             }
             let listener = UserNotificationListener::Current()?;
-            let qq_status=qq_channel_status();
-            let mut baseline=NotificationBaseline{previous:None,started:now_filetime()};
+            let channels=crate::messenger::Messenger::ALL.into_iter().filter(|client|client.adapter().capture==crate::messenger::Capture::SystemToast)
+                .filter(|client|filter.allows(client.adapter().notification_id)).map(channel_status).collect::<Vec<_>>().join("\n");
+            let mut baseline=baseline;
+            let mut accounts=crate::messenger::ToastAccounts::default();accounts.sample();
             let mut last_status=String::new();
             loop {
                 if stopped.try_recv()!=Err(mpsc::TryRecvError::Empty){return Ok(());}
-                if listener.GetAccessStatus()? != UserNotificationListenerAccessStatus::Allowed {
-                    send(Incoming::Revoked);
-                    send(Incoming::Status("通知权限已被关闭".into()));
-                    return Ok(());
-                }
-                let items=listener.GetNotificationsAsync(NotificationKinds::Toast)?.get()?;
-                let mut current=HashMap::new();
-                let mut messages=Vec::new();
-                for i in 0..items.Size()? {
-                    let Ok(n)=items.GetAt(i) else{continue};
-                    let (Ok(number),Ok(created))=(n.Id(),n.CreationTime()) else{continue};
-                    let created=created.UniversalTime;
-                    if let Some(old)=baseline.unchanged_other(number,created){current.insert(number,old);continue;}
-                    let known_qq=baseline.previous.as_ref().and_then(|old|old.get(&number)).is_some_and(|old|old.created==created && old.qq_body.is_some());
-                    let (app,id)=notification_identity(&n,number,created,known_qq);
-                    // 微信只走任务栏事件，即使客户端同时发送系统通知也不读取其正文。
-                    let phone=phone_channel(&id);
-                    if (qq_only && id!="QQ" && !phone) || (!phone && is_wechat_toast(&app,&id)){
-                        // 这一层在监听线程里，拦下的通知不会进 receive_notification，
-                        // 也就要单独记一行，否则「某条通知没上岛」会完全查不到。
-                        crate::extras::log_notice(&format!("DROP 监听线程过滤  app={app} id={id} phone={phone} qq_only={qq_only}"));
-                        current.insert(number,ToastVersion::new(created,None));
+                let (items,count)=match listener.GetAccessStatus().and_then(|access|{
+                    if access!=UserNotificationListenerAccessStatus::Allowed{return Ok(None);}
+                    let items=listener.GetNotificationsAsync(NotificationKinds::Toast)?.get()?;let count=items.Size()?;
+                    Ok(Some((items,count)))
+                }){
+                    Ok(Some(items))=>items,
+                    Ok(None)=>{send(Incoming::Revoked);send(Incoming::Status("通知权限已被关闭".into()));return Ok(());}
+                    Err(error)=>{
+                        let status=format!("Windows 通知暂时读取失败：{} · 将自动重试",error.code());
+                        if status!=last_status{send(Incoming::Status(status.clone()));last_status=status;}
+                        if stopped.recv_timeout(std::time::Duration::from_secs(2))!=Err(mpsc::RecvTimeoutError::Timeout){return Ok(());}
                         continue;
                     }
-                    let qq=id=="QQ";
-                    // QQ 可能原地更新同一条通知；其他应用的启动历史不需要读取正文。
-                    // 启动之后才出现的通知（首轮枚举前到达的）也要读正文，否则会被当成历史静默掉。
-                    let body=if qq || baseline.previous.is_some() || created>baseline.started{notification_body(&n).unwrap_or_default()}else{String::new()};
-                    let version=ToastVersion::new(created,qq.then_some(body.as_str()));
+                };
+                accounts.sample();
+                let mut current=HashMap::new();
+                let mut complete=true;
+                let mut messages=Vec::new();
+                for i in 0..count {
+                    let Ok(n)=items.GetAt(i) else{complete=false;continue};
+                    let (Ok(number),Ok(created))=(n.Id(),n.CreationTime()) else{complete=false;continue};
+                    let created=created.UniversalTime;
+                    if let Some(old)=baseline.unchanged_other(number,created){current.insert(number,old);continue;}
+                    let known=baseline.previous.as_ref().and_then(|old|old.get(&number)).filter(|old|old.created==created).and_then(|old|old.client);
+                    let (app,id)=notification_identity(&n,number,created,known);
+                    // 微信只走任务栏事件，即使客户端同时发送系统通知也不读取其正文。
+                    let client=crate::messenger::Messenger::from_notification_id(&id);
+                    if !filter.allows(&id) || crate::messenger::suppresses_toast(&app,&id,worker_mask.load(std::sync::atomic::Ordering::Relaxed)){current.insert(number,ToastVersion::new(created,client,None));continue;}
+                    let tracked=client.is_some();
+                    // 已适配客户端同时检查正文变化；其他应用的启动历史不需要读取正文。
+                    let body=if tracked || baseline.previous.is_some() || created>baseline.started{notification_body(&n)}else{Ok(String::new())};
+                    let (version,body)=baseline.observe(number,created,client,tracked,body);
                     current.insert(number,version);
-                    if baseline.changed(number,version){
-                        let body=if qq && body.trim().is_empty(){"有新消息".into()}else{body};
-                        if !body.trim().is_empty(){messages.push((number,created,app,id,body));}
+                    if let Some(body)=body{
+                        let target=client.filter(|client|client.adapter().capture==crate::messenger::Capture::SystemToast).and_then(|client|accounts.target(client,number,created));
+                        if !body.trim().is_empty(){messages.push((created,app,id,body,target));}
                     }
                 }
-                baseline.previous=Some(current);
+                baseline.finish(current,complete);
+                accounts.retain(|client,id,created|baseline.previous.as_ref().and_then(|items|items.get(&id)).is_some_and(|item|item.created==created && item.client==Some(client)));
                 messages.sort_by_key(|item|item.0);
-                for (number,_,app,id,body) in messages {
-                    if !send(Incoming::Message(app.clone(),id.clone(),body)){return Ok(());}
-                    // 手机通知已在岛上显示，从通知中心移除，真正做到「只有岛上有」。
-                    // 岛仔未运行时不会执行到这里，通知仍会留在通知中心。
-                    if PHONE_CLEAR && id.starts_with("Microsoft.YourPhone_") {
-                        let _=listener.RemoveNotification(number);
-                    }
+                for (_,app,id,body,target) in messages {
+                    if !send(Incoming::Message(app,id,body,target)){return Ok(());}
                 }
-                let status=if qq_only{format!("仅监听 QQ · {qq_status}")}else{format!("正在监听 Windows 通知 · 当前可见 {} 条\n{qq_status}",items.Size()?)};
+                let status=match filter{crate::messenger::NotificationFilter::Only(client)=>format!("仅监听 {} · {channels}",client.name()),crate::messenger::NotificationFilter::All=>format!("正在监听 Windows 通知 · 当前可见 {count} 条\n{channels}")};
                 if status!=last_status {
                     if !send(Incoming::Status(status.clone())){return Ok(());}
                     last_status=status;
@@ -544,58 +495,11 @@ pub fn connect(ctx:eframe::egui::Context,qq_only:bool) -> Result<Notifications> 
             send(Incoming::Status(format!("Windows 暂不允许读取通知：{}。请检查通知访问权限与应用身份。",e.code())));
         }
     }).map_err(|_|windows::core::Error::from_win32())?;
-    Ok(Notifications{incoming:rx,stop})
+    Ok(Notifications{incoming:rx,stop,taskbar_mask})
 }
 
 pub fn pick_files() -> Result<Vec<std::path::PathBuf>> {
     pick_files_for("添加文件到置物架",true)
-}
-
-/// 选择一个文件夹（返回 None = 用户取消）。
-pub fn pick_folder(title:&str) -> Result<Option<std::path::PathBuf>> {
-    unsafe {
-        use windows::Win32::UI::Shell::*;
-        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
-        // 只让选文件夹，且必须是已存在的文件系统路径。
-        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST)?;
-        dialog.SetTitle(&HSTRING::from(title))?;
-        if let Err(e) = dialog.Show(None) {
-            if e.code().0 as u32 == 0x800704c7 { return Ok(None); } // 用户取消
-            return Err(e);
-        }
-        let item = dialog.GetResult()?;
-        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
-        let text = ptr.to_string()?;
-        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
-        Ok(Some(text.into()))
-    }
-}
-
-/// 选择一个程序文件（返回 None = 用户取消）。
-pub fn pick_exe(title:&str) -> Result<Option<std::path::PathBuf>> {
-    unsafe {
-        use windows::Win32::UI::Shell::*;
-        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
-        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST)?;
-        dialog.SetTitle(&HSTRING::from(title))?;
-        // 默认只列 .exe，用户仍可在文件名框里输入其它路径。
-        let name: Vec<u16> = "程序 (*.exe)\0".encode_utf16().collect();
-        let spec: Vec<u16> = "*.exe\0".encode_utf16().collect();
-        let filters = [Common::COMDLG_FILTERSPEC {
-            pszName: windows::core::PCWSTR(name.as_ptr()),
-            pszSpec: windows::core::PCWSTR(spec.as_ptr()),
-        }];
-        let _ = dialog.SetFileTypes(&filters);
-        if let Err(e) = dialog.Show(None) {
-            if e.code().0 as u32 == 0x800704c7 { return Ok(None); }
-            return Err(e);
-        }
-        let item = dialog.GetResult()?;
-        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
-        let text = ptr.to_string()?;
-        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
-        Ok(Some(text.into()))
-    }
 }
 
 pub fn pick_files_for(title:&str,multiple:bool) -> Result<Vec<std::path::PathBuf>> {
@@ -665,24 +569,75 @@ mod tests {
     use super::*;
     #[test]
     fn notifications_skip_history_but_detect_reused_ids_and_updated_content(){
-        // started=100：比它老的是开机前的历史，比它新的是启动之后才到的。
-        let mut baseline=NotificationBaseline{previous:None,started:100};
-        let first=ToastVersion::new(10,Some("第一条"));
-        assert!(!baseline.changed(1,first),"开机前的历史通知不该补报");
-        assert!(baseline.changed(2,ToastVersion::new(200,None)),"启动之后到达的通知要补报（首轮枚举可能晚于它）");
-        baseline.previous=Some(HashMap::from([(1,first),(2,ToastVersion::new(10,None))]));
+        let mut baseline=NotificationBaseline{primed:true,..Default::default()};
+        let first=ToastVersion::new(10,Some(crate::messenger::Messenger::Qq),Some("第一条"));
         assert!(!baseline.changed(1,first));
-        assert!(baseline.changed(1,ToastVersion::new(10,Some("第二条"))));
-        assert!(baseline.changed(1,ToastVersion::new(11,Some("第一条"))));
+        baseline.previous=Some(HashMap::from([(1,first),(2,ToastVersion::new(10,None,None))]));
+        assert!(!baseline.changed(1,first));
+        assert!(baseline.changed(1,ToastVersion::new(10,Some(crate::messenger::Messenger::Qq),Some("第二条"))));
+        assert!(baseline.changed(1,ToastVersion::new(11,Some(crate::messenger::Messenger::Qq),Some("第一条"))));
         assert!(baseline.unchanged_other(2,10).is_some());
         assert!(baseline.unchanged_other(1,10).is_none());
         assert!(baseline.unchanged_other(2,11).is_none());
         baseline.previous=Some(HashMap::new());assert!(baseline.changed(1,first));
     }
     #[test]
+    fn notifications_arriving_during_connection_are_not_treated_as_old_history(){
+        let baseline=NotificationBaseline{previous:None,started:100,primed:false};
+        let (_,message)=baseline.observe(1,101,Some(crate::messenger::Messenger::Qq),true,Ok("连接期间的新消息".into()));
+        assert!(message.is_some(),"连接期间才到达的新通知不能混入启动历史而漏报");
+    }
+    #[test]
+    fn notifications_read_failures_do_not_replay_an_unchanged_qq_message(){
+        let client=Some(crate::messenger::Messenger::Qq);
+        let original=ToastVersion::new(10,client,Some("同一条消息"));
+        let baseline=NotificationBaseline{previous:Some(HashMap::from([(1,original)])),..Default::default()};
+        let (version,message)=baseline.observe(1,10,client,true,Err(windows::core::Error::from_win32()));
+        assert!(message.is_none(),"临时读取失败不能变成空正文更新而重复提醒");
+        assert!(version==original,"读取失败时保留上一轮指纹");
+    }
+    #[test]
+    fn notifications_unreadable_new_toasts_remind_once_and_historical_toasts_stay_silent(){
+        let client=Some(crate::messenger::Messenger::Qq);
+        for (created,expected) in [(90,false),(110,true)]{
+            let mut baseline=NotificationBaseline{previous:None,started:100,primed:false};
+            let (version,message)=baseline.observe(1,created,client,true,Err(windows::core::Error::from_win32()));
+            assert_eq!(message.is_some(),expected,"历史与连接期间的新通知必须区分");
+            baseline.previous=Some(HashMap::from([(1,version)]));
+            let (version,message)=baseline.observe(1,created,client,true,Ok("恢复后的正文".into()));
+            assert!(message.is_none(),"正文恢复不能重弹同一条通知");
+            baseline.previous=Some(HashMap::from([(1,version)]));
+            assert!(baseline.observe(1,created,client,true,Ok("下一条消息".into())).1.is_some());
+        }
+    }
+    #[test]
+    fn notifications_office_channel_switch_does_not_replay_but_later_body_updates_remind(){
+        for client in crate::messenger::Messenger::OFFICE{
+            let mut baseline=NotificationBaseline{previous:Some(HashMap::from([(1,ToastVersion::new(10,Some(client),None))])),started:0,primed:true};
+            assert!(baseline.unchanged_other(1,10).is_none(),"办公软件的捕获通道会切换，不能永久跳过");
+            let (version,message)=baseline.observe(1,10,Some(client),true,Ok("切换前的旧消息".into()));
+            assert!(message.is_none());baseline.previous=Some(HashMap::from([(1,version)]));
+            assert!(baseline.observe(1,10,Some(client),true,Ok("切换后的新消息".into())).1.is_some());
+        }
+    }
+    #[test]
+    fn notifications_partial_snapshots_do_not_replay_old_items_or_drop_new_items(){
+        let client=Some(crate::messenger::Messenger::Qq);
+        let old=ToastVersion::new(90,client,Some("启动前的旧通知"));let fresh=ToastVersion::new(110,client,Some("连接后的新通知"));
+        let mut baseline=NotificationBaseline{previous:None,started:100,primed:false};
+        assert!(baseline.changed(2,fresh));baseline.finish(HashMap::from([(2,fresh)]),false);
+        assert!(!baseline.changed(1,old),"首次只读到部分条目时，补读到的启动历史不能重放");
+        assert!(!baseline.changed(2,fresh));baseline.finish(HashMap::from([(1,old),(2,fresh)]),true);
+        baseline.finish(HashMap::from([(2,fresh)]),false);
+        assert!(!baseline.changed(1,old),"临时漏读条目不能被当成移除后重新新增");
+        let next=ToastVersion::new(120,client,Some("下一条"));assert!(baseline.changed(3,next));
+        baseline.finish(HashMap::new(),true);
+        assert!(baseline.previous.as_ref().unwrap().is_empty(),"成功读完整空列表后应清理历史，不能永久保留");
+    }
+    #[test]
     fn notifications_disconnect_signals_stop_without_waiting_for_new_messages(){
         let (_tx,incoming)=mpsc::sync_channel(32);let (stop,stopped)=mpsc::channel();
-        drop(Notifications{incoming,stop});
+        drop(Notifications{incoming,stop,taskbar_mask:std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0))});
         assert_eq!(stopped.try_recv(),Ok(()));
     }
     #[test]
@@ -856,5 +811,148 @@ mod avoidance_tests {
         }
         let notepad=std::path::Path::new(r"C:\Windows\System32\notepad.exe");
         if notepad.exists(){assert!(executable_description(notepad.to_str().unwrap()).is_some());}
+    }
+}
+
+// —— 自定义构建补回：手机连接通道（Phone Link）——
+const PHONE_CHANNELS: &[(&str,&str)] = &[
+    ("YourPhoneMessages_","短信"),
+    ("YourPhoneCalling","通话"),
+    ("YourPhoneDeviceStatus","手机状态"),
+    ("com.apple.mobilephone","电话"),
+    ("com.tencent.xin","微信"),
+    ("com.tencent.mqq","QQ"),
+    ("com.alipay.iphoneclient","支付宝"),
+    ("com.google.Gmail","Gmail"),
+];
+/// 手机连接 Toast 的来源判定。
+///
+/// WinRT 只报主 AUMID（`!App`），拿不到通道信息，所以只能看正文：
+/// 正文格式是「来源 · 内容…」，但短信用**手机号**当来源（`+8610… · 【xx】验证码…`），
+/// 电话是「号码 · 传入呼叫 / 未接来电」，普通 App 才是「微信 · 张三 · 内容」。
+///
+/// 判定顺序：名单命中 → 来电标记 → 短信特征 → 用首段当标签兜底。
+/// 名单放在 `%APPDATA%\Daozai\phone-apps.json`，加新 App 不用改代码重编译。
+/// 返回 (标签, 是否允许上岛)；None = 无法识别，由调用方按「连接」放行。
+pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String,bool)> {
+    let head=body.split('·').next().unwrap_or("").trim();
+    if head.is_empty() {return None;}
+    // 1. 名单优先：微信 / QQ / 支付宝 / Gmail 等。
+    if let Some(hit)=apps.lookup(head){return Some(hit);}
+    // 2. 来电：号码当来源，正文带这两个词。
+    if body.contains("传入呼叫")||body.contains("未接来电"){return Some(("电话".to_string(),true));}
+    // 3. 短信：来源是手机号，或正文有【签名】/验证码字样。
+    let digits=head.chars().all(|c|c.is_ascii_digit()||matches!(c,'+'|'-'|' '|'('|')'));
+    if digits||body.contains("验证码")||body.contains('【')||body.contains("短信"){
+        return Some(("短信".to_string(),true));
+    }
+    // 4. 兜底：短名字直接当标签（例如 WorkBuddy），过长才交给调用方。
+    if head.chars().count()<=12 {return Some((head.to_string(),true));}
+    None
+}
+
+pub(crate) fn phone_channel(id:&str)->bool {
+    // 只要是手机连接（Phone Link）发出来的就归手机通道：
+    // WinRT 有时给主 AUMID（`!App`），有时给子通道（`YourPhoneMessages_…` /
+    // `YourPhoneNotifications_<uuid>`），开机后通道注册晚一步还会先走汇总通道。
+    // 白名单只用来起标签，是否上岛/静音交给 phone-apps.json 按正文判断。
+    id.starts_with("Microsoft.YourPhone_")
+}
+pub(crate) fn phone_label(id:&str)->&'static str {
+    if id.ends_with("!App"){return "连接";}
+    PHONE_CHANNELS.iter().find(|(key,_)|id.contains(*key)).map(|(_,label)|*label).unwrap_or("手机")
+}
+
+#[cfg(test)]
+mod phone_channel_tests {
+    use super::{phone_app,phone_channel,phone_label};
+    #[test]
+    fn 只放行手机连接白名单通道(){
+        // 现在只要是手机连接的 AUMID 都算手机通道（白名单只管标签）；
+        // 真正决定「上不上岛 / 静不静音」的是正文 + phone-apps.json。
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.tencent.xin"));
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneMessages_9d62fe0c"));
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!App"));
+        // 开机后通道还没注册时，Win11 会先走汇总通道，这个也必须算手机通知。
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_9d62fe0c-7488-42c8-be15-0fbe4a087b7f"));
+        assert_eq!(phone_label("Microsoft.YourPhone_x!App"),"连接");
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.valvesoftware.Steam"));
+        assert!(!phone_channel("QQ"));
+        assert!(!phone_channel("mail.test"));
+        assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.tencent.xin"),"微信");
+        assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.google.Gmail"),"Gmail");
+    }
+    #[test]
+    fn 从正文首段识别手机应用与黑名单(){
+        let apps=crate::model::PhoneApps::builtin();
+        assert_eq!(crate::system::phone_app("QQ · 小号 · 这是一条测试正文内容",&apps),Some(("QQ".to_string(),true)));
+        assert_eq!(crate::system::phone_app("微信 · 某人 · 晚上好",&apps),Some(("微信".to_string(),true)));
+        assert_eq!(crate::system::phone_app("来电 · 138xxxx",&apps),Some(("电话".to_string(),true)));
+        assert_eq!(crate::system::phone_app("Steam · 夏季特惠",&apps),Some(("连接".to_string(),false)));
+        assert_eq!(crate::system::phone_app("",&apps),None);
+        assert_eq!(crate::system::phone_app("一条很长的普通消息内容里没有应用名",&apps),None);
+        // 名单是外部配置：加新 App 只需往 JSON 里加一条，不改代码。
+        let mut custom=crate::model::PhoneApps::builtin();
+        custom.items.push(("小红书".to_string(),"小红书".to_string(),true));
+        assert_eq!(crate::system::phone_app("小红书 · 有人回复了你",&custom),Some(("小红书".to_string(),true)));
+    }
+    #[test]
+    fn 短信与来电按正文特征识别(){
+        let apps=crate::model::PhoneApps::builtin();
+        // 短信用手机号当来源：认不出号码也要归到「短信」，不能退化成「连接」。
+        assert_eq!(phone_app("+86106826974003139 · 【清枫北京科技】您的验证码：4342，如非本人操作",&apps),Some(("短信".to_string(),true)));
+        assert_eq!(phone_app("10691234 · 您的验证码 8899",&apps),Some(("短信".to_string(),true)));
+        // 响铃与未接都先归到「电话」，再由正文区分「来电中 / 未接来电」。
+        assert_eq!(phone_app("130 8646 4686 · 传入呼叫",&apps),Some(("电话".to_string(),true)));
+        assert_eq!(phone_app("电话 · 130 8646 4686 · 未接来电",&apps),Some(("电话".to_string(),true)));
+        // 名单外的短名字直接用名字当标签。
+        assert_eq!(phone_app("WorkBuddy · 任务已完成",&apps),Some(("WorkBuddy".to_string(),true)));
+    }
+}
+
+#[cfg(test)]
+mod phone_channel_tests {
+    use super::{phone_app,phone_channel,phone_label};
+    #[test]
+    fn 只放行手机连接白名单通道(){
+        // 现在只要是手机连接的 AUMID 都算手机通道（白名单只管标签）；
+        // 真正决定「上不上岛 / 静不静音」的是正文 + phone-apps.json。
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.tencent.xin"));
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneMessages_9d62fe0c"));
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!App"));
+        // 开机后通道还没注册时，Win11 会先走汇总通道，这个也必须算手机通知。
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_9d62fe0c-7488-42c8-be15-0fbe4a087b7f"));
+        assert_eq!(phone_label("Microsoft.YourPhone_x!App"),"连接");
+        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.valvesoftware.Steam"));
+        assert!(!phone_channel("QQ"));
+        assert!(!phone_channel("mail.test"));
+        assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.tencent.xin"),"微信");
+        assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.google.Gmail"),"Gmail");
+    }
+    #[test]
+    fn 从正文首段识别手机应用与黑名单(){
+        let apps=crate::model::PhoneApps::builtin();
+        assert_eq!(crate::system::phone_app("QQ · 小号 · 这是一条测试正文内容",&apps),Some(("QQ".to_string(),true)));
+        assert_eq!(crate::system::phone_app("微信 · 某人 · 晚上好",&apps),Some(("微信".to_string(),true)));
+        assert_eq!(crate::system::phone_app("来电 · 138xxxx",&apps),Some(("电话".to_string(),true)));
+        assert_eq!(crate::system::phone_app("Steam · 夏季特惠",&apps),Some(("连接".to_string(),false)));
+        assert_eq!(crate::system::phone_app("",&apps),None);
+        assert_eq!(crate::system::phone_app("一条很长的普通消息内容里没有应用名",&apps),None);
+        // 名单是外部配置：加新 App 只需往 JSON 里加一条，不改代码。
+        let mut custom=crate::model::PhoneApps::builtin();
+        custom.items.push(("小红书".to_string(),"小红书".to_string(),true));
+        assert_eq!(crate::system::phone_app("小红书 · 有人回复了你",&custom),Some(("小红书".to_string(),true)));
+    }
+    #[test]
+    fn 短信与来电按正文特征识别(){
+        let apps=crate::model::PhoneApps::builtin();
+        // 短信用手机号当来源：认不出号码也要归到「短信」，不能退化成「连接」。
+        assert_eq!(phone_app("+86106826974003139 · 【清枫北京科技】您的验证码：4342，如非本人操作",&apps),Some(("短信".to_string(),true)));
+        assert_eq!(phone_app("10691234 · 您的验证码 8899",&apps),Some(("短信".to_string(),true)));
+        // 响铃与未接都先归到「电话」，再由正文区分「来电中 / 未接来电」。
+        assert_eq!(phone_app("130 8646 4686 · 传入呼叫",&apps),Some(("电话".to_string(),true)));
+        assert_eq!(phone_app("电话 · 130 8646 4686 · 未接来电",&apps),Some(("电话".to_string(),true)));
+        // 名单外的短名字直接用名字当标签。
+        assert_eq!(phone_app("WorkBuddy · 任务已完成",&apps),Some(("WorkBuddy".to_string(),true)));
     }
 }
