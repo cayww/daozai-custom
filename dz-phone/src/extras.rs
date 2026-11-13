@@ -229,12 +229,12 @@ impl App {
     }
     /// 邮件验证码上岛：标题带「邮件」标识，正文留明文数字供通知卡片显示；
     /// 不走手机短信的 auto_copy_otp，也不推 Cmd::Copy，只允许用户手动点复制。
-    pub fn mail_code_alert(&mut self, code:&str, from:&str, page:usize){
+    pub fn mail_code_alert(&mut self, _code:&str, from:&str, page:usize){
         let duration=if cfg!(test){4.5}else{(self.settings.otp_seconds as f64).max(10.0)};
         self.enqueue_alert(Alert{
             source:AlertSource::External("mail-code".into()),
             title:format!("邮件验证码 · {}",from),
-            body:format!("邮件验证码 {}",code),
+            body:"邮件验证码".to_string(),
             page,at:self.t,duration,
             bluetooth:None,meeting:None,status:None,unread:None,
         },false);
@@ -265,7 +265,7 @@ impl App {
     }
     fn enqueue_alert(&mut self, a: Alert, system: bool) {
         // 通知仅保存在本次运行的内存中。
-        if a.source==AlertSource::Internal {self.history.push_front(a.clone());}
+        if a.source==AlertSource::Internal || matches!(&a.source,AlertSource::External(id) if id=="mail-code") {self.history.push_front(a.clone());}
         self.history.truncate(50);
         // 落盘一份历史：岛仔重启或当时没看到时，还能在设置里回查。
         let status_bus=matches!(&a.source,AlertSource::External(id) if id.starts_with("island-status"));
@@ -1128,9 +1128,12 @@ impl App {
             let text_w=if icon{170.0}else{198.0};
             nc.centered_text(text_x,14.0,&nc.fit(&a.title,11.0,W::Semibold,text_w),11.0,W::Semibold,theme::WHITE,H::Left);
             // 验证码卡片：大号数字 + 一键复制（otp::extract 有打分门槛，普通消息不会误判）。
-            if let Some(code)=crate::otp::extract("",&a.body,&[]) {
-                nc.centered_text(text_x,30.0,&code.text,20.0,W::Bold,theme::WHITE,H::Left);
-                if notice_button(&nc,160.0,12.0,60.0,"复制","phone-code-copy"){_cmds.push(Cmd::Copy(code.text.clone()));}
+            // 短信从正文提取；邮件验证码只从邮件数据读，通知与历史都不留明文。
+            let mail_code=matches!(&a.source,AlertSource::External(id) if id=="mail-code")
+                .then(||self.mail.code_item().and_then(|m|m.code.clone())).flatten();
+            if let Some(code)=mail_code.or_else(||crate::otp::extract("",&a.body,&[]).map(|c|c.text)) {
+                nc.centered_text(text_x,30.0,&code,20.0,W::Bold,theme::WHITE,H::Left);
+                if notice_button(&nc,160.0,12.0,60.0,"复制","phone-code-copy"){_cmds.push(Cmd::Copy(code));}
             } else {
                 nc.centered_text(text_x,30.0,&nc.fit(&a.body,10.5,W::Regular,text_w),10.5,W::Regular,theme::GRAY,H::Left);
             }

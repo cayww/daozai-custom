@@ -3187,7 +3187,7 @@ fn mail_page_shows_code_and_copies_on_click() {
         new: true,
     });
     assert!(h.app.notification_bell_until > 0.0, "新邮件应点亮铃铛");
-    assert!(h.app.alerts.iter().any(|a|a.title=="新邮件"&&a.page==5),"新邮件应进入通知队列，不能只有收起时才可见的铃铛");
+    assert!(h.app.alerts.iter().any(|a|a.title.starts_with("邮件验证码")&&a.page==5),"新邮件应进入通知队列，不能只有收起时才可见的铃铛");
     h.app.show_page(5);
     h.hover(Pos2::new(WIN_W / 2.0, 12.0), 0.6);
     h.hover(H::local(300.0, 60.0), 0.4);
