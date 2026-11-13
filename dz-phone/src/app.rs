@@ -48,7 +48,6 @@ pub(crate) const LYRIC_BAR_W: f32 = 300.0;
 pub(crate) const LANE_PET_HALF: f32 = 24.0;   // 宠物表情贴图半宽（实际 48px）
 pub(crate) const LANE_ART_GAP: f32 = 4.0;     // 封面右缘 → 宠物左缘
 pub(crate) const LANE_TEXT_GAP: f32 = 4.0;    // 宠物右缘 → 歌词通道（硬余量，保证不重叠）
-pub(crate) const LANE_CENTER_CAP: f32 = 16.0; // 歌词在通道内居中的最大偏移，避免短歌词离宠物太远
 // 播放指示 5 根竖条以 content_width-21 为中心、向左占 7.8，左缘在 content_width-28.8；
 // 42 = 文字与竖条之间留出约 13px 空隙，避免两者贴在一起。
 pub(crate) const LANE_RIGHT_PAD: f32 = 48.0;  // 歌词通道右侧留给播放指示
@@ -3070,9 +3069,8 @@ impl App {
             let lyric_left=match self.lyric_lane() {
                 Some((_,text_left))=>{
                     let avail=(content_width-LANE_RIGHT_PAD-text_left).max(90.0);
-                    // 居中偏移设上限：短歌词不会被推到通道正中间、与宠物之间空出一大片。
-                    // 间隙因此稳定在 LANE_TEXT_GAP ~ LANE_TEXT_GAP+LANE_CENTER_CAP。
-                    let centering=((avail-galley.size().x/c.s).max(0.0)/2.0).min(LANE_CENTER_CAP);
+                    // 短歌词在歌词通道内完整居中；长歌词放不下时由后面的横向滚动接管。
+                    let centering=((avail-galley.size().x/c.s).max(0.0)/2.0);
                     text_left+centering
                 },
                 None=>content_width-LYRIC_BAR_W/2.0,
