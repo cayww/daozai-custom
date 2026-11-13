@@ -2352,7 +2352,10 @@ impl App {
                             ui.label(egui::RichText::new(status).size(13.0));
                             settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
                             ui.separator();
-                            if qq_mode {
+                            if !listening {
+                                // 停止监听时不展示应用开关：勾选此刻没有意义，容易让人以为还在生效。
+                                ui.label(egui::RichText::new("尚未开始监听。点上方「全部应用」或「仅 QQ」后才会接收通知。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else if qq_mode {
                                 ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             } else {
                                 ui.label(egui::RichText::new("应用列表：勾选后该应用的通知才会上岛；新发过通知的应用会自动出现在这里。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));

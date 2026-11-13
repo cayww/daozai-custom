@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-72"
+PATCH_ID = "custom-73"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -10435,6 +10435,65 @@ fn phone_settings_page_renders_with_locked_sms_toggle(){
         }
     }
 }
+'''),
+
+    # custom-73：停止监听时不显示应用开关列表
+    ("src/extras.rs",
+     '''                            ui.label(egui::RichText::new(status).size(13.0));
+                            settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
+                            ui.separator();
+                            if qq_mode {
+                                ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else {
+                                ui.label(egui::RichText::new("应用列表：勾选后该应用的通知才会上岛；新发过通知的应用会自动出现在这里。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+''',
+     '''                            ui.label(egui::RichText::new(status).size(13.0));
+                            settings_hint(ui,"全部应用：每个发过通知的应用都会进入下方列表，可逐个开关。仅 QQ：只接收 QQ，其他应用的通知不显示、也不记录。");
+                            ui.separator();
+                            if !listening {
+                                // 停止监听时不展示应用开关：勾选此刻没有意义，容易让人以为还在生效。
+                                ui.label(egui::RichText::new("尚未开始监听。点上方「全部应用」或「仅 QQ」后才会接收通知。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else if qq_mode {
+                                ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else {
+                                ui.label(egui::RichText::new("应用列表：勾选后该应用的通知才会上岛；新发过通知的应用会自动出现在这里。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+'''),
+    ("src/ui_tests.rs",
+     '''    h.app.settings_category=5; // 「通知、邮箱与日程」分组
+    h.app.settings_tab=6;
+    h.ctx.set_embed_viewports(false);
+    for qq_only in [false,true] {
+        h.app.settings.read_notifications=true;
+        h.app.settings.qq_only=qq_only;
+        for _ in 0..2 {
+            let time=h.t;
+''',
+     '''    h.app.settings_category=5; // 「通知、邮箱与日程」分组
+    h.app.settings_tab=6;
+    h.ctx.set_embed_viewports(false);
+    // 三种状态：全部应用 / 仅 QQ / 停止监听（都要能渲染且不显示应用开关）。
+    for (read,qq_only) in [(true,false),(true,true),(false,false),(false,true)] {
+        h.app.settings.read_notifications=read;
+        h.app.settings.qq_only=qq_only;
+        for _ in 0..2 {
+            let time=h.t;
+'''),
+    ("src/ui_tests.rs",
+     '''                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            });
+            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            assert!(output.lock().unwrap().is_some(),"qq_only={qq_only} 时设置页应完成渲染");
+            h.t+=1.0/60.0;
+        }
+    }
+''',
+     '''                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            });
+            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            assert!(output.lock().unwrap().is_some(),"read={read} qq_only={qq_only} 时设置页应完成渲染");
+            h.t+=1.0/60.0;
+        }
+    }
 '''),
 ]
 
