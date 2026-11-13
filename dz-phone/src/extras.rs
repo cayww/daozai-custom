@@ -2417,11 +2417,12 @@ impl App {
                             let auto_host=ctl::config().auto_host;
                             settings_label(ui,"网易云进度拖动");
                             settings_card(ui,|ui|{
+                                ui.small("拖动进度需要先改一下启动快捷方式。");
                                 let fixed=ctl::shortcut_fixed();
-                                ui.add(egui::Label::new(egui::RichText::new(if fixed{"已修改网易云快捷方式"}else{"未修改快捷方式"}).size(12.5).strong()).wrap());
-                                ui.add_space(4.0);
+                                ui.add(egui::Label::new(egui::RichText::new(if fixed{"已修改网易云快捷方式"}else{"还没有修改快捷方式"}).size(12.5).strong()).wrap());
+                                ui.separator();
                                 ui.horizontal(|ui|{
-                                    ui.small("快捷方式在其它位置：");
+                                    ui.small("开始菜单里没有？选快捷方式文件：");
                                     if ui.button("选择文件").clicked(){
                                         match crate::system::pick_files_for("选择网易云快捷方式",false){
                                             Ok(files)=>if let Some(path)=files.first(){
@@ -2436,7 +2437,7 @@ impl App {
                                 });
                                 ui.separator();
                                 let mut auto=auto_host;
-                                setting_row(ui,"自动托管","网易云未生效时自动修复",&mut auto);
+                                setting_row(ui,"自动托管","网易云没带上参数启动时自动重启",&mut auto);
                                 if auto!=auto_host{
                                     match ctl::set_auto_host(auto){
                                         Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
@@ -2444,6 +2445,7 @@ impl App {
                                     }
                                 }
                                 ui.separator();
+                                ui.small("改完快捷方式后点一下，让网易云重新启动。");
                                 if ui.button("重启网易云").clicked(){
                                     match ctl::restart_with_debug_port(){
                                         Ok(message)=>self.say(message),
