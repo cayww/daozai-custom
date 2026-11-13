@@ -72,11 +72,7 @@ impl State {
         if self.rx.is_some() { ctx.request_repaint_after(Duration::from_millis(100)); }
     }
 
-    pub(crate) fn ui(&mut self, ui: &mut egui::Ui, enabled: bool) {
-        if !enabled {
-            ui.label(egui::RichText::new("更新检查已关闭 · 自定义构建保护").size(11.5).color(ui.visuals().weak_text_color()));
-            return;
-        }
+    pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
         if ui.add_enabled(self.rx.is_none(), egui::Button::new("检查更新")).clicked() {
             let (tx, rx) = mpsc::channel(); self.rx = Some(rx);
             self.message.clear(); self.result = None; self.dialog_open = false;
@@ -186,9 +182,6 @@ impl State {
                                     });
                             });
                         ui.add_space(4.0);
-                        if crate::CUSTOM_BUILD {
-                            ui.label(egui::RichText::new("当前是自定义构建：安装官方版会覆盖手机电量、更新开关等本地修改，建议先运行 reapply.ps1。").color(egui::Color32::from_rgb(240,180,90)).size(11.5));
-                        }
                         ui.label(egui::RichText::new(if self.message.is_empty(){"更新后自动重启，设置和记录会保留。"}else{&self.message}).color(theme::DIM).size(11.5));
                         if self.cancel.is_some() {
                             ui.add(egui::ProgressBar::new(self.progress).fill(theme::BLUE).desired_height(8.0));
@@ -550,7 +543,7 @@ mod tests {
             let mut state = State::default(); state.rx = Some(rx);
             let _ = ctx.run(Default::default(), |ctx| {
                 state.poll(ctx);
-                egui::CentralPanel::default().show(ctx, |ui| state.ui(ui, true));
+                egui::CentralPanel::default().show(ctx, |ui| state.ui(ui));
             });
             assert!(state.rx.is_none());
             assert_eq!(!state.message.is_empty(), disconnected);

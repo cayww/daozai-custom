@@ -431,7 +431,6 @@ impl App {
         for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
             let selected = self.shelf_tab == i;
             let r = c.hit(left, 9.5, *w, 21.0, ("shelf-tab", i));
-            let r = if i == 1 { r.on_hover_text("切到剪贴板") } else { r };
             let (h, _) = c.hover_t(&r);
             if selected {
                 c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
@@ -575,70 +574,6 @@ impl App {
     }
 
     // ================= 剪贴板（置物架第二个分栏） =================
-    /// 剪贴板搜索：放大镜放在面板右侧的空白竖带（翻页箭头下方、页码豆上方）。
-    /// 以前钉在表头 (352, 9.5)，会和常驻的音乐播放条 (x≈367, y≈18) 叠在一起；
-    /// 表头其余元素又随内容动态排布，没有稳定空位，所以移到卡片外侧。
-    /// 点开后输入框浮在列表上方（盖住第一行），Esc 或小叉收起。
-    /// 过滤只作用于显示，索引仍指向同一份历史，复制/固定/删除的行为不变。
-    fn clip_search(&mut self, c: &Card, cmds: &mut Vec<Cmd>) {
-        // 右下侧空白带：x 377..419 不画列表，y 在箭头(≤101)与页码豆(≈131)之间。
-        let icon = c.hit(384.0, 105.0, 26.0, 20.0, "clip-search-open");
-        let (h, _) = c.hover_t(&icon);
-        if h > 0.01 { c.circle(397.0, 115.0, 10.5, Color32::from_white_alpha((22.0 * h) as u8)); }
-        let ink = if self.clip_search_open { theme::BLUE } else { paint::mix(theme::GRAY, theme::WHITE, h) };
-        c.ring(395.2, 113.2, 4.4, 1.3, ink);
-        c.seg((398.6, 116.6), (402.4, 120.4), 1.3, ink);
-        let icon = icon.on_hover_text(if self.clip_search_open { "收起搜索" } else { "搜索剪贴板" });
-        if icon.clicked() {
-            self.clip_search_open = !self.clip_search_open;
-            self.clip_query.clear();
-            self.clip_search_focus = false;
-        }
-        if !self.clip_search_open { return; }
-        // 输入框浮在列表卡片的上沿，比卡片亮一档 + 一圈描边，聚焦时描边变蓝。
-        let rect = c.rect(46.0, 32.0, 327.0, 20.0);
-        c.fill(46.0, 32.0, 327.0, 20.0, 8.0, Color32::from_gray(64));
-        c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.0, Color32::from_gray(102));
-        let mut ui = egui::Ui::new(c.ui.ctx().clone(), egui::Id::new("clip-search"), egui::UiBuilder::new().layer_id(c.ui.layer_id()).max_rect(rect).style(c.ui.style().clone()));
-        ui.set_clip_rect(c.painter.clip_rect());
-        ui.set_opacity(c.painter.opacity());
-        if !c.live { ui.disable(); }
-        // 多留一点左侧内边距，文字不贴边；光标也与文字对齐。
-        let text_rect = Rect::from_min_max(rect.min + egui::vec2(8.0, 2.0), rect.max - egui::vec2(26.0, 2.0));
-        let mut buf = std::mem::take(&mut self.clip_query);
-        let te = egui::TextEdit::singleline(&mut buf)
-            .id(egui::Id::new("clip-search-edit"))
-            .frame(false)
-            .margin(egui::Margin::ZERO)
-            .text_color(theme::WHITE)
-            .font(theme::font(size::TINY, W::Regular))
-            .hint_text(egui::RichText::new("输入关键词筛选").color(Color32::from_gray(158)).font(theme::font(size::TINY, W::Regular)))
-            .desired_width(text_rect.width());
-        let resp = ui.put(text_rect, te);
-        self.clip_query = buf;
-        // 展开后的第一帧就请求焦点并激活窗口，光标才会闪；之后点一下输入框也会重新聚焦。
-        if !self.clip_search_focus || resp.clicked() {
-            self.clip_search_focus = true;
-            resp.request_focus();
-            cmds.push(Cmd::Focus);
-        }
-        self.clip_typing=resp.has_focus();
-        if resp.has_focus() { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
-        // Esc 退出搜索：清空关键词并收起输入框。
-        if resp.has_focus() && c.ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.clip_query.clear();
-            self.clip_search_open = false;
-            resp.surrender_focus();
-        }
-        let x = c.hit(352.0, 34.0, 18.0, 16.0, "clip-search-close").on_hover_text(if self.clip_query.is_empty() { "关闭搜索" } else { "清空并关闭" });
-        paint::close(c, 361.0, 42.0, 2.6, if x.hovered() { theme::BLUE } else { Color32::from_gray(190) });
-        if x.clicked() {
-            self.clip_query.clear();
-            self.clip_search_open = false;
-            resp.surrender_focus();
-        }
-    }
-
     fn page_clipboard(&mut self, c: &Card, _env: &Env, _cmds: &mut Vec<Cmd>) {
         if !self.settings.clipboard_history {
             c.dashed(42.0, 32.0, 335.0, 91.0, 12.0, 1.2, Color32::from_gray(70), 0.0);
@@ -649,22 +584,10 @@ impl App {
             if r.clicked() { self.settings.clipboard_history = true; self.clipboard.set_enabled(true); self.settings.save(); }
             return;
         }
-        // 只在版本变化时重建快照：之前是每帧把整份历史（最多 30×2 万字）克隆一遍。
-        let version=self.clipboard.version();
-        if self.clip_snapshot.0!=version { self.clip_snapshot=self.clipboard.snapshot(); }
-        let items=self.clip_snapshot.1.clone();
-        let query = self.clip_query.trim().to_lowercase();
-        let shown: Vec<usize> = if query.is_empty() {
-            (0..items.len()).collect()
-        } else {
-            items.iter().enumerate().filter(|(_,clip)|clip.text.to_lowercase().contains(&query)).map(|(i,_)|i).collect()
-        };
-        let n = shown.len();
+        let items = self.clipboard.lock().items.clone();
+        let n = items.len();
         let recent = items.iter().filter(|clip| !clip.pinned).count();
-        // 搜索时输入框占掉卡片第一行，可见行数少一行。
-        let searching = self.clip_search_open || !self.clip_query.is_empty();
-        let rows = if searching { CLIP_ROWS - 1 } else { CLIP_ROWS };
-        self.clip_first = self.clip_first.min(n.saturating_sub(rows));
+        self.clip_first = self.clip_first.min(n.saturating_sub(CLIP_ROWS));
 
         // 右上：条数与「清空」（只清未固定的）。
         if recent > 0 {
@@ -692,53 +615,27 @@ impl App {
 
         if n == 0 {
             c.dashed(42.0, 32.0, 335.0, 91.0, 12.0, 1.2, Color32::from_gray(70), 0.0);
-            if query.is_empty() {
-                paint::clipboard_glyph(c, 209.5, 58.0, 22.0, Color32::from_gray(200), Color32::from_gray(80));
-                c.text(209.5, 93.0, "复制的文字会出现在这里", 12.0, W::Semibold, theme::WHITE, H::Center);
-                c.text(209.5, 108.0, "记录保存在本机，重新打开仍可查看", size::TINY, W::Regular, theme::GRAY, H::Center);
-            } else {
-                c.text(209.5, 70.0, "没有匹配的记录", 12.0, W::Semibold, theme::WHITE, H::Center);
-                c.text(209.5, 86.0, "换个关键词试试，或点右侧小叉退出搜索", size::TINY, W::Regular, theme::GRAY, H::Center);
-            }
-            self.clip_search(c, _cmds);
+            paint::clipboard_glyph(c, 209.5, 58.0, 22.0, Color32::from_gray(200), Color32::from_gray(80));
+            c.text(209.5, 93.0, "复制的文字会出现在这里", 12.0, W::Semibold, theme::WHITE, H::Center);
+            c.text(209.5, 108.0, "记录保存在本机，重新打开仍可查看", size::TINY, W::Regular, theme::GRAY, H::Center);
             return;
         }
 
         c.fill(42.0, 31.0, 335.0, 93.0, 12.0, theme::CARD);
         // 超过一屏时右侧细滚动条，滚轮查看。
-        if n > rows {
+        if n > CLIP_ROWS {
             let (top, track) = (38.0, 79.0);
-            let thumb = (track * rows as f32 / n as f32).max(12.0);
-            let y = top + (track - thumb) * self.clip_first as f32 / (n - rows) as f32;
+            let thumb = (track * CLIP_ROWS as f32 / n as f32).max(12.0);
+            let y = top + (track - thumb) * self.clip_first as f32 / (n - CLIP_ROWS) as f32;
             c.fill(371.0, top, 2.5, track, 1.25, Color32::from_white_alpha(14));
             c.fill(371.0, y, 2.5, thumb, 1.25, Color32::from_white_alpha(70));
         }
-        // 搜索框拿到键盘焦点时：↑↓ 选行、Enter 复制。选中行始终保持在可视范围内。
-        if self.clip_search_open && self.clip_typing && !shown.is_empty() {
-            let (down, up, enter) = c.ui.ctx().input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter)));
-            if down { self.clip_sel=(self.clip_sel+1).min(n-1); }
-            if up { self.clip_sel=self.clip_sel.saturating_sub(1); }
-            self.clip_sel=self.clip_sel.min(n-1);
-            if self.clip_sel<self.clip_first { self.clip_first=self.clip_sel; }
-            if self.clip_sel>=self.clip_first+rows { self.clip_first=self.clip_sel+1-rows; }
-            if enter {
-                let text=items[shown[self.clip_sel]].text.clone();
-                #[cfg(windows)]
-                self.say(if crate::clipboard::copy_history(&text) { "已复制" } else { "复制失败，请重试" });
-                #[cfg(not(windows))]
-                _cmds.push(Cmd::Copy(text));
-            }
-        }
         let mut action: Option<(usize, u8)> = None; // 0 复制 1 固定 2 删除
-        for (row, index) in shown.iter().copied().skip(self.clip_first).take(rows).enumerate() {
-            let clip = &items[index];
-            let y = if searching { 62.0 } else { 44.0 } + row as f32 * 22.5;
+        for (row, (index, clip)) in items.iter().enumerate().skip(self.clip_first).take(CLIP_ROWS).enumerate() {
+            let y = 44.0 + row as f32 * 22.5;
             let r = c.hit(48.0, y - 10.0, 323.0, 20.0, ("clip", index, clip.text.len(), clip.at.as_str()));
             let (h, _) = c.hover_t(&r);
-            let selected = self.clip_search_open && self.clip_typing && self.clip_first+row == self.clip_sel;
-            if selected {
-                c.fill(48.0, y - 10.0, 323.0, 20.0, 7.0, Color32::from_white_alpha(26));
-            } else if h > 0.01 {
+            if h > 0.01 {
                 c.fill(48.0, y - 10.0, 323.0, 20.0, 7.0, Color32::from_white_alpha((12.0 * h) as u8));
             }
             if clip.pinned {
@@ -772,8 +669,6 @@ impl App {
             Some((index, _)) => { self.clipboard.lock().remove(index); }
             None => {}
         }
-        // 搜索框最后画：它浮在卡片上沿，画在卡片之前会被卡片底色盖掉。
-        self.clip_search(c, _cmds);
     }
 
     fn file_icon_at(&mut self, c: &Card, p: &std::path::Path, cx: f32, cy: f32, sz: f32) {
@@ -955,7 +850,7 @@ impl App {
     // 邮件：有验证码大卡时分栏，否则显示紧凑单行列表。
     // ---------------------------------------------------------------
     fn visible_mail_code(&self)->Option<&mail::Item> {
-        self.mail.code_item().filter(|item|!self.mail.manage.trash_open && self.settings.mail_code && !self.mail_code_hidden(item) && self.mail_account_match(item))
+        self.mail.code_item().filter(|item|!self.mail.manage.trash_open && self.settings.mail_code && !self.mail_code_hidden(item))
     }
     pub(crate) fn mail_list_bounds(&self)->Rect {
         let left=if self.visible_mail_code().is_some(){182.0}else{36.0};
@@ -975,7 +870,7 @@ impl App {
         }
 
         self.mail_manage_tick();
-        // 点开某封邮件 → 整块换成正文摘要，左上「返回」回到列表。
+        // v0.5.5：点开某封邮件 → 整块换成正文摘要，左上「返回」回到列表。
         if let Some((account, uid)) = self.mail.open_uid.clone() {
             match self.mail_rows()
                 .iter()
@@ -1008,20 +903,10 @@ impl App {
         let folder=self.mail.manage.folder();let trash=folder==Folder::Trash;
         let list_bounds=self.mail_list_bounds();let list_x=list_bounds.left();let row_w=list_bounds.width()-12.0;
         let compact=code.is_none();let row_h=if compact{21.5}else{34.0};
-        let all_count=self.mail.recent.iter().filter(|m|self.mail_account_match(m)).count();
-        let unread=self.mail.recent.iter().filter(|m|self.mail_account_match(m)&&self.mail_seen(m,Folder::Inbox)==Some(false)).count();
+        let all_count=self.mail.recent.len();
+        let unread=self.mail.recent.iter().filter(|m|self.mail_seen(m,Folder::Inbox)==Some(false)).count();
         if trash{
             c.text(list_x+6.0,47.0,&format!("{} {}",if self.settings.mail_sync_operations{"回收站"}else{"本机回收站"},self.mail.manage.trash.len()),10.5,W::Semibold,theme::WHITE,H::Left);
-            // 回收站同样遵守账号筛选，这里补上同一个选框。
-            let filter_label=match &self.mail.manage.account_filter{
-                Some(email)=>Self::mail_account_label(email),
-                None=>"全部账号".to_string(),
-            };
-            c.fill(148.0,33.0,140.0,19.0,6.0,theme::CARD);
-            c.text(218.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,128.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
-            if c.hit(148.0,33.0,140.0,19.0,"mail-account-filter").on_hover_text("选择要看的邮箱账号").clicked(){
-                self.mail.manage.account_menu=!self.mail.manage.account_menu;
-            }
             c.text(375.0,47.0,"返回邮件",10.0,W::Regular,theme::BLUE,H::Right);
             if c.hit(322.0,33.0,56.0,19.0,"mail-trash-back").clicked(){self.mail_toggle_trash();return;}
         }else{
@@ -1033,24 +918,11 @@ impl App {
                 c.text(x+width/2.0,47.0,&label,10.0,W::Semibold,if selected{theme::WHITE}else{theme::GRAY},H::Center);
                 if c.hit(x,33.0,width,19.0,id).on_hover_text("当前加载的最近邮件").clicked(){self.mail.manage.unread_only=id=="mail-unread";}
             }
-            // 账号筛选：模式信息放进悬停提示。
-            let filter_label=match &self.mail.manage.account_filter{
-                Some(email)=>Self::mail_account_label(email),
-                None=>"全部账号".to_string(),
-            };
-            c.fill(148.0,33.0,140.0,19.0,6.0,theme::CARD);
-            c.text(218.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,128.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
-            if c.hit(148.0,33.0,140.0,19.0,"mail-account-filter").on_hover_text(format!("选择要看的邮箱账号\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){
-                self.mail.manage.account_menu=!self.mail.manage.account_menu;
-            }
-            let data_ready=self.mail_read_all_ready();
-            let ready=self.mail.manage.pending.is_empty()&&data_ready;
+            c.text(307.0,46.0,if self.settings.mail_sync_operations{"同步"}else{"仅本机"},8.0,W::Regular,theme::DIM,H::Center);
+            let ready=self.mail.manage.pending.is_empty()&&self.mail.accounts.iter().any(|a|a.enabled&&self.mail.manage.data.contains_key(&(crate::mail::key(a),Folder::Inbox))&&self.mail.manage.identities.get(&crate::mail::key(a))==Some(a));
             c.text(375.0,47.0,"全部已读",10.0,W::Regular,if ready{theme::BLUE}else{theme::DIM},H::Right);
-            if c.hit(325.0,33.0,53.0,19.0,"mail-read-all").on_hover_text(if self.settings.mail_sync_operations{"将已连接邮箱的未读邮件全部标为已读"}else{"仅将岛仔当前加载的邮件标为已读，不更改邮箱"}).clicked(){
-                crate::extras::log_mail(&format!("read-all ready={ready} data={data_ready} pending={} accounts={}",self.mail.manage.pending.len(),self.mail.accounts.len()));
-                if ready{self.mail_manage_request(None,Folder::Inbox,Action::ReadAll);}
-                else if data_ready{self.mail.manage.read_all_queued=true;self.mail.manage.message="正在同步邮件，完成后自动标记已读".into();}
-                else{self.mail.manage.message="邮件状态还没同步完，请稍后再试".into();}
+            if c.hit(325.0,33.0,53.0,19.0,"mail-read-all").on_hover_text(if self.settings.mail_sync_operations{"将已连接邮箱的未读邮件全部标为已读"}else{"仅将岛仔当前加载的邮件标为已读，不更改邮箱"}).clicked()&&ready{
+                self.mail_manage_request(None,Folder::Inbox,Action::ReadAll);
             }
         }
         if !trash{
@@ -1062,7 +934,7 @@ impl App {
             c.text(42.0,134.0,&c.fit(&self.mail.manage.message,8.0,W::Regular,125.0),8.0,W::Regular,theme::GRAY,H::Left);
             if c.hit(40.0,123.0,130.0,16.0,"mail-manage-status").on_hover_text(format!("{}\n点击刷新邮件状态",self.mail.manage.message)).clicked(){self.mail_manage_request(None,folder,Action::Load);}
         }
-        let indices:Vec<_>=self.mail_rows().iter().enumerate().filter(|(_,m)|self.mail_account_match(m)&&(trash||!self.mail.manage.unread_only||self.mail_seen(m,folder)==Some(false))).map(|(i,_)|i).collect();
+        let indices:Vec<_>=self.mail_rows().iter().enumerate().filter(|(_,m)|trash||!self.mail.manage.unread_only||self.mail_seen(m,folder)==Some(false)).map(|(i,_)|i).collect();
         if indices.is_empty(){
             let message=if !self.mail.manage.pending.is_empty(){"正在同步邮件…"}else if trash{"回收站为空"}else if self.mail.manage.unread_only{"没有未读邮件"}else{"还没有收到邮件"};
             c.text(list_x+6.0,80.0,message,11.0,W::Regular,theme::GRAY,H::Left);return;
@@ -1080,9 +952,7 @@ impl App {
                 let(rect,_)=ui.allocate_exact_size(egui::vec2(row_w*c.s,row_h*c.s),egui::Sense::hover());
                 let mut row=Card::new(ui,rect.min,ui.clip_rect());row.s=c.s;row.live=c.live;
                 let hit=row.hit(0.0,0.0,row_w,row_h-1.0,("mail-row",item.uid,item.account.as_str()));
-                // 账号下拉展开时列表行不再画悬停高亮：行高亮是按鼠标位置手绘的，
-                // 不经过 egui 的交互判定，遮罩拦不住它，会和菜单抢视觉焦点。
-                let hovered=!self.mail.manage.account_menu&&ui.ctx().pointer_hover_pos().is_some_and(|p|rect.contains(p)&&ui.clip_rect().contains(p));
+                let hovered=ui.ctx().pointer_hover_pos().is_some_and(|p|rect.contains(p)&&ui.clip_rect().contains(p));
                 let ready=self.mail_ready(&item.account,folder);let actions=trash||hovered&&ready;
                 if hovered{row.fill(0.0,0.0,row_w,row_h-1.0,5.0,Color32::from_gray(29));}
                 if seen==Some(false)&&!trash{row.circle(5.0,if compact{10.5}else{8.0},2.1,theme::BLUE);}
@@ -1114,31 +984,6 @@ impl App {
                 if hit.clicked()&&!acted{self.mail_open(&raw);}
             }
         });
-        // 账号下拉：画在列表之后，点击空白处收起。
-        if self.mail.manage.account_menu{
-            if c.hit(36.0,54.0,344.0,68.0,"mail-account-dismiss").clicked(){self.mail.manage.account_menu=false;}
-            let accounts:Vec<String>=self.mail.accounts.iter().map(|a|a.email.clone()).take(6).collect();
-            let rows=accounts.len()+1;
-            c.fill(148.0,54.0,140.0,17.0*rows as f32,8.0,Color32::from_gray(24));
-            let current=self.mail.manage.account_filter.clone();
-            let mut pick=None;
-            for (i,email) in std::iter::once(None).chain(accounts.iter().map(Some)).enumerate(){
-                let y=54.0+17.0*i as f32;
-                let selected=match (&current,email){(None,None)=>true,(Some(a),Some(b))=>a.eq_ignore_ascii_case(b),_=>false};
-                let label=match email{Some(e)=>e.clone(),None=>"全部账号".to_string()};
-                let item_hit=c.hit(148.0,y,140.0,17.0,("mail-account-pick",i));
-                if item_hit.hovered(){c.fill(150.0,y+1.0,136.0,15.0,5.0,Color32::from_gray(52));}
-                if item_hit.clicked(){pick=Some(email.cloned());}
-                c.text(156.0,y+11.5,&c.fit(&label,9.5,W::Regular,124.0),9.5,W::Regular,if selected{theme::BLUE}else{theme::WHITE},H::Left);
-            }
-            if let Some(choice)=pick{
-                // 记住上次选的账号，重启后沿用（空 = 全部账号）。
-                self.settings.mail_filter=choice.clone().unwrap_or_default();
-                self.settings.save();
-                self.mail.manage.account_filter=choice;
-                self.mail.manage.account_menu=false;
-            }
-        }
     }
 
     /// 岛内邮件详情可滚动，也可以进入独立窗口阅读全文。

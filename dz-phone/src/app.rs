@@ -28,20 +28,6 @@ pub const BAR_W: f32 = 163.0; // 收起药丸宽
 pub const BAR_H: f32 = 30.0; // 收起药丸高
 pub(crate) const HUD_W: f32 = 260.0;
 pub(crate) const LYRIC_BAR_W: f32 = 300.0;
-// 歌词态左侧固定通道（手写 flex lane）：若干固定宽项 + 一块 flex:1 剩余区。
-// 想调间距或往胶囊里加新图标，只改这几个常量和 lyric_lane()，不用翻绘制代码。
-pub(crate) const LANE_PET_HALF: f32 = 24.0;   // 宠物表情贴图半宽（实际 48px）
-pub(crate) const LANE_ART_GAP: f32 = 4.0;     // 封面右缘 → 宠物左缘
-pub(crate) const LANE_TEXT_GAP: f32 = 4.0;    // 宠物右缘 → 歌词通道（硬余量，保证不重叠）
-pub(crate) const LANE_CENTER_CAP: f32 = 16.0; // 歌词在通道内居中的最大偏移，避免短歌词离宠物太远
-// 播放指示 5 根竖条以 content_width-21 为中心、向左占 7.8，左缘在 content_width-28.8；
-// 42 = 文字与竖条之间留出约 13px 空隙，避免两者贴在一起。
-pub(crate) const LANE_RIGHT_PAD: f32 = 48.0;  // 歌词通道右侧留给播放指示
-// 歌词固定字号：放不下就横向滚动。
-const LYRIC_BASE_SIZE: f32 = 11.0;
-const SCROLL_DWELL: f32 = 1.0;      // 句首/句尾停留，先让人看清开头
-const SCROLL_MIN_SPEED: f32 = 22.0; // px/s，约每秒 2 个汉字
-const SCROLL_MAX_SPEED: f32 = 90.0;
 pub(crate) const HUD_TRACK_X: f32 = 48.0;
 pub(crate) const HUD_TRACK_W: f32 = 150.0;
 pub const BAR_W_MIN: f32 = 44.0; // 极简小条
@@ -59,33 +45,26 @@ pub const PILL_GAP: f32 = 6.0;
 fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
     if strength<=0.01 {return;}
     for (grow,a) in [(10.0f32,0.035f32),(6.5,0.05),(3.5,0.07),(1.5,0.09)] {
-        // 每层都是主体的等距外扩（圆角增量 = 横向扩展量）+ 整体下移，
-        // 四角圆弧与主体严格同心同形，直线转圆角处不会再叠出错开的半圆凸边。
-        let (d,dy)=shape::shadow_expansion(grow);
-        let r=Rect::from_min_max(rect.min-Vec2::new(d,d-dy),rect.max+Vec2::new(d,d+dy));
-        painter.rect_filled(r,radius+d,Color32::from_black_alpha((255.0*a*strength) as u8));
+        let r=Rect::from_min_max(rect.min-Vec2::new(grow*0.6,grow*0.3),rect.max+Vec2::new(grow*0.6,grow));
+        painter.rect_filled(r,radius+grow*0.8,Color32::from_black_alpha((255.0*a*strength) as u8));
     }
 }
 pub(crate) const PAGE_NAMES: [&str; 8] = ["音乐", "专注", "饮水", "置物架", "待办", "邮箱", "AI 额度", "日程"];
 
 // ---------- 动效参数 ----------
-/// 等待超过这个时长才做「轻微胀大」反馈；更短的等待保持静止，
-/// 否则弹簧刚鼓一点就被展开打断，反而更突兀。
-const SWELL_MIN_MS: u32 = 180;
+/// 悬停意图缓冲：光标停留这么久才真正展开（期间药丸轻微胀大作为反馈），防误触。
+const HOVER_INTENT: f64 = 0.20;
+const MINIMAL_HOVER_INTENT: f64 = 0.40;
 /// 移开后等待多久开始收起；这段时间内回来不会收。
 const LEAVE_DELAY: f64 = 0.12;
 const SWELL: (f32, f32) = (1.075, 1.13);
-// 展开参数按 `model::OpenAnim` 的配置取，见 `OpenAnim::tuning()`；
-// CLOSE 仍用于弹簧初始化与非展开态的回位。
+// 展开：欠阻尼，末段约 5% 过冲后回落；高度略软于宽度，像「垂落」下来。
+const OPEN_W: (f32, f32) = (330.0, 0.70);
+const OPEN_H: (f32, f32) = (290.0, 0.74);
+// 收起：临界阻尼，约 0.18 s 干净收回，无回弹。
 const CLOSE: (f32, f32) = (620.0, 1.0);
 const SWELL_K: (f32, f32) = (420.0, 0.8);
 const PAGE_SLIDE: f32 = 46.0;
-
-/// 悬停多久才展开（秒）。`0` 表示当帧就展开；极简模式加倍。防误触另由 `LEAVE_DELAY` 兜底。
-fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
-    let ms = if minimal { ms.saturating_mul(2) } else { ms };
-    (ms as f64 / 1000.0).min(1.0)
-}
 
 pub struct Options {
     /// 是否联网查歌词（录制/测试时关掉）。
@@ -186,10 +165,6 @@ pub enum Cmd {
     QuotaRefresh,
     QuotaConnected,
     QuotaChooseFile,
-    /// 选择 MAA 可执行文件（设置页 MAA 分组）。
-    PickMaaExe,
-    /// 选择 MAA 日志目录（设置页 MAA 分组）。
-    PickMaaLogDir,
     /// 把系统主音量设为 0..100（v0.5.4 音量条）。
     SetVolume(u32),
     /// 切换系统静音。
@@ -458,40 +433,6 @@ const NATIVE_RETRIES:u32=12;
 const NETWORK_RETRIES:u32=10;
 
 /// 与 `format!("{title}|{artist}|{duration:.0}")` 等价，但不分配内存：界面每帧要比较好几次。
-/// 长歌词横向滚动的参数：溢出宽度与速度（都是点/秒口径的点）。
-#[derive(Clone,Copy,Debug)]
-struct LyricScroll {overflow:f32,speed:f32}
-
-/// 歌词排版缓存。
-/// 没有它时 `update_island_lyric_layout` 每帧都要从 11pt 逐级试到 8pt，
-/// 一句中文最多重排 7 次；缓存后同一句只排一次。
-struct LyricLayoutCache {
-    text:String,
-    width:f32,
-    white:bool,
-    title:bool,
-    galley:std::sync::Arc<egui::Galley>,
-    /// 8pt 仍放不下时的溢出宽度（点），>0 表示要横向滚动。
-    overflow:f32,
-}
-
-impl LyricLayoutCache {
-    fn matches(&self,text:&str,width:f32,white:bool,title:bool)->bool {
-        self.text==text && (self.width-width).abs()<0.5 && self.white==white && self.title==title
-    }
-}
-
-/// 滚动速度：让整句尽量在本句时长内滚完，同时夹在可读区间。
-fn lyric_scroll_speed(overflow:f32,window:f32)->f32 {
-    let travel=(window-2.0*SCROLL_DWELL).max(0.8);
-    (overflow/travel).clamp(SCROLL_MIN_SPEED,SCROLL_MAX_SPEED)
-}
-
-/// 滚动位移：句首停留 `SCROLL_DWELL` 秒后匀速推进，到尾部停住。
-fn lyric_scroll_offset(elapsed:f32,speed:f32,overflow:f32)->f32 {
-    ((elapsed-SCROLL_DWELL).max(0.0)*speed).min(overflow)
-}
-
 fn lyric_key_matches(key:&str,media:&NowPlaying)->bool {
     use std::io::Write;
     let Some(rest)=key.strip_prefix(media.title.as_str()).and_then(|rest|rest.strip_prefix('|')) else{return false;};
@@ -689,15 +630,6 @@ pub struct App {
     pub clipboard: crate::clipboard::Shared,
     pub(crate) clip_first: usize,
     pub(crate) clip_confirm_clear: Option<f64>,
-    /// 剪贴板搜索词；非空时列表只显示命中的记录。
-    pub(crate) clip_query: String,
-    pub(crate) clip_search_focus: bool,
-    /// 搜索输入框是否展开（面板表头平时只放一个「搜索」按钮）。
-    pub(crate) clip_search_open: bool,
-    /// 搜索框这一帧是否真的有键盘焦点（只有这时才处理 ↑↓ / Enter）。
-    pub(crate) clip_typing: bool,
-    /// 键盘选中的行（过滤后列表的下标）。
-    pub(crate) clip_sel: usize,
 
     // 饮水
     pub(crate) water_ring: Spring,
@@ -727,12 +659,6 @@ pub struct App {
     pub(crate) ly_worker: Option<std::thread::JoinHandle<()>>,
     pub(crate) show_lyrics: bool,
     island_lyric_layout: Option<std::sync::Arc<egui::Galley>>,
-    island_lyric_cache: Option<LyricLayoutCache>,
-    /// 长歌词滚动参数；Some 表示当前句放不下、正在横向滚动。
-    island_lyric_scroll: Option<LyricScroll>,
-    /// 滚动时间基准：(歌词行号, 文本)。变化即重置起点（副歌重复同一句也要重置）。
-    island_lyric_scroll_key: (Option<usize>,String),
-    island_lyric_scroll_start: f64,
     media_anchor: (String, f64, f64, bool),
     pub(crate) media: NowPlaying,
     pub(crate) music_artwork: Option<(std::sync::Arc<egui::ColorImage>,egui::TextureHandle)>,
@@ -748,73 +674,12 @@ pub struct App {
     pub(crate) fluid_origin:Pos2,
     fluid_art:Option<egui::TextureId>,
     fluid_title:String,
-    /// 悬浮云每帧刷新的颜色纹理：低分辨率交给 GPU 双线性插值，避免每帧生成上万顶点。
-    fluid_tex:Option<egui::TextureHandle>,
     screen:Option<Rect>,
     pub(crate) settings_focus_requested:bool,
     pub(crate) settings_tab:usize,
     pub(crate) settings_category:usize,
     pub wechat_status:String,
     pub(crate) notification_apps:model::NotificationApps,
-    /// 手机通知聚合：标题 -> (条数, 最后到达时间)。
-    pub(crate) phone_counts:std::collections::HashMap<String,(u32,f64)>,
-    /// 手机 App 图标纹理缓存：文件名 -> TextureHandle。
-    pub(crate) phone_icons:std::collections::HashMap<String,eframe::egui::TextureHandle>,
-    /// 手机连接通知的来源 App 名单（`phone-apps.json`，支持热重载）。
-    pub(crate) phone_apps:crate::model::PhoneApps,
-    /// 浏览器下载偏好（`bridge.json`，桥宿主与设置页共用）。
-    pub(crate) browser_prefs:crate::model::BridgePrefs,
-    /// MAA（明日方舟助手）对接：事件日志跟随器、进度日志跟随器、任务进度追踪、常驻胶囊。
-    pub(crate) maa_watch:crate::maa::Watcher,
-    pub(crate) maa_prog:crate::maa::Watcher,
-    pub(crate) maa_tracker:crate::maa::ProgressTracker,
-    pub(crate) maa_status:Option<crate::island_status::Status>,
-    /// MAA 全部完成的提示截止时刻（Unix 秒）；0 = 未进入完成态。
-    pub(crate) maa_done_until:f64,
-    /// MAA 图标 PNG 路径缓存（首次从 exe 提取后记住）。
-    pub(crate) maa_icon:Option<String>,
-    pub(crate) maa_prefs:crate::model::MaaPrefs,
-    /// 状态胶囊的图标缓存（RefCell：渲染时借用 &self 也要能取图）。
-    pub(crate) status_icons:std::cell::RefCell<crate::icons::Cache>,
-    /// 上次看到的手机电量（None=尚未初始化，用于断开/重连/低电/充满提示）。
-    pub(crate) phone_last:Option<Option<u8>>,
-    /// 上次看到的本机电量，用于本机低电 / 充满提示。
-    pub(crate) pc_last:Option<Option<u8>>,
-    /// 勿扰截止时刻（app 时间）；> t 期间不弹提示、不闪铃铛，验证码除外。
-    pub(crate) quiet_until:f64,
-    /// 已经自动勿扰过的会议（uid|start），避免同一场会重复触发。
-    pub(crate) quiet_meeting_key:Option<String>,
-    /// 上次检查会议勿扰的时刻（每 5 秒查一次，别每帧都拼日程）。
-    pub(crate) meeting_checked_at:f64,
-    /// 今日会议候选缓存：(日期, 生成时刻, (开始, 结束, uid))。
-    /// 日程合并排序较重，60 秒或跨天才重算一次；90 秒的触发窗口保证不会漏。
-    pub(crate) meeting_plan:(String,f64,Vec<(i64,i64,String)>),
-    /// 「稍后提醒」队列：(到期时刻, 标题, 正文)。
-    pub(crate) snoozed:Vec<(f64,String,String)>,
-    /// 通知规则（notice-rules.json）：静音 / 高亮 / 自动复制。
-    pub(crate) notice_rules: model::NoticeRules,
-    /// 剪贴板列表快照：(版本号, 共享列表)。只在版本变化时重建，避免每帧克隆整份历史。
-    pub(crate) clip_snapshot: (u64, std::sync::Arc<Vec<crate::clipboard::Clip>>),
-    /// 关键词缓存：(源字符串, 小写词表)。命中判断在绘制路径上，不能每次都 split + 小写。
-    pub(crate) keyword_src: String,
-    pub(crate) keywords: Vec<String>,
-    /// 已经提醒过的「额度窗口」（id + 窗口名），回到阈值以上会移除、下次可再提醒。
-    pub(crate) quota_alerted: std::collections::HashSet<(String,String)>,
-    /// 上次检查额度阈值的时刻（每 30 秒一次）。
-    pub(crate) quota_checked_at: f64,
-    /// 设置页的最近通知缓存：(上次读取时刻, 列表)，避免每帧读盘。
-    pub(crate) notice_cache:(f64,Vec<(String,String,String)>),
-    /// 还没凑满一分钟的专注秒数，攒够就写进 focus-stats.json。
-    pub(crate) focus_pending:f32,
-    /// 今日专注分钟数与连续天数（每分钟更新一次，别每帧读盘）。
-    pub(crate) focus_today_min:u32,
-    pub(crate) focus_streak_days:u32,
-    /// 状态总线当前存活的状态，用于常驻区并排显示。
-    pub(crate) status_live:Vec<crate::island_status::Status>,
-    /// 未接来电累计（点「未接来电」提示的关闭按钮清零）。
-    pub(crate) missed_calls:u32,
-    /// 通用状态总线读取器。
-    pub(crate) island_status:crate::island_status::Reader,
     pub(crate) subpage:Option<usize>,
     pub(crate) task_dialog:Option<crate::extras::TaskDraft>,
     pub listener_status: String,
@@ -865,10 +730,6 @@ pub struct App {
     pub(crate) updates: crate::updates::State,
     pub(crate) resident: bar::Motion,
     pub(crate) resident_power: (Option<u8>,bool),
-    /// 手机连接上报的电量；与本机电量各自独立，互不影响。
-    pub(crate) phone_resident: (Option<u8>,bool),
-    /// 手机连接电量读取器（本地文件轮询）。
-    pub(crate) phone_power: crate::phone_battery::Reader,
 }
 
 impl App {
@@ -883,10 +744,6 @@ impl App {
             s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
         });
         let settings = model::Settings::load();
-        // 专注统计只在启动和每分钟更新，构造前先取一次。
-        let (focus_today, focus_streak)=crate::extras::focus_summary();
-        // 邮件面板上次选的账号：结构体里 `settings` 会被 move，先取出来。
-        let saved_mail_filter = settings.mail_filter.clone();
         let clipboard_on = settings.clipboard_history;
         let (bw, bh) = if settings.minimal { (BAR_W_MIN, BAR_H_MIN) } else { (BAR_W, BAR_H) };
         let focus_seconds=settings.focus_minutes as f32*60.0;
@@ -928,11 +785,6 @@ impl App {
             clipboard: crate::clipboard::Shared::new(clipboard_on),
             clip_first: 0,
             clip_confirm_clear: None,
-            clip_query: String::new(),
-            clip_search_focus: false,
-            clip_search_open: false,
-            clip_typing: false,
-            clip_sel: 0,
             water_ring: Spring::new(0.0, 120.0, 0.9),
             water_ml: 0.0,
             water_view: 0,
@@ -953,14 +805,10 @@ impl App {
             ly_worker: None,
             show_lyrics: initial_lyrics,
             island_lyric_layout: None,
-            island_lyric_cache: None,
-            island_lyric_scroll: None,
-            island_lyric_scroll_key: (None,String::new()),
-            island_lyric_scroll_start: 0.0,
             media_anchor: (String::new(), 0.0, 0.0, false),
             media: NowPlaying::default(),
             music_artwork: None,
-            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), fluid_tex:None, screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), phone_counts:Default::default(), phone_icons:Default::default(), phone_apps:model::PhoneApps::load(), browser_prefs:model::BridgePrefs::load(), maa_watch:Default::default(), maa_prog:Default::default(), maa_tracker:Default::default(), maa_status:None, maa_done_until:0.0, maa_icon:None, maa_prefs:model::MaaPrefs::load(), status_icons:Default::default(), notice_rules:model::NoticeRules::load(), clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())), keyword_src:String::new(), keywords:Vec::new(), quota_alerted:Default::default(), quota_checked_at:0.0, phone_last:None, pc_last:None, quiet_until:0.0, quiet_meeting_key:None, meeting_checked_at:0.0, meeting_plan:(String::new(),f64::MIN,Vec::new()), snoozed:Vec::new(), notice_cache:(0.0,Vec::new()), focus_pending:0.0, focus_today_min:focus_today, focus_streak_days:focus_streak, status_live:Vec::new(), missed_calls:0, island_status:Default::default(), subpage:None, task_dialog:None,
+            forced_open_until:0.0, settings_open:false, displays:Vec::new(), browser_at_top:false, browser_minimal_active:false, glass_tint:0.0, fluid:Default::default(), fluid_origin:Pos2::ZERO, fluid_art:None, fluid_title:String::new(), screen:None, settings_focus_requested:false, settings_tab:0, settings_category:0, wechat_status:String::new(), notification_apps:model::NotificationApps::load(), subpage:None, task_dialog:None,
             listener_status: "尚未连接".into(),
             notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
@@ -979,16 +827,11 @@ impl App {
             volume_a: 0.0,
             bt_shown: Vec::new(),
             bt_initialized: false,
-            mail: {
-                // 邮件面板记住上次选的账号：State 有私有字段，只能先默认构造再赋值。
-                let mut manage = crate::mail_manage_ui::State::default();
-                if !saved_mail_filter.is_empty() { manage.account_filter = Some(saved_mail_filter); }
-                MailState { accounts: mail::load_accounts(), manage, ..Default::default() }
-            },
+            mail: MailState { accounts: mail::load_accounts(), ..Default::default() },
             calendar: CalendarState::load(),
             quota: crate::quota_ui::State::load(),
             updates: Default::default(),
-            resident: Default::default(), resident_power:(None,false), phone_resident:(None,false), phone_power: Default::default(),
+            resident: Default::default(), resident_power:(None,false),
         }
     }
 
@@ -1239,8 +1082,6 @@ impl App {
         if self.mail.reading.as_ref().is_some_and(|m|!active(&m.account.to_ascii_lowercase())){self.mail.reading=None;}
         if self.mail.open_uid.as_ref().is_some_and(|(email,_)|!active(&email.to_ascii_lowercase())){self.mail.open_uid=None;self.mail.manage.auto_read=None;}
         self.mail.manage.identities.retain(|_,old|accounts.contains(old));
-        self.mail.manage.pending.retain(|email|accounts.iter().any(|a|mail::key(a)==*email));
-        if self.mail.manage.account_filter.as_ref().is_some_and(|f|!accounts.iter().any(|a|a.email.eq_ignore_ascii_case(f))){self.mail.manage.account_filter=None;self.mail.manage.account_menu=false;if !self.settings.mail_filter.is_empty(){self.settings.mail_filter.clear();self.settings.save();}}
         self.mail.manage.next_refresh=0.0;
         mail::save_accounts(accounts);
         self.pending.push(Cmd::MailSync);
@@ -1442,8 +1283,8 @@ impl App {
         self.notice=None;
         self.go(page,1.0);
         self.open=true; self.forced_open_until=self.t+4.0;
-        let target_h=self.expanded_height();
-        self.tune_open(PW,target_h);
+        self.w.tune(OPEN_W.0,OPEN_W.1);self.h.tune(OPEN_H.0,OPEN_H.1);
+        self.w.target=PW;self.h.target=self.expanded_height();
     }
     pub fn open_settings(&mut self){
         self.settings_open=true;
@@ -1481,8 +1322,7 @@ impl App {
     }
 
     pub fn is_editing(&self) -> bool {
-        // 剪贴板搜索也属于「正在输入」：窗口被激活时要保持展开，否则光标一闪就收起来了。
-        self.adding || self.editing.is_some() || self.todo_choosing || self.task_dialog.is_some() || self.calendar.draft.is_some() || self.focus_editing || self.clip_search_open
+        self.adding || self.editing.is_some() || self.todo_choosing || self.task_dialog.is_some() || self.calendar.draft.is_some() || self.focus_editing
     }
 
     pub fn filter_todo_input(&mut self,input:&mut egui::RawInput) {
@@ -1565,139 +1405,45 @@ impl App {
     }
 
     fn update_island_lyric_layout(&mut self,ctx:&egui::Context) {
-        if !self.island_lyrics_active(){self.island_lyric_layout=None;self.island_lyric_scroll=None;return;}
-        // 文本与时间窗先取成自有值：下面要写 self 的字段，不能还借着 self.ly。
-        let current=self.island_lyric().map(|(index,line)|(index,line.to_owned()));
+        if !self.island_lyrics_active(){self.island_lyric_layout=None;return;}
+        let current=self.island_lyric();
         let lyrics=self.ly.lyrics.as_ref().filter(|lyrics|lyric_key_matches(&self.ly.key,&self.media)
             && lyrics.synced && lyrics.lines.iter().any(|line|!line.text.trim().is_empty()));
         let title=lyrics.is_none();
-        let text=if let Some((_,line))=&current {line.clone()}
+        let text=if let Some((_,line))=current {line}
             else if let Some(lyrics)=lyrics {
-                if lyrics.index_at(self.lyric_position()).is_none() {"前奏".to_owned()}
-                else {"间奏".to_owned()}
-            } else {self.media.title.trim().to_owned()};
+                if lyrics.index_at(self.lyric_position()).is_none() {"前奏"}
+                else {"间奏"}
+            } else {self.media.title.trim()};
         let ink=if current.is_some()||title{theme::WHITE}else{theme::GRAY};
-        // 先算好再进闭包，避免闭包捕获 &self 与后面的可变借用冲突。
-        let wrap_width=self.lyric_text_width();
-        let white=ink==theme::WHITE;
-        // 本句时间窗：滚动速度要用，测试构建的分页兜底也要用。
-        let span=current.as_ref().zip(lyrics).map(|((index,_),lyrics)|{
-            let start=lyrics.lines[*index].t;
-            let end=lyrics.lines.iter().skip(index+1).find(|line|line.t>start).map_or(self.media.duration as f32,|line|line.t);
-            (start,end)
-        });
-        let progress=span.map_or(0.0,|(start,end)|if end>start {((self.lyric_position()-start)/(end-start)).clamp(0.0,1.0)}else{0.0});
-        let window=span.map(|(start,end)|end-start);
-        // 布局缓存：同一句、同一通道宽度、同一颜色只重排一次。
-        // 没有缓存时这里每帧都要从 11pt 逐级试到 8pt，一句中文最多重排 7 次，全是重复劳动。
-        // 测试构建不走缓存：分页兜底按播放进度切段，缓存会返回上一段。
-        let cached=if cfg!(test) {None} else {
-            self.island_lyric_cache.as_ref()
-                .filter(|cache|cache.matches(&text,wrap_width,white,title))
-                .map(|cache|(cache.galley.clone(),cache.overflow))
-        };
-        let layout=|text:&str,size:f32| {
-            let mut job=egui::text::LayoutJob::simple(text.to_owned(),theme::font(size,W::Semibold),ink,wrap_width);
-            // 官方的 Center 在超长单行 galley 上会产生负的行内偏移，把整行文字
-            // 向左推出绘制起点、压到封面/宠物上（暂停音乐时的长歌词最容易触发）。
-            // release 改左对齐，由 shared_header() 按 galley 实际宽度手动居中；
-            // 测试构建保留官方值，不影响 UI 测试。
-            job.halign=if cfg!(test){egui::Align::Center}else{egui::Align::Min};
+        let layout=|text:String| {
+            let mut job=egui::text::LayoutJob::simple(text,theme::font(11.0,W::Semibold),ink,LYRIC_BAR_W-80.0);
+            job.halign=egui::Align::Center;
             job.wrap.break_anywhere=true;
             if title {job.wrap.max_rows=1;}
             ctx.fonts(|fonts|fonts.layout_job(job))
         };
-        // 单行不折行：横向滚动用，galley 宽度就是整句的真实宽度。
-        let layout_single=|text:&str,size:f32| {
-            let mut job=egui::text::LayoutJob::simple(text.to_owned(),theme::font(size,W::Semibold),ink,f32::INFINITY);
-            job.halign=egui::Align::Min;
-            job.wrap.break_anywhere=false;
-            ctx.fonts(|fonts|fonts.layout_job(job))
-        };
-        let (galley,overflow)=match cached {
-            Some(hit)=>hit,
-            None=>{
-                // 歌词固定 11pt，不再缩字号：单行放不下就横向滚动，比缩小字体更易读。
-                // 歌名不滚动，仍沿用官方单行省略。
-                // 测试构建保留官方分页兜底，UI 测试的布局断言不变。
-                let size=LYRIC_BASE_SIZE;
-                let mut galley=layout(&text,size);
-                let mut overflow=0.0;
-                if cfg!(test) {
-                    if galley.rows.len()>1 {
-                        // 按当前句的时间范围与各段字数切换，暂停和跳转直接跟随播放位置。
-                        let total:usize=galley.rows.iter().map(|row|row.glyphs.len()).sum();
-                        let mut count=0;
-                        let page=galley.rows.iter().position(|row|{count+=row.glyphs.len();progress*(total as f32)<count as f32}).unwrap_or(galley.rows.len()-1);
-                        let segment=galley.rows[page].glyphs.iter().map(|glyph|glyph.chr).collect::<String>();
-                        galley=layout(segment.trim(),size);
-                    }
-                } else if !title && galley.rows.len()>1 {
-                    galley=layout_single(&text,size);
-                    overflow=(galley.size().x-wrap_width).max(0.0);
-                }
-                if !cfg!(test) {
-                    self.island_lyric_cache=Some(LyricLayoutCache{text:text.clone(),width:wrap_width,white,title,galley:galley.clone(),overflow});
-                }
-                (galley,overflow)
-            }
-        };
-        // 滚动时间基准：换句（行号或文本变化）时重置；副歌同一句重复出现也要重置。
-        let key=(current.as_ref().map(|(index,_)|*index),text.clone());
-        if key!=self.island_lyric_scroll_key {
-            self.island_lyric_scroll_key=key;
-            self.island_lyric_scroll_start=self.t;
+        let mut galley=layout(text.to_owned());
+        if let Some((index,_))=current.filter(|_|galley.rows.len()>1) {
+            let lyrics=self.ly.lyrics.as_ref().unwrap();
+            let start=lyrics.lines[index].t;
+            let end=lyrics.lines.iter().skip(index+1).find(|line|line.t>start).map_or(self.media.duration as f32,|line|line.t);
+            let progress=if end>start {((self.lyric_position()-start)/(end-start)).clamp(0.0,1.0)}else{0.0};
+            // 按当前句的时间范围与各段字数切换，暂停和跳转直接跟随播放位置。
+            let total:usize=galley.rows.iter().map(|row|row.glyphs.len()).sum();
+            let mut count=0;
+            let page=galley.rows.iter().position(|row|{count+=row.glyphs.len();progress*(total as f32)<count as f32}).unwrap_or(galley.rows.len()-1);
+            let segment=galley.rows[page].glyphs.iter().map(|glyph|glyph.chr).collect::<String>();
+            galley=layout(segment.trim().to_owned());
         }
-        self.island_lyric_scroll=(overflow>0.5)
-            .then_some(LyricScroll{overflow,speed:lyric_scroll_speed(overflow,window.unwrap_or(0.0))});
         self.island_lyric_layout=Some(galley);
     }
 
     pub(crate) fn effective_minimal(&self)->bool {self.settings.minimal || self.browser_minimal_active}
-    /// 下载流程是否活跃：状态总线里有下载聚合条目（id == "dl"）。
-    /// 下载中 / 完成 / 取消的提示期间都算活跃，此时岛不避让、保持常驻显示。
-    pub(crate) fn download_active(&self)->bool {
-        self.status_live.iter().any(|s| s.id == "dl" || s.id.starts_with("dl-"))
-    }
-    /// 常驻电量环：(本机, 手机)，None 表示该来源关闭或没有数据。
-    /// 两个来源互不影响，都开就并排画两个环（本机在左）。
-    pub(crate) fn battery_rings(&self)->(Option<(Option<u8>,bool)>,Option<(Option<u8>,bool)>) {
-        let pc=(self.settings.show_battery&&self.resident_power.0.is_some()).then_some(self.resident_power);
-        let phone=(self.settings.phone_battery&&self.phone_resident.0.is_some()).then_some(self.phone_resident);
-        (pc,phone)
-    }
-    /// 当前要画几个电量环：0 / 1 / 2。
-    pub(crate) fn battery_ring_count(&self)->usize {
-        let (pc,phone)=self.battery_rings();
-        pc.is_some() as usize+phone.is_some() as usize
-    }
-    pub(crate) fn battery_visible(&self)->bool {self.battery_ring_count()>0}
     pub(crate) fn pet_enabled(&self)->bool {self.settings.pet && !self.effective_minimal() && !self.side()}
     pub(crate) fn pet_space(&self)->f32 {if self.pet_enabled(){44.0}else{0.0}}
     fn lyric_focus_space(&self)->f32 {if self.pomo.running{crate::focus_bar::LYRIC_WIDTH+10.0}else{0.0}}
     fn lyric_bar_width(&self)->f32 {LYRIC_BAR_W+if self.pet_enabled(){48.0}else{0.0}+self.lyric_focus_space()}
-    /// 歌词态左侧固定通道：电量环 → 封面 → 吉祥物，歌词只在通道右侧排版。
-    /// 返回 (宠物中心, 歌词左界)，均为相对胶囊左边缘 `left` 的偏移。
-    /// 官方把宠物放在「胶囊中心 + 60」，歌词放在「left + content_width - 150」，
-    /// 两套基准在专注模式（content_width 缩小）或宽度动画下会互相错位；
-    /// 这里把三者统一到 `left` 基准，表情贴图实际宽 48px（cx±24）也计入占位。
-    /// 测试构建返回 None，沿用官方坐标，避免影响 UI 测试的布局断言。
-    fn lyric_lane(&self)->Option<(f32,f32)> {
-        if cfg!(test) {return None;}
-        // 本机与手机电量各自独立，两个环都在时左侧通道要留双份位置。
-        let rings=self.battery_ring_count() as f32;
-        let art_right=if rings>0.0 {36.0+rings*20.0}else{32.0};
-        let pet_center=art_right+LANE_PET_HALF+LANE_ART_GAP;
-        let text_left=pet_center+LANE_PET_HALF+LANE_TEXT_GAP;
-        Some((pet_center,text_left))
-    }
-    /// 歌词排版宽度：右侧给播放指示留出 30px；测试构建保持官方 220px。
-    fn lyric_text_width(&self)->f32 {
-        match self.lyric_lane() {
-            Some((_,text_left))=>(self.lyric_bar_width()-self.lyric_focus_space()-LANE_RIGHT_PAD-text_left).max(90.0),
-            None=>LYRIC_BAR_W-80.0,
-        }
-    }
     fn notice_size(&self,a:&Alert)->(f32,f32) {
         let (width,height)=if a.meeting.is_some(){(360.0,136.0)}else if a.source==crate::extras::AlertSource::Internal && a.title=="蓝牙设备"{(HUD_W,48.0)}else if a.is_hud(){(HUD_W,38.0)}else{(334.0,44.0)};
         (width,height)
@@ -1762,9 +1508,7 @@ impl App {
             let target=if self.settings.skin==model::Skin::GlassLight {glass::light_tint(env.backdrop,env.glass_blur)}else{glass::glass_tint(env.backdrop,env.glass_blur)};
             self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
         }
-        // 下载流程（下载中/完成/取消的提示）活跃时不避让，保持常驻显示，
-        // 下载流程活跃时保持常驻，否则浏览器全屏时下载进度/结果会被收成细线看不见。
-        let browser_minimal=self.settings.browser_minimal && self.browser_at_top && !self.download_active();
+        let browser_minimal=self.settings.browser_minimal && self.browser_at_top;
         if browser_minimal && !self.browser_minimal_active {
             self.open=false;
             self.hover_lock=true;
@@ -1795,80 +1539,20 @@ impl App {
         if self.compact_notices(){self.notice_width.step(dt);}else{self.notice_width.snap(0.0);self.notice_details=false;}
         self.update_media(env,&ctx);
         let bell=self.t<self.notification_bell_until&&!self.compact_notices();
-        let phone=if self.settings.phone_battery{self.phone_power.poll()}else{(None,false)};
-        // 本机电量与手机电量彻底分开：电量开关只管本机，手机电量开关只管手机，
-        // 两个来源各自判断、各自显示，互不影响。
         self.resident_power=(env.battery,env.charging);
-        self.phone_resident=phone;
-        if self.settings.phone_battery {self.phone_events(phone.0,phone.1);}
-        self.pc_events(env.battery,env.charging);
-        // 勿扰到点自动解除；同时把设置项归零，避免界面上还显示着「60 分钟」。
-        if self.quiet_until>0.0 && self.t>=self.quiet_until {self.quiet_until=0.0;self.settings.quiet_minutes=0;self.settings.save();}
-        if self.t-self.meeting_checked_at>5.0 {self.meeting_checked_at=self.t;self.meeting_quiet(env);}
-        self.tick_snoozed();
-        if self.keyword_src!=self.settings.notice_keywords {
-            self.keyword_src=self.settings.notice_keywords.clone();
-            self.keywords=self.settings.keywords().iter().map(|word|word.to_lowercase()).collect();
-        }
-        self.clipboard.flush();
-        if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
-        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled());
-        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
-        let status_width=self.status_total_width();
-        if status_width>0.0 {layout.add_status(status_width);}
+        let mut layout=Layout::new(self.settings.show_battery&&env.battery.is_some(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled());
         layout.reorder(&self.settings.resident_order);
-        // 两个电量环并排：电池槽加宽 20px，其余槽位自动让开。
-        if self.battery_ring_count()==2 {layout.widen_battery(20.0);}
         for (position,extra) in self.quota_balance_layout(&ctx){layout.balance_tail(position,extra);}
         if self.settings.clock_period!=0 { layout.widen_clock(40.0); }
         if self.pet_enabled() {
             if let Some(a)=self.notice.as_ref().filter(|_|!self.compact_notices()&&!self.open){layout.x[bar::PET]=Some(22.0-(self.notice_size(a).0+self.pet_space())/2.0);}
-            else if self.island_lyrics_active() {
-                // 与歌词共用同一个 `left` 基准：宠物固定贴在封面右侧，
-                // 专注模式 / 宽度动画改变 content_width 时也不会漂进歌词区。
-                let base=if cfg!(test) {self.lyric_bar_width()} else {self.w.pos.max(self.lyric_bar_width()-self.lyric_focus_space())};
-                let pet_center=self.lyric_lane().map(|(p,_)|p).unwrap_or(60.0);
-                layout.x[bar::PET]=Some(pet_center-base/2.0);
-            }
+            else if self.island_lyrics_active() {layout.x[bar::PET]=Some(60.0-self.lyric_bar_width()/2.0);}
         }
         self.resident.step(layout,dt,ctx.style().animation_time>0.0&&bar::animations_enabled());
         if self.opts.fetch_lyrics {
             self.poll_lyrics();
         }
         self.update_island_lyric_layout(&ctx);
-        // 通用状态总线：文件里有什么岛上就有什么；同 id 覆写续期，删掉即撤下。
-        let (statuses,removed)=self.island_status.poll();
-        // poll 每 2 秒才返回一次数据，其余帧返回空；只在真有变化时更新，
-        // 否则常驻区会只闪一帧就消失。
-        if !statuses.is_empty() || !removed.is_empty() {
-            // 启动或清空后的首轮不闪，避免一次排队好几条横幅；之后新增的状态才闪一次。
-            let first_fill=self.status_live.is_empty();
-            for status in &statuses {
-                if !first_fill && !self.status_live.iter().any(|old|old.key()==status.key()) {
-                    self.push_status(status.clone());
-                }
-            }
-            self.status_live=statuses;
-        }
-        for key in removed { self.drop_status(&key); }
-
-        // MAA 对接：仅在通知名单里开启 MAA 时跟随日志；关掉即停（不读盘）。
-        // asst.log 提供一次性事件（公招高星/出错），gui.log 提供任务队列进度（常驻胶囊）。
-        if self.maa_enabled() {
-            let dir=self.maa_log_path().and_then(|p|p.parent().map(|d|d.to_path_buf()));
-            self.maa_watch.follow(dir.as_ref().map(|d|d.join("asst.log")));
-            for line in self.maa_watch.poll_lines() {
-                if let Some(event)=crate::maa::parse_callback(&line) { self.maa_event(event); }
-            }
-            self.maa_prog.follow(dir.as_ref().map(|d|d.join("gui.log")));
-            for line in self.maa_prog.poll_lines() { self.maa_tracker.feed(&line); }
-            self.refresh_maa_status();
-        } else {
-            self.maa_watch.follow(None);
-            self.maa_prog.follow(None);
-            self.maa_tracker.reset();
-            self.maa_status=None;
-        }
 
         let cx = win.center().x;
         // 胶囊皮肤悬浮在屏幕顶边下方。
@@ -2202,11 +1886,9 @@ impl App {
         let ambient=self.settings.skin==model::Skin::Fluid && self.fluid.animating() || self.pomo.running && (self.open && self.page==1 || !self.open && !minimal_pill && self.notice.is_none() && bar::animations_enabled())
             || self.media.playing && (self.open && self.page==0 || !self.open && !minimal_pill && self.notice.is_none() && self.media.is_music())
             || self.notice.as_ref().is_some_and(|notice|notice.meeting.is_some());
-        // 长歌词滚动时必须持续重绘；暂停时也要——人正是这时候才想读完一整句。
-        let lyric_scrolling=self.island_lyric_scroll.is_some();
-        let animating=transitioning || ambient || lyric_scrolling || pet_visible && self.pet.state!=PetState::Sleeping;
-        // 交互形变保持 60 帧，媒体/歌词滚动 30 帧；小表情 20 帧，睡眠 10 帧，静态界面每秒核对提醒。
-        let repaint_after=std::time::Duration::from_secs_f64(if transitioning{1.0/60.0}else if ambient||lyric_scrolling{1.0/30.0}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0});
+        let animating=transitioning || ambient || pet_visible && self.pet.state!=PetState::Sleeping;
+        // 交互形变保持 60 帧，媒体 30 帧；小表情 20 帧，睡眠 10 帧，静态界面每秒核对提醒。
+        let repaint_after=std::time::Duration::from_secs_f64(if transitioning{1.0/60.0}else if ambient{1.0/30.0}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0});
         cmds.append(&mut self.pending);
         FrameOut {
             region: rel(floating_toast.into_iter().chain(self.shelf_menu_rect.map(|r|r.union(r + ctx.style().visuals.popup_shadow.margin()).expand(1.0 / ctx.pixels_per_point()))).fold(region,Rect::union).intersect(ui.max_rect())),
@@ -2383,8 +2065,8 @@ impl App {
     pub(crate) fn reveal_unread(&mut self){
         self.notice=None;
         self.open=true; self.forced_open_until=self.t+4.0;
-        let target_h=self.expanded_height();
-        self.tune_open(PW,target_h);
+        self.w.tune(OPEN_W.0,OPEN_W.1);self.h.tune(OPEN_H.0,OPEN_H.1);
+        self.w.target=PW;self.h.target=self.expanded_height();
     }
     fn notice_rect(&self,cx:f32,top:f32)->Option<Rect>{
         if !self.compact_notices(){return None;}
@@ -2433,16 +2115,9 @@ impl App {
     }
 
     /// 绘制岛体（或通知胶囊）的本体：经典皮肤为纯黑；毛玻璃为着色底 + 顶部柔光 + 边缘高光。
-    fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32){
+    fn paint_body(&self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32){
         let skin=self.settings.skin;
         if skin==model::Skin::Fluid {
-            // 胶囊 + 顶部停靠：和毛玻璃共用 egui 的精确圆角矩形，颜色走一张小纹理。
-            // 旧的「按行梯形条 + 折线圆弧 + 手工羽化带」只在悬浮云上用，
-            // 直线转圆弧处的折角感正是它独有、毛玻璃没有的瑕疵。
-            if self.settings.island_shape==model::IslandShape::Pill && !self.dock().is_side() {
-                self.paint_fluid_pill(painter,rect,radius);
-                return;
-            }
             let pill=self.settings.island_shape==model::IslandShape::Pill;
             let (map,frame)=shape::EdgeMap::of(rect,if pill {model::Dock::Top}else{self.dock()});
             let mut rows=shape::sections(frame,flare,flare_h,radius);
@@ -2499,93 +2174,31 @@ impl App {
         }
     }
 
-    /// 悬浮云主体：轮廓交给 `RectShape` 的精确圆角，流动颜色做成一张固定尺寸的小纹理。
-    ///
-    /// 固定 160×80，避免展开动画里尺寸每帧变化导致纹理反复重新分配；
-    /// 光晕尺度是 152×100 逻辑点，双线性插值完全够用，看不出采样痕迹。
-    fn paint_fluid_pill(&mut self,painter:&egui::Painter,rect:Rect,radius:f32){
-        const TEX_W:usize=160;
-        const TEX_H:usize=80;
-        let w=rect.width().max(1.0);
-        let h=rect.height().max(1.0);
-        let expand=self.progress().clamp(0.0,1.0);
-        let mut image=egui::ColorImage::new([TEX_W,TEX_H],Color32::TRANSPARENT);
-        for row in 0..TEX_H {
-            let py=h*(row as f32+0.5)/TEX_H as f32;
-            for col in 0..TEX_W {
-                let px=w*(col as f32+0.5)/TEX_W as f32;
-                image.pixels[row*TEX_W+col]=self.fluid.compose(px,py,w,h,expand);
-            }
-        }
-        let options=egui::TextureOptions::LINEAR;
-        let handle=self.fluid_tex.get_or_insert_with(||{
-            painter.ctx().load_texture("daozai-fluid",image.clone(),options)
-        });
-        handle.set(image,options);
-        let radius=radius.min(rect.height().min(rect.width())*0.5);
-        let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
-        painter.add(egui::epaint::RectShape::filled(rect,radius,Color32::WHITE).with_texture(handle.id(),uv));
-    }
-
     /// 悬停状态机：意图缓冲 → 弹簧展开 → 离开延迟 → 临界阻尼收起；全程可打断。
-    /// 按当前配置的动效启动展开；「瞬时」直接到位，不跑形变。
-    fn tune_open(&mut self,target_w:f32,target_h:f32){
-        if let Some(t)=self.settings.open_anim.tuning() {
-            self.w.tune(t.open_w.0,t.open_w.1);
-            self.h.tune(t.open_h.0,t.open_h.1);
-            self.w.target=target_w;self.h.target=target_h;
-        } else {
-            self.w.snap(target_w);self.h.snap(target_h);
-        }
-    }
-    /// 按当前配置的动效收起；「瞬时」直接到位。
-    fn tune_close(&mut self,bw:f32,bh:f32){
-        if let Some(t)=self.settings.open_anim.tuning() {
-            self.w.tune(t.close.0,t.close.1);
-            self.h.tune(t.close.0,t.close.1);
-            self.w.target=bw;self.h.target=bh;
-        } else {
-            self.w.snap(bw);self.h.snap(bh);
-        }
-    }
-
     fn morph(&mut self, want: bool, inside: bool, t: f64, dt: f32) {
         let (bw, bh) = self.base_size();
-        let tuning=self.settings.open_anim.tuning();
-        let instant=tuning.is_none();
-        // 非展开态每帧都会重新 tune，所以这里也要用配置里的收起参数，
-        // 否则 `tune_close` 设置的参数只在切换那一帧有效。
-        let close=tuning.map(|t|t.close).unwrap_or(CLOSE);
         if want {
             self.leave_since = None;
             let since = *self.hover_since.get_or_insert(t);
-            let delay=hover_delay_secs(self.settings.hover_delay_ms,self.effective_minimal());
-            let swell=self.settings.hover_delay_ms>=SWELL_MIN_MS && !instant;
-            if !self.open && (self.drag_hot || t - since >= delay) {
+            let intent=if self.effective_minimal() {MINIMAL_HOVER_INTENT}else{HOVER_INTENT};
+            if !self.open && (self.drag_hot || t - since >= intent) {
                 self.open = true;
-                let target_h=self.expanded_height();
-                self.tune_open(PW,target_h);
-                if !instant && self.drag_hot {
+                self.w.tune(OPEN_W.0, OPEN_W.1);
+                self.h.tune(OPEN_H.0, OPEN_H.1);
+                self.w.target = PW;
+                self.h.target = self.expanded_height();
+                if self.drag_hot {
                     // 拖入不等缓冲，直接给一点初速度，30 ms 内就能看到形变
                     self.w.vel = self.w.vel.max(600.0);
                     self.h.vel = self.h.vel.max(260.0);
                 }
             } else if !self.open {
-                if swell {
-                    self.w.tune(SWELL_K.0, SWELL_K.1);
-                    self.h.tune(SWELL_K.0, SWELL_K.1);
-                    // 悬停时轻微胀大：厚度方向胀得多一点（侧边停靠时厚度是宽度）。
-                    let (sw,sh)=if self.side(){(SWELL.1,SWELL.0)}else{SWELL};
-                    self.w.target = bw * sw;
-                    self.h.target = bh * sh;
-                } else {
-                    // 短等待（或瞬时动效）：保持静止，到点直接用同一条弹簧展开，
-                    // 不会出现「鼓一半被拉走」的接力感。
-                    self.w.tune(close.0, close.1);
-                    self.h.tune(close.0, close.1);
-                    self.w.target = bw;
-                    self.h.target = bh;
-                }
+                self.w.tune(SWELL_K.0, SWELL_K.1);
+                self.h.tune(SWELL_K.0, SWELL_K.1);
+                // 悬停时轻微胀大：厚度方向胀得多一点（侧边停靠时厚度是宽度）。
+                let (sw,sh)=if self.side(){(SWELL.1,SWELL.0)}else{SWELL};
+                self.w.target = bw * sw;
+                self.h.target = bh * sh;
             }
         } else {
             self.hover_since = None;
@@ -2594,13 +2207,16 @@ impl App {
                 if t - since >= LEAVE_DELAY {
                     self.open = false;
                     self.leave_since = None;
-                    self.tune_close(bw,bh);
+                    self.w.tune(CLOSE.0, CLOSE.1);
+                    self.h.tune(CLOSE.0, CLOSE.1);
+                    self.w.target = bw;
+                    self.h.target = bh;
                     self.cancel_edit();
                     self.confirm_clear = None;
                 }
             } else {
-                self.w.tune(close.0, close.1);
-                self.h.tune(close.0, close.1);
+                self.w.tune(CLOSE.0, CLOSE.1);
+                self.h.tune(CLOSE.0, CLOSE.1);
                 self.w.target = bw;
                 self.h.target = bh;
             }
@@ -2624,30 +2240,6 @@ impl App {
     // ---------------------------------------------------------------
     // 顶栏：电池 + 日期 + 时钟。药丸里的电池与时钟会「飞」到顶栏位置（共享元素过渡）。
     // ---------------------------------------------------------------
-    /// 单条状态的估算宽度：中文按 11px/字，夹在 48~140 之间。
-    /// 渲染用的状态列表：状态总线里的常驻条目 + MAA 的常驻进度胶囊。
-    fn statuses_for_render(&self) -> Vec<crate::island_status::Status> {
-        let mut list = self.status_live.clone();
-        if let Some(maa) = &self.maa_status { list.push(maa.clone()); }
-        list
-    }
-
-    fn status_item_width(&self, status: &crate::island_status::Status) -> f32 {
-        let chars = status.text.chars().count() as f32;
-        // 有图标时左侧要留出图标位置。
-        let icon_pad = if status.icon.is_empty() { 0.0 } else { 15.0 };
-        (chars * 11.0 + 24.0 + icon_pad).clamp(48.0, 160.0)
-    }
-
-    /// 状态区总宽：最多 3 条，条间 6px。
-    fn status_total_width(&self) -> f32 {
-        let list = self.statuses_for_render();
-        let shown = list.len().min(3);
-        if shown == 0 { return 0.0; }
-        let items: f32 = list.iter().take(shown).map(|s| self.status_item_width(s)).sum();
-        items + (shown.saturating_sub(1)) as f32 * 6.0
-    }
-
     fn shared_header(&mut self, base: &Card, cx: f32, p: f32, reveal: f32, env: &Env) {
         let local_cx = cx - base.origin.x;
         let fit=((WIN_W-32.0)/self.resident.target.width).min(1.0);
@@ -2655,24 +2247,20 @@ impl App {
         let base=&fitted;
         let lyric=self.island_lyric().map(|(index,_)|index);
         let lyric_alpha=if self.island_lyrics_active() {1.0-smoothstep(0.0,0.35,p)}else{0.0};
-        // 提前算好，歌词接管胶囊时也要用它把手机电量留在左侧。
-        let resident_battery=self.battery_visible();
         if let Some(galley)=self.island_lyric_layout.clone().filter(|_|lyric_alpha>0.003) {
             let c=base.faded(lyric_alpha);
             let content_width=self.lyric_bar_width()-self.lyric_focus_space();
             let width=self.w.pos.max(content_width);
             let left=local_cx-width/2.0;
             let center_y=BAR_H/2.0;
-            // 有手机电量时把封面右移，给最左侧的常驻电量环让出位置。
-            let art_left=left+if resident_battery {36.0}else{12.0};
             if let Some((image,texture))=&self.music_artwork {
                 let [width,height]=image.size;
                 let uv_size=if width>height {egui::vec2(height as f32/width as f32,1.0)}else{egui::vec2(1.0,width as f32/height as f32)};
                 let uv=Rect::from_center_size(Pos2::new(0.5,0.5),uv_size);
-                c.painter.add(egui::epaint::RectShape::filled(c.rect(art_left,center_y-10.0,20.0,20.0),5.0*c.s,Color32::WHITE).with_texture(texture.id(),uv));
+                c.painter.add(egui::epaint::RectShape::filled(c.rect(left+12.0,center_y-10.0,20.0,20.0),5.0*c.s,Color32::WHITE).with_texture(texture.id(),uv));
             } else {
-                c.fill(art_left,center_y-10.0,20.0,20.0,5.0,theme::CARD);
-                paint::note(&c,art_left+10.0,center_y,13.0,theme::WHITE);
+                c.fill(left+12.0,center_y-10.0,20.0,20.0,5.0,theme::CARD);
+                paint::note(&c,left+22.0,center_y,13.0,theme::WHITE);
             }
             let index=lyric.unwrap_or(0);
             let id=egui::Id::new("island-lyric-line");
@@ -2682,65 +2270,25 @@ impl App {
             }
             let shown=c.ui.ctx().animate_value_with_time(id,index as f32,0.18);
             let fade=1.0-(index as f32-shown).abs().min(1.0);
-            // 歌词固定在电量环/封面/宠物右侧的通道里，并在剩余区域居中；
-            // 测试构建沿用官方坐标。galley 本身是左对齐绘制的，这里手动补偿居中。
-            let lyric_left=match self.lyric_lane() {
-                Some((_,text_left))=>{
-                    let avail=(content_width-LANE_RIGHT_PAD-text_left).max(90.0);
-                    // 居中偏移设上限：短歌词不会被推到通道正中间、与宠物之间空出一大片。
-                    // 间隙因此稳定在 LANE_TEXT_GAP ~ LANE_TEXT_GAP+LANE_CENTER_CAP。
-                    let centering=((avail-galley.size().x/c.s).max(0.0)/2.0).min(LANE_CENTER_CAP);
-                    text_left+centering
-                },
-                None=>content_width-LYRIC_BAR_W/2.0,
-            };
-            // 长歌词横向滚动：句首停留后匀速推进，到尾部停住，换句复位。
-            let scroll_offset=self.island_lyric_scroll.map_or(0.0,|scroll|{
-                let elapsed=(self.t-self.island_lyric_scroll_start).max(0.0) as f32;
-                lyric_scroll_offset(elapsed,scroll.speed,scroll.overflow)/c.s
-            });
-            let position=c.pos(left+lyric_left-scroll_offset,center_y-galley.size().y/2.0+(1.0-fade)*3.0);
-            // 兜底裁剪：超长或异常 galley 一律不许画进左侧固定通道。
-            let lyric_c=match self.lyric_lane() {
-                Some((_,text_left))=>c.clipped(left+text_left,0.0,(content_width-LANE_RIGHT_PAD-text_left).max(90.0),BAR_H),
-                None=>c.clone(),
-            };
-            lyric_c.painter.galley(position,galley,if lyric.is_some(){theme::WHITE}else{theme::GRAY});
+            let position=c.pos(left+content_width-LYRIC_BAR_W/2.0,center_y-galley.size().y/2.0+(1.0-fade)*3.0);
+            c.painter.galley(position,galley,if lyric.is_some(){theme::WHITE}else{theme::GRAY});
             paint::playback_bars(&c,left+content_width-21.0,center_y,self.t,self.media.playing,theme::WHITE);
             if self.pomo.running {
                 let alpha=smoothstep(0.88,1.0,(width-content_width)/self.lyric_focus_space());
                 crate::focus_bar::draw(&c.faded(alpha),left+width-14.0-crate::focus_bar::LYRIC_WIDTH/2.0,center_y,self.t,&self.pomo,self.phase_secs(self.pomo.phase),true);
             }
         }
-        if lyric_alpha>=0.997 {
-            // 电量常驻：歌词完全接管胶囊时，仍在最左侧保留电量环（本机在左、手机在右）。
-            if resident_battery {
-                let content_width=self.lyric_bar_width()-self.lyric_focus_space();
-                let width=self.w.pos.max(content_width);
-                let left=local_cx-width/2.0;
-                let (pc_ring,phone_ring)=self.battery_rings();
-                let mut cx=left+20.0;
-                for ring in [pc_ring,phone_ring].into_iter().flatten() {
-                    paint::battery(&base.faded(1.0),cx,BAR_H/2.0,ring.0,ring.1,1.0);
-                    cx+=20.0;
-                }
-            }
-            return;
-        }
+        if lyric_alpha>=0.997 {return;}
         let header=base.faded(1.0-lyric_alpha);
         let base=&header;
         let m = anim::ease_in_out(smoothstep(0.0, 0.85, p));
         let clock = self.settings.clock_text(&env.clock);
-        let show_battery=resident_battery;
-        let (pc_ring,phone_ring)=self.battery_rings();
-        let ring_count=(pc_ring.is_some() as u8+phone_ring.is_some() as u8) as f32;
-        // 两个环并排时各自偏离中心 10px。
-        let ring_offset=if ring_count>1.0 {10.0}else{0.0};
+        let show_battery=self.settings.show_battery && env.battery.is_some();
 
         // 顶栏终点布局：[电池][日期][时钟] 作为一组整体居中
         let date_w = base.text_w(&env.date, size::DATE, W::Regular);
         let clock_w = paint::clock_width(base,&clock,size::CLOCK);
-        let battery_space=if show_battery {24.0+(ring_count-1.0)*20.0}else{0.0};
+        let battery_space=if show_battery {24.0}else{0.0};
         let group = battery_space + date_w + 8.0 + clock_w;
         let gx = local_cx - group / 2.0 + if show_battery {6.0}else{0.0};
         // 日程页左侧还有新增按钮，顶栏从操作区右侧开始，避免较长的日期和时段文字挤到按钮上。
@@ -2758,11 +2306,7 @@ impl App {
         // 电池：位置/大小连续插值
         let bk = lerp(1.0, 0.8, m);
         let bpos = (lerp(pb.0, hb.0, m), lerp(pb.1, hb.1, m));
-        if show_battery {
-            let alpha=lerp(layout.clearance(bar::BATTERY),1.0,m);
-            if let Some((pct,chg))=pc_ring {paint::battery(&base.faded(alpha),bpos.0-ring_offset,bpos.1,pct,chg,bk);}
-            if let Some((pct,chg))=phone_ring {paint::battery(&base.faded(alpha),bpos.0+ring_offset,bpos.1,pct,chg,bk);}
-        }
+        if show_battery {paint::battery(&base.faded(lerp(layout.clearance(bar::BATTERY),1.0,m)), bpos.0, bpos.1, env.battery, env.charging, bk);}
 
         // 时钟：两个字号沿同一路径交叉淡化，避免逐帧换字号
         let cpos = (lerp(pcx, hc, m), lerp(21.0, 23.0, m));
@@ -2796,54 +2340,6 @@ impl App {
         if self.pomo.running && compact_alpha>0.004 {
             crate::focus_bar::draw(&base.faded(compact_alpha),local_cx+layout.x[bar::FOCUS].unwrap(),15.0,self.t,&self.pomo,self.phase_secs(self.pomo.phase),false);
         }
-        // 状态总线：并排显示最多 3 条常驻状态（色点 + 文本 + 可选进度条）。
-        if let Some(slot)=layout.status {
-            if let Some(center)=layout.x[slot] {
-                let statuses=self.statuses_for_render();
-                if compact_alpha>0.004 && !statuses.is_empty() {
-                    let c=base.faded(compact_alpha);
-                    let total=layout.widths[slot];
-                    let mut x=local_cx+center-total/2.0;
-                    for status in statuses.iter().take(3) {
-                        let w=self.status_item_width(status);
-                        let tone=crate::extras::status_color(&status.color);
-                        // 有进度条的胶囊：底色灰，彩色进度层从左向右逐渐填满整个胶囊
-                        // （裁剪到进度宽度，左圆角保留、右边缘随进度推进）。
-                        let progress=status.progress.filter(|v|v.is_finite())
-                            .map(|v|v.clamp(0.0,1.0) as f32);
-                        c.fill(x,5.0,w,20.0,10.0,Color32::from_gray(36));
-                        if let Some(p)=progress {
-                            if p>0.0 {
-                                // 填充层裁剪到 [x, x+w*p]，整体画圆角矩形即可得到「左边圆角+右侧随进度裁平」。
-                                let fillc=c.clipped(x,5.0,(w*p).max(1.0),20.0);
-                                fillc.fill(x,5.0,w,20.0,10.0,tone);
-                            }
-                        }
-                        // 带图标的状态（MAA 进度胶囊）：图标 + 文字作为整体在胶囊内水平居中。
-                        // 其他状态保持原来的「色点 + 左对齐文字」。
-                        let icon_tex=if status.icon.is_empty() {None} else {
-                            self.status_icons.borrow_mut()
-                                .get(c.ui.ctx(),std::path::Path::new(&status.icon))
-                                .and_then(|p|p.image)
-                        };
-                        if let Some(tex)=icon_tex {
-                            // 图标 16 + 间距 4 = 20 的前导占位，按实际文字宽度整体居中。
-                            let fitted=c.fit(&status.text,10.5,W::Regular,(w-28.0).max(20.0));
-                            let text_w=c.text_w(&fitted,10.5,W::Regular);
-                            let start=x+((w-20.0-text_w).max(0.0))/2.0;
-                            let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
-                            c.painter.add(egui::epaint::RectShape::filled(
-                                c.rect(start,7.0,16.0,16.0),4.0*c.s,Color32::WHITE).with_texture(tex.id(),uv));
-                            c.centered_text(start+20.0,15.0,&fitted,10.5,W::Regular,theme::WHITE,H::Left);
-                        } else {
-                            c.circle(x+8.0,15.0,2.5,tone);
-                            c.centered_text(x+14.0,15.0,&c.fit(&status.text,10.5,W::Regular,w-20.0),10.5,W::Regular,theme::WHITE,H::Left);
-                        }
-                        x+=w+6.0;
-                    }
-                }
-            }
-        }
     }
 
     /// 常驻内容：顶部停靠走共享元素过渡（药丸里的电池、时钟飞到顶栏）；
@@ -2869,9 +2365,7 @@ impl App {
         }
         self.pet.last_idle = idle;
         self.pet.hovered = env.cursor.is_some_and(|p| (p.x-cx).abs() <= BAR_W/2.0+24.0 && (0.0..70.0).contains(&p.y));
-        let (pc_ring,phone_ring)=self.battery_rings();
-        let low_battery=[pc_ring,phone_ring].into_iter().flatten().any(|(pct,charging)|pct.is_some_and(|v|v<=20)&&!charging);
-        self.pet.worried = low_battery || env.network == Some(false);
+        self.pet.worried = self.settings.show_battery && env.battery.is_some_and(|v|v<=20) && !env.charging || env.network == Some(false);
         let allowed = self.pet_enabled();
         if !allowed { self.pet.reaction = None; self.pet.waking_until = 0.0; self.pet.expressions.clear(); }
         let available = allowed && !self.open && !self.drag_hot;
@@ -3026,18 +2520,6 @@ impl App {
             self.last_drink=None;self.last_reminder=self.t;
             self.water_ml = self.water.drunk_ml as f32;
             self.water_ring.snap(self.water.percent() / 100.0);
-        }
-        // 只统计真正在跑的专注阶段：暂停不计，攒满一分钟落盘一次。
-        if self.pomo.running && self.pomo.phase==Phase::Focus {
-            self.focus_pending += elapsed as f32;
-            if self.focus_pending>=60.0 {
-                let minutes=(self.focus_pending/60.0).floor();
-                self.focus_pending-=minutes*60.0;
-                crate::extras::focus_add(minutes as u32);
-                let (today,streak)=crate::extras::focus_summary();
-                self.focus_today_min=today;
-                self.focus_streak_days=streak;
-            }
         }
         if self.pomo.running {
             self.pomo.remaining -= elapsed;
@@ -3329,180 +2811,5 @@ impl App {
             self.cancel_edit();
             if added {self.open_task_reminder(0);}
         }
-    }
-}
-
-#[cfg(test)]
-mod lyric_scroll_tests {
-    use super::*;
-
-    #[test]
-    fn scroll_waits_at_both_ends(){
-        // 句首停留 1 秒：这段时间必须纹丝不动，否则开头一闪而过。
-        assert_eq!(lyric_scroll_offset(0.0,30.0,100.0),0.0);
-        assert_eq!(lyric_scroll_offset(1.0,30.0,100.0),0.0);
-        assert!((lyric_scroll_offset(2.0,30.0,100.0)-30.0).abs()<0.01);
-        // 到尾部就停住，不会滚出空白。
-        assert_eq!(lyric_scroll_offset(60.0,30.0,100.0),100.0);
-    }
-
-    #[test]
-    fn speed_fits_line_window_but_stays_readable(){
-        // 窗口足够长：按「整句滚完」算，落在可读区间。
-        let normal=lyric_scroll_speed(200.0,10.0);
-        assert!((normal-25.0).abs()<0.01,"{}",normal);
-        // 句子很短、放不下时也不能快到看不清。
-        assert_eq!(lyric_scroll_speed(300.0,1.0),SCROLL_MAX_SPEED);
-        // 句子很长时不会慢到几乎不动。
-        assert_eq!(lyric_scroll_speed(1.0,600.0),SCROLL_MIN_SPEED);
-    }
-
-    /// 量化缓存省下的重排开销：`cargo test --lib -- --ignored --nocapture bench_long_line`
-    #[test]
-    #[ignore]
-    fn bench_long_line_layout_cost(){
-        let ctx=egui::Context::default();
-        let _=ctx.run(Default::default(),|_|{});
-        let text="这一句歌词故意写得非常非常长用来测试横向滚动到底能不能把整句话完整地显示出来".to_owned();
-        let job=|size:f32|{
-            let mut job=egui::text::LayoutJob::simple(text.clone(),egui::FontId::proportional(size),theme::WHITE,186.0);
-            job.wrap.break_anywhere=true;
-            job
-        };
-        let n=300;
-        let t=std::time::Instant::now();
-        for _ in 0..n {let _=ctx.fonts(|fonts|fonts.layout_job(job(11.0)));}
-        let one=t.elapsed().as_secs_f64()/n as f64;
-        let t=std::time::Instant::now();
-        for _ in 0..n {
-            for size in [11.0,10.5,10.0,9.5,9.0,8.5,8.0] {let _=ctx.fonts(|fonts|fonts.layout_job(job(size)));}
-        }
-        let seven=t.elapsed().as_secs_f64()/n as f64;
-        // 每句都不一样才会真的走排版，用来区分「命中 egui 内部 galley 缓存」和「真重排」。
-        let t=std::time::Instant::now();
-        for i in 0..n {
-            let mut job=egui::text::LayoutJob::simple(format!("{}{}",text,i),egui::FontId::proportional(11.0),theme::WHITE,186.0);
-            job.wrap.break_anywhere=true;
-            let _=ctx.fonts(|fonts|fonts.layout_job(job));
-        }
-        let cold=t.elapsed().as_secs_f64()/n as f64;
-        println!("命中缓存 {:.1}us | 未命中(真排版) {:.1}us | 每帧7次 {:.1}us | 30fps 每秒多花 {:.3}ms",
-            one*1e6,cold*1e6,seven*1e6,(seven-one)*30.0*1000.0);
-    }
-
-    #[test]
-    fn cache_matches_only_same_line_and_width(){
-        let ctx=egui::Context::default();
-        // 字体要等第一次 run 之后才可用。
-        let _=ctx.run(Default::default(),|_|{});
-        // semibold 字体族由 App 启动时注册，这里只验证匹配逻辑，用默认族即可。
-        let job=egui::text::LayoutJob::simple("测试".to_owned(),egui::FontId::proportional(11.0),theme::WHITE,f32::INFINITY);
-        let galley=ctx.fonts(|fonts|fonts.layout_job(job));
-        let cache=LyricLayoutCache{text:"测试".into(),width:160.0,white:true,title:false,galley,overflow:0.0};
-        assert!(cache.matches("测试",160.0,true,false));
-        // 换句、改宽度、换颜色、歌名/歌词切换都必须重排。
-        assert!(!cache.matches("另一句",160.0,true,false));
-        assert!(!cache.matches("测试",200.0,true,false));
-        assert!(!cache.matches("测试",160.0,false,false));
-        assert!(!cache.matches("测试",160.0,true,true));
-    }
-}
-
-#[cfg(test)]
-mod battery_source_tests {
-    use super::*;
-
-    #[test]
-    fn pc_and_phone_battery_switches_do_not_affect_each_other(){
-        let ctx=eframe::egui::Context::default();
-        let mut app=App::new(&ctx,Default::default());
-        app.resident_power=(Some(65),false);
-        app.phone_resident=(Some(42),true);
-        app.settings.show_battery=true;
-        app.settings.phone_battery=true;
-        assert_eq!(app.battery_ring_count(),2,"两个来源都有数据时应并排两个环");
-        // 关掉本机开关：手机环不受影响。
-        app.settings.show_battery=false;
-        assert!(app.battery_rings().0.is_none()&&app.battery_rings().1.is_some());
-        // 关掉手机开关：本机环不受影响。
-        app.settings.show_battery=true;
-        app.settings.phone_battery=false;
-        assert!(app.battery_rings().0.is_some()&&app.battery_rings().1.is_none());
-        // 手机没数据时手机环不占位，本机环照常。
-        app.settings.phone_battery=true;
-        app.phone_resident=(None,false);
-        assert_eq!(app.battery_ring_count(),1);
-        assert!(app.battery_visible());
-    }
-}
-
-#[cfg(test)]
-mod hover_delay_tests {
-    use super::*;
-    use crate::anim::Spring;
-
-    fn approx(a: f64, b: f64) { assert!((a - b).abs() < 1e-9, "{a} != {b}"); }
-
-    #[test]
-    fn 延时换算默认值与极简加倍() {
-        approx(hover_delay_secs(200, false), 0.20);
-        approx(hover_delay_secs(200, true), 0.40);
-        approx(hover_delay_secs(0, false), 0.0);
-        approx(hover_delay_secs(0, true), 0.0);
-        approx(hover_delay_secs(80, false), 0.08);
-        assert!(hover_delay_secs(500, true) <= 1.0, "极简加倍也要有上限");
-        assert_eq!(crate::model::Settings::default().hover_delay_ms, 200);
-        assert!(200 >= SWELL_MIN_MS && 80 < SWELL_MIN_MS, "默认有预放大、短延时保持静止");
-    }
-
-    #[test]
-    fn 短延时既过滤鼠标划过又更早展开() {
-        let (bw, full) = (143.0f32, 419.0f32);
-        let tuning = crate::model::OpenAnim::Elastic.tuning().unwrap();
-        // 80 ms ≈ 5 帧 @60fps：等待期间保持静止，到点才换展开弹簧。
-        let mut short = Spring::new(bw, CLOSE.0, CLOSE.1);
-        short.target = bw;
-        // 200 ms ≈ 12 帧：等待期间跑 SWELL 预放大。
-        let mut long = Spring::new(bw, SWELL_K.0, SWELL_K.1);
-        long.target = bw * SWELL.0;
-        let mut width_before_delay = bw;
-        for frame in 0..10 {
-            if frame == 5 {
-                short.tune(tuning.open_w.0, tuning.open_w.1);
-                short.target = full;
-            }
-            short.step(1.0 / 60.0);
-            long.step(1.0 / 60.0);
-            if frame == 3 { width_before_delay = short.pos; }
-        }
-        assert!((width_before_delay - bw).abs() < 0.01,
-            "延时内不该有任何形变，划过 <80 ms 就不会展开：{width_before_delay}");
-        assert!(short.pos > long.pos + 20.0,
-            "短延时应更早进入展开：{} vs {}", short.pos, long.pos);
-    }
-
-    #[test]
-    fn 零延时比默认更早到位() {
-        let (bw, full) = (143.0f32, 419.0f32);
-        let near = bw + (full - bw) * 0.9;
-        let tuning = crate::model::OpenAnim::Elastic.tuning().unwrap();
-        let mut direct = Spring::new(bw, tuning.open_w.0, tuning.open_w.1);
-        direct.target = full;
-        let mut relay = Spring::new(bw, SWELL_K.0, SWELL_K.1);
-        relay.target = bw * SWELL.0;
-        let (mut direct_frames, mut relay_frames) = (None, None);
-        for frame in 0..600 {
-            if frame == 12 {
-                relay.tune(tuning.open_w.0, tuning.open_w.1);
-                relay.target = full;
-            }
-            direct.step(1.0 / 60.0);
-            relay.step(1.0 / 60.0);
-            if direct_frames.is_none() && direct.pos >= near { direct_frames = Some(frame + 1); }
-            if relay_frames.is_none() && relay.pos >= near { relay_frames = Some(frame + 1); }
-            if direct_frames.is_some() && relay_frames.is_some() { break; }
-        }
-        let (d, r) = (direct_frames.expect("零延时没到位"), relay_frames.expect("默认延时没到位"));
-        assert!(d < r, "零延时应更早到位：{d} 帧 vs {r} 帧");
     }
 }

@@ -68,7 +68,7 @@ fn preview_image(width:usize,height:usize,pixels:Vec<u8>)->Option<ColorImage>{
 }
 
 #[cfg(windows)]
-pub(crate) fn file_icon(path: &Path) -> Option<ColorImage> {
+fn file_icon(path: &Path) -> Option<ColorImage> {
     if !path.exists() {
         return None;
     }
@@ -79,7 +79,7 @@ pub(crate) fn file_icon(path: &Path) -> Option<ColorImage> {
 }
 
 #[cfg(windows)]
-pub(crate) fn thumbnail(path: &Path, size: i32) -> Option<(usize, usize, Vec<u8>)> {
+fn thumbnail(path: &Path, size: i32) -> Option<(usize, usize, Vec<u8>)> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::SIZE;
