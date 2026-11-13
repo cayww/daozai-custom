@@ -365,7 +365,6 @@ mod tests {
             finished.recv_timeout(std::time::Duration::from_secs(3)).expect("监听线程应在停止后退出");
         }
     }
-    }
 
     #[test]
     fn history_copy_preserves_order_but_external_copy_promotes() {

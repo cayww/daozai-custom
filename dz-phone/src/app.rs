@@ -935,6 +935,7 @@ pub struct App {
     pub(crate) phone_resident: (Option<u8>,bool),
     /// 手机连接电量读取器（本地文件轮询）。
     pub(crate) phone_power: crate::phone_battery::Reader,
+    pub wechat_status:String,
 }
 
 impl App {
@@ -1057,7 +1058,7 @@ impl App {
             messenger_statuses:Default::default(),
             notification_apps:model::NotificationApps::load(),
             subpage:None,
-            task_dialog:None,,
+            task_dialog:None,
             fluid_tex:None,
             wechat_status:String::new(),
             phone_counts:Default::default(),

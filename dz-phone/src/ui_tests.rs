@@ -5791,7 +5791,9 @@ fn settings_theme_follows_system_and_preserves_island_style() {
     let mut h=H::new();h.app.open_settings();h.ctx.set_embed_viewports(false);
     assert_eq!(h.app.settings.settings_theme,SettingsTheme::System);
     assert_eq!(SettingsTheme::parse("unknown"),SettingsTheme::System);
-    let mut raster=crate::preview_raster::Raster::new(690,1100);
+    // v0.6.64 合并后「常规」页新增停靠/避让/渲染兼容等设置，整页高度已超过 1100。
+    // egui 会跳过视口外控件的绘制，导致分段选项文本缺失，故测试视口需覆盖整页。
+    let mut raster=crate::preview_raster::Raster::new(690,2000);
     for (mode,system,dark) in [(SettingsTheme::System,false,false),(SettingsTheme::System,true,true),
         (SettingsTheme::System,false,false),(SettingsTheme::Dark,false,true),(SettingsTheme::Light,true,false)] {
         h.app.settings.settings_theme=mode;
@@ -5800,7 +5802,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
         let output=std::sync::Arc::new(std::sync::Mutex::new(None));let capture=output.clone();
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
-            let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1100.0))),
+            let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,2000.0))),
                 viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()};
             *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
         });
@@ -5849,7 +5851,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
                         let dest=std::path::PathBuf::from(dest);std::fs::create_dir_all(&dest).unwrap();
                         raster.buf.fill([0.0,0.0,0.0,1.0]);raster.draw(&h.ctx.tessellate(child.shapes,child.pixels_per_point),child.pixels_per_point);
                         let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);
-                        image::save_buffer(dest.join(format!("settings-{}-{tab}.png",if dark{"dark"}else{"light"})),&rgba,690,1100,image::ColorType::Rgba8).unwrap();
+                        image::save_buffer(dest.join(format!("settings-{}-{tab}.png",if dark{"dark"}else{"light"})),&rgba,690,2000,image::ColorType::Rgba8).unwrap();
                     }
                 }
                 raster.free_textures(&root.textures_delta);raster.free_textures(&child.textures_delta);
@@ -7937,6 +7939,9 @@ fn notification_source_page_renders_in_both_modes(){
             let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
             assert!(output.lock().unwrap().is_some(),"read={read} qq_only={qq_only} 时设置页应完成渲染");
             h.t+=1.0/60.0;
+        }
+    }
+}
 #[test]
 fn weather_page_shows_the_local_snapshot_and_forecast(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
@@ -8151,6 +8156,7 @@ fn phone_settings_page_renders_with_locked_sms_toggle(){
             h.t+=1.0/60.0;
         }
     }
+}
 #[test]
 #[ignore="按需导出天气设置页，检查排版"]
 fn weather_settings_preview(){
@@ -8522,4 +8528,4 @@ fn every_module_settings_tab_maps_to_its_page(){
         if let Some(page)=crate::extras::settings_tab_module(tab) {assert!(crate::app::PAGE_NAMES[page].chars().next()==titles[tab].chars().next(),"{} ↔ {}",titles[tab],crate::app::PAGE_NAMES[page]);}
     }
     pages.sort();assert_eq!(pages,(0..crate::app::PAGE_NAMES.len()).collect::<Vec<_>>(),"每个功能页面各有一个设置分页");
-
+}

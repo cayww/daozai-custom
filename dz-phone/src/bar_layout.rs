@@ -271,8 +271,8 @@ mod tests {
     #[test]
     fn widening_the_battery_slot_keeps_neighbours_apart(){
         // 本机与手机电量同时显示时，电池槽加宽 20px，其余组件必须自动让开。
-        let one=Layout::new(true,2,true,false,false,true);
-        let mut two=Layout::new(true,2,true,false,false,true);
+        let one=Layout::new(true,2,true,false,false,true,false);
+        let mut two=Layout::new(true,2,true,false,false,true,false);
         two.widen_battery(20.0);
         assert!((two.width-one.width-20.0).abs()<0.01,"整体宽度应增加 20");
         assert!((two.widths[BATTERY]-one.widths[BATTERY]-20.0).abs()<0.01);

@@ -21,6 +21,7 @@ pub(crate) struct Alert {
     /// 通用状态总线的可选呈现信息（进度 / 状态色 / 点击动作）。
     pub status: Option<crate::island_status::Status>,
     pub unread: Option<crate::app::Unread>,
+}
 
 impl Alert {
     pub(crate) fn messenger(&self)->Option<crate::app::Messenger>{
@@ -343,14 +344,14 @@ impl App {
         self.mark_messenger(client,unread.pid,unread.window);
         if pending{return;}
         self.notification_bell_at=self.t;self.notification_bell_until=self.t+4.5;
-        self.enqueue_alert(Alert{source:AlertSource::Messenger(client),title:client.name().into(),body:format!("有新消息 · 请到{}查看",client.name()),page:usize::MAX,at:self.t,duration:4.5,bluetooth:None,meeting:None,unread:Some(unread)},false);
+        self.enqueue_alert(Alert{source:AlertSource::Messenger(client),title:client.name().into(),body:format!("有新消息 · 请到{}查看",client.name()),page:usize::MAX,at:self.t,duration:4.5,bluetooth:None,meeting:None,unread:Some(unread), status: None, },false);
     }
     /// 通用状态总线：外部脚本写 island_status.json 后转成岛上提示。
     /// 来源 id 带上状态 key，同 key 每 2 秒覆写一次，既刷新内容又续期。
     pub(crate) fn push_status(&mut self,s:crate::island_status::Status){
         let duration=if s.seconds>0.0{s.seconds}else{8.0};
         let key=s.key();
-        self.enqueue_alert(Alert{source:AlertSource::External(format!("island-status:{key}")),title:s.text.clone(),body:s.detail.clone(),page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:Some(s)},false);
+        self.enqueue_alert(Alert{source:AlertSource::External(format!("island-status:{key}")),title:s.text.clone(),body:s.detail.clone(),page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:Some(s), unread: None, },false);
     }
     /// 状态从 JSON 里删掉：立刻撤下对应提示，不等 8 秒自然过期。
     pub(crate) fn drop_status(&mut self,key:&str){
@@ -474,7 +475,7 @@ impl App {
                 ("MAA 出错".to_string(),label)
             }
         };
-        let a=Alert{source:AlertSource::Internal,title,body,page:usize::MAX,at:self.t,duration:self.maa_prefs.seconds as f64,bluetooth:None,meeting:None,status:None};
+        let a=Alert{source:AlertSource::Internal,title,body,page:usize::MAX,at:self.t,duration:self.maa_prefs.seconds as f64,bluetooth:None,meeting:None,status:None, unread: None, };
         self.enqueue_alert(a,false);
     }
     /// 手机电量的关键变化：断开 / 重连 / 低电 / 充满。
@@ -600,7 +601,7 @@ impl App {
 
     /// 把一条历史通知重新弹出来（「稍后提醒」用）。
     pub(crate) fn replay_notice(&mut self,title:String,body:String){
-        self.enqueue_alert(Alert{source:AlertSource::External("notice-history".into()),title,body,page:usize::MAX,at:self.t,duration:if cfg!(test){4.5}else{30.0},bluetooth:None,meeting:None,status:None},false);
+        self.enqueue_alert(Alert{source:AlertSource::External("notice-history".into()),title,body,page:usize::MAX,at:self.t,duration:if cfg!(test){4.5}else{30.0},bluetooth:None,meeting:None,status:None, unread: None, },false);
     }
 
     /// 稍后提醒：`minutes` 分钟后再弹一次。
@@ -669,13 +670,13 @@ impl App {
             if let Some(code)=crate::otp::extract("",&text,&[]) {text=crate::mail_privacy::mask(&text,&code.text);}
             text
         }else{"收到新通知 · 内容已隐藏".into()};
-        self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration:4.5,bluetooth:None,meeting:None,unread},false);
+        self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration:4.5,bluetooth:None,meeting:None,unread, status: None, },false);
     }
     pub fn reveal_messenger_notice(&mut self,unread:crate::app::Unread){
         if !unread.source.adapter().dismiss_unread || !self.pending_messengers.contains(&unread){return;}
         let body=if unread.pid==0{"消息账号暂无法确认"}else{"暂时无法打开对应窗口"};
         let source=if unread.source.adapter().capture==crate::messenger::Capture::Taskbar{AlertSource::Messenger(unread.source)}else{AlertSource::External(unread.source.adapter().notification_id.into())};
-        self.notice=Some(Alert{source,title:unread.source.name().into(),body:body.into(),page:usize::MAX,at:self.t,duration:4.5,bluetooth:None,meeting:None,unread:Some(unread)});
+        self.notice=Some(Alert{source,title:unread.source.name().into(),body:body.into(),page:usize::MAX,at:self.t,duration:4.5,bluetooth:None,meeting:None,unread:Some(unread), status: None, });
         self.notification_bell_at=self.t;self.notification_bell_until=self.t+4.5;
     }
     pub(crate) fn notify_phone(&mut self, app:String, id:String, body:String){
@@ -780,7 +781,7 @@ let phone=crate::system::phone_channel(&id);
             ("未接来电".to_string(),format!("{} 通未接来电 · 点击关闭清除",self.missed_calls),30.0)
         }else{(title,body,if cfg!(test) {4.5} else if has_code {otp_stay} else {stay})};
         log_notice(&format!("SHOW {title} / {body}  <- {trace}"));
-        self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:None},false);
+        self.enqueue_alert(Alert{source:AlertSource::External(id),title,body,page:usize::MAX,at:self.t,duration,bluetooth:None,meeting:None,status:None, unread: None, },false);
     }
     pub(crate) fn tick_alerts(&mut self) {
         self.pending_messengers.retain(|u|u.source.enabled(&self.settings) && (u.source.adapter().capture!=crate::messenger::Capture::SystemToast
@@ -1958,7 +1959,7 @@ fn setting_choices(ui:&mut egui::Ui,title:&str,value:&mut u32,values:[u32;3],uni
 const SETTINGS_GROUPS: [(&str,usize,usize);12] = [
     ("常规",0,0), ("页面管理",10,10), ("音乐与歌词",1,1), ("专注与饮水",2,3),
     ("待办与置物",4,5), ("通知、邮箱与日程",6,8), ("天气",12,12), ("手机连接",13,13), ("浏览器下载",14,14), ("MAA",15,15), ("AI 额度",11,11), ("关于",9,9),
-;
+];
 
 /// 「浏览器下载」卡片：始终显示安装指引（打开浏览器扩展页和扩展文件夹、复制路径）。
 /// Chrome/Edge 从 33 版起封死了本地扩展的静默安装，只能开发者模式加载，所以做成引导而非自动装。
@@ -2111,7 +2112,6 @@ impl App {
                     match self.settings_tab {
                     12=>self.weather_settings(ui),
                     11=>self.quota_settings(ui),
-                    12=>self.weather_settings(ui),
                     13=>{
                         settings_label(ui,"连接状态");
                         settings_card(ui,|ui|{
@@ -3191,5 +3191,4 @@ fn meeting_hit(plan:&[(i64,i64,String)],now:i64)->Option<(i64,String)>{
         hit=Some(((*end).min(now+7200),format!("{}|{}",uid,start)));
     }
     hit
-}
 }

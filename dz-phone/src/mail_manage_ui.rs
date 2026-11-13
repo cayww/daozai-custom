@@ -253,7 +253,7 @@ impl App{
     }
     #[test]fn account_filter_only_matches_selected_mailbox(){
         let mut app=App::new(&eframe::egui::Context::default(),Default::default());
-        let item=|email:&str|Item{account:email.into(),from:String::new(),subject:String::new(),time:String::new(),code:None,received_unix:None,summary:"".into(),links:vec![],meeting:None,uid:1};
+        let item=|email:&str|Item{account:email.into(),from:String::new(),subject:String::new(),time:String::new(),code:None,html:String::new().into(),received_unix:None,summary:"".into(),links:vec![],meeting:None,uid:1};
         assert!(app.mail_account_match(&item("a@qq.com")),"默认应匹配全部账号");
         app.mail.manage.account_filter=Some("A@QQ.com".into());
         assert!(app.mail_account_match(&item("a@qq.com")),"筛选应忽略大小写");
