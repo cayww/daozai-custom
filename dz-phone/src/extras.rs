@@ -322,8 +322,12 @@ impl App {
         if self.notice.as_ref().is_some_and(|a|a.source==source){self.notice=None;self.notification_bell_until=0.0;}
         if self.hud_notice.as_ref().is_some_and(|a|a.source==source){self.hud_notice=None;}
     }
-    /// MAA 通知是否已开启：通知分组里勾选了 MAA，才认为可以对接（配置页据此解锁）。
+    /// MAA 是否可对接：通知名单里勾选了 MAA，或用户手动指定了 MAA 程序。
+    ///
+    /// 后面这条很关键：MAA 只有在发过系统通知后才会被自动登记进名单，
+    /// 换台机器 / 关掉 MAA 通知的用户名单里根本没有它，此时手选路径就是唯一入口。
     pub(crate) fn maa_enabled(&self)->bool {
+        if !self.maa_prefs.exe_path.trim().is_empty() { return true; }
         self.notification_apps.items.iter().any(|(id,name,on)| *on && (name=="MAA" || id.to_ascii_lowercase().ends_with("maa.exe")))
     }
     /// MAA 日志文件：优先用设置里的目录，其次从通知名单里 MAA 的 exe 路径推导 `<MAA目录>\debug`。
@@ -2344,7 +2348,7 @@ impl App {
                         settings_label(ui,"状态");
                         settings_card(ui,|ui|{
                             let (text,light,dark)=if !maa_on {
-                                ("未开启 MAA 通知".to_string(),Color32::from_gray(120),Color32::from_gray(160))
+                                ("未对接：勾选通知里的 MAA，或在下方指定 MAA 程序".to_string(),Color32::from_gray(120),Color32::from_gray(160))
                             } else if log_ready {
                                 ("已对接：正在跟随 MAA 日志".to_string(),Color32::from_rgb(46,125,50),Color32::from_rgb(129,199,132))
                             } else {
@@ -2358,7 +2362,7 @@ impl App {
                                 ui.label(egui::RichText::new(format!("日志：{}",path.display())).size(11.5).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             }
                             if !maa_on {
-                                settings_hint(ui,"先在「通知、邮箱与日程」分组底部勾选 MAA，本页配置才会生效并可操作。");
+                                settings_hint(ui,"两种对接方式二选一：① 在「通知、邮箱与日程」分组底部勾选 MAA（它发过通知才会出现在那里）；② 在下方「路径」里直接选 MAA.exe。任选其一，本页配置即可生效。");
                             } else if !log_ready {
                                 settings_hint(ui,"没找到 debug\\asst.log。确认 MAA 与岛仔在同一台机器上跑过任务；目录特殊时在下方填 MAA 安装目录。");
                             }
@@ -2384,7 +2388,8 @@ impl App {
 
                         settings_label(ui,"路径");
                         settings_card(ui,|ui|{
-                            ui.add_enabled_ui(maa_on,|ui|{
+                            // 这里不能用 maa_on 禁用：没对接时正是要靠它选程序来启用。
+                            {
                                 let before=self.maa_prefs.clone();
                                 settings_control_row(ui,"MAA 程序",80.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2406,7 +2411,7 @@ impl App {
                                 });
                                 settings_hint(ui,"岛仔只读这里的 debug\\asst.log 拿运行状态，不修改 MAA、不需要它开任何服务。留空时按 MAA 程序所在目录自动定位。");
                                 if before!=self.maa_prefs{self.maa_prefs.save();}
-                            });
+                            }
                         });
                     }
                     7=>{
