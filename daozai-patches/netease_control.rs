@@ -6,8 +6,15 @@
 //!
 //! 本模块是**渐进增强**：客户端带 `--remote-debugging-port` 启动时才接管跳转；
 //! 端口不在则立刻返回 false，由上层照旧提示，不反复等待超时。
-//! 命令串来自 `package/orpheus.ntpk` 静态分析，可用 `%APPDATA%/Daozai/netease-cdp.json`
-//! 覆盖（实机验证后不必改代码）：`{"port":9222,"commands":["nm.play.playerSeek"]}`。
+//! 可用 `%APPDATA%/Daozai/netease-cdp.json` 覆盖端口与命令：
+//! `{"port":9222,"commands":["audioplayer.seek"]}`。
+//!
+//! 命令与参数经实机验证（2026-11-13，网易云 3.1.41 + CDP 9222）：
+//! `legacyNativeCmder.call('audioplayer.seek','','',秒数)` 会让原生层回
+//! `Seek(playId, seekId, code, position)` 事件，`code=0` 且 position 等于请求秒数；
+//! 前两个参数留空时原生层自动使用当前播放实例。`nm.play.playerSeek` /
+//! `nh.player.seek` / `player.setCurrentTime` 三条虽在前端白名单里，实机**没有任何
+//! 原生事件**，仅 JS 不抛异常，不能当作成功。
 //!
 //! 只用 std + 已有的 serde_json/base64 手写 HTTP/WebSocket，不加依赖、不动 Cargo.lock。
 
@@ -21,10 +28,11 @@ pub const DEFAULT_PORT:u16=9222;
 /// 端口连不上时的冷却，避免拖动时每帧都做一次连接尝试。
 const COOLDOWN:Duration=Duration::from_secs(20);
 const CONNECT_TIMEOUT:Duration=Duration::from_millis(350);
-const FRAME_TIMEOUT:Duration=Duration::from_millis(1200);
+/// 原生 Seek 回调用 Promise 等待，内部 1.5s 超时；读超时要留得比它长。
+const FRAME_TIMEOUT:Duration=Duration::from_millis(2500);
 const MAX_FRAME:usize=2*1024*1024;
-/// 前端包里出现过的跳转命令，按把握程度排序；实机逐一回读确认，不靠返回值猜。
-const DEFAULT_COMMANDS:&[&str]=&["nm.play.playerSeek","nh.player.seek","player.setCurrentTime"];
+/// 只保留实机确认生效的命令；旧命令可由配置文件临时加回做兼容试验。
+const DEFAULT_COMMANDS:&[&str]=&["audioplayer.seek"];
 
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub struct Config{pub port:u16,pub commands:Vec<String>}
@@ -95,8 +103,15 @@ fn seek_inner(seconds:f64,cfg:&Config,
         let reply=match ws.request(index as u64+1,&expression(command,seconds)){
             Some(reply)=>reply,None=>return Outcome::Rejected,
         };
-        // 桥返回 ok:false（无此全局对象 / 抛异常）就换下一条命令，不浪费一轮回读。
+        // 桥返回 ok:false（无此全局对象 / 抛异常 / 原生 code!=0 / 超时）就换下一条。
         if !accepts(&reply){continue;}
+        // 原生 Seek 回调带回的 position 是权威回执，优先用它判定；
+        // netease_timeline 依赖硬编码内存偏移，部分客户端实例上一直读不到（实测为 None）。
+        if let Some(pos)=reply["result"]["result"]["value"]["position"].as_f64(){
+            if (pos-seconds).abs()<=3.0{return Outcome::Arrived;}
+            continue; // code=0 但跳错位置，试下一条命令
+        }
+        // 旧命令没有 position 字段时才退回时间轴回读。
         let started=Instant::now();
         for _ in 0..6 {
             pause(Duration::from_millis(80));
@@ -119,20 +134,29 @@ fn accepts(reply:&serde_json::Value)->bool{
         && reply["result"]["result"]["value"]["ok"].as_bool()==Some(true)
 }
 
-/// 调用是 fire-and-forget：原生桥的 Promise 要等 CEF 回调，CDP 不能 awaitPromise，
-/// 真正的结果交给后面的位置回读判断。
+/// 用 Promise 等原生 `Seek` 回调：`code=0` 且 position≈目标才是真跳转。
+/// `audioplayer.seek` 的实参是 (playId, seekId, value)，前两个留空即可。
+/// Promise 内部自带 1.5s 超时，配合 CDP 的 `awaitPromise` 不会永久挂住。
 fn expression(command:&str,seconds:f64)->String{
     let cmd=serde_json::to_string(command).unwrap_or_else(|_|"\"\"".to_string());
     let secs=format!("{:.3}",seconds);
+    let args=if command=="audioplayer.seek"{format!("'','',{secs}")}else{secs.clone()};
+    let call=format!("const p=c.call({cmd},{args});",cmd=cmd,args=args);
     [
         "(()=>{try{",
         "const c=window.legacyNativeCmder;",
-        "if(!c||typeof c.call!=='function')return {ok:false,why:'no-bridge'};",
-        "const p=c.call(",cmd.as_str(),",",secs.as_str(),");",
+        "if(!c||typeof c.call!=='function')return Promise.resolve({ok:false,why:'no-bridge'});",
+        "return new Promise((resolve)=>{",
+        "let done=false;let cb=()=>{};",
+        "const finish=(v)=>{if(done)return;done=true;try{c.removeRegisterCall('Seek','audioplayer',cb)}catch(e){}resolve(v)};",
+        "cb=(playId,seekId,code,position)=>finish({ok:code===0,code,position});",
+        "try{c.appendRegisterCall('Seek','audioplayer',cb);",
+        call.as_str(),
         "if(p&&typeof p.catch==='function')p.catch(()=>{});",
-        "return {ok:true,cmd:",cmd.as_str(),",seconds:",secs.as_str(),"};",
-        "}catch(e){return {ok:false,why:String(e)};}",
-        "})()",
+        "setTimeout(()=>finish({ok:false,why:'timeout'}),1500);",
+        "}catch(e){finish({ok:false,why:String(e)});}",
+        "});",
+        "}catch(e){return Promise.resolve({ok:false,why:String(e)});}})()",
     ].concat()
 }
 
@@ -266,7 +290,9 @@ impl Ws{
         }
         let end=find_header_end(&buffer)?;
         let head=String::from_utf8_lossy(&buffer[..end]).to_ascii_lowercase();
-        if !head.contains("101 switching protocols"){return None;}
+        // CEF 72 回的是 "101 WebSocket Protocol Handshake"，新版 Chrome 回
+        // "101 Switching Protocols"，只认状态码 101，别绑死原因短语。
+        if !head.starts_with("http/1.1 101")&&!head.starts_with("http/1.0 101"){return None;}
         buffer.drain(..end);
         Some(Ws{stream,buffer})
     }
@@ -304,8 +330,9 @@ impl Ws{
 
     /// CDP 会先推事件消息，按 id 过滤出本请求的响应。
     fn request(&mut self,id:u64,expression:&str)->Option<serde_json::Value>{
+        // 注入表达式返回 Promise（等原生 Seek 回调）；CDP 必须 awaitPromise 才能拿到结果。
         let message=serde_json::json!({"id":id,"method":"Runtime.evaluate","params":{
-            "expression":expression,"returnByValue":true,"awaitPromise":false,"userGesture":true}});
+            "expression":expression,"returnByValue":true,"awaitPromise":true,"userGesture":true}});
         self.send_text(&message.to_string())?;
         let deadline=Instant::now()+FRAME_TIMEOUT;
         while Instant::now()<deadline{
@@ -416,14 +443,35 @@ mod tests{
     }
 
     #[test]
-    fn expression_uses_native_bridge_and_seconds(){
-        let expr=expression("nm.play.playerSeek",12.5);
+    fn expression_uses_native_seek_and_waits_for_callback(){
+        let expr=expression("audioplayer.seek",12.5);
         assert!(expr.contains("window.legacyNativeCmder"));
-        assert!(expr.contains("c.call(\"nm.play.playerSeek\",12.500)"));
-        assert!(expr.contains("ok:true"));
+        assert!(expr.contains("c.call(\"audioplayer.seek\",'','',12.500)"));
+        assert!(expr.contains("appendRegisterCall('Seek','audioplayer',cb)"));
+        assert!(expr.contains("ok:code===0"));
+        assert!(expr.contains("setTimeout"));
+        // 旧命令仍可用两参数形式，方便通过配置文件做兼容试验。
+        let legacy=expression("nm.play.playerSeek",30.0);
+        assert!(legacy.contains("c.call(\"nm.play.playerSeek\",30.000)"));
         assert!(!accepts(&serde_json::json!({"exceptionDetails":{},"result":{}})));
         assert!(accepts(&serde_json::json!({"result":{"result":{"value":{"ok":true}}}})));
         assert!(!accepts(&serde_json::json!({"result":{"result":{"value":{"ok":false}}}})));
+    }
+
+    #[test]
+    fn native_seek_callback_confirms_without_timeline(){
+        // 实机关键路径：原生回执自带 position，时间轴完全读不到也应判成功。
+        let (mut cfg,handle)=mock_cdp(|_,_|serde_json::json!({"ok":true,"code":0,"position":30.0}));
+        cfg.commands.truncate(1);
+        assert_eq!(seek_inner(30.0,&cfg,||None,|_|{}),Outcome::Arrived);
+        assert_eq!(handle.join().unwrap().len(),1);
+    }
+
+    #[test]
+    fn native_seek_wrong_position_is_rejected(){
+        let (cfg,handle)=mock_cdp(|_,_|serde_json::json!({"ok":true,"code":0,"position":3.0}));
+        assert_eq!(seek_inner(30.0,&cfg,||None,|_|{}),Outcome::Rejected);
+        assert_eq!(handle.join().unwrap().len(),2);
     }
 
     #[test]
@@ -492,7 +540,14 @@ mod tests{
         assert_eq!(value["call"].as_str(),Some("function"));
     }
 
-    /// 手动实机验证：逐条试命令并回读播放器位置，确认哪条命令真的能跳。
+    /// 实机验证上层入口：smtc::seek 兜底调用的就是 `seek()`，必须返回 true。
+    #[test]
+    #[ignore="手动实机验证：会真实改变播放进度"]
+    fn live_cdp_seek_public(){
+        assert!(seek(45.0),"CDP 跳转应由原生 Seek 回执确认成功");
+    }
+
+    /// 手动实机验证：逐条试命令并打印原生回执，确认哪条命令真的能跳。
     /// 会真实改变播放进度（统一跳到 20 秒），只在明确需要验证时运行。
     #[test]
     #[ignore="手动实机验证：会真实改变播放进度"]
