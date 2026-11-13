@@ -1849,7 +1849,7 @@ impl App {
                         4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
                         6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
                         13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
-                        14=>egui::include_image!("../assets/settings-icons/system/maa.svg"),
+                        14=>egui::include_image!("../assets/maa-icon.png"), // 与状态胶囊同一个 MAA 官方图标
                         12=>egui::include_image!("../assets/settings-icons/system/phone.svg"),
                         _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
                     };

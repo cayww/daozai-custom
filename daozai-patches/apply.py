@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-76"
+PATCH_ID = "custom-77"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -10573,6 +10573,25 @@ fn phone_settings_page_renders_with_locked_sms_toggle(){
                     ui.painter().text(egui::pos2(rect.left()+40.0,rect.center().y),egui::Align2::LEFT_CENTER,name,egui::FontId::proportional(13.0),if selected{settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41))}else{settings_color(ctx,Color32::from_gray(225),Color32::from_gray(55))});
                     ui.add_space(3.0);
                 }
+'''),
+
+    # custom-77：MAA 分组图标与进度胶囊一致（同一张 png）
+    ("src/extras.rs",
+     '''                        4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
+                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+                        13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        14=>egui::include_image!("../assets/settings-icons/system/maa.svg"),
+                        12=>egui::include_image!("../assets/settings-icons/system/phone.svg"),
+                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
+                    };
+''',
+     '''                        4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
+                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+                        13=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        14=>egui::include_image!("../assets/maa-icon.png"), // 与状态胶囊同一个 MAA 官方图标
+                        12=>egui::include_image!("../assets/settings-icons/system/phone.svg"),
+                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
+                    };
 '''),
 ]
 
