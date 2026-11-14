@@ -855,6 +855,8 @@ pub fn spawn_poller(state: Shared,ctx:eframe::egui::Context)->Poller {
             std::thread::park_timeout(Duration::from_millis(if idle{idle_interval(wait)}else{wait}.into()));
         }
     });
+    // 音量推送的独立通道：与采样线程解耦，避免采样线程停摆时推送静默失效。
+    #[cfg(windows)] crate::music_volume::spawn_push_watcher();
     Poller{enabled,stop,worker,interval_ms}
 }
 

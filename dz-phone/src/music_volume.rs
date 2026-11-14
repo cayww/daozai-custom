@@ -234,9 +234,26 @@ fn push_step(running:bool,seen:Option<(bool,std::time::Duration)>,stable:std::ti
 
 /// 挂在现有采样循环里调用：播放器每次启动只推一次记住的音量。
 /// 内部 2 秒节流；推送前先等播放器稳定 4 秒，并在发送前再确认一次它仍在运行。
+/// 独立的后台通道：每秒调一次 `watch_tick`。
+/// 实测媒体采样线程会在运行一段时间后静默停摆（日志停在某次 push 后再无 detect），
+/// 而音量推送不能依赖它，所以单开一条极轻的线程（两次进程枚举，开销可忽略）。
+#[cfg(windows)]
+pub fn spawn_push_watcher(){
+    use std::sync::Once;
+    static ONCE:Once=Once::new();
+    ONCE.call_once(||{
+        std::thread::spawn(||{
+            loop{
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                watch_tick();
+            }
+        });
+    });
+}
+
 #[cfg(windows)]
 pub fn watch_tick(){
-    use std::sync::Mutex;
+    use std::sync::{Mutex,MutexGuard};
     use std::time::{Duration, Instant};
     // QQ 冷启动后要十几秒才完成初始化；在此之前发的 `/volumeto` 会被它自己恢复的音量覆盖。
     // 而且推过一次就标记 Done、不会再推，所以推早了等于永久失败。
@@ -245,16 +262,27 @@ pub fn watch_tick(){
     const STABLE:Duration=Duration::from_secs(4);
     // 每个播放器：(本次运行是否已推送, 看到它在运行的时间)。退出后整条记录删除。
     static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant)>>>=Mutex::new(None);
+    static LAST:Mutex<Option<Instant>>=Mutex::new(None);
     if cfg!(test){return;}
-    // 不再自己做节流：采样循环本来就 1~2 秒一次，多一层节流会把 12 秒等待拉成 20 秒。
-
+    // 锁被 poison 也要继续：之前某次 panic 不该让音量推送从此彻底静默失效。
+    fn guard<T>(lock:&'static Mutex<T>)->MutexGuard<'static,T>{
+        match lock.lock(){Ok(guard)=>guard,Err(poisoned)=>poisoned.into_inner()}
+    }
+    {
+        let mut last=guard(&LAST);
+        if last.is_some_and(|at|at.elapsed()<Duration::from_secs(1)){return;}
+        *last=Some(Instant::now());
+    }
     if !state().authoritative{
-        if let Ok(mut track)=TRACK.lock(){if let Some(map)=track.as_mut(){map.clear();}}
+        let mut track=guard(&TRACK);
+        if let Some(map)=track.as_mut(){map.clear();}
         return;
     }
     for (key,source) in [("qqmusic","Tencent.QQMusic"),("cloudmusic","cloudmusic.exe")]{
         let mut should_push=false;
-        if let Ok(mut track)=TRACK.lock(){
+        let mut detected:Option<Duration>=None;
+        {
+            let mut track=guard(&TRACK);
             if track.is_none(){*track=Some(std::collections::HashMap::new());}
             if let Some(map)=track.as_mut(){
                 let running=player_running(key);
@@ -262,13 +290,12 @@ pub fn watch_tick(){
                 let stable=if key=="qqmusic"{STABLE_QQ}else{STABLE};
                 match push_step(running,seen,stable){
                     PushStep::Idle=>{}
+                    // 退出就忘掉这次运行，下次启动重新推一次。
                     PushStep::Reset=>{map.remove(key);}
                     PushStep::Waiting=>{
                         if !map.contains_key(key){
                             map.insert(key,(false,Instant::now()));
-                            let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
-                            crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                                &format!("{seconds} detect key={key} 等待{stable:?}后推送"));
+                            detected=Some(stable);
                         }
                     }
                     PushStep::Ready=>{map.insert(key,(true,Instant::now()));should_push=true;}
@@ -276,11 +303,17 @@ pub fn watch_tick(){
                 }
             }
         }
+        // 日志放在锁外：文件 I/O 慢，也不该让写日志失败影响状态机。
+        if let Some(stable)=detected{
+            let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
+            crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
+                &format!("{seconds} detect key={key} 等待{stable:?}后推送"));
+        }
         if !should_push{continue;}
         let Some(percent)=state().volumes.get(key).copied() else{continue;};
         let source=source.to_string();
         let key=key.to_string();
-        // 推送本身要起进程或连 CDP，放到一次性线程里，避免拖慢采样。
+        // 推送本身要起进程或连 CDP，放到一次性线程里，避免拖慢调用方。
         std::thread::spawn(move||{
             // 从判定到真正发命令之间还有几毫秒，这里再确认一次：QQ 的命令进程本身是
             // QQMusic.exe，若此刻它已退出，这条命令会变成一次完整启动，把客户端拉起来。
