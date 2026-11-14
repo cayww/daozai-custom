@@ -206,6 +206,13 @@ pub fn port_open()->bool{
     std::net::TcpStream::connect_timeout(&addr,std::time::Duration::from_millis(200)).is_ok()
 }
 
+/// 调试端口开了不等于能发命令：页面里的 `legacyNativeCmder` 要更晚才注入。
+/// 以它是否存在作为“可以发命令”的判据，避免刚启动时白发一次。
+pub fn bridge_ready()->bool{
+    if !port_open(){return false;}
+    matches!(evaluate(config().port,"typeof window.legacyNativeCmder!=='undefined'"),Some(serde_json::Value::Bool(true)))
+}
+
 /// 通过客户端自己的桥设置应用内音量：与拖动它的音量条走同一条命令。
 /// 内部音量没有读取接口，调用方需要自己记住数值用于显示。
 pub fn set_volume(percent:u32)->bool{

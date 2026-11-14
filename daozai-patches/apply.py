@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-107"
+PATCH_ID = "custom-109"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5358,7 +5358,10 @@ fn player_token(key:&str)->Option<u32>{
     if key=="qqmusic"{
         crate::smtc::player_process::pids_named("qqmusic.exe").into_iter().min()
     }else{
-        crate::smtc::netease_control::port_open().then_some(1)
+        // 网易云：端口打开且页面桥已注入才算“可发送”。会话标识用主进程 PID——
+        // 原来固定返回 1，导致它退出再启动时标识不变、状态一直停在“已推过”，再也不推。
+        if !crate::smtc::netease_control::bridge_ready(){return None;}
+        crate::smtc::player_process::pids_named("cloudmusic.exe").into_iter().min().or(Some(1))
     }
 }
 
@@ -5383,18 +5386,28 @@ enum PushStep{
     Done,
 }
 
-/// `record` 是历史记录：(本次是否已推送, 已等待时长, 记录时的 PID)。
-/// 关键点：**PID 一变就当成新的一次启动**，不再依赖“是否碰巧抓到进程消失的那一帧”。
-/// QQ 退出时会有进程消失得慢，快速重启时 `running` 始终为 true，旧实现会一直停在 Done。
+/// `record` 是历史记录：(已推送过的状态位, 记录时间, 记录时的 PID)。
+/// - 用 **PID** 识别新一次启动：QQ 退出时残留进程消失得慢，旧实现看不到 `running=false`，
+///   状态会永远停在 Done（这就是“只有重启岛仔后第一次有效”的原因）；
+/// - 用**状态位**区分“未播放时推过”和“播放时推过”：网易云只在播放时才应用内部音量，
+///   未播放时推的那次会被忽略，所以开始播放后要再推一次；同一状态只推一次，暂停/续播不重复。
 #[cfg(windows)]
-fn push_step(token:Option<u32>,record:Option<(bool,std::time::Duration,u32)>,stable:std::time::Duration)->PushStep{
+fn push_step(token:Option<u32>,record:Option<(u8,std::time::Duration,u32)>,need:u8)->PushStep{
     match (token,record){
         (None,None)=>PushStep::Idle,
         (None,Some(_))=>PushStep::Reset,
         (Some(_),None)=>PushStep::Start,
         (Some(pid),Some((_,_,old))) if pid!=old=>PushStep::Start,
-        (Some(_),Some((true,_,_)))=>PushStep::Done,
-        (Some(_),Some((false,elapsed,_)))=>if elapsed>=stable{PushStep::Ready}else{PushStep::Waiting},
+        (Some(_),Some((mask,_,_)))=>if mask&need==0{PushStep::Ready}else{PushStep::Done},
+    }
+}
+
+/// 网易云当前是否在播放（只有播放时它才应用内部音量）。
+#[cfg(windows)]
+fn netease_playing()->bool{
+    match crate::smtc::shared().lock(){
+        Ok(state)=>state.source.eq_ignore_ascii_case("cloudmusic.exe") && state.playing,
+        Err(_)=>false,
     }
 }
 
@@ -5420,8 +5433,12 @@ pub fn watch_tick(){
     // 两家都按用户要求不延迟：检测到播放器（QQ 看进程、网易云看调试端口）就立刻推一次。
     const STABLE_QQ:Duration=Duration::ZERO;
     const STABLE:Duration=Duration::ZERO;
+    /// 未播放时推过。
+    const MASK_IDLE:u8=1;
+    /// 播放中推过（网易云只有这时才会真正应用）。
+    const MASK_PLAYING:u8=2;
     // 每个播放器：(本次运行是否已推送, 记录时间, 记录时的 PID)
-    static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant,u32)>>>=Mutex::new(None);
+    static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(u8,Instant,u32)>>>=Mutex::new(None);
     static LAST:Mutex<Option<Instant>>=Mutex::new(None);
     if cfg!(test){return;}
     fn guard<T>(lock:&'static Mutex<T>)->MutexGuard<'static,T>{
@@ -5438,25 +5455,28 @@ pub fn watch_tick(){
         return;
     }
     for (key,source) in [("qqmusic","Tencent.QQMusic"),("cloudmusic","cloudmusic.exe")]{
+        let token=player_token(key);
         let mut should_push=false;
         let mut detected:Option<Duration>=None;
         {
             let mut track=guard(&TRACK);
             if track.is_none(){*track=Some(std::collections::HashMap::new());}
             if let Some(map)=track.as_mut(){
-                let token=player_token(key);
-                let record=map.get(key).map(|(pushed,at,pid)|(*pushed,at.elapsed(),*pid));
+                let record=map.get(key).map(|(mask,at,pid)|(*mask,at.elapsed(),*pid));
                 let stable=if key=="qqmusic"{STABLE_QQ}else{STABLE};
-                match push_step(token,record,stable){
+                // QQ 任何时候都能收命令；网易云要区分“未播放”和“播放中”，两者各推一次。
+                let need=if key=="qqmusic"{MASK_IDLE}else if netease_playing(){MASK_PLAYING}else{MASK_IDLE};
+                match push_step(token,record,need){
                     PushStep::Idle=>{}
                     PushStep::Reset=>{map.remove(key);}
                     PushStep::Start=>{
-                        map.insert(key,(false,Instant::now(),token.unwrap_or(0)));
+                        map.insert(key,(0,Instant::now(),token.unwrap_or(0)));
                         detected=Some(stable);
                     }
                     PushStep::Waiting=>{}
                     PushStep::Ready=>{
-                        map.insert(key,(true,Instant::now(),token.unwrap_or(0)));
+                        let mask=record.map(|(mask,_,_)|mask).unwrap_or(0)|need;
+                        map.insert(key,(mask,Instant::now(),token.unwrap_or(0)));
                         should_push=true;
                     }
                     PushStep::Done=>{}
@@ -5466,7 +5486,7 @@ pub fn watch_tick(){
         if let Some(stable)=detected{
             let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
             crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                &format!("{seconds} detect key={key} pid={:?} 等待{stable:?}后推送",player_token(key)));
+                &format!("{seconds} detect key={key} pid={token:?} 等待{stable:?}后推送"));
         }
         if !should_push{continue;}
         let Some(percent)=state().volumes.get(key).copied() else{continue;};
@@ -5554,23 +5574,24 @@ pub fn set_volume(_source:&str,_percent:u32)->bool{false}
     #[cfg(windows)]
     fn volume_push_happens_once_per_player_run(){
         use std::time::Duration;
-        let stable=Duration::from_secs(4);
-        // 没在运行、没记录：什么都不做。
-        assert_eq!(push_step(None,None,stable),PushStep::Idle);
-        // 首次出现：开始计时。
-        assert_eq!(push_step(Some(10),None,stable),PushStep::Start);
-        // 未到稳定时间。
-        assert_eq!(push_step(Some(10),Some((false,Duration::from_secs(1),10)),stable),PushStep::Waiting);
-        // 到时间且未推过。
-        assert_eq!(push_step(Some(10),Some((false,Duration::from_secs(5),10)),stable),PushStep::Ready);
-        // 已推过：同一 PID 不再推。
-        assert_eq!(push_step(Some(10),Some((true,Duration::from_secs(600),10)),stable),PushStep::Done);
-        // 关键：PID 变了就是新一次启动。QQ 退出时进程消失得慢、快速重启时抓不到 false，
-        // 旧实现会一直停在 Done（这就是“只有重启岛仔后第一次有效”的原因）。
-        assert_eq!(push_step(Some(20),Some((true,Duration::from_secs(600),10)),stable),PushStep::Start);
-        assert_eq!(push_step(Some(20),Some((false,Duration::from_secs(30),10)),stable),PushStep::Start);
-        // 进程消失：清记录。
-        assert_eq!(push_step(None,Some((true,Duration::from_secs(600),10)),stable),PushStep::Reset);
+        const IDLE:u8=1;
+        const PLAYING:u8=2;
+        // 没在运行、没记录。
+        assert_eq!(push_step(None,None,IDLE),PushStep::Idle);
+        // 首次出现。
+        assert_eq!(push_step(Some(10),None,IDLE),PushStep::Start);
+        // 未播放态还没推过：可以推。
+        assert_eq!(push_step(Some(10),Some((0,Duration::ZERO,10)),IDLE),PushStep::Ready);
+        // 未播放态已推过：不再推。
+        assert_eq!(push_step(Some(10),Some((IDLE,Duration::from_secs(60),10)),IDLE),PushStep::Done);
+        // 开始播放：即使未播放态已推过，这一位还没推，要再推一次（网易云只在这时生效）。
+        assert_eq!(push_step(Some(10),Some((IDLE,Duration::from_secs(60),10)),PLAYING),PushStep::Ready);
+        // 播放态也推过了：暂停后再播不再重复推。
+        assert_eq!(push_step(Some(10),Some((IDLE|PLAYING,Duration::from_secs(60),10)),PLAYING),PushStep::Done);
+        // PID 变了就是新一次启动（残留进程导致看不到 running=false 的老问题）。
+        assert_eq!(push_step(Some(20),Some((IDLE|PLAYING,Duration::from_secs(600),10)),IDLE),PushStep::Start);
+        // 进程消失。
+        assert_eq!(push_step(None,Some((IDLE|PLAYING,Duration::from_secs(600),10)),IDLE),PushStep::Reset);
     }
 
     #[test]
