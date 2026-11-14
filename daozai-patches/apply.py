@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-109"
+PATCH_ID = "custom-110"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5230,6 +5230,68 @@ use std::time::{Duration, Instant};
     }
 '''),
     ("src/music_volume.rs",
+     '''mod platform {
+    use windows::{core::{Interface,PWSTR},Win32::{
+        Foundation::CloseHandle,
+        Media::Audio::{AudioSessionStateExpired,IAudioSessionControl2,IAudioSessionManager2,IMMDeviceEnumerator,ISimpleAudioVolume,MMDeviceEnumerator,DEVICE_STATE_ACTIVE,eRender},
+        Storage::Packaging::Appx::GetApplicationUserModelId,
+        System::{Com::{CoCreateInstance,CoInitializeEx,CLSCTX_ALL,COINIT_MULTITHREADED},Threading::{OpenProcess,PROCESS_QUERY_LIMITED_INFORMATION}},
+    }};
+''',
+     '''mod platform {
+    use windows::{core::{Interface,PWSTR},Win32::{
+        Foundation::CloseHandle,
+        Media::Audio::{AudioSessionStateActive,AudioSessionStateExpired,IAudioSessionControl2,IAudioSessionManager2,IMMDeviceEnumerator,ISimpleAudioVolume,MMDeviceEnumerator,DEVICE_STATE_ACTIVE,eRender},
+        Storage::Packaging::Appx::GetApplicationUserModelId,
+        System::{Com::{CoCreateInstance,CoInitializeEx,CLSCTX_ALL,COINIT_MULTITHREADED},Threading::{OpenProcess,PROCESS_QUERY_LIMITED_INFORMATION}},
+    }};
+'''),
+    ("src/music_volume.rs",
+     '''            let _=CloseHandle(process);
+            result.is_ok() && length>0 && (length as usize)<=id.len()
+                && String::from_utf16_lossy(&id[..length as usize-1]).eq_ignore_ascii_case(source)
+        }
+    }
+
+''',
+     '''            let _=CloseHandle(process);
+            result.is_ok() && length>0 && (length as usize)<=id.len()
+                && String::from_utf16_lossy(&id[..length as usize-1]).eq_ignore_ascii_case(source)
+        }
+    }
+
+    /// 该应用此刻是否真的有声音（音频会话峰值 > 0）。
+    /// 岛仔的媒体源可能被别的播放器抢占，用它来判断“是否在播放”会漏；峰值是直接证据。
+    pub fn audio_active(source:&str)->bool {
+        if source.is_empty(){return false;}
+        unsafe {
+            thread_local!{static ENUMERATOR:Option<IMMDeviceEnumerator>=unsafe{
+                let _=CoInitializeEx(None,COINIT_MULTITHREADED);
+                CoCreateInstance(&MMDeviceEnumerator,None,CLSCTX_ALL).ok()
+            };}
+            ENUMERATOR.with(|enumerator|{
+                let Some(enumerator)=enumerator else{return false;};
+                let Ok(devices)=enumerator.EnumAudioEndpoints(eRender,DEVICE_STATE_ACTIVE) else{return false;};
+                for d in 0..devices.GetCount().unwrap_or(0) {
+                    let Ok(device)=devices.Item(d) else{continue;};
+                    let Ok(manager)=device.Activate::<IAudioSessionManager2>(CLSCTX_ALL,None) else{continue;};
+                    let Ok(sessions)=manager.GetSessionEnumerator() else{continue;};
+                    for s in 0..sessions.GetCount().unwrap_or(0) {
+                        let Ok(session)=sessions.GetSession(s) else{continue;};
+                        if session.GetState().ok()==Some(AudioSessionStateExpired){continue;}
+                        let Ok(control)=session.cast::<IAudioSessionControl2>() else{continue;};
+                        if !control.GetProcessId().ok().is_some_and(|pid|matches(pid,source)){continue;}
+                        // Active = 该会话正在输出音频（暂停通常是 Paused）。
+                        if session.GetState().ok()==Some(AudioSessionStateActive){return true;}
+                    }
+                }
+                false
+            })
+        }
+    }
+
+'''),
+    ("src/music_volume.rs",
      '''    }
 }
 
@@ -5403,12 +5465,14 @@ fn push_step(token:Option<u32>,record:Option<(u8,std::time::Duration,u32)>,need:
 }
 
 /// 网易云当前是否在播放（只有播放时它才应用内部音量）。
+/// 先看岛仔的媒体状态，再用音频峰值兜底——媒体源可能被别的播放器抢占，只看状态会漏判。
 #[cfg(windows)]
 fn netease_playing()->bool{
-    match crate::smtc::shared().lock(){
+    let by_state=match crate::smtc::shared().lock(){
         Ok(state)=>state.source.eq_ignore_ascii_case("cloudmusic.exe") && state.playing,
         Err(_)=>false,
-    }
+    };
+    by_state || platform::audio_active("cloudmusic.exe")
 }
 
 /// 独立的后台通道：每秒检测一次。播放器每次启动（含快速重启）只推一次。
@@ -5456,6 +5520,8 @@ pub fn watch_tick(){
     }
     for (key,source) in [("qqmusic","Tencent.QQMusic"),("cloudmusic","cloudmusic.exe")]{
         let token=player_token(key);
+        // QQ 任何时候都能收命令；网易云要区分“未播放”和“播放中”，两者各推一次。
+        let need=if key=="qqmusic"{MASK_IDLE}else if netease_playing(){MASK_PLAYING}else{MASK_IDLE};
         let mut should_push=false;
         let mut detected:Option<Duration>=None;
         {
@@ -5464,8 +5530,6 @@ pub fn watch_tick(){
             if let Some(map)=track.as_mut(){
                 let record=map.get(key).map(|(mask,at,pid)|(*mask,at.elapsed(),*pid));
                 let stable=if key=="qqmusic"{STABLE_QQ}else{STABLE};
-                // QQ 任何时候都能收命令；网易云要区分“未播放”和“播放中”，两者各推一次。
-                let need=if key=="qqmusic"{MASK_IDLE}else if netease_playing(){MASK_PLAYING}else{MASK_IDLE};
                 match push_step(token,record,need){
                     PushStep::Idle=>{}
                     PushStep::Reset=>{map.remove(key);}
@@ -5486,7 +5550,7 @@ pub fn watch_tick(){
         if let Some(stable)=detected{
             let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
             crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                &format!("{seconds} detect key={key} pid={token:?} 等待{stable:?}后推送"));
+                &format!("{seconds} detect key={key} pid={token:?} need={need} 等待{stable:?}后推送"));
         }
         if !should_push{continue;}
         let Some(percent)=state().volumes.get(key).copied() else{continue;};
@@ -5498,7 +5562,7 @@ pub fn watch_tick(){
             let applied=apply_internal(&source,percent);
             let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
             crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                &format!("{seconds} push key={key} percent={percent} applied={applied}"));
+                &format!("{seconds} push key={key} percent={percent} need={need} applied={applied}"));
         });
     }
 }
