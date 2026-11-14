@@ -2414,8 +2414,6 @@ impl App {
                         #[cfg(windows)]
                         {
                             use crate::smtc::netease_control as ctl;
-                            // 重启在后台线程里等端口，结果晚一点才出来，这里接住再提示。
-                            if let Some(message)=ctl::take_restart_result(){self.say(message);}
                             let auto_host=ctl::config().auto_host;
                             let mut authoritative=crate::music_volume::authoritative();
                             settings_label(ui,"音乐音量");
@@ -2434,7 +2432,7 @@ impl App {
                                 let fixed=ctl::shortcut_fixed();
                                 ui.add(egui::Label::new(egui::RichText::new(if fixed{"已自动修改网易云快捷方式"}else{"还没有修改快捷方式"}).size(12.5).strong()).wrap());
                                 ui.separator();
-                                ui.small("开始菜单没有快捷方式？手动选取网易云快捷方式");
+                                ui.small("找不到快捷方式？选任意一条网易云的，其余一起修");
                                 if ui.button("选择文件").clicked(){
                                         match crate::system::pick_files_for("选择网易云快捷方式",false){
                                             Ok(files)=>if let Some(path)=files.first(){
@@ -2453,14 +2451,6 @@ impl App {
                                     match ctl::set_auto_host(auto){
                                         Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
                                         Err(error)=>self.say(format!("保存失败：{}",error)),
-                                    }
-                                }
-                                ui.separator();
-                                ui.small("手动重启以连接到岛仔，并且补上开始菜单的快捷方式，立即生效。");
-                                if ui.button("重启网易云").clicked(){
-                                    match ctl::restart_with_debug_port(){
-                                        Ok(message)=>self.say(message),
-                                        Err(error)=>self.say(format!("未能重启：{}",error)),
                                     }
                                 }
                             });

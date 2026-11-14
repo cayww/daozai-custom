@@ -3464,7 +3464,12 @@ impl App {
     // 每帧推进：番茄钟、饮水提醒、跨天
     // ---------------------------------------------------------------
     fn tick(&mut self, env: &Env, dt: f32, elapsed: f32) {
-        #[cfg(windows)] crate::smtc::netease_control::auto_host_tick();
+        #[cfg(windows)]
+        {
+            crate::smtc::netease_control::boot_scan_shortcuts();
+            if let Some(message)=crate::smtc::netease_control::take_restart_result(){self.say(message);}
+            crate::smtc::netease_control::auto_host_tick();
+        }
         if self.toast.as_ref().is_some_and(|(_,at)|self.t-at>2.4){self.toast=None;}
         // 跳转后先用本地目标位置显示；播放器回报追上了、换歌了或超时就交还真实位置。
         let seek_done=self.music_seek_ui.as_ref().is_some_and(|(target,title)|{

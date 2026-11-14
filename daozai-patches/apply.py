@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-117"
+PATCH_ID = "custom-118"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -7962,6 +7962,55 @@ path = "src/bin/daozai-bridge/main.rs"
                             // 重启在后台线程里等端口，结果晚一点才出来，这里接住再提示。
                             if let Some(message)=ctl::take_restart_result(){self.say(message);}
                             let auto_host=ctl::config().auto_host;'''),
+
+    # custom-118：网易云快捷方式：启动自动扫描修复、选择文件修全部、移除手动重启按钮
+    ("src/app.rs",
+     '''        #[cfg(windows)] crate::smtc::netease_control::auto_host_tick();
+''',
+     '''        #[cfg(windows)]
+        {
+            crate::smtc::netease_control::boot_scan_shortcuts();
+            if let Some(message)=crate::smtc::netease_control::take_restart_result(){self.say(message);}
+            crate::smtc::netease_control::auto_host_tick();
+        }
+'''),
+    ("src/extras.rs",
+     '''                            use crate::smtc::netease_control as ctl;
+                            // 重启在后台线程里等端口，结果晚一点才出来，这里接住再提示。
+                            if let Some(message)=ctl::take_restart_result(){self.say(message);}
+                            let auto_host=ctl::config().auto_host;''',
+     '''                            use crate::smtc::netease_control as ctl;
+                            let auto_host=ctl::config().auto_host;'''),
+    ("src/extras.rs",
+     '''                                ui.small("开始菜单没有快捷方式？手动选取网易云快捷方式");''',
+     '''                                ui.small("找不到快捷方式？选任意一条网易云的，其余一起修");'''),
+    ("src/extras.rs",
+     '''                                let mut auto=auto_host;
+                                setting_row(ui,"自动托管","开启后会重启未连接到岛仔的网易云进程",&mut auto);
+                                if auto!=auto_host{
+                                    match ctl::set_auto_host(auto){
+                                        Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
+                                        Err(error)=>self.say(format!("保存失败：{}",error)),
+                                    }
+                                }
+                                ui.separator();
+                                ui.small("手动重启以连接到岛仔，并且补上开始菜单的快捷方式，立即生效。");
+                                if ui.button("重启网易云").clicked(){
+                                    match ctl::restart_with_debug_port(){
+                                        Ok(message)=>self.say(message),
+                                        Err(error)=>self.say(format!("未能重启：{}",error)),
+                                    }
+                                }
+                            });''',
+     '''                                let mut auto=auto_host;
+                                setting_row(ui,"自动托管","开启后会重启未连接到岛仔的网易云进程",&mut auto);
+                                if auto!=auto_host{
+                                    match ctl::set_auto_host(auto){
+                                        Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
+                                        Err(error)=>self.say(format!("保存失败：{}",error)),
+                                    }
+                                }
+                            });'''),
 ]
 
 
