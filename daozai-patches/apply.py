@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-106"
+PATCH_ID = "custom-107"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5417,8 +5417,9 @@ pub fn spawn_push_watcher(){
 pub fn watch_tick(){
     use std::sync::{Mutex,MutexGuard};
     use std::time::{Duration, Instant};
+    // 两家都按用户要求不延迟：检测到播放器（QQ 看进程、网易云看调试端口）就立刻推一次。
     const STABLE_QQ:Duration=Duration::ZERO;
-    const STABLE:Duration=Duration::from_secs(4);
+    const STABLE:Duration=Duration::ZERO;
     // 每个播放器：(本次运行是否已推送, 记录时间, 记录时的 PID)
     static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant,u32)>>>=Mutex::new(None);
     static LAST:Mutex<Option<Instant>>=Mutex::new(None);
