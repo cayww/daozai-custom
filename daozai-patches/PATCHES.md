@@ -618,10 +618,11 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 播放/暂停/上下曲；系统 `TryChangePlaybackPosition` 返回 `true` 但进度不动；控件
 `LegacyIAccessible::SetValue` 返回“尚未实现”；`QQMusic_Protocol.dll` 的 XML 命令只服务网页跳转。
 
-QPlay 也已实测：渲染器 (`QQ音乐2019`) 确实通过 SSDP 广播，AVTransport 服务里也有标准 `Seek`，
-`QPlayAuth` 握手正常返回 Code/MID/DID；但 `GetTransportInfo`、`GetPositionInfo`、`Seek`
-一律返回 UPnP 501（`Internal Error`），说明它只在手机发起 QPlay 投放、存在投放会话时才处理
-AVTransport，控制的是那条会话而不是本机正在播放的队列。所以这条路对本机进度跳转无效。
+QPlay 也已实测：渲染器 (`QQ音乐2019`) 通过 SSDP 广播，AVTransport 服务里有标准 `Seek`，
+`QPlayAuth` 也能返回 Code/MID/DID。但没有投放会话时 AVTransport 一律 501；手机投放期间
+`GetTransportInfo` / `GetMediaInfo` / `GetPositionInfo` 均返回 200（能读到状态、曲目、队列），
+而 `Seek`（REL_TIME / ABS_TIME / TRACK_NR 三种单位）、`Pause`、`Play` **仍然全部 501**。
+也就是说这个渲染器只对可信客户端开放控制动作，对外只读。结论：QPlay 不能用来跳本机进度。
 
 因此继续强化点击通道：
 
