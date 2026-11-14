@@ -616,8 +616,12 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 
 排查过但走不通的通道（记录备查）：CDP 不存在（无 CEF 主界面）；`QQMusicSvr` COM 只有
 播放/暂停/上下曲；系统 `TryChangePlaybackPosition` 返回 `true` 但进度不动；控件
-`LegacyIAccessible::SetValue` 返回“尚未实现”；`QPlaySupport.dll` 默认不加载、SSDP 不广播、
-本地 HTTP 只回 404；`QQMusic_Protocol.dll` 的 XML 命令只服务网页跳转。
+`LegacyIAccessible::SetValue` 返回“尚未实现”；`QQMusic_Protocol.dll` 的 XML 命令只服务网页跳转。
+
+QPlay 也已实测：渲染器 (`QQ音乐2019`) 确实通过 SSDP 广播，AVTransport 服务里也有标准 `Seek`，
+`QPlayAuth` 握手正常返回 Code/MID/DID；但 `GetTransportInfo`、`GetPositionInfo`、`Seek`
+一律返回 UPnP 501（`Internal Error`），说明它只在手机发起 QPlay 投放、存在投放会话时才处理
+AVTransport，控制的是那条会话而不是本机正在播放的队列。所以这条路对本机进度跳转无效。
 
 因此继续强化点击通道：
 
