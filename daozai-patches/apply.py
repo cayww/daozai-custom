@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-103"
+PATCH_ID = "custom-104"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5412,10 +5412,11 @@ pub fn spawn_push_watcher(){
 pub fn watch_tick(){
     use std::sync::{Mutex,MutexGuard};
     use std::time::{Duration, Instant};
-    // QQ 冷启动后要十几秒才完成初始化；在此之前发的 `/volumeto` 会被它自己恢复的音量覆盖。
-    // 而且推过一次就标记 Done、不会再推，所以推早了等于永久失败。
-    // 实测：4 秒、12 秒都被覆盖，第 20 秒推才稳定生效，这里取 20 秒。网易云 4 秒即可。
-    const STABLE_QQ:Duration=Duration::from_secs(20);
+    // QQ 首次推送的等待时间。实测 20 秒能生效，但同样在 20 秒时也会出现“推了没被接受”的情况，
+    // 而 QQ 没有读取内部音量的接口、无法确认一次是否生效，所以在启动窗口内补推几次。
+    const STABLE_QQ:Duration=Duration::from_secs(8);
+    /// 启动窗口内的补推间隔：首次之后每 6 秒补一次，共 3 次（8 / 14 / 20 秒）。
+    const RETRY_GAP:Duration=Duration::from_secs(6);
     const STABLE:Duration=Duration::from_secs(4);
     // 每个播放器：(本次运行是否已推送, 看到它在运行的时间)。退出后整条记录删除。
     static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant)>>>=Mutex::new(None);
@@ -5471,14 +5472,18 @@ pub fn watch_tick(){
         let source=source.to_string();
         let key=key.to_string();
         // 推送本身要起进程或连 CDP，放到一次性线程里，避免拖慢调用方。
+        // QQ 读不到内部音量，无法确认某一次是否被接受，所以在启动窗口内补推几次（值相同）。
         std::thread::spawn(move||{
-            // 从判定到真正发命令之间还有几毫秒，这里再确认一次：QQ 的命令进程本身是
-            // QQMusic.exe，若此刻它已退出，这条命令会变成一次完整启动，把客户端拉起来。
-            if !player_running(&key){return;}
-            let applied=apply_internal(&source,percent);
-            let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
-            crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                &format!("{seconds} push key={key} percent={percent} applied={applied}"));
+            for round in 1..=3u32{
+                if round>1{std::thread::sleep(RETRY_GAP);}
+                // 每次发命令前确认播放器还在：QQ 的命令进程本身是 QQMusic.exe，
+                // 若此刻它已退出，这条命令会变成一次完整启动，把客户端拉起来。
+                if !player_running(&key){return;}
+                let applied=apply_internal(&source,percent);
+                let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
+                crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
+                    &format!("{seconds} push#{round} key={key} percent={percent} applied={applied}"));
+            }
         });
     }
 }
