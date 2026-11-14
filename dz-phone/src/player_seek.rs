@@ -1,5 +1,5 @@
 //! 系统跳转不可用时，定位播放器自己的进度控件并向该窗口发送消息。
-use windows::{core::{Interface,VARIANT},Win32::{Foundation::*,System::{Com::*,Threading::*},UI::{Accessibility::*,WindowsAndMessaging::*},Graphics::Gdi::{ClientToScreen,ScreenToClient}}};
+use windows::{core::{Interface,VARIANT},Win32::{Foundation::*,System::{Com::*,Threading::*},UI::{Accessibility::*,WindowsAndMessaging::*},Graphics::Gdi::ClientToScreen}};
 use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext,DPI_AWARENESS_CONTEXT,DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 
@@ -107,7 +107,7 @@ unsafe fn qq_bar(ui:&IUIAutomation,root:&IUIAutomationElement,expected:Option<f6
             let Ok(r)=bar.CurrentBoundingRectangle()else{continue};
             if r.right-r.left<=40 || r.bottom-r.top>60{continue;}
             let Ok(parent)=walker.GetParentElement(&bar)else{continue};
-            let Ok(group_texts)=parent.FindAll(TreeScope_Descendants,&texts_condition(ui)?)else{continue};
+            let Ok(group_texts)=parent.FindAll(TreeScope_Descendants,&condition)else{continue};
             let mut total:Option<f64>=None;
             for k in 0..group_texts.Length().ok()?{
                 if let Some(value)=group_texts.GetElement(k).ok().and_then(|e|e.CurrentName().ok()).and_then(|name|seconds(&name.to_string())){
@@ -121,10 +121,6 @@ unsafe fn qq_bar(ui:&IUIAutomation,root:&IUIAutomationElement,expected:Option<f6
         }
     }
     None
-}
-
-unsafe fn texts_condition(ui:&IUIAutomation)->Option<windows::Win32::UI::Accessibility::IUIAutomationCondition>{
-    ui.CreatePropertyCondition(UIA_ControlTypePropertyId,&VARIANT::from(UIA_TextControlTypeId.0)).ok()
 }
 
 /// 从进度条那一组控件读当前播放时间；读不到时返回 None，由调用方决定是否继续。

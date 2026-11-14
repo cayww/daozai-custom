@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-110"
+PATCH_ID = "custom-111"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -3843,7 +3843,7 @@ impl App {
                             settings_card(ui,|ui|{
                                 setting_row(ui,"岛仔推送音量","播放器启动后岛仔推送音量", &mut authoritative);
                                 ui.add_space(3.0);
-                                ui.small("关闭后，你在播放器里手动调的音量不会被覆盖。");
+                                ui.small("关闭后，播放器内调整音量后下次启动不会被岛仔音量覆盖");
                             });
                             if authoritative!=crate::music_volume::authoritative(){
                                 crate::music_volume::set_authoritative(authoritative);
@@ -5427,9 +5427,6 @@ fn player_token(key:&str)->Option<u32>{
     }
 }
 
-#[cfg(windows)]
-fn player_running(key:&str)->bool{player_token(key).is_some()}
-
 /// 一次运行会话的推送状态。
 #[cfg(windows)]
 #[derive(Clone,Copy,PartialEq,Eq,Debug)]
@@ -5438,11 +5435,9 @@ enum PushStep{
     Idle,
     /// 没在运行但有记录：清掉。
     Reset,
-    /// 出现了一次新的运行会话（首次，或 PID 变了）：开始计时。
+    /// 出现了一次新的运行会话（首次，或 PID 变了）。
     Start,
-    /// 在运行，但还没到稳定时间。
-    Waiting,
-    /// 在运行且已稳定、本次还没推过：可以推。
+    /// 在运行、本次状态还没推过：可以推。
     Ready,
     /// 本次运行已经推过：不重复推。
     Done,
@@ -5494,9 +5489,6 @@ pub fn spawn_push_watcher(){
 pub fn watch_tick(){
     use std::sync::{Mutex,MutexGuard};
     use std::time::{Duration, Instant};
-    // 两家都按用户要求不延迟：检测到播放器（QQ 看进程、网易云看调试端口）就立刻推一次。
-    const STABLE_QQ:Duration=Duration::ZERO;
-    const STABLE:Duration=Duration::ZERO;
     /// 未播放时推过。
     const MASK_IDLE:u8=1;
     /// 播放中推过（网易云只有这时才会真正应用）。
@@ -5513,7 +5505,9 @@ pub fn watch_tick(){
         if last.is_some_and(|at|at.elapsed()<Duration::from_secs(1)){return;}
         *last=Some(Instant::now());
     }
-    if !state().authoritative{
+    // 一次读取即可：本轮用的音量值与开关状态取自同一快照，避免重复加锁与克隆。
+    let snapshot=state();
+    if !snapshot.authoritative{
         let mut track=guard(&TRACK);
         if let Some(map)=track.as_mut(){map.clear();}
         return;
@@ -5523,21 +5517,19 @@ pub fn watch_tick(){
         // QQ 任何时候都能收命令；网易云要区分“未播放”和“播放中”，两者各推一次。
         let need=if key=="qqmusic"{MASK_IDLE}else if netease_playing(){MASK_PLAYING}else{MASK_IDLE};
         let mut should_push=false;
-        let mut detected:Option<Duration>=None;
+        let mut detected=false;
         {
             let mut track=guard(&TRACK);
             if track.is_none(){*track=Some(std::collections::HashMap::new());}
             if let Some(map)=track.as_mut(){
                 let record=map.get(key).map(|(mask,at,pid)|(*mask,at.elapsed(),*pid));
-                let stable=if key=="qqmusic"{STABLE_QQ}else{STABLE};
                 match push_step(token,record,need){
                     PushStep::Idle=>{}
                     PushStep::Reset=>{map.remove(key);}
                     PushStep::Start=>{
                         map.insert(key,(0,Instant::now(),token.unwrap_or(0)));
-                        detected=Some(stable);
+                        detected=true;
                     }
-                    PushStep::Waiting=>{}
                     PushStep::Ready=>{
                         let mask=record.map(|(mask,_,_)|mask).unwrap_or(0)|need;
                         map.insert(key,(mask,Instant::now(),token.unwrap_or(0)));
@@ -5547,18 +5539,24 @@ pub fn watch_tick(){
                 }
             }
         }
-        if let Some(stable)=detected{
+        if detected{
             let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
             crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                &format!("{seconds} detect key={key} pid={token:?} need={need} 等待{stable:?}后推送"));
+                &format!("{seconds} detect key={key} pid={token:?} need={need}"));
         }
         if !should_push{continue;}
-        let Some(percent)=state().volumes.get(key).copied() else{continue;};
+        let Some(percent)=snapshot.volumes.get(key).copied() else{continue;};
         let source=source.to_string();
         let key=key.to_string();
         // 发命令只要几十毫秒，放一次性线程，避免拖慢调用方。
         std::thread::spawn(move||{
-            if !player_running(&key){return;}
+            // 只确认播放器还在：桥是否就绪主线程刚查过，这里不再重复建 WebSocket。
+            let alive=if key=="qqmusic"{
+                !crate::smtc::player_process::pids_named("qqmusic.exe").is_empty()
+            }else{
+                crate::smtc::netease_control::port_open()
+            };
+            if !alive{return;}
             let applied=apply_internal(&source,percent);
             let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
             crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
@@ -6339,7 +6337,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 
 ''',
      '''//! 系统跳转不可用时，定位播放器自己的进度控件并向该窗口发送消息。
-use windows::{core::{Interface,VARIANT},Win32::{Foundation::*,System::{Com::*,Threading::*},UI::{Accessibility::*,WindowsAndMessaging::*},Graphics::Gdi::{ClientToScreen,ScreenToClient}}};
+use windows::{core::{Interface,VARIANT},Win32::{Foundation::*,System::{Com::*,Threading::*},UI::{Accessibility::*,WindowsAndMessaging::*},Graphics::Gdi::ClientToScreen}};
 use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext,DPI_AWARENESS_CONTEXT,DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 
@@ -6465,7 +6463,7 @@ unsafe fn qq_bar(ui:&IUIAutomation,root:&IUIAutomationElement,expected:Option<f6
             let Ok(r)=bar.CurrentBoundingRectangle()else{continue};
             if r.right-r.left<=40 || r.bottom-r.top>60{continue;}
             let Ok(parent)=walker.GetParentElement(&bar)else{continue};
-            let Ok(group_texts)=parent.FindAll(TreeScope_Descendants,&texts_condition(ui)?)else{continue};
+            let Ok(group_texts)=parent.FindAll(TreeScope_Descendants,&condition)else{continue};
             let mut total:Option<f64>=None;
             for k in 0..group_texts.Length().ok()?{
                 if let Some(value)=group_texts.GetElement(k).ok().and_then(|e|e.CurrentName().ok()).and_then(|name|seconds(&name.to_string())){
@@ -6479,10 +6477,6 @@ unsafe fn qq_bar(ui:&IUIAutomation,root:&IUIAutomationElement,expected:Option<f6
         }
     }
     None
-}
-
-unsafe fn texts_condition(ui:&IUIAutomation)->Option<windows::Win32::UI::Accessibility::IUIAutomationCondition>{
-    ui.CreatePropertyCondition(UIA_ControlTypePropertyId,&VARIANT::from(UIA_TextControlTypeId.0)).ok()
 }
 
 /// 从进度条那一组控件读当前播放时间；读不到时返回 None，由调用方决定是否继续。
