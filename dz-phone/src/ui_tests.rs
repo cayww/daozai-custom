@@ -4202,6 +4202,9 @@ fn music_seek_drag_previews_and_commits_on_release(){
         assert!(!h.cmds.iter().any(|c|matches!(c,crate::app::Cmd::Media(crate::smtc::Transport::Seek(_)))),"拖动中不应反复发送跳转");
         h.frame(vec![egui::Event::PointerButton{pos:to,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
         assert!(h.cmds.iter().any(|c|matches!(c,crate::app::Cmd::Media(crate::smtc::Transport::Seek(t)) if (*t-90.0).abs()<0.1)),"释放应提交目标进度");
+        // 播放器的新位置要等下一轮采样才回来（QQ 音乐尤其慢），松手后不能先弹回旧位置。
+        h.frame(vec![]);
+        assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="01:30")),"{source} 松手后应保持目标时间直到播放器回报");
     }
 }
 

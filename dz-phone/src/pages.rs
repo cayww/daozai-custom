@@ -78,7 +78,11 @@ impl App {
             bar.interact_pointer_pos().or_else(||ctx.input(|i|i.pointer.interact_pos()))
                 .map(|pointer|((c.to_local(pointer).x-bx)/bw).clamp(0.0,1.0) as f64*np.duration)
         }else{None};
-        let position=seek_position.unwrap_or(np.position);
+        // 松手后播放器的新位置要等下一轮采样才回来（QQ 音乐尤其慢），先用目标值顶着，
+        // 否则滑块会先弹回旧位置再跳过去。
+        let pending_position=self.music_seek_ui.as_ref()
+            .filter(|(_,title)|*title==np.title).map(|(target,_)|*target);
+        let position=seek_position.or(pending_position).unwrap_or(np.position);
         let frac=if np.duration>0.0 {(position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
         let (time_y,time_size,right)=if with_lyrics {(100.0,10.0,220.0)}else{(97.0,15.0,375.0)};
         c.text(44.0,time_y,&mmss(position),time_size,W::Regular,tc,H::Left);
@@ -104,7 +108,11 @@ impl App {
         if bh>0.01 {c.faded(bh).circle(bx+bw*frac,by,4.5,theme::WHITE);}
         }
         if bar.clicked() || bar.drag_stopped() {
-            if let Some(position)=seek_position {cmds.push(Cmd::Media(Transport::Seek(position)));}
+            if let Some(position)=seek_position {
+                self.music_seek_ui=Some((position,np.title.clone()));
+                self.music_seek_quiet_until=self.t+2.5;
+                cmds.push(Cmd::Media(Transport::Seek(position)));
+            }
         }
 
         let y=118.0;

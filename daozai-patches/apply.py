@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-113"
+PATCH_ID = "custom-114"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -7831,6 +7831,75 @@ path = "src/bin/daozai-bridge/main.rs"
                 ctx.request_repaint();
             }
             self.avoidance.dialog(ctx,&mut self.settings);
+'''),
+
+    # custom-114：拖动进度条后先用本地目标值显示，等播放器回报追上再交还
+    ("src/app.rs",
+     '''    pub(crate) music_volume_ui: Option<(u32,bool)>,
+    pub(crate) music_volume_quiet_until: f64,
+    pub(crate) music_volume_open: bool,
+''',
+     '''    pub(crate) music_volume_ui: Option<(u32,bool)>,
+    pub(crate) music_volume_quiet_until: f64,
+    pub(crate) music_volume_open: bool,
+    /// 拖动进度条松手后先用本地目标值显示：播放器的会话位置回报有延迟，
+    /// 等它的新位置追上（或超时、换歌）再交还，避免滑块先弹回旧位置。
+    pub(crate) music_seek_ui: Option<(f64,String)>,
+    pub(crate) music_seek_quiet_until: f64,
+'''),
+    ("src/app.rs",
+     '''            music_volume_ui: None,
+            music_volume_quiet_until: 0.0,
+            music_volume_open: false,
+''',
+     '''            music_volume_ui: None,
+            music_volume_quiet_until: 0.0,
+            music_volume_open: false,
+            music_seek_ui: None,
+            music_seek_quiet_until: 0.0,
+'''),
+    ("src/app.rs",
+     '''        if self.toast.as_ref().is_some_and(|(_,at)|self.t-at>2.4){self.toast=None;}
+''',
+     '''        if self.toast.as_ref().is_some_and(|(_,at)|self.t-at>2.4){self.toast=None;}
+        // 跳转后先用本地目标位置显示；播放器回报追上了、换歌了或超时就交还真实位置。
+        let seek_done=self.music_seek_ui.as_ref().is_some_and(|(target,title)|{
+            (self.media.duration>0.0 && (self.media.position-*target).abs()<1.5)
+                || self.t>=self.music_seek_quiet_until || &self.media.title!=title
+        });
+        if seek_done {self.music_seek_ui=None;}
+'''),
+    ("src/pages.rs",
+     '''        let position=seek_position.unwrap_or(np.position);
+''',
+     '''        // 松手后播放器的新位置要等下一轮采样才回来（QQ 音乐尤其慢），先用目标值顶着，
+        // 否则滑块会先弹回旧位置再跳过去。
+        let pending_position=self.music_seek_ui.as_ref()
+            .filter(|(_,title)|*title==np.title).map(|(target,_)|*target);
+        let position=seek_position.or(pending_position).unwrap_or(np.position);
+'''),
+    ("src/pages.rs",
+     '''        if bar.clicked() || bar.drag_stopped() {
+            if let Some(position)=seek_position {cmds.push(Cmd::Media(Transport::Seek(position)));}
+        }
+''',
+     '''        if bar.clicked() || bar.drag_stopped() {
+            if let Some(position)=seek_position {
+                self.music_seek_ui=Some((position,np.title.clone()));
+                self.music_seek_quiet_until=self.t+2.5;
+                cmds.push(Cmd::Media(Transport::Seek(position)));
+            }
+        }
+'''),
+    ("src/ui_tests.rs",
+     '''        assert!(h.cmds.iter().any(|c|matches!(c,crate::app::Cmd::Media(crate::smtc::Transport::Seek(t)) if (*t-90.0).abs()<0.1)),"释放应提交目标进度");
+    }
+''',
+     '''        assert!(h.cmds.iter().any(|c|matches!(c,crate::app::Cmd::Media(crate::smtc::Transport::Seek(t)) if (*t-90.0).abs()<0.1)),"释放应提交目标进度");
+        // 播放器的新位置要等下一轮采样才回来（QQ 音乐尤其慢），松手后不能先弹回旧位置。
+        h.frame(vec![]);
+        assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="01:30")),"{source} 松手后应保持目标时间直到播放器回报");
+    }
 '''),
 ]
 

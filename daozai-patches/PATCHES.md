@@ -612,6 +612,27 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**拖动进度条后不弹回旧位置（custom-114）**
+
+拖动松手后，`page_music` 的 `seek_position` 立刻变 `None`，显示回落到 `np.position`。
+播放器的新位置要等 poller 下一轮采样才回来：网易云有 `SEEK_SYNC`（CDP 跳转成功后写临时基准），
+落回旧值只有一瞬；QQ 音乐只能等系统会话的 timeline 回报（`/seekto` 生效后还要几百毫秒到一秒），
+于是滑块先弹回旧位置、进度数字也回退，看上去「延迟很高」。
+
+- `App` 新增 `music_seek_ui`（目标位置 + 歌名）与 `music_seek_quiet_until`；
+- 松手/点击提交跳转时记下目标，绘制时优先用它，松手后不再回弹；
+- `tick()` 里在三种情况下让位：播放器回报追上目标（差值 <1.5 秒）、超过 2.5 秒、换歌。
+  跳转失败时最多顶 2.5 秒就回到真实位置，不会一直骗人。
+
+验证：EDITS 167，干净重放应用 167 处、跳过 0、diff 空、marker custom-114；
+`music_seek_drag_previews_and_commits_on_release` 新增断言「松手后再跑一帧仍显示目标时间」；
+全量 **1167 passed / 0 failed**（须加 `-- --test-threads=1`，见下），exe SHA256 `f5e0833566dfc984`。
+
+**测试并行度**：`doubao` / `messenger::qq` 等用例用 `std::env::set_var("DAOZAI_DATA_DIR")`
+做隔离，而环境变量是进程级的，并行执行会互相踩。`cargo test -j 1` 只限制编译并行，
+运行时仍多线程；必须 `-- --test-threads=1`，否则会出现随机 3~4 个「文件找不到」失败
+（custom-113 报告里把这类失败归因于窗口类占用是错的）。
+
 **设置窗口内的操作提示（custom-113）**
 
 设置页跑在独立窗口里（`extras.rs` 的 `show_viewport_immediate`），而 `App::say()` 的 toast
