@@ -498,6 +498,18 @@ fn qq_seek_command(seconds:f64)->bool{
         .is_ok()
 }
 
+/// QQ 音乐 `/volumeto <0-100>` 调的是客户端内部音量，不经过 Windows 音频会话，
+/// 所以调用方要自己记住这个值用于显示。
+#[cfg(windows)]
+pub(crate) fn qq_volume_command(percent:u32)->bool{
+    let Some(path)=player_process::pids_named("qqmusic.exe").into_iter().find_map(player_process::image_path)else{return false;};
+    std::process::Command::new(path)
+        .arg("/volumeto")
+        .arg(percent.min(100).to_string())
+        .spawn()
+        .is_ok()
+}
+
 /// 跳转在工作线程执行；专用回退必须回读实际位置，避免播放器接口假成功。
 #[cfg(windows)]
 pub fn seek(seconds:f64,source:&str)->bool {

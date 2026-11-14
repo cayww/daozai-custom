@@ -1,4 +1,5 @@
 //! Windows 音量混合器中的播放器音量；只操作匹配的应用会话。
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -84,8 +85,49 @@ mod platform {
     }
 }
 
+/// QQ 音乐的音量是应用内部的，读不到；记住最近一次由岛仔设置的值用于显示，
+/// 并落盘到 `music-volume.json`，重启后仍然对得上。
+#[cfg(windows)]
+static QQ_INTERNAL:Mutex<Option<u32>>=Mutex::new(None);
+#[cfg(windows)]
+static QQ_INTERNAL_LOADED:Mutex<bool>=Mutex::new(false);
+
+#[cfg(windows)]
+fn qq_internal()->Option<u32>{
+    if let Ok(mut loaded)=QQ_INTERNAL_LOADED.lock(){
+        if !*loaded{
+            *loaded=true;
+            let path=crate::model::config_dir().join("music-volume.json");
+            if let Ok(text)=std::fs::read_to_string(path){
+                if let Ok(value)=serde_json::from_str::<serde_json::Value>(&text){
+                    if let Some(percent)=value.get("qqmusic").and_then(|v|v.as_u64()){
+                        if let Ok(mut cache)=QQ_INTERNAL.lock(){*cache=Some(percent.min(100) as u32);}
+                    }
+                }
+            }
+        }
+    }
+    QQ_INTERNAL.lock().ok().and_then(|cache|*cache)
+}
+
+#[cfg(windows)]
+fn remember_qq_internal(percent:u32){
+    if let Ok(mut cache)=QQ_INTERNAL.lock(){*cache=Some(percent.min(100));}
+    let path=crate::model::config_dir().join("music-volume.json");
+    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    let _=std::fs::write(path,format!("{{\"qqmusic\":{}}}",percent.min(100)));
+}
+
 #[cfg(windows)]
 pub fn read(source:&str)->Option<(u32,bool)> {
+    // QQ 音乐调的是内部音量，会话音量不会跟着变，显示以记住的值为准。
+    if crate::smtc::qq_music(source) {
+        if let Some(percent)=qq_internal(){
+            // 音量是应用内部的，静音仍走系统会话，所以静音状态单独读。
+            let muted=platform::sessions(source).iter().filter_map(|session|unsafe{session.GetMute().ok()}).any(|state|state.as_bool());
+            return Some((percent,muted));
+        }
+    }
     platform::sessions(source).iter().filter_map(|session|unsafe {
         Some(((session.GetMasterVolume().ok()?*100.0).round() as u32,session.GetMute().ok()?.as_bool()))
     }).reduce(|a,b|(a.0.max(b.0),a.1 && b.1))
@@ -93,6 +135,10 @@ pub fn read(source:&str)->Option<(u32,bool)> {
 
 #[cfg(windows)]
 pub fn set_volume(source:&str,percent:u32)->bool {
+    if crate::smtc::qq_music(source) && crate::smtc::qq_volume_command(percent) {
+        remember_qq_internal(percent);
+        return true;
+    }
     apply(source,|session|unsafe {
         session.SetMasterVolume(percent.min(100) as f32/100.0,std::ptr::null()).is_ok()
             && session.SetMute(false,std::ptr::null()).is_ok()

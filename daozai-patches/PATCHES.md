@@ -612,6 +612,17 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**应用内音量（custom-92）：QQ 音乐走 /volumeto**
+
+`/volumeto <0-100>` 改的是客户端内部音量，不经过 Windows 音频会话，所以会话音量保持 100，
+不会与岛仔的会话音量叠加衰减。
+
+- `smtc::qq_volume_command(percent)`：取映像路径后拉起 `/volumeto <值>` 交接进程。
+- `music_volume`：QQ 的音量改走命令，并记住最近设置值用于显示（落盘 `music-volume.json`，
+  重启后仍然一致）；静音仍走系统会话，读取时单独取静音位。
+- 实测：设 35 时显示 35、会话音量仍为 100；恢复 100 后显示同步。EDITS 152，
+  exe SHA256 `4c0d61db9aa54ef8`。
+
 **命令行跳转（custom-91）：发现 QQ 音乐的 /seekto**
 
 逆向命令表时发现 `CQQMusicCommandLineInfo` 支持一批斜杠命令，其中 `HandleSeekTo` 对应
