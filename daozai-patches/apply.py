@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-97"
+PATCH_ID = "custom-99"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5357,7 +5357,8 @@ pub fn watch_tick(){
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     static LAST:Mutex<Option<Instant>>=Mutex::new(None);
-    static ACTIVE:Mutex<Option<std::collections::HashMap<&'static str,bool>>>=Mutex::new(None);
+    // 记录每个播放器“第一次看到在运行”的时间，稳定几秒后再推，避免播放器还没准备好就下命令。
+    static ACTIVE:Mutex<Option<std::collections::HashMap<&'static str,Instant>>>=Mutex::new(None);
     if cfg!(test){return;}
     if let Ok(mut last)=LAST.lock(){
         if last.is_some_and(|at|at.elapsed()<Duration::from_secs(2)){return;}
@@ -5374,13 +5375,31 @@ pub fn watch_tick(){
             crate::smtc::netease_control::port_open()
         };
         let mut should_push=false;
+        let mut wait=false;
         if let Ok(mut active)=ACTIVE.lock(){
             if active.is_none(){*active=Some(std::collections::HashMap::new());}
             if let Some(map)=active.as_mut(){
-                if map.get(key).copied()!=Some(running){map.insert(key,running);should_push=running;}
+                match map.get(key).copied(){
+                    Some(seen) if running=>{
+                        if seen.elapsed()>=Duration::from_secs(4){map.remove(key);should_push=true;}
+                        else{wait=true;}
+                    }
+                    Some(_) if !running=>{map.remove(key);}
+                    None if running=>{map.insert(key,Instant::now());wait=true;}
+                    _=>{}
+                }
             }
         }
+        let _=wait;
         if !should_push{continue;}
+        // 发命令前再确认一次：QQ 的音量命令本身就是启动一个 QQMusic.exe 交接进程，
+        // 若播放器刚好在这期间退出，这条命令会把它重新拉起来。
+        let still_running=if key=="qqmusic"{
+            !crate::smtc::player_process::pids_named("qqmusic.exe").is_empty()
+        }else{
+            crate::smtc::netease_control::port_open()
+        };
+        if !still_running{continue;}
         let Some(percent)=state().volumes.get(key).copied() else{continue;};
         let source=source.to_string();
         let key=key.to_string();
