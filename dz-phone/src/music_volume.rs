@@ -193,61 +193,89 @@ fn apply_internal(source:&str,percent:u32)->bool{
     }
 }
 
-/// 挂在现有采样循环里调用：播放器一启动就把岛仔记住的音量推过去。内部 2 秒节流。
-/// QQ 看进程是否出现；网易云看调试端口是否打开（没有端口就发不了命令，避免反复重试）。
+/// 播放器本次运行是否活着：QQ 看进程，网易云看调试端口是否打开
+/// （没有端口就发不了命令，看进程会误判并造成无意义重试）。
+#[cfg(windows)]
+fn player_running(key:&str)->bool{
+    if key=="qqmusic"{
+        !crate::smtc::player_process::pids_named("qqmusic.exe").is_empty()
+    }else{
+        crate::smtc::netease_control::port_open()
+    }
+}
+
+/// 一次运行会话的推送状态。抽成纯函数便于单测：这里搞错就会每几秒重复推送。
+#[cfg(windows)]
+#[derive(Clone,Copy,PartialEq,Eq,Debug)]
+enum PushStep{
+    /// 没在运行、也没有记录：什么都不做。
+    Idle,
+    /// 没在运行但有记录：清掉，等它下次启动重新推。
+    Reset,
+    /// 在运行，但还没到稳定时间：继续等。
+    Waiting,
+    /// 在运行且已稳定、本次运行还没推过：可以推。
+    Ready,
+    /// 本次运行已经推过：绝不重复推。
+    Done,
+}
+
+/// `seen` 是“看到它在运行”的记录：(本次是否已推送, 已等待时长)。
+#[cfg(windows)]
+fn push_step(running:bool,seen:Option<(bool,std::time::Duration)>,stable:std::time::Duration)->PushStep{
+    match (running,seen){
+        (false,None)=>PushStep::Idle,
+        (false,Some(_))=>PushStep::Reset,
+        (true,None)=>PushStep::Waiting,
+        (true,Some((true,_)))=>PushStep::Done,
+        (true,Some((false,elapsed)))=>if elapsed>=stable{PushStep::Ready}else{PushStep::Waiting},
+    }
+}
+
+/// 挂在现有采样循环里调用：播放器每次启动只推一次记住的音量。
+/// 内部 2 秒节流；推送前先等播放器稳定 4 秒，并在发送前再确认一次它仍在运行。
 #[cfg(windows)]
 pub fn watch_tick(){
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
+    const STABLE:Duration=Duration::from_secs(4);
     static LAST:Mutex<Option<Instant>>=Mutex::new(None);
-    // 记录每个播放器“第一次看到在运行”的时间，稳定几秒后再推，避免播放器还没准备好就下命令。
-    static ACTIVE:Mutex<Option<std::collections::HashMap<&'static str,Instant>>>=Mutex::new(None);
+    // 每个播放器：(本次运行是否已推送, 看到它在运行的时间)。退出后整条记录删除。
+    static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant)>>>=Mutex::new(None);
     if cfg!(test){return;}
     if let Ok(mut last)=LAST.lock(){
         if last.is_some_and(|at|at.elapsed()<Duration::from_secs(2)){return;}
         *last=Some(Instant::now());
     }
     if !state().authoritative{
-        if let Ok(mut active)=ACTIVE.lock(){if let Some(map)=active.as_mut(){map.clear();}}
+        if let Ok(mut track)=TRACK.lock(){if let Some(map)=track.as_mut(){map.clear();}}
         return;
     }
     for (key,source) in [("qqmusic","Tencent.QQMusic"),("cloudmusic","cloudmusic.exe")]{
-        let running=if key=="qqmusic"{
-            !crate::smtc::player_process::pids_named("qqmusic.exe").is_empty()
-        }else{
-            crate::smtc::netease_control::port_open()
-        };
         let mut should_push=false;
-        let mut wait=false;
-        if let Ok(mut active)=ACTIVE.lock(){
-            if active.is_none(){*active=Some(std::collections::HashMap::new());}
-            if let Some(map)=active.as_mut(){
-                match map.get(key).copied(){
-                    Some(seen) if running=>{
-                        if seen.elapsed()>=Duration::from_secs(4){map.remove(key);should_push=true;}
-                        else{wait=true;}
-                    }
-                    Some(_) if !running=>{map.remove(key);}
-                    None if running=>{map.insert(key,Instant::now());wait=true;}
-                    _=>{}
+        if let Ok(mut track)=TRACK.lock(){
+            if track.is_none(){*track=Some(std::collections::HashMap::new());}
+            if let Some(map)=track.as_mut(){
+                let running=player_running(key);
+                let seen=map.get(key).map(|(pushed,at)|(*pushed,at.elapsed()));
+                match push_step(running,seen,STABLE){
+                    PushStep::Idle=>{}
+                    PushStep::Reset=>{map.remove(key);}
+                    PushStep::Waiting=>{if !map.contains_key(key){map.insert(key,(false,Instant::now()));}}
+                    PushStep::Ready=>{map.insert(key,(true,Instant::now()));should_push=true;}
+                    PushStep::Done=>{}
                 }
             }
         }
-        let _=wait;
         if !should_push{continue;}
-        // 发命令前再确认一次：QQ 的音量命令本身就是启动一个 QQMusic.exe 交接进程，
-        // 若播放器刚好在这期间退出，这条命令会把它重新拉起来。
-        let still_running=if key=="qqmusic"{
-            !crate::smtc::player_process::pids_named("qqmusic.exe").is_empty()
-        }else{
-            crate::smtc::netease_control::port_open()
-        };
-        if !still_running{continue;}
         let Some(percent)=state().volumes.get(key).copied() else{continue;};
         let source=source.to_string();
         let key=key.to_string();
         // 推送本身要起进程或连 CDP，放到一次性线程里，避免拖慢采样。
         std::thread::spawn(move||{
+            // 从判定到真正发命令之间还有几毫秒，这里再确认一次：QQ 的命令进程本身是
+            // QQMusic.exe，若此刻它已退出，这条命令会变成一次完整启动，把客户端拉起来。
+            if !player_running(&key){return;}
             let applied=apply_internal(&source,percent);
             let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
             crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
@@ -322,6 +350,26 @@ mod tests {
         assert_eq!(read("daozai-missing-player.exe"),None);
         assert!(!set_volume("daozai-missing-player.exe",100));
         assert!(!set_mute("",true));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn volume_push_happens_once_per_player_run(){
+        use std::time::Duration;
+        let stable=Duration::from_secs(4);
+        // 没运行、没记录：什么都不做。
+        assert_eq!(push_step(false,None,stable),PushStep::Idle);
+        // 刚看到它起来：开始计时。
+        assert_eq!(push_step(true,None,stable),PushStep::Waiting);
+        // 还不稳定：继续等。
+        assert_eq!(push_step(true,Some((false,Duration::from_secs(1))),stable),PushStep::Waiting);
+        // 稳定且本次没推过：推一次。
+        assert_eq!(push_step(true,Some((false,Duration::from_secs(5))),stable),PushStep::Ready);
+        // 已推过：不论过多久都不再推（旧实现每 4 秒重推一次，网易云音量会被反复改回、QQ 会被反复拉起）。
+        assert_eq!(push_step(true,Some((true,Duration::from_secs(0))),stable),PushStep::Done);
+        assert_eq!(push_step(true,Some((true,Duration::from_secs(600))),stable),PushStep::Done);
+        // 退出：重置，下次启动再推一次。
+        assert_eq!(push_step(false,Some((true,Duration::from_secs(600))),stable),PushStep::Reset);
     }
 
     #[test]
