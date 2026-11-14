@@ -193,6 +193,21 @@ fn invalidate_shortcut_cache(){
 
 static SHORTCUT_LOCK:Mutex<()>=Mutex::new(());
 
+/// 快捷方式修复的诊断日志：手动选择出问题时能直接看到对话框给了什么、改了哪些文件。
+fn diag(message:&str){
+    let dir=crate::model::config_dir().join("diagnostics");
+    let _=std::fs::create_dir_all(&dir);
+    let path=dir.join("netease-shortcut.log");
+    // 别让它无限长：超过 256 KB 就从头写。
+    if std::fs::metadata(&path).is_ok_and(|meta|meta.len()>256*1024){
+        let _=std::fs::write(&path,b"");
+    }
+    if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(path){
+        let stamp=SystemTime::now().duration_since(UNIX_EPOCH).map(|d|d.as_secs()).unwrap_or(0);
+        let _=writeln!(file,"{stamp} {message}");
+    }
+}
+
 /// 把已存在的快捷方式都补上调试端口参数：开始菜单与桌面一起修。
 /// 完全没有快捷方式时返回 false，由自动托管兜底。
 fn ensure_shortcut(port:u16)->bool{ensure_shortcut_with(port,None)}
@@ -200,17 +215,26 @@ fn ensure_shortcut(port:u16)->bool{ensure_shortcut_with(port,None)}
 /// `extra` 是用户手动选的那条：即使它不在常规目录里也一起修。
 /// 启动扫描、自动托管重启、手动选择可能同时改同一批 .lnk，用一把锁串行化。
 fn ensure_shortcut_with(port:u16,extra:Option<&Path>)->bool{
-    let Ok(_guard)=SHORTCUT_LOCK.lock() else{return false};
+    let Ok(_guard)=SHORTCUT_LOCK.lock() else{
+        diag("ensure: 锁不可用（曾有线程 panic）");
+        return false;
+    };
     let arg=format!("--remote-debugging-port={}",port);
     let mut paths=shortcut_paths();
     if let Some(path)=extra{
         if !paths.iter().any(|found|found==path){paths.push(path.to_path_buf());}
     }
+    diag(&format!("ensure: port={port} extra={extra:?} found={}",paths.len()));
     let mut ok=false;
     for path in &paths{
-        if patch_shortcut(path,&arg){ok=true;}
+        let before=std::fs::metadata(path).map(|meta|meta.len()).unwrap_or(0);
+        let patched=patch_shortcut(path,&arg);
+        let after=std::fs::metadata(path).map(|meta|meta.len()).unwrap_or(0);
+        diag(&format!("  patch {path:?} ok={patched} {before}->{after}"));
+        if patched{ok=true;}
     }
     if ok{invalidate_shortcut_cache();}
+    diag(&format!("ensure: done ok={ok}"));
     ok
 }
 
@@ -219,11 +243,12 @@ fn ensure_shortcut_with(port:u16,extra:Option<&Path>)->bool{
 pub fn boot_scan_shortcuts(){
     // 测试里 tick() 也会跑：不能让像素基准测试去改本机的真实快捷方式。
     if cfg!(test){return;}
-    static BOOT_SCAN:std::sync::Once=std::sync::Once::new();
-    BOOT_SCAN.call_once(||{
-        let port=config().port;
-        std::thread::spawn(move||{ensure_shortcut(port);});
-    });
+    static SCAN_AT:Mutex<Option<Instant>>=Mutex::new(None);
+    let Ok(mut guard)=SCAN_AT.lock() else{return};
+    if guard.is_some_and(|at|at.elapsed()<Duration::from_secs(60)){return;}
+    *guard=Some(Instant::now());
+    let port=config().port;
+    std::thread::spawn(move||{ensure_shortcut(port);});
 }
 
 fn persist_launch(exe:&str,port:u16)->bool{
@@ -235,15 +260,25 @@ fn persist_launch(exe:&str,port:u16)->bool{
 /// 一起修（与自动托管重启里同一套修法）。只修所选那条时，用户从开始菜单子文件夹点开的
 /// 往往是另一条，看起来就像「选择文件没生效」。
 pub fn fix_shortcut(path:&std::path::Path)->Result<String,String>{
-    if path.extension().and_then(|e|e.to_str()).map_or(true,|e|!e.eq_ignore_ascii_case("lnk")){
+    diag(&format!("fix_shortcut: 传入 {path:?}"));
+    let is_lnk=path.extension().and_then(|e|e.to_str()).is_some_and(|e|e.eq_ignore_ascii_case("lnk"));
+    // 某些环境下文件对话框会把 .lnk 解析成目标程序，这时拿回来的是 cloudmusic.exe。
+    let is_client=path.file_name().and_then(|n|n.to_str())
+        .is_some_and(|n|n.eq_ignore_ascii_case("cloudmusic.exe"));
+    if !is_lnk && !is_client{
+        diag("fix_shortcut: 既不是 .lnk 也不是 cloudmusic.exe，拒绝");
         return Err("请选择 .lnk 快捷方式".to_string());
     }
-    // 只接受指向网易云的快捷方式：否则会把调试参数写到别的程序上。
-    let bytes=std::fs::read(path).map_err(|error|format!("读取失败：{error}"))?;
-    if !points_to_cloudmusic(&bytes){
-        return Err("这不是网易云的快捷方式，请重新选择".to_string());
+    if is_lnk{
+        // 只接受指向网易云的快捷方式：否则会把调试参数写到别的程序上。
+        let bytes=std::fs::read(path).map_err(|error|format!("读取失败：{error}"))?;
+        if !points_to_cloudmusic(&bytes){
+            diag("fix_shortcut: 内容不指向 cloudmusic.exe，拒绝");
+            return Err("这不是网易云的快捷方式，请重新选择".to_string());
+        }
     }
-    if ensure_shortcut_with(config().port,Some(path)){
+    let extra=if is_lnk{Some(path)}else{None};
+    if ensure_shortcut_with(config().port,extra){
         Ok("已修好所有网易云快捷方式，重启客户端后生效".to_string())
     }
     else{Err("修改失败，请检查快捷方式文件".to_string())}

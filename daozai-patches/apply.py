@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-118"
+PATCH_ID = "custom-119"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -8011,6 +8011,31 @@ path = "src/bin/daozai-bridge/main.rs"
                                     }
                                 }
                             });'''),
+
+    # custom-119：网易云：修手动选择快捷方式无效（对话框解引用、周期补扫、诊断日志、明确提示）
+    ("src/system.rs",
+     '''        let mut options=FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST;''',
+     '''        // 选 .lnk 时要拿快捷方式本身，不能让对话框把它解析成目标程序。
+        let mut options=FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_NODEREFERENCELINKS;'''),
+    ("src/extras.rs",
+     '''                                        match crate::system::pick_files_for("选择网易云快捷方式",false){
+                                            Ok(files)=>if let Some(path)=files.first(){
+                                                match ctl::fix_shortcut(path){
+                                                    Ok(message)=>self.say(message),
+                                                    Err(error)=>self.say(error),
+                                                }
+                                            },
+                                            Err(_)=>self.say("未选择文件"),
+                                        }''',
+     '''                                        match crate::system::pick_files_for("选择网易云快捷方式",false){
+                                            Ok(files)=>if let Some(path)=files.first(){
+                                                match ctl::fix_shortcut(path){
+                                                    Ok(message)=>self.say(message),
+                                                    Err(error)=>self.say(error),
+                                                }
+                                            }else{self.say("未选择文件");},
+                                            Err(error)=>self.say(format!("打开文件对话框失败：{}",error)),
+                                        }'''),
 ]
 
 
