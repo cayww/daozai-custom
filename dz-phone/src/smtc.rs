@@ -503,11 +503,34 @@ fn qq_seek_command(seconds:f64)->bool{
 #[cfg(windows)]
 pub(crate) fn qq_volume_command(percent:u32)->bool{
     let Some(path)=player_process::pids_named("qqmusic.exe").into_iter().find_map(player_process::image_path)else{return false;};
-    std::process::Command::new(path)
+    let mut child=match std::process::Command::new(&path)
         .arg("/volumeto")
         .arg(percent.min(100).to_string())
-        .spawn()
-        .is_ok()
+        .spawn(){
+        Ok(child)=>child,
+        Err(error)=>{
+            let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
+            crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
+                &format!("{seconds} exec percent={percent} spawn失败={error}"));
+            return false;
+        }
+    };
+    // 等交接进程退出：它把参数交给已运行的主实例后就结束。退出码能区分
+    // “参数没送到”和“送到了但 QQ 不采纳”，这是排查这类问题的唯一线索。
+    // 最多等 2 秒；超时说明它没交接而是自己常驻了，直接结束，避免拖住推送线程。
+    let mut code=None;
+    for _ in 0..40{
+        match child.try_wait(){
+            Ok(Some(status))=>{code=status.code();break;}
+            Ok(None)=>std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_)=>break,
+        }
+    }
+    if code.is_none(){let _=child.kill();}
+    let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
+    crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
+        &format!("{seconds} exec percent={percent} code={code:?} exe={path}"));
+    true
 }
 
 /// 跳转在工作线程执行；专用回退必须回读实际位置，避免播放器接口假成功。

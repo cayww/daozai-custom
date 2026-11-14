@@ -255,12 +255,10 @@ pub fn spawn_push_watcher(){
 pub fn watch_tick(){
     use std::sync::{Mutex,MutexGuard};
     use std::time::{Duration, Instant};
-    // QQ 首次推送的等待时间。实测 20 秒能生效，但同样在 20 秒时也会出现“推了没被接受”的情况，
-    // 而 QQ 没有读取内部音量的接口、无法确认一次是否生效，所以在启动窗口内补推几次。
-    const STABLE_QQ:Duration=Duration::from_secs(8);
-    /// 启动窗口内的补推间隔：首次之后每 6 秒补一次，共 3 次（8 / 14 / 20 秒）。
-    const RETRY_GAP:Duration=Duration::from_secs(6);
+    // 用户要求：不延迟、不补推——发现播放器启动就立刻推一次。
+    const STABLE_QQ:Duration=Duration::ZERO;
     const STABLE:Duration=Duration::from_secs(4);
+    const RETRY_TIMES:u32=1;
     // 每个播放器：(本次运行是否已推送, 看到它在运行的时间)。退出后整条记录删除。
     static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant)>>>=Mutex::new(None);
     static LAST:Mutex<Option<Instant>>=Mutex::new(None);
@@ -317,8 +315,8 @@ pub fn watch_tick(){
         // 推送本身要起进程或连 CDP，放到一次性线程里，避免拖慢调用方。
         // QQ 读不到内部音量，无法确认某一次是否被接受，所以在启动窗口内补推几次（值相同）。
         std::thread::spawn(move||{
-            for round in 1..=3u32{
-                if round>1{std::thread::sleep(RETRY_GAP);}
+            for round in 1..=RETRY_TIMES{
+                if round>1{std::thread::sleep(Duration::from_secs(5));}
                 // 每次发命令前确认播放器还在：QQ 的命令进程本身是 QQMusic.exe，
                 // 若此刻它已退出，这条命令会变成一次完整启动，把客户端拉起来。
                 if !player_running(&key){return;}
