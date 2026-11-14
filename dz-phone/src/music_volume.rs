@@ -238,6 +238,9 @@ fn push_step(running:bool,seen:Option<(bool,std::time::Duration)>,stable:std::ti
 pub fn watch_tick(){
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
+    // QQ 冷启动后要十几秒才完成初始化；在此之前发的 `/volumeto` 会被它自己恢复的音量覆盖，
+    // 表现为“首次推送没反应”。实测 4 秒无效、12 秒有效。网易云 4 秒即可。
+    const STABLE_QQ:Duration=Duration::from_secs(12);
     const STABLE:Duration=Duration::from_secs(4);
     static LAST:Mutex<Option<Instant>>=Mutex::new(None);
     // 每个播放器：(本次运行是否已推送, 看到它在运行的时间)。退出后整条记录删除。
@@ -258,7 +261,8 @@ pub fn watch_tick(){
             if let Some(map)=track.as_mut(){
                 let running=player_running(key);
                 let seen=map.get(key).map(|(pushed,at)|(*pushed,at.elapsed()));
-                match push_step(running,seen,STABLE){
+                let stable=if key=="qqmusic"{STABLE_QQ}else{STABLE};
+                match push_step(running,seen,stable){
                     PushStep::Idle=>{}
                     PushStep::Reset=>{map.remove(key);}
                     PushStep::Waiting=>{if !map.contains_key(key){map.insert(key,(false,Instant::now()));}}
@@ -370,6 +374,12 @@ mod tests {
         assert_eq!(push_step(true,Some((true,Duration::from_secs(600))),stable),PushStep::Done);
         // 退出：重置，下次启动再推一次。
         assert_eq!(push_step(false,Some((true,Duration::from_secs(600))),stable),PushStep::Reset);
+        // QQ 冷启动：4 秒时它还没初始化完，推了会被它自己恢复的音量覆盖，所以按 12 秒等。
+        let qq_stable=Duration::from_secs(12);
+        assert_eq!(push_step(true,Some((false,Duration::from_secs(4))),qq_stable),PushStep::Waiting);
+        assert_eq!(push_step(true,Some((false,Duration::from_secs(11))),qq_stable),PushStep::Waiting);
+        assert_eq!(push_step(true,Some((false,Duration::from_secs(12))),qq_stable),PushStep::Ready);
+        assert_eq!(push_step(true,Some((true,Duration::from_secs(30))),qq_stable),PushStep::Done);
     }
 
     #[test]
