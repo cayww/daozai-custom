@@ -7983,7 +7983,7 @@ path = "src/bin/daozai-bridge/main.rs"
                             let auto_host=ctl::config().auto_host;'''),
     ("src/extras.rs",
      '''                                ui.small("开始菜单没有快捷方式？手动选取网易云快捷方式");''',
-     '''                                ui.small("找不到快捷方式？选任意一条网易云的，其余一起修");'''),
+     '''                                ui.small("快捷方式未修复？选任意网易云的快捷方式修复");'''),
     ("src/extras.rs",
      '''                                let mut auto=auto_host;
                                 setting_row(ui,"自动托管","开启后会重启未连接到岛仔的网易云进程",&mut auto);

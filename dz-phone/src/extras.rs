@@ -2432,7 +2432,7 @@ impl App {
                                 let fixed=ctl::shortcut_fixed();
                                 ui.add(egui::Label::new(egui::RichText::new(if fixed{"已自动修改网易云快捷方式"}else{"还没有修改快捷方式"}).size(12.5).strong()).wrap());
                                 ui.separator();
-                                ui.small("找不到快捷方式？选任意一条网易云的，其余一起修");
+                                ui.small("快捷方式未修复？选任意网易云的快捷方式修复");
                                 if ui.button("选择文件").clicked(){
                                         match crate::system::pick_files_for("选择网易云快捷方式",false){
                                             Ok(files)=>if let Some(path)=files.first(){
