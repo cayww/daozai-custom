@@ -16,6 +16,9 @@ use crate::shape;
 use crate::smtc::{NowPlaying, Transport};
 use crate::theme::{self, size, W};
 use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
+
+/// 提示停留时长：要够把最长的一句（重启失败说明）读完。
+pub(crate) const TOAST_SECS: f32 = 6.0;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -895,6 +898,8 @@ pub struct App {
     // 其它
     toast: Option<(String, f64)>,
     toast_below: bool,
+    /// say() 之后下一帧把起点对齐到当前帧时间（模态文件对话框会阻塞 UI 循环）。
+    toast_align: bool,
     last_input: f64,
     system_idle: Option<f64>,
     last_cursor: Option<Pos2>,
@@ -1101,7 +1106,7 @@ impl App {
            listener_status: "尚未连接".into(),
             notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],
             todo_first: 0, todo_choosing: false, pet: Default::default(), last_drink: None,
-            toast: None, toast_below: false,
+            toast: None, toast_below: false, toast_align: false,
             last_input: 0.0, system_idle: None,
             last_cursor: None,
             pet_a: 0.0,
@@ -1140,13 +1145,14 @@ impl App {
     pub fn say(&mut self, msg: impl Into<String>) {
         self.toast = Some((msg.into(), self.t));
         self.toast_below = false;
+        self.toast_align = true;
     }
 
     /// 设置窗口是独立窗口，主岛的提示它看不到：给它取一份当前提示与已显示时长。
     pub(crate) fn toast_now(&self)->Option<(String,f32)>{
         let (message,at)=self.toast.as_ref()?;
         let elapsed=(self.t-at) as f32;
-        (elapsed<=2.4).then(||(message.clone(),elapsed))
+        (elapsed<=TOAST_SECS).then(||(message.clone(),elapsed))
     }
 
     pub fn messenger_unavailable(&mut self, message: impl Into<String>) {
@@ -2007,6 +2013,13 @@ impl App {
         let elapsed = self.last_t.map(|at| (env.t - at).max(0.0) as f32).unwrap_or(0.0);
         self.last_t = Some(env.t);
         self.t = env.t;
+        // 模态文件对话框（选快捷方式/导入文件）会阻塞 UI 循环，say() 记下的起点
+        // 还是阻塞前的帧时间，下一帧时间一跳，提示会被判成过期、一帧都看不到。
+        // 这里把起点对齐到 say() 之后的第一帧，仍然只用 Env::t，不读系统时钟。
+        if self.toast_align {
+            if let Some((_,at))=&mut self.toast {*at=self.t;}
+            self.toast_align=false;
+        }
         self.quota_tick();
         self.weather_tick();
         self.current_hour=env.hour();
@@ -3445,11 +3458,11 @@ impl App {
     fn toast_layer(&mut self, c: &Card, base_y:f32)->Option<Rect> {
         let Some((msg, at)) = self.toast.clone() else { return None };
         let e = (self.t - at) as f32;
-        if e > 2.4 {
+        if e > TOAST_SECS {
             self.toast = None;
             return None;
         }
-        let a = smoothstep(0.0, 0.16, e) * (1.0 - smoothstep(2.1, 2.4, e));
+        let a = smoothstep(0.0, 0.16, e) * (1.0 - smoothstep(TOAST_SECS-0.4, TOAST_SECS, e));
         let rise = (1.0 - anim::ease_out_cubic(e / 0.3)) * 6.0;
         let msg=c.fit(&msg,size::BODY,W::Regular,310.0);
         let w = c.text_w(&msg, size::BODY, W::Regular) + 26.0;
@@ -3470,7 +3483,7 @@ impl App {
             if let Some(message)=crate::smtc::netease_control::take_restart_result(){self.say(message);}
             crate::smtc::netease_control::auto_host_tick();
         }
-        if self.toast.as_ref().is_some_and(|(_,at)|self.t-at>2.4){self.toast=None;}
+        if self.toast.as_ref().is_some_and(|(_,at)|self.t-at>TOAST_SECS as f64){self.toast=None;}
         // 跳转后先用本地目标位置显示；播放器回报追上了、换歌了或超时就交还真实位置。
         let seek_done=self.music_seek_ui.as_ref().is_some_and(|(target,title)|{
             (self.media.duration>0.0 && (self.media.position-*target).abs()<1.5)

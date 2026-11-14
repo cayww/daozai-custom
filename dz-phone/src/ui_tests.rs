@@ -5021,7 +5021,7 @@ fn code_copy_confirmation_stays_below_the_island_and_does_not_capture_hover() {
         h.hover(Pos2::new(600.0,180.0),0.8);
         assert!(h.app.progress()<0.02);
         assert!(confirmation(&h).is_some(),"岛收起后确认提示仍应显示到正常结束");
-        h.hover(Pos2::new(600.0,180.0),2.0);
+        h.hover(Pos2::new(600.0,180.0),crate::app::TOAST_SECS as f64);
         assert!(confirmation(&h).is_none());
         assert!(h.region.bottom()<100.0,"提示结束后应释放额外窗口区域");
     }
@@ -8531,4 +8531,24 @@ fn every_module_settings_tab_maps_to_its_page(){
         if let Some(page)=crate::extras::settings_tab_module(tab) {assert!(crate::app::PAGE_NAMES[page].chars().next()==titles[tab].chars().next(),"{} ↔ {}",titles[tab],crate::app::PAGE_NAMES[page]);}
     }
     pages.sort();assert_eq!(pages,(0..crate::app::PAGE_NAMES.len()).collect::<Vec<_>>(),"每个功能页面各有一个设置分页");
+}
+
+#[test]
+fn toast_stays_readable_after_a_modal_file_dialog_blocks_the_ui_loop(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.frame(vec![]);
+    h.app.say("已修好所有网易云快捷方式，重启客户端后生效");
+    // 选文件会打开模态对话框，阻塞 UI 循环；回来时 Env::t 已经跳过十几秒。
+    // 起点必须对齐到阻塞后的第一帧，否则提示一帧就被判过期、用户完全看不到。
+    h.t+=12.0;
+    h.frame(vec![]);
+    let (message,elapsed)=h.app.toast_now().expect("阻塞后提示仍应可见");
+    assert!(message.contains("已修好"));
+    assert!(elapsed<0.5,"提示起点应对齐到阻塞后的第一帧，实际 {elapsed}");
+    // 停留时间要够把最长的一句读完，且最终会自己消失。
+    h.t+=3.0;h.frame(vec![]);
+    assert!(h.app.toast_now().is_some(),"3 秒后仍应可读");
+    h.t+=4.0;h.frame(vec![]);
+    assert!(h.app.toast_now().is_none(),"超过 6 秒后应消失");
 }

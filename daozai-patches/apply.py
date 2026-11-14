@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-120"
+PATCH_ID = "custom-121"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -8036,6 +8036,116 @@ path = "src/bin/daozai-bridge/main.rs"
                                             }else{self.say("未选择文件");},
                                             Err(error)=>self.say(format!("打开文件对话框失败：{}",error)),
                                         }'''),
+
+    # custom-121：toast：修模态对话框阻塞导致不显示、停留 6 秒、移到设置窗口上半部分；启动扫描退回 Once
+    ("src/app.rs",
+     '''use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
+''',
+     '''use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
+
+/// 提示停留时长：要够把最长的一句（重启失败说明）读完。
+pub(crate) const TOAST_SECS: f32 = 6.0;
+'''),
+    ("src/app.rs",
+     '''    toast: Option<(String, f64)>,
+    toast_below: bool,''',
+     '''    toast: Option<(String, f64)>,
+    toast_below: bool,
+    /// say() 之后下一帧把起点对齐到当前帧时间（模态文件对话框会阻塞 UI 循环）。
+    toast_align: bool,'''),
+    ("src/app.rs",
+     '''            toast: None, toast_below: false,''',
+     '''            toast: None, toast_below: false, toast_align: false,'''),
+    ("src/app.rs",
+     '''    pub fn say(&mut self, msg: impl Into<String>) {
+        self.toast = Some((msg.into(), self.t));
+        self.toast_below = false;
+    }''',
+     '''    pub fn say(&mut self, msg: impl Into<String>) {
+        self.toast = Some((msg.into(), self.t));
+        self.toast_below = false;
+        self.toast_align = true;
+    }'''),
+    ("src/app.rs",
+     '''        (elapsed<=2.4).then(||(message.clone(),elapsed))''',
+     '''        (elapsed<=TOAST_SECS).then(||(message.clone(),elapsed))'''),
+    ("src/app.rs",
+     '''        self.last_t = Some(env.t);
+        self.t = env.t;
+        self.quota_tick();''',
+     '''        self.last_t = Some(env.t);
+        self.t = env.t;
+        // 模态文件对话框（选快捷方式/导入文件）会阻塞 UI 循环，say() 记下的起点
+        // 还是阻塞前的帧时间，下一帧时间一跳，提示会被判成过期、一帧都看不到。
+        // 这里把起点对齐到 say() 之后的第一帧，仍然只用 Env::t，不读系统时钟。
+        if self.toast_align {
+            if let Some((_,at))=&mut self.toast {*at=self.t;}
+            self.toast_align=false;
+        }
+        self.quota_tick();'''),
+    ("src/app.rs",
+     '''        if e > 2.4 {
+            self.toast = None;
+            return None;
+        }
+        let a = smoothstep(0.0, 0.16, e) * (1.0 - smoothstep(2.1, 2.4, e));''',
+     '''        if e > TOAST_SECS {
+            self.toast = None;
+            return None;
+        }
+        let a = smoothstep(0.0, 0.16, e) * (1.0 - smoothstep(TOAST_SECS-0.4, TOAST_SECS, e));'''),
+    ("src/app.rs",
+     '''        if self.toast.as_ref().is_some_and(|(_,at)|self.t-at>2.4){self.toast=None;}''',
+     '''        if self.toast.as_ref().is_some_and(|(_,at)|self.t-at>TOAST_SECS as f64){self.toast=None;}'''),
+    ("src/extras.rs",
+     '''            if let Some((message,elapsed))=self.toast_now(){
+                let alpha=crate::anim::smoothstep(0.0,0.12,elapsed)*(1.0-crate::anim::smoothstep(2.0,2.4,elapsed));''',
+     '''            if let Some((message,elapsed))=self.toast_now(){
+                let secs=crate::app::TOAST_SECS;
+                let alpha=crate::anim::smoothstep(0.0,0.12,elapsed)*(1.0-crate::anim::smoothstep(secs-0.8,secs,elapsed));'''),
+    ("src/extras.rs",
+     '''                    .anchor(egui::Align2::CENTER_BOTTOM,egui::vec2(0.0,-16.0+lift)).interactable(false)''',
+     '''                    .anchor(egui::Align2::CENTER_TOP,egui::vec2(0.0,24.0+lift)).interactable(false)'''),
+    ("src/extras.rs",
+     '''                            .show(ui,|ui|{
+                                ui.label(egui::RichText::new(&message).size(12.5).color(Color32::from_rgba_unmultiplied(tr,tg,tb,a)));
+                            });''',
+     '''                            .show(ui,|ui|{
+                                // 长提示（重启失败说明）要换行，不能撑出窗口外。
+                                ui.set_width(320.0);
+                                ui.label(egui::RichText::new(&message).size(12.5)
+                                    .color(Color32::from_rgba_unmultiplied(tr,tg,tb,a)));
+                            });'''),
+    ("src/ui_tests.rs",
+     '''        h.hover(Pos2::new(600.0,180.0),2.0);
+        assert!(confirmation(&h).is_none());''',
+     '''        h.hover(Pos2::new(600.0,180.0),crate::app::TOAST_SECS as f64);
+        assert!(confirmation(&h).is_none());'''),
+    ("src/ui_tests.rs",
+     '''    pages.sort();assert_eq!(pages,(0..crate::app::PAGE_NAMES.len()).collect::<Vec<_>>(),"每个功能页面各有一个设置分页");
+}''',
+     '''    pages.sort();assert_eq!(pages,(0..crate::app::PAGE_NAMES.len()).collect::<Vec<_>>(),"每个功能页面各有一个设置分页");
+}
+
+#[test]
+fn toast_stays_readable_after_a_modal_file_dialog_blocks_the_ui_loop(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.frame(vec![]);
+    h.app.say("已修好所有网易云快捷方式，重启客户端后生效");
+    // 选文件会打开模态对话框，阻塞 UI 循环；回来时 Env::t 已经跳过十几秒。
+    // 起点必须对齐到阻塞后的第一帧，否则提示一帧就被判过期、用户完全看不到。
+    h.t+=12.0;
+    h.frame(vec![]);
+    let (message,elapsed)=h.app.toast_now().expect("阻塞后提示仍应可见");
+    assert!(message.contains("已修好"));
+    assert!(elapsed<0.5,"提示起点应对齐到阻塞后的第一帧，实际 {elapsed}");
+    // 停留时间要够把最长的一句读完，且最终会自己消失。
+    h.t+=3.0;h.frame(vec![]);
+    assert!(h.app.toast_now().is_some(),"3 秒后仍应可读");
+    h.t+=4.0;h.frame(vec![]);
+    assert!(h.app.toast_now().is_none(),"超过 6 秒后应消失");
+}'''),
 ]
 
 
