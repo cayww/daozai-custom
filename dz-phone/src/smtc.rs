@@ -485,6 +485,19 @@ pub(crate) fn qq_music(source:&str)->bool{
     lower=="qqmusic" || lower=="qqmusic.exe" || (lower.contains("tencent") && lower.contains("qqmusic"))
 }
 
+/// QQ 音乐提供 `/seekto <秒>` 命令行命令，由单实例 IPC 转交给正在运行的客户端。
+/// 它不依赖窗口和界面结构，最小化时同样有效，所以优先于点击进度条。
+#[cfg(windows)]
+fn qq_seek_command(seconds:f64)->bool{
+    let target=seconds.max(0.0).round() as u64;
+    let Some(path)=player_process::pids_named("qqmusic.exe").into_iter().find_map(player_process::image_path)else{return false;};
+    std::process::Command::new(path)
+        .arg("/seekto")
+        .arg(target.to_string())
+        .spawn()
+        .is_ok()
+}
+
 /// 跳转在工作线程执行；专用回退必须回读实际位置，避免播放器接口假成功。
 #[cfg(windows)]
 pub fn seek(seconds:f64,source:&str)->bool {
@@ -513,12 +526,15 @@ pub fn seek(seconds:f64,source:&str)->bool {
         .and_then(|info|info.PlaybackStatus().ok()).is_some_and(|status|status!=windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
     let accepted=(!native || enabled) && session.as_ref().and_then(|s|media_result(||s.TryChangePlaybackPositionAsync((target*10_000_000.0)as i64)))==Some(true);
     if !native{return accepted;}
-    for system in [true,false] {
-        if system {if !accepted{continue;}}else {
-            if !player_seek::seek(source,target,duration){return false;}
+    // 依次尝试：系统接口 → 客户端自带的 /seekto 命令 → 点击界面进度条。
+    for stage in 0..3 {
+        let timeout=match stage {0=>Duration::from_millis(600),1=>Duration::from_secs(3),_=>Duration::from_secs(2)};
+        match stage {
+            0=>{if !accepted{continue;}}
+            1=>{if !qq_seek_command(target){continue;}}
+            _=>{if !player_seek::seek(source,target,duration){return false;}}
         }
         let start=std::time::Instant::now();
-        let timeout=if system{Duration::from_millis(600)}else{Duration::from_secs(2)};
         let mut pause_requested=false;
         while start.elapsed()<timeout {
             std::thread::sleep(Duration::from_millis(100));

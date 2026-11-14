@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-90"
+PATCH_ID = "custom-91"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5837,6 +5837,46 @@ mod tests{
 
     /// 岛内邮件详情可滚动，也可以进入独立窗口阅读全文。
 '''),
+    ("src/player_process.rs",
+     '''    }
+}
+
+#[test]
+fn exe_name_takes_file_part(){
+    assert_eq!(exe_name(r"C:\\Program Files\\KuGou\\KuGou.exe"),"KuGou.exe");
+''',
+     '''    }
+}
+
+/// 取进程映像的完整路径；只申请有限查询权限，不读取进程内存。
+pub fn image_path(pid:u32)->Option<String> {
+    if pid==0 {return None;}
+    unsafe {
+        let process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,pid).ok()?;
+        let mut path=[0u16;1024];let mut length=path.len() as u32;
+        let result=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,windows::core::PWSTR(path.as_mut_ptr()),&mut length);
+        let _=CloseHandle(process);
+        result.ok()?;
+        Some(String::from_utf16_lossy(&path[..length as usize]))
+    }
+}
+
+#[test]
+fn exe_name_takes_file_part(){
+    assert_eq!(exe_name(r"C:\\Program Files\\KuGou\\KuGou.exe"),"KuGou.exe");
+'''),
+    ("src/player_process.rs",
+     '''    assert!(pids_named(exe).contains(&pid));
+    assert!(image_is(pid,exe));
+    assert!(!image_is(pid,"KuGou.exe"));
+}
+''',
+     '''    assert!(pids_named(exe).contains(&pid));
+    assert!(image_is(pid,exe));
+    assert!(!image_is(pid,"KuGou.exe"));
+    assert!(image_path(pid).is_some_and(|path|path.ends_with(exe)),"映像路径应指向自身可执行文件");
+}
+'''),
     ("src/player_seek.rs",
      '''//! 系统跳转不可用时，定位播放器自己的进度控件并向该窗口发送消息。
 use windows::{core::{Interface,VARIANT},Win32::{Foundation::*,System::{Com::*,Threading::*},UI::{Accessibility::*,WindowsAndMessaging::*},Graphics::Gdi::ScreenToClient}};
@@ -6495,6 +6535,19 @@ pub(crate) fn qq_music(source:&str)->bool{
     lower=="qqmusic" || lower=="qqmusic.exe" || (lower.contains("tencent") && lower.contains("qqmusic"))
 }
 
+/// QQ 音乐提供 `/seekto <秒>` 命令行命令，由单实例 IPC 转交给正在运行的客户端。
+/// 它不依赖窗口和界面结构，最小化时同样有效，所以优先于点击进度条。
+#[cfg(windows)]
+fn qq_seek_command(seconds:f64)->bool{
+    let target=seconds.max(0.0).round() as u64;
+    let Some(path)=player_process::pids_named("qqmusic.exe").into_iter().find_map(player_process::image_path)else{return false;};
+    std::process::Command::new(path)
+        .arg("/seekto")
+        .arg(target.to_string())
+        .spawn()
+        .is_ok()
+}
+
 /// 跳转在工作线程执行；专用回退必须回读实际位置，避免播放器接口假成功。
 #[cfg(windows)]
 pub fn seek(seconds:f64,source:&str)->bool {
@@ -6536,6 +6589,15 @@ pub fn seek(seconds:f64,source:&str)->bool {
         .and_then(|info|info.PlaybackStatus().ok()).is_some_and(|status|status!=windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
     let accepted=(!native || enabled) && session.as_ref().and_then(|s|media_result(||s.TryChangePlaybackPositionAsync((target*10_000_000.0)as i64)))==Some(true);
     if !native{return accepted;}
+    for system in [true,false] {
+        if system {if !accepted{continue;}}else {
+            if !player_seek::seek(source,target,duration){return false;}
+        }
+        let start=std::time::Instant::now();
+        let timeout=if system{Duration::from_millis(600)}else{Duration::from_secs(2)};
+        let mut pause_requested=false;
+        while start.elapsed()<timeout {
+            std::thread::sleep(Duration::from_millis(100));
 ''',
      '''    let target=if duration>0.0{seconds.min(duration)}else{seconds};
     let enabled=session.as_ref().and_then(|s|s.GetPlaybackInfo().ok()).and_then(|i|i.Controls().ok())
@@ -6544,6 +6606,18 @@ pub fn seek(seconds:f64,source:&str)->bool {
         .and_then(|info|info.PlaybackStatus().ok()).is_some_and(|status|status!=windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
     let accepted=(!native || enabled) && session.as_ref().and_then(|s|media_result(||s.TryChangePlaybackPositionAsync((target*10_000_000.0)as i64)))==Some(true);
     if !native{return accepted;}
+    // 依次尝试：系统接口 → 客户端自带的 /seekto 命令 → 点击界面进度条。
+    for stage in 0..3 {
+        let timeout=match stage {0=>Duration::from_millis(600),1=>Duration::from_secs(3),_=>Duration::from_secs(2)};
+        match stage {
+            0=>{if !accepted{continue;}}
+            1=>{if !qq_seek_command(target){continue;}}
+            _=>{if !player_seek::seek(source,target,duration){return false;}}
+        }
+        let start=std::time::Instant::now();
+        let mut pause_requested=false;
+        while start.elapsed()<timeout {
+            std::thread::sleep(Duration::from_millis(100));
 '''),
     ("src/smtc.rs",
      '''    assert!(seek_arrived(60.0,60.0,0.2));

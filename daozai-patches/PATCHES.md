@@ -612,6 +612,19 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**命令行跳转（custom-91）：发现 QQ 音乐的 /seekto**
+
+逆向命令表时发现 `CQQMusicCommandLineInfo` 支持一批斜杠命令，其中 `HandleSeekTo` 对应
+`/seekto '<秒>'`；它通过单实例 IPC（`Global\QQMusicServer` + `SendMessageTimeout`）把参数交给
+已运行的客户端，窗口最小化、界面改版都不受影响。
+
+- `player_process` 新增 `image_path(pid)`，只申请有限查询权限取映像路径。
+- `smtc` 新增 `qq_seek_command(seconds)`：取 `qqmusic.exe` 映像路径，`/seekto <秒>` 拉起一次
+  交接进程（它自己退出），由主进程执行跳转。
+- 跳转顺序改为三级：系统接口 → `/seekto` 命令 → 点击界面进度条；每级都必须回读进度确认。
+- 实测：`/seekto 150` 使进度从 120.6 秒跳到 151.0 秒；整合后 30 / 210 秒两次跳转均成功（约 1.2 秒）。
+  EDITS 149，exe SHA256 `5c7f279e9403168f`。
+
 **健壮性补强（custom-90）：QQ 音乐多窗口与结构回退**
 
 排查过但走不通的通道（记录备查）：CDP 不存在（无 CEF 主界面）；`QQMusicSvr` COM 只有
