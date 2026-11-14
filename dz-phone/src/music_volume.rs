@@ -86,9 +86,77 @@ mod platform {
 }
 
 /// QQ 音乐与网易云音乐的音量都是应用内部的，读不到；记住最近一次由岛仔设置的值用于显示，
-/// 并落盘到 `music-volume.json`，重启后仍然对得上。
+/// 并落盘到 `music-volume.json`。`authoritative` 打开时，启动后把记住的值推回播放器，
+/// 让两边以岛仔为准。
 #[cfg(windows)]
-static INTERNAL:Mutex<Option<std::collections::HashMap<String,u32>>>=Mutex::new(None);
+#[derive(Clone)]
+struct VolumeState{
+    authoritative:bool,
+    volumes:std::collections::HashMap<String,u32>,
+}
+#[cfg(windows)]
+impl Default for VolumeState{
+    fn default()->Self{Self{authoritative:true,volumes:std::collections::HashMap::new()}}
+}
+
+#[cfg(windows)]
+static STATE:Mutex<Option<VolumeState>>=Mutex::new(None);
+#[cfg(windows)]
+static PUSHED:Mutex<Option<std::collections::HashSet<String>>>=Mutex::new(None);
+
+#[cfg(windows)]
+fn volume_file()->std::path::PathBuf{crate::model::config_dir().join("music-volume.json")}
+
+#[cfg(windows)]
+fn state()->VolumeState{
+    if let Ok(mut guard)=STATE.lock(){
+        if guard.is_none(){
+            let mut loaded=VolumeState::default();
+            if let Ok(text)=std::fs::read_to_string(volume_file()){
+                if let Ok(value)=serde_json::from_str::<serde_json::Value>(&text){
+                    if let Some(object)=value.as_object(){
+                        if let Some(volumes)=object.get("volumes").and_then(|item|item.as_object()){
+                            loaded.authoritative=object.get("authoritative").and_then(|item|item.as_bool()).unwrap_or(true);
+                            for (name,percent) in volumes{
+                                if let Some(percent)=percent.as_u64(){loaded.volumes.insert(name.clone(),percent.min(100) as u32);}
+                            }
+                        }else{
+                            // 旧格式是直接映射，忽略非数字字段。
+                            for (name,percent) in object{
+                                if let Some(percent)=percent.as_u64(){loaded.volumes.insert(name.clone(),percent.min(100) as u32);}
+                            }
+                        }
+                    }
+                }
+            }
+            *guard=Some(loaded);
+        }
+        guard.clone().unwrap_or_default()
+    }else{
+        VolumeState::default()
+    }
+}
+
+#[cfg(windows)]
+fn save_state(state:&VolumeState){
+    let path=volume_file();
+    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
+    let value=serde_json::json!({"authoritative":state.authoritative,"volumes":state.volumes});
+    if let Ok(text)=serde_json::to_string_pretty(&value){let _=std::fs::write(path,text);}
+}
+
+#[cfg(windows)]
+pub fn authoritative()->bool{state().authoritative}
+
+#[cfg(windows)]
+pub fn set_authoritative(value:bool){
+    if let Ok(mut guard)=STATE.lock(){
+        let mut current=guard.clone().unwrap_or_default();
+        current.authoritative=value;
+        *guard=Some(current.clone());
+        save_state(&current);
+    }
+}
 
 #[cfg(windows)]
 fn internal_key(source:&str)->Option<&'static str>{
@@ -98,42 +166,58 @@ fn internal_key(source:&str)->Option<&'static str>{
 }
 
 #[cfg(windows)]
-fn internal_volume(key:&str)->Option<u32>{
-    let mut guard=INTERNAL.lock().ok()?;
-    if guard.is_none(){
-        let mut map=std::collections::HashMap::new();
-        if let Ok(text)=std::fs::read_to_string(crate::model::config_dir().join("music-volume.json")){
-            if let Ok(value)=serde_json::from_str::<serde_json::Value>(&text){
-                if let Some(object)=value.as_object(){
-                    for (name,percent) in object{
-                        if let Some(percent)=percent.as_u64(){map.insert(name.clone(),percent.min(100) as u32);}
-                    }
-                }
-            }
-        }
-        *guard=Some(map);
-    }
-    guard.as_ref().and_then(|map|map.get(key).copied())
+fn internal_volume(source:&str)->Option<u32>{
+    let key=internal_key(source)?;
+    state().volumes.get(key).copied()
 }
 
 #[cfg(windows)]
 fn remember_internal(key:&str,percent:u32){
     let percent=percent.min(100);
-    if let Ok(mut guard)=INTERNAL.lock(){
-        if guard.is_none(){*guard=Some(std::collections::HashMap::new());}
-        if let Some(map)=guard.as_mut(){map.insert(key.to_string(),percent);}
+    let mut saved=None;
+    if let Ok(mut guard)=STATE.lock(){
+        let mut current=guard.clone().unwrap_or_default();
+        current.volumes.insert(key.to_string(),percent);
+        *guard=Some(current.clone());
+        saved=Some(current);
     }
-    let path=crate::model::config_dir().join("music-volume.json");
-    if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
-    let map=INTERNAL.lock().ok().and_then(|guard|guard.clone()).unwrap_or_default();
-    if let Ok(text)=serde_json::to_string(&map){let _=std::fs::write(path,text);}
+    if let Ok(mut guard)=PUSHED.lock(){
+        if guard.is_none(){*guard=Some(std::collections::HashSet::new());}
+        if let Some(set)=guard.as_mut(){set.insert(key.to_string());}
+    }
+    if let Some(state)=saved{save_state(&state);}
+}
+
+#[cfg(windows)]
+fn apply_internal(source:&str,percent:u32)->bool{
+    if crate::smtc::qq_music(source){
+        crate::smtc::qq_volume_command(percent)
+    }else if source.eq_ignore_ascii_case("cloudmusic.exe"){
+        crate::smtc::netease_control::set_volume(percent)
+    }else{
+        false
+    }
+}
+
+/// 打开“以岛仔为准”时，每个播放器本次运行只推一次，避免覆盖用户随后在播放器里的调整。
+#[cfg(windows)]
+fn push_once(source:&str,key:&str,percent:u32){
+    if cfg!(test) || !state().authoritative{return;}
+    if let Ok(mut guard)=PUSHED.lock(){
+        if guard.is_none(){*guard=Some(std::collections::HashSet::new());}
+        let Some(set)=guard.as_mut() else{return;};
+        if !set.insert(key.to_string()){return;}
+    }
+    let source=source.to_string();
+    std::thread::spawn(move||{let _=apply_internal(&source,percent);});
 }
 
 #[cfg(windows)]
 pub fn read(source:&str)->Option<(u32,bool)> {
     // QQ 音乐和网易云调的都是应用内音量，会话音量不会跟着变，显示以记住的值为准。
     if let Some(key)=internal_key(source) {
-        if let Some(percent)=internal_volume(key){
+        if let Some(percent)=internal_volume(source){
+            push_once(source,key,percent);
             // 静音仍走系统会话，所以静音状态单独读。
             let muted=platform::sessions(source).iter().filter_map(|session|unsafe{session.GetMute().ok()}).any(|state|state.as_bool());
             return Some((percent,muted));
@@ -147,12 +231,7 @@ pub fn read(source:&str)->Option<(u32,bool)> {
 #[cfg(windows)]
 pub fn set_volume(source:&str,percent:u32)->bool {
     if let Some(key)=internal_key(source) {
-        let applied=if crate::smtc::qq_music(source){
-            crate::smtc::qq_volume_command(percent)
-        }else{
-            crate::smtc::netease_control::set_volume(percent)
-        };
-        if applied {
+        if apply_internal(source,percent) {
             remember_internal(key,percent);
             return true;
         }
@@ -176,6 +255,10 @@ fn apply(source:&str,change:impl Fn(&windows::Win32::Media::Audio::ISimpleAudioV
     success
 }
 
+#[cfg(not(windows))]
+pub fn authoritative()->bool{false}
+#[cfg(not(windows))]
+pub fn set_authoritative(_value:bool){}
 #[cfg(not(windows))]
 pub fn read(_source:&str)->Option<(u32,bool)>{None}
 #[cfg(not(windows))]
