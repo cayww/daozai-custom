@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-116"
+PATCH_ID = "custom-117"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -7951,6 +7951,17 @@ path = "src/bin/daozai-bridge/main.rs"
 ''',
      '''            if next.clicked() {self.music_restart_at=Some(self.t);self.music_seek_ui=None;cmds.push(Cmd::Media(Transport::Next));}
 '''),
+
+    # custom-117：网易云快捷方式：递归扫描子目录；重启等进程退干净；设置页接住后台结果
+    ("src/extras.rs",
+     '''                        {
+                            use crate::smtc::netease_control as ctl;
+                            let auto_host=ctl::config().auto_host;''',
+     '''                        {
+                            use crate::smtc::netease_control as ctl;
+                            // 重启在后台线程里等端口，结果晚一点才出来，这里接住再提示。
+                            if let Some(message)=ctl::take_restart_result(){self.say(message);}
+                            let auto_host=ctl::config().auto_host;'''),
 ]
 
 

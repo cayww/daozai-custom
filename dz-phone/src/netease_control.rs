@@ -20,6 +20,7 @@
 
 use std::io::{Read,Write};
 use std::net::{SocketAddr,TcpStream};
+use std::path::{Path,PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration,Instant,SystemTime,UNIX_EPOCH};
 use base64::Engine;
@@ -162,18 +163,28 @@ fn points_to_cloudmusic(bytes:&[u8])->bool{
 /// 所有指向网易云的快捷方式：开始菜单、用户桌面、公共桌面。
 fn shortcut_paths()->Vec<std::path::PathBuf>{
     let mut found=Vec::new();
-    for dir in shortcut_dirs(){
-        let Ok(entries)=std::fs::read_dir(&dir) else{continue;};
-        for entry in entries.flatten(){
-            let path=entry.path();
-            if !path.extension().and_then(|ext|ext.to_str()).is_some_and(|ext|ext.eq_ignore_ascii_case("lnk")){continue;}
-            if std::fs::read(&path).is_ok_and(|bytes|points_to_cloudmusic(&bytes)){found.push(path);}
-        }
-        // 兜底：万一某个 .lnk 用了读不到内容的格式，按标准文件名仍然修它。
-        let named=dir.join("网易云音乐.lnk");
-        if named.is_file() && !found.contains(&named){found.push(named);}
-    }
+    for dir in shortcut_dirs(){collect_shortcuts(&dir,2,&mut found);}
     found
+}
+
+/// 收集目录下（含两层子目录）指向网易云的快捷方式。
+/// 安装器经常把快捷方式放进开始菜单的同名子文件夹（`Programs/网易云音乐/网易云音乐.lnk`），
+/// 只扫第一层会漏掉它，而用户从「所有应用」点开的恰恰是这一条。
+fn collect_shortcuts(dir:&Path,depth:usize,found:&mut Vec<PathBuf>){
+    let Ok(entries)=std::fs::read_dir(dir) else{return;};
+    for entry in entries.flatten(){
+        let path=entry.path();
+        let Ok(kind)=entry.file_type() else{continue;};
+        if kind.is_dir(){
+            if depth>1{collect_shortcuts(&path,depth-1,found);}
+            continue;
+        }
+        if !path.extension().and_then(|ext|ext.to_str()).is_some_and(|ext|ext.eq_ignore_ascii_case("lnk")){continue;}
+        // 按内容识别；个别 .lnk 用了读不到内容的格式时按标准文件名兜底。
+        let named=path.file_name().and_then(|name|name.to_str())
+            .is_some_and(|name|name.eq_ignore_ascii_case("网易云音乐.lnk"));
+        if named || std::fs::read(&path).is_ok_and(|bytes|points_to_cloudmusic(&bytes)){found.push(path);}
+    }
 }
 
 fn invalidate_shortcut_cache(){
@@ -210,7 +221,7 @@ pub fn fix_shortcut(path:&std::path::Path)->Result<String,String>{
     let arg=format!("--remote-debugging-port={}",config().port);
     if patch_shortcut(path,&arg){
         invalidate_shortcut_cache();
-        Ok("已修改网易云快捷方式".to_string())
+        Ok("已修改这个快捷方式，重启网易云后生效".to_string())
     }
     else{Err("修改失败，请检查快捷方式文件".to_string())}
 }
@@ -307,8 +318,10 @@ pub fn port_status()->Option<bool>{
     READY_CACHE.lock().ok().and_then(|guard|guard.map(|(_,ready)|ready))
 }
 
-/// 已运行的网易云没带调试端口时，结束它并用同一映像路径带参数重新拉起。
-/// 只由设置页手动触发；岛仔是常驻进程，它派生的客户端不受会话清理影响。
+/// 设置页「重启网易云」：结束进程 → 等它真的退干净 → 带调试端口重新拉起。
+/// 岛仔是常驻进程，它派生的客户端不受会话清理影响。
+/// 关键在「等」：网易云是单实例应用，旧进程没退完时新进程会把参数交给旧实例然后自己退出，
+/// 结果就是「重启了但端口永远不开」——之前只有手动退出客户端再启动才生效，就是这里的原因。
 pub fn restart_with_debug_port()->Result<String,String>{
     use windows::Win32::{
         Foundation::CloseHandle,
@@ -340,13 +353,57 @@ pub fn restart_with_debug_port()->Result<String,String>{
         }
     }
     if killed==0{return Err("无法结束网易云进程，可能权限不足".to_string());}
-    std::process::Command::new(&path)
-        .arg(format!("--remote-debugging-port={}",cfg.port))
-        .spawn()
-        .map_err(|error|format!("重新启动失败：{error}"))?;
+    // 先把快捷方式补齐（递归扫描所有位置），下次从开始菜单启动也带参数。
+    let _=persist_launch(&path,cfg.port);
     if let Ok(mut guard)=READY_CACHE.lock(){*guard=None;}
-    let persisted=persist_launch(&path,cfg.port);
-    Ok(if persisted{"已修改网易云快捷方式".to_string()}else{"已重启网易云".to_string()})
+    // 等待与重启都放到后台：等进程退干净最多 6 秒、等端口最多 12 秒，不能卡住设置页。
+    std::thread::spawn(move||{
+        let start=Instant::now();
+        while start.elapsed()<Duration::from_secs(6){
+            if super::player_process::pids_named("cloudmusic.exe").is_empty(){break;}
+            std::thread::sleep(Duration::from_millis(120));
+        }
+        // 还有残留就再清一次，避免新进程又被旧实例接管。
+        if !super::player_process::pids_named("cloudmusic.exe").is_empty(){
+            for pid in super::player_process::pids_named("cloudmusic.exe"){
+                unsafe{
+                    let Ok(process)=OpenProcess(PROCESS_TERMINATE,false,pid) else{continue};
+                    let _=TerminateProcess(process,1);
+                    let _=CloseHandle(process);
+                }
+            }
+            let deadline=Instant::now()+Duration::from_secs(3);
+            while Instant::now()<deadline && !super::player_process::pids_named("cloudmusic.exe").is_empty(){
+                std::thread::sleep(Duration::from_millis(120));
+            }
+        }
+        let spawned=std::process::Command::new(&path)
+            .arg(format!("--remote-debugging-port={}",cfg.port))
+            .spawn()
+            .is_ok();
+        let message=if !spawned{
+            "重新启动失败，请从开始菜单打开网易云".to_string()
+        }else{
+            let start=Instant::now();
+            let mut ready=false;
+            while start.elapsed()<Duration::from_secs(12){
+                if port_open(){ready=true;break;}
+                std::thread::sleep(Duration::from_millis(300));
+            }
+            if let Ok(mut guard)=READY_CACHE.lock(){*guard=None;}
+            if ready{"已重启网易云，调试端口就绪".to_string()}
+            else{"已重启网易云，但调试端口还没打开。若一直如此，请手动退出客户端再从开始菜单启动".to_string()}
+        };
+        if let Ok(mut guard)=RESTART_RESULT.lock(){*guard=Some(message);}
+    });
+    Ok("正在重启网易云…".to_string())
+}
+
+static RESTART_RESULT:Mutex<Option<String>>=Mutex::new(None);
+
+/// 设置页每帧取一次后台重启的结果（取到就清空）。
+pub fn take_restart_result()->Option<String>{
+    RESTART_RESULT.lock().ok().and_then(|mut guard|guard.take())
 }
 
 fn valid(seconds:f64)->bool{seconds.is_finite() && (0.0..86400.0).contains(&seconds)}

@@ -2414,6 +2414,8 @@ impl App {
                         #[cfg(windows)]
                         {
                             use crate::smtc::netease_control as ctl;
+                            // 重启在后台线程里等端口，结果晚一点才出来，这里接住再提示。
+                            if let Some(message)=ctl::take_restart_result(){self.say(message);}
                             let auto_host=ctl::config().auto_host;
                             let mut authoritative=crate::music_volume::authoritative();
                             settings_label(ui,"音乐音量");
