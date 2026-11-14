@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-101"
+PATCH_ID = "custom-102"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5395,18 +5395,16 @@ fn push_step(running:bool,seen:Option<(bool,std::time::Duration)>,stable:std::ti
 pub fn watch_tick(){
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
-    // QQ 冷启动后要十几秒才完成初始化；在此之前发的 `/volumeto` 会被它自己恢复的音量覆盖，
-    // 表现为“首次推送没反应”。实测 4 秒无效、12 秒有效。网易云 4 秒即可。
-    const STABLE_QQ:Duration=Duration::from_secs(12);
+    // QQ 冷启动后要十几秒才完成初始化；在此之前发的 `/volumeto` 会被它自己恢复的音量覆盖。
+    // 而且推过一次就标记 Done、不会再推，所以推早了等于永久失败。
+    // 实测：4 秒、12 秒都被覆盖，第 20 秒推才稳定生效，这里取 20 秒。网易云 4 秒即可。
+    const STABLE_QQ:Duration=Duration::from_secs(20);
     const STABLE:Duration=Duration::from_secs(4);
-    static LAST:Mutex<Option<Instant>>=Mutex::new(None);
     // 每个播放器：(本次运行是否已推送, 看到它在运行的时间)。退出后整条记录删除。
     static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant)>>>=Mutex::new(None);
     if cfg!(test){return;}
-    if let Ok(mut last)=LAST.lock(){
-        if last.is_some_and(|at|at.elapsed()<Duration::from_secs(2)){return;}
-        *last=Some(Instant::now());
-    }
+    // 不再自己做节流：采样循环本来就 1~2 秒一次，多一层节流会把 12 秒等待拉成 20 秒。
+
     if !state().authoritative{
         if let Ok(mut track)=TRACK.lock(){if let Some(map)=track.as_mut(){map.clear();}}
         return;
@@ -5422,7 +5420,14 @@ pub fn watch_tick(){
                 match push_step(running,seen,stable){
                     PushStep::Idle=>{}
                     PushStep::Reset=>{map.remove(key);}
-                    PushStep::Waiting=>{if !map.contains_key(key){map.insert(key,(false,Instant::now()));}}
+                    PushStep::Waiting=>{
+                        if !map.contains_key(key){
+                            map.insert(key,(false,Instant::now()));
+                            let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
+                            crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
+                                &format!("{seconds} detect key={key} 等待{stable:?}后推送"));
+                        }
+                    }
                     PushStep::Ready=>{map.insert(key,(true,Instant::now()));should_push=true;}
                     PushStep::Done=>{}
                 }
@@ -5531,11 +5536,12 @@ pub fn set_volume(_source:&str,_percent:u32)->bool{false}
         // 退出：重置，下次启动再推一次。
         assert_eq!(push_step(false,Some((true,Duration::from_secs(600))),stable),PushStep::Reset);
         // QQ 冷启动：4 秒时它还没初始化完，推了会被它自己恢复的音量覆盖，所以按 12 秒等。
-        let qq_stable=Duration::from_secs(12);
+        let qq_stable=Duration::from_secs(20);
         assert_eq!(push_step(true,Some((false,Duration::from_secs(4))),qq_stable),PushStep::Waiting);
-        assert_eq!(push_step(true,Some((false,Duration::from_secs(11))),qq_stable),PushStep::Waiting);
-        assert_eq!(push_step(true,Some((false,Duration::from_secs(12))),qq_stable),PushStep::Ready);
-        assert_eq!(push_step(true,Some((true,Duration::from_secs(30))),qq_stable),PushStep::Done);
+        assert_eq!(push_step(true,Some((false,Duration::from_secs(12))),qq_stable),PushStep::Waiting);
+        assert_eq!(push_step(true,Some((false,Duration::from_secs(19))),qq_stable),PushStep::Waiting);
+        assert_eq!(push_step(true,Some((false,Duration::from_secs(20))),qq_stable),PushStep::Ready);
+        assert_eq!(push_step(true,Some((true,Duration::from_secs(60))),qq_stable),PushStep::Done);
     }
 
     #[test]
