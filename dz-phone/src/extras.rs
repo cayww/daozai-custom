@@ -2418,13 +2418,13 @@ impl App {
                             let mut authoritative=crate::music_volume::authoritative();
                             settings_label(ui,"音乐音量");
                             settings_card(ui,|ui|{
-                                setting_row(ui,"以岛仔为准","启动后把岛仔记住的音量推给播放器", &mut authoritative);
+                                setting_row(ui,"岛仔推送音量","播放器启动后岛仔推送音量", &mut authoritative);
                                 ui.add_space(3.0);
-                                ui.small("关闭后，你在播放器里手动调的音量不会被覆盖。");
+                                ui.small("关闭后，播放器内调整音量后下次启动不会被岛仔音量覆盖");
                             });
                             if authoritative!=crate::music_volume::authoritative(){
                                 crate::music_volume::set_authoritative(authoritative);
-                                self.say(if authoritative{"音量以岛仔为准"}else{"音量以播放器为准"});
+                                self.say(if authoritative{"音量岛仔推送音量"}else{"音量以播放器为准"});
                             }
                             settings_label(ui,"网易云播放进度条修复");
                             settings_card(ui,|ui|{

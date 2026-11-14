@@ -117,7 +117,7 @@ mod platform {
 
 /// QQ 音乐与网易云音乐的音量都是应用内部的，读不到；记住最近一次由岛仔设置的值用于显示，
 /// 并落盘到 `music-volume.json`。`authoritative` 打开时，启动后把记住的值推回播放器，
-/// 让两边以岛仔为准。
+/// 让两边岛仔推送音量。
 #[cfg(windows)]
 #[derive(Clone)]
 struct VolumeState{
