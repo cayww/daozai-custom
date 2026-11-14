@@ -612,6 +612,23 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**设置窗口内的操作提示（custom-113）**
+
+设置页跑在独立窗口里（`extras.rs` 的 `show_viewport_immediate`），而 `App::say()` 的 toast
+由主岛窗口绘制。于是设置页里所有 `say()` 都打在主岛上：用户在设置窗口点「选择文件」选错快捷方式、
+改音量开关时，提示落在被设置窗口挡住的岛上，看起来就是「点了没反应」。
+
+- 新增 `App::toast_now()`：返回当前提示文本 + 已显示秒数（>2.4 秒视为已消失）；
+- 设置窗口在底部居中补画同一条提示：2.4 秒淡出、起点上浮 6px，暗/亮主题各自配色；
+- 主岛的提示保留，两边读同一份 `toast`，不会出现两条不同内容。
+
+验证：EDITS 161，干净重放应用 161 处、跳过 0、diff 空、marker custom-113；
+release 构建通过；`DAOZAI_DATA_DIR` 隔离目录全量 `1164 passed / 3 failed`——
+`messenger::qq`（托盘账号）与 `quota::doubao`（加密存储）串行重跑均通过（并发敏感），
+`wechat::tests::all_taskbar_clients_first_flash...` 稳定失败：它用 `Chrome_WidgetWin_1`
+注册合成窗口类，本机已有进程占用该类，`CreateWindowExW` 拿到的是别人进程的窗口（pid 不符），
+本次未触碰 `wechat.rs`。exe SHA256 `7ae52eeff483aa39`。
+
 **快捷方式修复覆盖桌面，并校验所选目标（custom-112）**
 
 原来只修开始菜单里固定文件名 `网易云音乐.lnk` 的两处（用户级/全局）。桌面上放的同名或改过名的快捷方式完全没被处理。

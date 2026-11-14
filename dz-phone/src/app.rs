@@ -1133,6 +1133,13 @@ impl App {
         self.toast_below = false;
     }
 
+    /// 设置窗口是独立窗口，主岛的提示它看不到：给它取一份当前提示与已显示时长。
+    pub(crate) fn toast_now(&self)->Option<(String,f32)>{
+        let (message,at)=self.toast.as_ref()?;
+        let elapsed=(self.t-at) as f32;
+        (elapsed<=2.4).then(||(message.clone(),elapsed))
+    }
+
     pub fn messenger_unavailable(&mut self, message: impl Into<String>) {
         self.say(message);
         self.toast_below = true;

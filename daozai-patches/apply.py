@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-112"
+PATCH_ID = "custom-113"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -7784,6 +7784,53 @@ path = "src/bin/daozai-bridge/main.rs"
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_System_RemoteDesktop",
+'''),
+
+    # custom-113：设置窗口内的操作提示（toast 只画在主岛窗口，设置窗口里看不到）
+    ("src/app.rs",
+     '''    pub fn say(&mut self, msg: impl Into<String>) {
+        self.toast = Some((msg.into(), self.t));
+        self.toast_below = false;
+    }
+''',
+     '''    pub fn say(&mut self, msg: impl Into<String>) {
+        self.toast = Some((msg.into(), self.t));
+        self.toast_below = false;
+    }
+
+    /// 设置窗口是独立窗口，主岛的提示它看不到：给它取一份当前提示与已显示时长。
+    pub(crate) fn toast_now(&self)->Option<(String,f32)>{
+        let (message,at)=self.toast.as_ref()?;
+        let elapsed=(self.t-at) as f32;
+        (elapsed<=2.4).then(||(message.clone(),elapsed))
+    }
+'''),
+    ("src/extras.rs",
+     '''            });
+            self.avoidance.dialog(ctx,&mut self.settings);
+''',
+     '''            });
+            // 设置窗口是独立窗口，主岛的 toast 画不到这里；补一条同位置的提示。
+            if let Some((message,elapsed))=self.toast_now(){
+                let alpha=crate::anim::smoothstep(0.0,0.12,elapsed)*(1.0-crate::anim::smoothstep(2.0,2.4,elapsed));
+                let a=(alpha*255.0).round().clamp(0.0,255.0) as u8;
+                let lift=(1.0-crate::anim::ease_out_cubic((elapsed/0.22).min(1.0)))*6.0;
+                let [r,g,b,_]=settings_color(ctx,Color32::from_rgb(46,46,50),Color32::from_rgb(250,250,252)).to_array();
+                let [tr,tg,tb,_]=settings_color(ctx,Color32::WHITE,Color32::from_rgb(28,32,39)).to_array();
+                egui::Area::new(egui::Id::new("settings-toast")).order(egui::Order::Foreground)
+                    .anchor(egui::Align2::CENTER_BOTTOM,egui::vec2(0.0,-16.0+lift)).interactable(false)
+                    .show(ctx,|ui|{
+                        egui::Frame::new()
+                            .fill(Color32::from_rgba_unmultiplied(r,g,b,a))
+                            .stroke(egui::Stroke::new(1.0,Color32::from_rgba_unmultiplied(255,255,255,(a as f32*0.14) as u8)))
+                            .corner_radius(11.0).inner_margin(egui::Margin::symmetric(14,7))
+                            .show(ui,|ui|{
+                                ui.label(egui::RichText::new(&message).size(12.5).color(Color32::from_rgba_unmultiplied(tr,tg,tb,a)));
+                            });
+                    });
+                ctx.request_repaint();
+            }
+            self.avoidance.dialog(ctx,&mut self.settings);
 '''),
 ]
 
