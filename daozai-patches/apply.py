@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-92"
+PATCH_ID = "custom-93"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5231,45 +5231,56 @@ pub fn read(source:&str)->Option<(u32,bool)> {
      '''    }
 }
 
-/// QQ 音乐的音量是应用内部的，读不到；记住最近一次由岛仔设置的值用于显示，
+/// QQ 音乐与网易云音乐的音量都是应用内部的，读不到；记住最近一次由岛仔设置的值用于显示，
 /// 并落盘到 `music-volume.json`，重启后仍然对得上。
 #[cfg(windows)]
-static QQ_INTERNAL:Mutex<Option<u32>>=Mutex::new(None);
-#[cfg(windows)]
-static QQ_INTERNAL_LOADED:Mutex<bool>=Mutex::new(false);
+static INTERNAL:Mutex<Option<std::collections::HashMap<String,u32>>>=Mutex::new(None);
 
 #[cfg(windows)]
-fn qq_internal()->Option<u32>{
-    if let Ok(mut loaded)=QQ_INTERNAL_LOADED.lock(){
-        if !*loaded{
-            *loaded=true;
-            let path=crate::model::config_dir().join("music-volume.json");
-            if let Ok(text)=std::fs::read_to_string(path){
-                if let Ok(value)=serde_json::from_str::<serde_json::Value>(&text){
-                    if let Some(percent)=value.get("qqmusic").and_then(|v|v.as_u64()){
-                        if let Ok(mut cache)=QQ_INTERNAL.lock(){*cache=Some(percent.min(100) as u32);}
+fn internal_key(source:&str)->Option<&'static str>{
+    if crate::smtc::qq_music(source){Some("qqmusic")}
+    else if source.eq_ignore_ascii_case("cloudmusic.exe"){Some("cloudmusic")}
+    else{None}
+}
+
+#[cfg(windows)]
+fn internal_volume(key:&str)->Option<u32>{
+    let mut guard=INTERNAL.lock().ok()?;
+    if guard.is_none(){
+        let mut map=std::collections::HashMap::new();
+        if let Ok(text)=std::fs::read_to_string(crate::model::config_dir().join("music-volume.json")){
+            if let Ok(value)=serde_json::from_str::<serde_json::Value>(&text){
+                if let Some(object)=value.as_object(){
+                    for (name,percent) in object{
+                        if let Some(percent)=percent.as_u64(){map.insert(name.clone(),percent.min(100) as u32);}
                     }
                 }
             }
         }
+        *guard=Some(map);
     }
-    QQ_INTERNAL.lock().ok().and_then(|cache|*cache)
+    guard.as_ref().and_then(|map|map.get(key).copied())
 }
 
 #[cfg(windows)]
-fn remember_qq_internal(percent:u32){
-    if let Ok(mut cache)=QQ_INTERNAL.lock(){*cache=Some(percent.min(100));}
+fn remember_internal(key:&str,percent:u32){
+    let percent=percent.min(100);
+    if let Ok(mut guard)=INTERNAL.lock(){
+        if guard.is_none(){*guard=Some(std::collections::HashMap::new());}
+        if let Some(map)=guard.as_mut(){map.insert(key.to_string(),percent);}
+    }
     let path=crate::model::config_dir().join("music-volume.json");
     if let Some(parent)=path.parent(){let _=std::fs::create_dir_all(parent);}
-    let _=std::fs::write(path,format!("{{\\"qqmusic\\":{}}}",percent.min(100)));
+    let map=INTERNAL.lock().ok().and_then(|guard|guard.clone()).unwrap_or_default();
+    if let Ok(text)=serde_json::to_string(&map){let _=std::fs::write(path,text);}
 }
 
 #[cfg(windows)]
 pub fn read(source:&str)->Option<(u32,bool)> {
-    // QQ 音乐调的是内部音量，会话音量不会跟着变，显示以记住的值为准。
-    if crate::smtc::qq_music(source) {
-        if let Some(percent)=qq_internal(){
-            // 音量是应用内部的，静音仍走系统会话，所以静音状态单独读。
+    // QQ 音乐和网易云调的都是应用内音量，会话音量不会跟着变，显示以记住的值为准。
+    if let Some(key)=internal_key(source) {
+        if let Some(percent)=internal_volume(key){
+            // 静音仍走系统会话，所以静音状态单独读。
             let muted=platform::sessions(source).iter().filter_map(|session|unsafe{session.GetMute().ok()}).any(|state|state.as_bool());
             return Some((percent,muted));
         }
@@ -5289,9 +5300,16 @@ pub fn set_volume(source:&str,percent:u32)->bool {
      '''
 #[cfg(windows)]
 pub fn set_volume(source:&str,percent:u32)->bool {
-    if crate::smtc::qq_music(source) && crate::smtc::qq_volume_command(percent) {
-        remember_qq_internal(percent);
-        return true;
+    if let Some(key)=internal_key(source) {
+        let applied=if crate::smtc::qq_music(source){
+            crate::smtc::qq_volume_command(percent)
+        }else{
+            crate::smtc::netease_control::set_volume(percent)
+        };
+        if applied {
+            remember_internal(key,percent);
+            return true;
+        }
     }
     apply(source,|session|unsafe {
         session.SetMasterVolume(percent.min(100) as f32/100.0,std::ptr::null()).is_ok()

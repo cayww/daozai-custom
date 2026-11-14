@@ -200,6 +200,16 @@ pub fn auto_host_tick(){
     }
 }
 
+/// 通过客户端自己的桥设置应用内音量：与拖动它的音量条走同一条命令。
+/// 内部音量没有读取接口，调用方需要自己记住数值用于显示。
+pub fn set_volume(percent:u32)->bool{
+    let value=format!("{:.4}",percent.min(100) as f64/100.0);
+    let expression=format!(
+        "(()=>{{const c=window.legacyNativeCmder;if(!c||typeof c.call!=='function')return false;c.call('audioplayer.setVolume','','',{value});return true;}})()"
+    );
+    matches!(evaluate(config().port,&expression),Some(serde_json::Value::Bool(true)))
+}
+
 /// 设置页用：CDP 调试端口状态。探测放在后台线程，绝不阻塞 UI 线程；
 /// `None` 表示第一次探测还没回来。
 static READY_CACHE:Mutex<Option<(Instant,bool)>>=Mutex::new(None);

@@ -612,6 +612,19 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**网易云也走内部音量（custom-93）**
+
+从前端包 `package/orpheus.ntpk`（ZIP 从偏移 100 开始）解出音量命令：
+`audioplayer.setVolume("","",值)`，值域 0–1，与界面拖动音量条是同一条调用。
+
+- `netease_control::set_volume(percent)`：经 CDP 执行上面的调用。
+- `music_volume` 的缓存改成通用映射（`qqmusic` / `cloudmusic`），落盘 `music-volume.json`；
+  QQ 与网易云都按“内部音量 + 记住数值”显示，静音仍读系统会话。
+- 实测：设 50 时显示 50；会话音量保持 100（两家都是独立两层，内部音量不会写回会话）。
+- 已知限制：两家的内部音量都**只能写不能读**（网易云 `getApplicationVolume` 返回的是会话值，
+  `getPlaybackInfo` 无音量字段；QQ 的音量控件不是标准 UIA 滑块），所以用户在播放器内手动调音量时，
+  岛仔显示不会跟随。EDITS 152，exe SHA256 `89c3007cee9dc588`。
+
 **应用内音量（custom-92）：QQ 音乐走 /volumeto**
 
 `/volumeto <0-100>` 改的是客户端内部音量，不经过 Windows 音频会话，所以会话音量保持 100，
