@@ -40,6 +40,39 @@ unsafe fn window(source:&str)->Option<HWND>{
     let mut search=Search{source:if apple{"AppleMusic.exe"}else{source},apple,found:None};let _=EnumWindows(Some(visit),LPARAM(&mut search as *mut _ as isize));search.found
 }
 
+/// QQ 音乐可能同时有主窗口、迷你播放器等多个顶层窗口；全部收集，再由调用方挑出含进度条的那个。
+unsafe fn windows(source:&str)->Vec<HWND>{
+    struct Search<'a>{source:&'a str,found:Vec<HWND>}
+    unsafe extern "system" fn visit(hwnd:HWND,param:LPARAM)->BOOL{
+        let search=&mut *(param.0 as *mut Search<'_>);
+        let mut name=[0u16;80];let n=GetClassNameW(hwnd,&mut name);
+        let class=String::from_utf16_lossy(&name[..n.max(0)as usize]);
+        if class=="TXGuiFoundation" && IsWindowVisible(hwnd).as_bool() && GetWindow(hwnd,GW_OWNER).is_err()
+            && GetWindowTextLengthW(hwnd)>0 && matches_player(hwnd,search.source){search.found.push(hwnd);}
+        BOOL(1)
+    }
+    let mut search=Search{source,found:Vec::new()};
+    let _=EnumWindows(Some(visit),LPARAM(&mut search as *mut _ as isize));
+    search.found
+}
+
+unsafe fn automation()->Option<IUIAutomation>{
+    let ui:IUIAutomation=CoCreateInstance(&CUIAutomation8,None,CLSCTX_INPROC_SERVER).ok()?;
+    if let Ok(timed)=ui.cast::<IUIAutomation2>(){let _=timed.SetConnectionTimeout(800);let _=timed.SetTransactionTimeout(800);}
+    Some(ui)
+}
+unsafe fn apple_bar(ui:&IUIAutomation,root:&IUIAutomationElement)->Option<IUIAutomationRangeValuePattern>{
+    let condition=ui.CreatePropertyCondition(UIA_AutomationIdPropertyId,&VARIANT::from("LCDScrubber")).ok()?;
+    root.FindFirst(TreeScope_Descendants,&condition).ok()?.GetCurrentPattern(UIA_RangeValuePatternId).ok()?.cast().ok()
+}
+fn apple_value(range:&IUIAutomationRangeValuePattern,duration:f64)->Option<(f64,f64)>{
+    unsafe {
+        let (min,max,value)=(range.CurrentMinimum().ok()?,range.CurrentMaximum().ok()?,range.CurrentValue().ok()?);
+        (duration.is_finite() && duration>0.0 && min==0.0 && max.is_finite() && (max-duration).abs()<1.5
+            && value.is_finite() && (min..=max).contains(&value)).then_some((value,max))
+    }
+}
+
 unsafe fn qq_bar(ui:&IUIAutomation,root:&IUIAutomationElement,expected:Option<f64>)->Option<(IUIAutomationElement,f64,IUIAutomationElement)>{
     let condition=ui.CreatePropertyCondition(UIA_ControlTypePropertyId,&VARIANT::from(UIA_TextControlTypeId.0)).ok()?;
     let texts=root.FindAll(TreeScope_Descendants,&condition).ok()?;
@@ -64,7 +97,34 @@ unsafe fn qq_bar(ui:&IUIAutomation,root:&IUIAutomationElement,expected:Option<f6
             if best.as_ref().map_or(true,|(_,best_delta,_):&(IUIAutomationElement,f64,IUIAutomationElement)|delta<*best_delta){best=Some((bar,total,parent));}
         }
     }
-    best
+    if best.is_some(){return best;}
+    // 回退：版本改版把时间标签挪走时，改在“能读到两个时间”的父控件里找滑块/进度条。
+    for control in [UIA_SliderControlTypeId,UIA_ProgressBarControlTypeId,UIA_PaneControlTypeId]{
+        let Ok(condition)=ui.CreatePropertyCondition(UIA_ControlTypePropertyId,&VARIANT::from(control.0))else{continue};
+        let Ok(bars)=root.FindAll(TreeScope_Descendants,&condition)else{continue};
+        for i in 0..bars.Length().ok()?{
+            let Ok(bar)=bars.GetElement(i)else{continue};
+            let Ok(r)=bar.CurrentBoundingRectangle()else{continue};
+            if r.right-r.left<=40 || r.bottom-r.top>60{continue;}
+            let Ok(parent)=walker.GetParentElement(&bar)else{continue};
+            let Ok(group_texts)=parent.FindAll(TreeScope_Descendants,&texts_condition(ui)?)else{continue};
+            let mut total:Option<f64>=None;
+            for k in 0..group_texts.Length().ok()?{
+                if let Some(value)=group_texts.GetElement(k).ok().and_then(|e|e.CurrentName().ok()).and_then(|name|seconds(&name.to_string())){
+                    total=Some(total.map_or(value,|current|current.max(value)));
+                }
+            }
+            let Some(total)=total else{continue};
+            if total<=0.0{continue;}
+            if expected.is_some_and(|value|(value-total).abs()>8.0){continue;}
+            return Some((bar,total,parent));
+        }
+    }
+    None
+}
+
+unsafe fn texts_condition(ui:&IUIAutomation)->Option<windows::Win32::UI::Accessibility::IUIAutomationCondition>{
+    ui.CreatePropertyCondition(UIA_ControlTypePropertyId,&VARIANT::from(UIA_TextControlTypeId.0)).ok()
 }
 
 /// 从进度条那一组控件读当前播放时间；读不到时返回 None，由调用方决定是否继续。
@@ -75,42 +135,32 @@ unsafe fn qq_position(group:&IUIAutomationElement,ui:&IUIAutomation)->Option<f64
     seconds(&children.GetElement(0).ok()?.CurrentName().ok()?.to_string())
 }
 
-unsafe fn automation()->Option<IUIAutomation>{
-    let ui:IUIAutomation=CoCreateInstance(&CUIAutomation8,None,CLSCTX_INPROC_SERVER).ok()?;
-    if let Ok(timed)=ui.cast::<IUIAutomation2>(){let _=timed.SetConnectionTimeout(800);let _=timed.SetTransactionTimeout(800);}
-    Some(ui)
-}
-unsafe fn apple_bar(ui:&IUIAutomation,root:&IUIAutomationElement)->Option<IUIAutomationRangeValuePattern>{
-    let condition=ui.CreatePropertyCondition(UIA_AutomationIdPropertyId,&VARIANT::from("LCDScrubber")).ok()?;
-    root.FindFirst(TreeScope_Descendants,&condition).ok()?.GetCurrentPattern(UIA_RangeValuePatternId).ok()?.cast().ok()
-}
-fn apple_value(range:&IUIAutomationRangeValuePattern,duration:f64)->Option<(f64,f64)>{
-    unsafe {
-        let (min,max,value)=(range.CurrentMinimum().ok()?,range.CurrentMaximum().ok()?,range.CurrentValue().ok()?);
-        (duration.is_finite() && duration>0.0 && min==0.0 && max.is_finite() && (max-duration).abs()<1.5
-            && value.is_finite() && (min..=max).contains(&value)).then_some((value,max))
-    }
-}
 pub(super) fn seek(source:&str,position:f64,duration:f64)->bool{
     use std::time::{Duration,Instant};
     let apple=super::apple_music::is_source(source);
     let qq=super::qq_music(source);
     if !apple && !qq{return false;}
-    // 系统会话里的 AUMID 与进程名不一致，窗口匹配统一用映像名。
-    let exe=if apple{"AppleMusic.exe"}else{"qqmusic.exe"};
     unsafe { (||->Option<()> {
         let _dpi=DpiContext(SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
-        let hwnd=window(exe)?;
-        if !IsWindowEnabled(hwnd).as_bool(){return None;}
         let ui=automation()?;
-        let root=ui.ElementFromHandle(hwnd).ok()?;
+        // 系统会话里的 AUMID 与进程名不一致，窗口匹配统一用映像名。
         if apple {
+            let hwnd=window("AppleMusic.exe")?;
+            if !IsWindowEnabled(hwnd).as_bool(){return None;}
+            let root=ui.ElementFromHandle(hwnd).ok()?;
             let range=apple_bar(&ui,&root)?;let (_,max)=apple_value(&range,duration)?;
             if range.CurrentIsReadOnly().ok()?.as_bool() || !position.is_finite() || !(0.0..=max).contains(&position){return None;}
             // 直接设置原生滑块；无需移动鼠标、激活窗口或扫描歌词区域。
             return range.SetValue(position).ok();
         }
-        let (bar,total,group)=qq_bar(&ui,&root,(duration>0.0).then_some(duration))?;
+        let expected=(duration>0.0).then_some(duration);
+        let mut chosen=None;
+        for hwnd in windows("qqmusic.exe"){
+            if !IsWindowEnabled(hwnd).as_bool(){continue;}
+            let Ok(root)=ui.ElementFromHandle(hwnd)else{continue};
+            if let Some(found)=qq_bar(&ui,&root,expected){chosen=Some((hwnd,found));break;}
+        }
+        let (hwnd,(bar,total,group))=chosen?;
         let rect=bar.CurrentBoundingRectangle().ok()?;
         let mut client=RECT::default();GetClientRect(hwnd,&mut client).ok()?;
         let origin=if IsIconic(hwnd).as_bool(){

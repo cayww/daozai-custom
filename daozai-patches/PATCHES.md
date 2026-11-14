@@ -612,6 +612,20 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**健壮性补强（custom-90）：QQ 音乐多窗口与结构回退**
+
+排查过但走不通的通道（记录备查）：CDP 不存在（无 CEF 主界面）；`QQMusicSvr` COM 只有
+播放/暂停/上下曲；系统 `TryChangePlaybackPosition` 返回 `true` 但进度不动；控件
+`LegacyIAccessible::SetValue` 返回“尚未实现”；`QPlaySupport.dll` 默认不加载、SSDP 不广播、
+本地 HTTP 只回 404；`QQMusic_Protocol.dll` 的 XML 命令只服务网页跳转。
+
+因此继续强化点击通道：
+
+- 收集 QQ 音乐所有可见顶层窗口（主窗口、迷你播放器等），逐个找含进度条的那个，不再只认第一个。
+- 进度条识别增加回退：3 子结构（当前时间 / 滑块 / 总时长）匹配失败时，改在“能读到两个时间”
+  的父控件里找 Slider / ProgressBar / Pane。
+- 实测跳转 45 / 150 秒均成功。EDITS 147，exe SHA256 `64d914a699321b8a`。
+
 **进度修复（custom-89）：QQ 音乐拖动进度条无效**
 
 - 根因：系统媒体会话把 QQ 音乐报成 AUMID `Tencent.QQMusic`，而跳转与音量代码只认进程名
