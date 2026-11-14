@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-105"
+PATCH_ID = "custom-106"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5350,50 +5350,55 @@ fn apply_internal(source:&str,percent:u32)->bool{
     }
 }
 
-/// 播放器本次运行是否活着：QQ 看进程，网易云看调试端口是否打开
-/// （没有端口就发不了命令，看进程会误判并造成无意义重试）。
+/// 播放器本次运行的标识。QQ 用**最小 PID**：主进程 PID 最小，我们推送时产生的
+/// `QQMusic.exe /volumeto` 交接进程 PID 更大，不干扰判断；重启后 PID 必然变化。
+/// 网易云没有稳定 PID 可看，用调试端口是否打开。
 #[cfg(windows)]
-fn player_running(key:&str)->bool{
+fn player_token(key:&str)->Option<u32>{
     if key=="qqmusic"{
-        !crate::smtc::player_process::pids_named("qqmusic.exe").is_empty()
+        crate::smtc::player_process::pids_named("qqmusic.exe").into_iter().min()
     }else{
-        crate::smtc::netease_control::port_open()
+        crate::smtc::netease_control::port_open().then_some(1)
     }
 }
 
-/// 一次运行会话的推送状态。抽成纯函数便于单测：这里搞错就会每几秒重复推送。
+#[cfg(windows)]
+fn player_running(key:&str)->bool{player_token(key).is_some()}
+
+/// 一次运行会话的推送状态。
 #[cfg(windows)]
 #[derive(Clone,Copy,PartialEq,Eq,Debug)]
 enum PushStep{
-    /// 没在运行、也没有记录：什么都不做。
+    /// 没在运行、也没有记录。
     Idle,
-    /// 没在运行但有记录：清掉，等它下次启动重新推。
+    /// 没在运行但有记录：清掉。
     Reset,
-    /// 在运行，但还没到稳定时间：继续等。
+    /// 出现了一次新的运行会话（首次，或 PID 变了）：开始计时。
+    Start,
+    /// 在运行，但还没到稳定时间。
     Waiting,
-    /// 在运行且已稳定、本次运行还没推过：可以推。
+    /// 在运行且已稳定、本次还没推过：可以推。
     Ready,
-    /// 本次运行已经推过：绝不重复推。
+    /// 本次运行已经推过：不重复推。
     Done,
 }
 
-/// `seen` 是“看到它在运行”的记录：(本次是否已推送, 已等待时长)。
+/// `record` 是历史记录：(本次是否已推送, 已等待时长, 记录时的 PID)。
+/// 关键点：**PID 一变就当成新的一次启动**，不再依赖“是否碰巧抓到进程消失的那一帧”。
+/// QQ 退出时会有进程消失得慢，快速重启时 `running` 始终为 true，旧实现会一直停在 Done。
 #[cfg(windows)]
-fn push_step(running:bool,seen:Option<(bool,std::time::Duration)>,stable:std::time::Duration)->PushStep{
-    match (running,seen){
-        (false,None)=>PushStep::Idle,
-        (false,Some(_))=>PushStep::Reset,
-        (true,None)=>PushStep::Waiting,
-        (true,Some((true,_)))=>PushStep::Done,
-        (true,Some((false,elapsed)))=>if elapsed>=stable{PushStep::Ready}else{PushStep::Waiting},
+fn push_step(token:Option<u32>,record:Option<(bool,std::time::Duration,u32)>,stable:std::time::Duration)->PushStep{
+    match (token,record){
+        (None,None)=>PushStep::Idle,
+        (None,Some(_))=>PushStep::Reset,
+        (Some(_),None)=>PushStep::Start,
+        (Some(pid),Some((_,_,old))) if pid!=old=>PushStep::Start,
+        (Some(_),Some((true,_,_)))=>PushStep::Done,
+        (Some(_),Some((false,elapsed,_)))=>if elapsed>=stable{PushStep::Ready}else{PushStep::Waiting},
     }
 }
 
-/// 挂在现有采样循环里调用：播放器每次启动只推一次记住的音量。
-/// 内部 2 秒节流；推送前先等播放器稳定 4 秒，并在发送前再确认一次它仍在运行。
-/// 独立的后台通道：每秒调一次 `watch_tick`。
-/// 实测媒体采样线程会在运行一段时间后静默停摆（日志停在某次 push 后再无 detect），
-/// 而音量推送不能依赖它，所以单开一条极轻的线程（两次进程枚举，开销可忽略）。
+/// 独立的后台通道：每秒检测一次。播放器每次启动（含快速重启）只推一次。
 #[cfg(windows)]
 pub fn spawn_push_watcher(){
     use std::sync::Once;
@@ -5412,15 +5417,12 @@ pub fn spawn_push_watcher(){
 pub fn watch_tick(){
     use std::sync::{Mutex,MutexGuard};
     use std::time::{Duration, Instant};
-    // 用户要求：不延迟、不补推——发现播放器启动就立刻推一次。
     const STABLE_QQ:Duration=Duration::ZERO;
     const STABLE:Duration=Duration::from_secs(4);
-    const RETRY_TIMES:u32=1;
-    // 每个播放器：(本次运行是否已推送, 看到它在运行的时间)。退出后整条记录删除。
-    static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant)>>>=Mutex::new(None);
+    // 每个播放器：(本次运行是否已推送, 记录时间, 记录时的 PID)
+    static TRACK:Mutex<Option<std::collections::HashMap<&'static str,(bool,Instant,u32)>>>=Mutex::new(None);
     static LAST:Mutex<Option<Instant>>=Mutex::new(None);
     if cfg!(test){return;}
-    // 锁被 poison 也要继续：之前某次 panic 不该让音量推送从此彻底静默失效。
     fn guard<T>(lock:&'static Mutex<T>)->MutexGuard<'static,T>{
         match lock.lock(){Ok(guard)=>guard,Err(poisoned)=>poisoned.into_inner()}
     }
@@ -5441,47 +5443,41 @@ pub fn watch_tick(){
             let mut track=guard(&TRACK);
             if track.is_none(){*track=Some(std::collections::HashMap::new());}
             if let Some(map)=track.as_mut(){
-                let running=player_running(key);
-                let seen=map.get(key).map(|(pushed,at)|(*pushed,at.elapsed()));
+                let token=player_token(key);
+                let record=map.get(key).map(|(pushed,at,pid)|(*pushed,at.elapsed(),*pid));
                 let stable=if key=="qqmusic"{STABLE_QQ}else{STABLE};
-                match push_step(running,seen,stable){
+                match push_step(token,record,stable){
                     PushStep::Idle=>{}
-                    // 退出就忘掉这次运行，下次启动重新推一次。
                     PushStep::Reset=>{map.remove(key);}
-                    PushStep::Waiting=>{
-                        if !map.contains_key(key){
-                            map.insert(key,(false,Instant::now()));
-                            detected=Some(stable);
-                        }
+                    PushStep::Start=>{
+                        map.insert(key,(false,Instant::now(),token.unwrap_or(0)));
+                        detected=Some(stable);
                     }
-                    PushStep::Ready=>{map.insert(key,(true,Instant::now()));should_push=true;}
+                    PushStep::Waiting=>{}
+                    PushStep::Ready=>{
+                        map.insert(key,(true,Instant::now(),token.unwrap_or(0)));
+                        should_push=true;
+                    }
                     PushStep::Done=>{}
                 }
             }
         }
-        // 日志放在锁外：文件 I/O 慢，也不该让写日志失败影响状态机。
         if let Some(stable)=detected{
             let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
             crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                &format!("{seconds} detect key={key} 等待{stable:?}后推送"));
+                &format!("{seconds} detect key={key} pid={:?} 等待{stable:?}后推送",player_token(key)));
         }
         if !should_push{continue;}
         let Some(percent)=state().volumes.get(key).copied() else{continue;};
         let source=source.to_string();
         let key=key.to_string();
-        // 推送本身要起进程或连 CDP，放到一次性线程里，避免拖慢调用方。
-        // QQ 读不到内部音量，无法确认某一次是否被接受，所以在启动窗口内补推几次（值相同）。
+        // 发命令只要几十毫秒，放一次性线程，避免拖慢调用方。
         std::thread::spawn(move||{
-            for round in 1..=RETRY_TIMES{
-                if round>1{std::thread::sleep(Duration::from_secs(5));}
-                // 每次发命令前确认播放器还在：QQ 的命令进程本身是 QQMusic.exe，
-                // 若此刻它已退出，这条命令会变成一次完整启动，把客户端拉起来。
-                if !player_running(&key){return;}
-                let applied=apply_internal(&source,percent);
-                let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
-                crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                    &format!("{seconds} push#{round} key={key} percent={percent} applied={applied}"));
-            }
+            if !player_running(&key){return;}
+            let applied=apply_internal(&source,percent);
+            let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
+            crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
+                &format!("{seconds} push key={key} percent={percent} applied={applied}"));
         });
     }
 }
@@ -5558,26 +5554,22 @@ pub fn set_volume(_source:&str,_percent:u32)->bool{false}
     fn volume_push_happens_once_per_player_run(){
         use std::time::Duration;
         let stable=Duration::from_secs(4);
-        // 没运行、没记录：什么都不做。
-        assert_eq!(push_step(false,None,stable),PushStep::Idle);
-        // 刚看到它起来：开始计时。
-        assert_eq!(push_step(true,None,stable),PushStep::Waiting);
-        // 还不稳定：继续等。
-        assert_eq!(push_step(true,Some((false,Duration::from_secs(1))),stable),PushStep::Waiting);
-        // 稳定且本次没推过：推一次。
-        assert_eq!(push_step(true,Some((false,Duration::from_secs(5))),stable),PushStep::Ready);
-        // 已推过：不论过多久都不再推（旧实现每 4 秒重推一次，网易云音量会被反复改回、QQ 会被反复拉起）。
-        assert_eq!(push_step(true,Some((true,Duration::from_secs(0))),stable),PushStep::Done);
-        assert_eq!(push_step(true,Some((true,Duration::from_secs(600))),stable),PushStep::Done);
-        // 退出：重置，下次启动再推一次。
-        assert_eq!(push_step(false,Some((true,Duration::from_secs(600))),stable),PushStep::Reset);
-        // QQ 冷启动：4 秒时它还没初始化完，推了会被它自己恢复的音量覆盖，所以按 12 秒等。
-        let qq_stable=Duration::from_secs(20);
-        assert_eq!(push_step(true,Some((false,Duration::from_secs(4))),qq_stable),PushStep::Waiting);
-        assert_eq!(push_step(true,Some((false,Duration::from_secs(12))),qq_stable),PushStep::Waiting);
-        assert_eq!(push_step(true,Some((false,Duration::from_secs(19))),qq_stable),PushStep::Waiting);
-        assert_eq!(push_step(true,Some((false,Duration::from_secs(20))),qq_stable),PushStep::Ready);
-        assert_eq!(push_step(true,Some((true,Duration::from_secs(60))),qq_stable),PushStep::Done);
+        // 没在运行、没记录：什么都不做。
+        assert_eq!(push_step(None,None,stable),PushStep::Idle);
+        // 首次出现：开始计时。
+        assert_eq!(push_step(Some(10),None,stable),PushStep::Start);
+        // 未到稳定时间。
+        assert_eq!(push_step(Some(10),Some((false,Duration::from_secs(1),10)),stable),PushStep::Waiting);
+        // 到时间且未推过。
+        assert_eq!(push_step(Some(10),Some((false,Duration::from_secs(5),10)),stable),PushStep::Ready);
+        // 已推过：同一 PID 不再推。
+        assert_eq!(push_step(Some(10),Some((true,Duration::from_secs(600),10)),stable),PushStep::Done);
+        // 关键：PID 变了就是新一次启动。QQ 退出时进程消失得慢、快速重启时抓不到 false，
+        // 旧实现会一直停在 Done（这就是“只有重启岛仔后第一次有效”的原因）。
+        assert_eq!(push_step(Some(20),Some((true,Duration::from_secs(600),10)),stable),PushStep::Start);
+        assert_eq!(push_step(Some(20),Some((false,Duration::from_secs(30),10)),stable),PushStep::Start);
+        // 进程消失：清记录。
+        assert_eq!(push_step(None,Some((true,Duration::from_secs(600),10)),stable),PushStep::Reset);
     }
 
     #[test]
@@ -6929,34 +6921,11 @@ fn qq_seek_command(seconds:f64)->bool{
 #[cfg(windows)]
 pub(crate) fn qq_volume_command(percent:u32)->bool{
     let Some(path)=player_process::pids_named("qqmusic.exe").into_iter().find_map(player_process::image_path)else{return false;};
-    let mut child=match std::process::Command::new(&path)
+    std::process::Command::new(path)
         .arg("/volumeto")
         .arg(percent.min(100).to_string())
-        .spawn(){
-        Ok(child)=>child,
-        Err(error)=>{
-            let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
-            crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-                &format!("{seconds} exec percent={percent} spawn失败={error}"));
-            return false;
-        }
-    };
-    // 等交接进程退出：它把参数交给已运行的主实例后就结束。退出码能区分
-    // “参数没送到”和“送到了但 QQ 不采纳”，这是排查这类问题的唯一线索。
-    // 最多等 2 秒；超时说明它没交接而是自己常驻了，直接结束，避免拖住推送线程。
-    let mut code=None;
-    for _ in 0..40{
-        match child.try_wait(){
-            Ok(Some(status))=>{code=status.code();break;}
-            Ok(None)=>std::thread::sleep(std::time::Duration::from_millis(50)),
-            Err(_)=>break,
-        }
-    }
-    if code.is_none(){let _=child.kill();}
-    let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
-    crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
-        &format!("{seconds} exec percent={percent} code={code:?} exe={path}"));
-    true
+        .spawn()
+        .is_ok()
 }
 
 /// 跳转在工作线程执行；专用回退必须回读实际位置，避免播放器接口假成功。
