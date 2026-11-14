@@ -919,6 +919,8 @@ pub struct App {
     /// 等它的新位置追上（或超时、换歌）再交还，避免滑块先弹回旧位置。
     pub(crate) music_seek_ui: Option<(f64,String)>,
     pub(crate) music_seek_quiet_until: f64,
+    /// 点了上一首/下一首的时刻：先本地把进度归零，等播放器报回新歌位置再交还。
+    pub(crate) music_restart_at: Option<f64>,
     /// 上一次看到的蓝牙设备，用来只在连接/断开时提示一次。
     pub(crate) bt_shown: Vec<crate::bt::Device>,
     bt_initialized: bool,
@@ -1117,6 +1119,7 @@ impl App {
             music_volume_open: false,
             music_seek_ui: None,
             music_seek_quiet_until: 0.0,
+            music_restart_at: None,
             bt_shown: Vec::new(),
             bt_initialized: false,
             mail: {
@@ -3469,6 +3472,7 @@ impl App {
                 || self.t>=self.music_seek_quiet_until || &self.media.title!=title
         });
         if seek_done {self.music_seek_ui=None;}
+        if self.music_restart_at.is_some_and(|at|self.t>=at+1.5){self.music_restart_at=None;}
         if env.today != self.today {
             self.today = env.today.clone();
             self.water = model::Water::load(&env.today);

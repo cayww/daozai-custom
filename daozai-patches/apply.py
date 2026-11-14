@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-114"
+PATCH_ID = "custom-115"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -7900,6 +7900,56 @@ path = "src/bin/daozai-bridge/main.rs"
         h.frame(vec![]);
         assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="01:30")),"{source} 松手后应保持目标时间直到播放器回报");
     }
+'''),
+
+    # custom-115：上一首/下一首立即把岛上进度归零，不等播放器回报
+    ("src/app.rs",
+     '''    pub(crate) music_seek_ui: Option<(f64,String)>,
+    pub(crate) music_seek_quiet_until: f64,
+''',
+     '''    pub(crate) music_seek_ui: Option<(f64,String)>,
+    pub(crate) music_seek_quiet_until: f64,
+    /// 点了上一首/下一首的时刻：先本地把进度归零，等播放器报回新歌位置再交还。
+    pub(crate) music_restart_at: Option<f64>,
+'''),
+    ("src/app.rs",
+     '''            music_seek_ui: None,
+            music_seek_quiet_until: 0.0,
+''',
+     '''            music_seek_ui: None,
+            music_seek_quiet_until: 0.0,
+            music_restart_at: None,
+'''),
+    ("src/app.rs",
+     '''        if seek_done {self.music_seek_ui=None;}
+''',
+     '''        if seek_done {self.music_seek_ui=None;}
+        if self.music_restart_at.is_some_and(|at|self.t>=at+1.5){self.music_restart_at=None;}
+'''),
+    ("src/pages.rs",
+     '''        let pending_position=self.music_seek_ui.as_ref()
+            .filter(|(_,title)|*title==np.title).map(|(target,_)|*target);
+        let position=seek_position.or(pending_position).unwrap_or(np.position);
+''',
+     '''        let pending_position=self.music_seek_ui.as_ref()
+            .filter(|(_,title)|*title==np.title).map(|(target,_)|*target);
+        // 切换上一首/下一首后先本地归零：新歌的位置要等下一轮采样才回来（QQ 音乐尤其慢），
+        // 否则会拿旧歌的进度配新歌名停一下；播放器报回比本地计时更小的值时立即采用。
+        let restart=self.music_restart_at.filter(|at|self.t<at+1.5).map(|at|(self.t-at).max(0.0));
+        let position=seek_position.or(pending_position).unwrap_or_else(|| match restart {
+            Some(fresh) if np.position>fresh+1.0 => fresh,
+            _ => np.position,
+        });
+'''),
+    ("src/pages.rs",
+     '''            if previous.clicked() {cmds.push(Cmd::Media(Transport::Prev));}
+''',
+     '''            if previous.clicked() {self.music_restart_at=Some(self.t);self.music_seek_ui=None;cmds.push(Cmd::Media(Transport::Prev));}
+'''),
+    ("src/pages.rs",
+     '''            if next.clicked() {cmds.push(Cmd::Media(Transport::Next));}
+''',
+     '''            if next.clicked() {self.music_restart_at=Some(self.t);self.music_seek_ui=None;cmds.push(Cmd::Media(Transport::Next));}
 '''),
 ]
 
