@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-94"
+PATCH_ID = "custom-97"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -5258,8 +5258,6 @@ impl Default for VolumeState{
 
 #[cfg(windows)]
 static STATE:Mutex<Option<VolumeState>>=Mutex::new(None);
-#[cfg(windows)]
-static PUSHED:Mutex<Option<std::collections::HashSet<String>>>=Mutex::new(None);
 
 #[cfg(windows)]
 fn volume_file()->std::path::PathBuf{crate::model::config_dir().join("music-volume.json")}
@@ -5338,10 +5336,6 @@ fn remember_internal(key:&str,percent:u32){
         *guard=Some(current.clone());
         saved=Some(current);
     }
-    if let Ok(mut guard)=PUSHED.lock(){
-        if guard.is_none(){*guard=Some(std::collections::HashSet::new());}
-        if let Some(set)=guard.as_mut(){set.insert(key.to_string());}
-    }
     if let Some(state)=saved{save_state(&state);}
 }
 
@@ -5356,25 +5350,55 @@ fn apply_internal(source:&str,percent:u32)->bool{
     }
 }
 
-/// 打开“以岛仔为准”时，每个播放器本次运行只推一次，避免覆盖用户随后在播放器里的调整。
+/// 挂在现有采样循环里调用：播放器一启动就把岛仔记住的音量推过去。内部 2 秒节流。
+/// QQ 看进程是否出现；网易云看调试端口是否打开（没有端口就发不了命令，避免反复重试）。
 #[cfg(windows)]
-fn push_once(source:&str,key:&str,percent:u32){
-    if cfg!(test) || !state().authoritative{return;}
-    if let Ok(mut guard)=PUSHED.lock(){
-        if guard.is_none(){*guard=Some(std::collections::HashSet::new());}
-        let Some(set)=guard.as_mut() else{return;};
-        if !set.insert(key.to_string()){return;}
+pub fn watch_tick(){
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST:Mutex<Option<Instant>>=Mutex::new(None);
+    static ACTIVE:Mutex<Option<std::collections::HashMap<&'static str,bool>>>=Mutex::new(None);
+    if cfg!(test){return;}
+    if let Ok(mut last)=LAST.lock(){
+        if last.is_some_and(|at|at.elapsed()<Duration::from_secs(2)){return;}
+        *last=Some(Instant::now());
     }
-    let source=source.to_string();
-    std::thread::spawn(move||{let _=apply_internal(&source,percent);});
+    if !state().authoritative{
+        if let Ok(mut active)=ACTIVE.lock(){if let Some(map)=active.as_mut(){map.clear();}}
+        return;
+    }
+    for (key,source) in [("qqmusic","Tencent.QQMusic"),("cloudmusic","cloudmusic.exe")]{
+        let running=if key=="qqmusic"{
+            !crate::smtc::player_process::pids_named("qqmusic.exe").is_empty()
+        }else{
+            crate::smtc::netease_control::port_open()
+        };
+        let mut should_push=false;
+        if let Ok(mut active)=ACTIVE.lock(){
+            if active.is_none(){*active=Some(std::collections::HashMap::new());}
+            if let Some(map)=active.as_mut(){
+                if map.get(key).copied()!=Some(running){map.insert(key,running);should_push=running;}
+            }
+        }
+        if !should_push{continue;}
+        let Some(percent)=state().volumes.get(key).copied() else{continue;};
+        let source=source.to_string();
+        let key=key.to_string();
+        // 推送本身要起进程或连 CDP，放到一次性线程里，避免拖慢采样。
+        std::thread::spawn(move||{
+            let applied=apply_internal(&source,percent);
+            let seconds=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|value.as_secs()).unwrap_or(0);
+            crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"music-volume.log",
+                &format!("{seconds} push key={key} percent={percent} applied={applied}"));
+        });
+    }
 }
 
 #[cfg(windows)]
 pub fn read(source:&str)->Option<(u32,bool)> {
     // QQ 音乐和网易云调的都是应用内音量，会话音量不会跟着变，显示以记住的值为准。
-    if let Some(key)=internal_key(source) {
+    if internal_key(source).is_some() {
         if let Some(percent)=internal_volume(source){
-            push_once(source,key,percent);
             // 静音仍走系统会话，所以静音状态单独读。
             let muted=platform::sessions(source).iter().filter_map(|session|unsafe{session.GetMute().ok()}).any(|state|state.as_bool());
             return Some((percent,muted));
@@ -6870,6 +6894,38 @@ fn qq_source_matches_process_name_and_aumid(){
 }
 
 #[cfg(windows)]
+'''),
+    ("src/smtc.rs",
+     '''    let stop=Arc::new(std::sync::atomic::AtomicBool::new(false));let stopped=stop.clone();
+    let interval_ms=Arc::new(std::sync::atomic::AtomicU32::new(POLL_FAST.as_millis() as u32));let requested=interval_ms.clone();
+    let worker=crate::resources::POLLER.spawn(move || {
+        let _apartment=init_winrt();
+        let mut artwork=ArtworkCache::default();
+        let mut playback_clock=PlaybackClock::default();
+''',
+     '''    let stop=Arc::new(std::sync::atomic::AtomicBool::new(false));let stopped=stop.clone();
+    let interval_ms=Arc::new(std::sync::atomic::AtomicU32::new(POLL_FAST.as_millis() as u32));let requested=interval_ms.clone();
+    let worker=crate::resources::POLLER.spawn(move || {
+
+        let _apartment=init_winrt();
+        let mut artwork=ArtworkCache::default();
+        let mut playback_clock=PlaybackClock::default();
+'''),
+    ("src/smtc.rs",
+     '''            let mut np=choose_media_for_source(system,native,&selected_source,native_pending).unwrap_or_default();
+            memory.update(&mut np,std::time::Instant::now());
+            np.volume=volume.poll(&np.source);
+            if !np.source.is_empty(){selected_source=np.source.clone();}
+            #[cfg(windows)]
+            netease.fill_artwork(&mut np);
+''',
+     '''            let mut np=choose_media_for_source(system,native,&selected_source,native_pending).unwrap_or_default();
+            memory.update(&mut np,std::time::Instant::now());
+            np.volume=volume.poll(&np.source);
+            #[cfg(windows)] crate::music_volume::watch_tick();
+            if !np.source.is_empty(){selected_source=np.source.clone();}
+            #[cfg(windows)]
+            netease.fill_artwork(&mut np);
 '''),
     ("src/system.rs",
      '''    pick_files_for("添加文件到置物架",true)

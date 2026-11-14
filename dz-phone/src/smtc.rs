@@ -802,6 +802,7 @@ pub fn spawn_poller(state: Shared,ctx:eframe::egui::Context)->Poller {
     let stop=Arc::new(std::sync::atomic::AtomicBool::new(false));let stopped=stop.clone();
     let interval_ms=Arc::new(std::sync::atomic::AtomicU32::new(POLL_FAST.as_millis() as u32));let requested=interval_ms.clone();
     let worker=crate::resources::POLLER.spawn(move || {
+
         let _apartment=init_winrt();
         let mut artwork=ArtworkCache::default();
         let mut playback_clock=PlaybackClock::default();
@@ -834,6 +835,7 @@ pub fn spawn_poller(state: Shared,ctx:eframe::egui::Context)->Poller {
             let mut np=choose_media_for_source(system,native,&selected_source,native_pending).unwrap_or_default();
             memory.update(&mut np,std::time::Instant::now());
             np.volume=volume.poll(&np.source);
+            #[cfg(windows)] crate::music_volume::watch_tick();
             if !np.source.is_empty(){selected_source=np.source.clone();}
             #[cfg(windows)]
             netease.fill_artwork(&mut np);

@@ -200,6 +200,12 @@ pub fn auto_host_tick(){
     }
 }
 
+/// 调试端口是否已打开：网易云只有带 `--remote-debugging-port` 启动时才有。
+pub fn port_open()->bool{
+    let addr=std::net::SocketAddr::from(([127,0,0,1],config().port));
+    std::net::TcpStream::connect_timeout(&addr,std::time::Duration::from_millis(200)).is_ok()
+}
+
 /// 通过客户端自己的桥设置应用内音量：与拖动它的音量条走同一条命令。
 /// 内部音量没有读取接口，调用方需要自己记住数值用于显示。
 pub fn set_volume(percent:u32)->bool{
