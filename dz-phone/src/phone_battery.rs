@@ -7,6 +7,8 @@
 //! 卡片里的中文是 JSON 的 \uXXXX 转义，判断文案前统一解码。
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::{path::{Path, PathBuf}, time::{Duration, Instant, SystemTime}};
 
 const RELATIVE: &str = r"Packages\Microsoft.YourPhone_8wekyb3d8bbwe\LocalState\StartMenu\StartMenuCompanion.json";
@@ -20,6 +22,10 @@ const STALE: Duration = Duration::from_secs(2 * 60 * 60);
 const MISSING_GRACE: Duration = Duration::from_secs(3 * 60);
 /// 充电中若电量长时间不再上涨，退出充电态，避免拔电后一直显示绿色。
 const CHARGE_IDLE: Duration = Duration::from_secs(20 * 60);
+/// 低于这个电量就停止充电，多半是随手拔线，不作为“充电上限”样本。
+const MIN_SAMPLE: u8 = 60;
+/// 每台设备保存最近几次充电会话的峰值，用来推断它的充电上限。
+const SAMPLES_KEEP: usize = 5;
 
 #[derive(Default)]
 pub struct Reader {
@@ -31,6 +37,13 @@ pub struct Reader {
     charging: bool,
     charged_at: Option<Instant>,
     device: String,
+    /// 本次充电会话到达过的最高电量；判定一次充电结束时记为样本。
+    peak: u8,
+    /// 本次充电会话是否已经涨过学到的上限：手机临时设成“本次充满”“充到明天”时，
+    /// 电量会继续往上走，这时不能再用“停在上限”的短确认，回到默认的观望时间。
+    exceeded: bool,
+    /// 每台手机的充电上限记录，首次用到时从磁盘读。
+    book: Option<Book>,
 }
 
 impl Reader {
@@ -79,23 +92,49 @@ impl Reader {
             return (self.level, self.charging);
         };
         self.missing_since = None;
+        let was_charging = self.charging;
+        self.device = parse_device(plain).unwrap_or_default();
+        let device = self.device.clone();
+        let profile = self.book().profile(&device);
+        let mut inferred = false;
         // 卡片没有充电字段：优先用外部精确状态，否则按电量涨跌推测；
         // 电量长期不涨时自动退出充电态，避免拔电后一直保持绿色。
         self.charging = match override_charging() {
             // 精确覆盖由外部负责，不做超时回落；清掉计时器，删文件后立刻回到推测。
             Some(state) => { self.charged_at = None; state },
             None => {
+                inferred = true;
                 let rising = self.level.is_some_and(|old| level > old);
                 if rising { self.charged_at = Some(Instant::now()); }
                 let next = next_charging(self.level, level, self.charging);
+                if next && !was_charging { self.peak = level; self.exceeded = false; }
+                if next && level > self.peak { self.peak = level; }
+                // 涨过学到的上限：这台机器这次是要充满（临时设成“本次充满”“充到明天”），
+                // 本会话不再用短确认；真正的上限对不对，等会话结束按峰值判断。
+                if next && profile.limit().is_some_and(|limit| level > limit) { self.exceeded = true; }
                 // 没有上涨记录也视为超时，避免覆盖文件撤销后一直保持绿色。
-                let idle = self.charged_at.map_or(true, |at| at.elapsed() > CHARGE_IDLE);
-                if next && level < 100 && idle { false } else { next }
+                let wait = idle_timeout(level, profile.limit(), profile.count(), profile.is_manual(), self.exceeded);
+                let idle = self.charged_at.map_or(true, |at| at.elapsed() >= wait);
+                if next && idle { false } else { next }
             },
         };
+        // 一次充电会话结束（拔线、掉电，或判定停在该机的上限）时按本次峰值结账：
+        // 停在上限附近就记一票，下次这个电量只需很短的确认；停得更高说明上次学错了，
+        // 样本作废重学；充到 100% 的会话不记（满电本身有单独的 60 秒判定）。
+        if inferred && !self.charging && was_charging && self.peak >= MIN_SAMPLE && self.peak < 100 {
+            let peak = self.peak;
+            match profile.limit() {
+                Some(limit) if peak > limit + 1 => self.book().forget(&device),
+                _ => self.book().remember(&device, peak),
+            }
+        }
         self.level = Some(level);
-        self.device = parse_device(plain).unwrap_or_default();
         (self.level, self.charging)
+    }
+
+    /// 每台手机的充电记录，首次用到时才读盘（文件不存在就是空表）。
+    fn book(&mut self) -> &mut Book {
+        self.book.get_or_insert_with(Book::load)
     }
 
     /// 断开 / 数据失效时清空所有缓存，避免 UI 继续显示上一次的电量。
@@ -105,6 +144,8 @@ impl Reader {
         self.charged_at = None;
         self.missing_since = None;
         self.device.clear();
+        self.peak = 0;
+        self.exceeded = false;
     }
 
     pub fn device(&self) -> &str { &self.device }
@@ -231,6 +272,145 @@ fn next_charging(previous: Option<u8>, level: u8, current: bool) -> bool {
     }
 }
 
+// ---------------------------------------------------------------
+// 充电上限：有些手机把充电目标设在 80%，到 80% 就不再涨；卡片里没有充电标志，
+// 只能靠“电量长时间不涨”来判断。默认的 20 分钟等待对这类机器太长，所以按设备
+// 记住它上次停在哪一档，下次到这个电量只要很短的确认时间。
+// ---------------------------------------------------------------
+
+/// `%APPDATA%\Daozai\phone-charge.json`，每台手机一条记录。
+#[derive(Default, Clone, Serialize, Deserialize)]
+struct Book {
+    #[serde(default)]
+    devices: BTreeMap<String, Profile>,
+}
+
+#[derive(Default, Clone, Serialize, Deserialize)]
+struct Profile {
+    /// 手动指定的充电上限（0 表示没指定）。写了就以它为准，不再靠样本推断。
+    #[serde(default)]
+    limit: u8,
+    /// 最近几次充电会话的峰值电量，最多 [`SAMPLES_KEEP`] 个。
+    #[serde(default)]
+    samples: Vec<u8>,
+    /// 当前上限被确认过几次（派生值，写进文件方便查看，加载后重算）。
+    #[serde(default)]
+    count: u32,
+}
+
+impl Profile {
+    /// 手动值优先，否则用样本里反复出现的峰值。
+    fn limit(&self) -> Option<u8> {
+        if self.limit > 0 { Some(self.limit.min(100)) } else { infer(&self.samples).map(|(limit, _)| limit) }
+    }
+    fn is_manual(&self) -> bool { self.limit > 0 }
+    fn count(&self) -> u32 {
+        match self.limit() {
+            Some(limit) => self.samples.iter().filter(|value| value.abs_diff(limit) <= 1).count() as u32,
+            None => 0,
+        }
+    }
+}
+
+/// 从样本推断充电上限：相邻相差 1 的电量并成一档（手机上报会跳数），
+/// 一档取簇内最小值（宁可比实际低一点），再挑出现次数最多的那档；并列时取更高的那档。
+fn infer(samples: &[u8]) -> Option<(u8, u32)> {
+    let mut values = samples.to_vec();
+    values.sort_unstable();
+    let mut best: Option<(u8, u32)> = None;
+    let mut index = 0;
+    while index < values.len() {
+        let low = values[index];
+        let mut end = index + 1;
+        while end < values.len() && values[end].abs_diff(values[end - 1]) <= 1 { end += 1; }
+        let count = (end - index) as u32;
+        let better = best.map_or(true, |(current, times)| count > times || (count == times && low > current));
+        if better { best = Some((low, count)); }
+        index = end;
+    }
+    best
+}
+
+/// 到这个电量后还要盯多久才认定“停住了”。次数越多越短，手写上限时最短。
+fn confirm_seconds(manual: bool, count: u32) -> u64 {
+    if manual { return 60; }
+    match count {
+        0 | 1 => 600, // 第一次学到：比默认的 20 分钟短，但仍留足余量
+        2 => 240,
+        3 => 120,
+        _ => 60,
+    }
+}
+
+/// 本次采样允许“电量不涨”的时间：离学到的上限还远或没学过时，仍用默认的 20 分钟。
+fn idle_timeout(level: u8, limit: Option<u8>, count: u32, manual: bool, exceeded: bool) -> Duration {
+    if level >= 100 { return Duration::from_secs(60); } // 满了不用等
+    // 这次要充满（电量已经越过常规上限）：退回默认的观望时间，不要提前判定停住。
+    if exceeded { return CHARGE_IDLE; }
+    let Some(limit) = limit else { return CHARGE_IDLE };
+    if level + 1 < limit { return CHARGE_IDLE; }
+    Duration::from_secs(confirm_seconds(manual, count))
+}
+
+fn book_path() -> Option<PathBuf> {
+    Some(crate::model::config_dir().join("phone-charge.json"))
+}
+
+impl Book {
+    fn load() -> Book {
+        // 测试不读真实用户文件：既避免断言受本机记录影响，也不会因坏文件触发隔离改名。
+        if cfg!(test) { return Book::default(); }
+        let Some(path) = book_path() else { return Book::default(); };
+        let Some(value) = crate::model::read_json_renaming_bad(&path, 1024 * 1024) else { return Book::default(); };
+        let mut book: Book = serde_json::from_value(value).unwrap_or_default();
+        for profile in book.devices.values_mut() {
+            profile.samples.retain(|value| *value <= 100);
+            if profile.samples.len() > SAMPLES_KEEP {
+                let extra = profile.samples.len() - SAMPLES_KEEP;
+                profile.samples.drain(0..extra);
+            }
+            profile.count = profile.count();
+        }
+        book
+    }
+
+    fn save(&self) {
+        if cfg!(test) { return; }
+        let Some(path) = book_path() else { return; };
+        let mut copy = self.clone();
+        for profile in copy.devices.values_mut() { profile.count = profile.count(); }
+        let Ok(body) = serde_json::to_vec_pretty(&copy) else { return; };
+        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+        let _ = crate::model::atomic_write(&path, &body);
+    }
+
+    fn profile(&self, device: &str) -> Profile {
+        self.devices.get(&device_key(device)).cloned().unwrap_or_default()
+    }
+
+    /// 记一次充电会话的峰值；同一档只会被多次累加，用来缩短确认时间。
+    fn remember(&mut self, device: &str, peak: u8) {
+        let profile = self.devices.entry(device_key(device)).or_default();
+        profile.samples.push(peak);
+        if profile.samples.len() > SAMPLES_KEEP { profile.samples.remove(0); }
+        self.save();
+    }
+
+    /// 学错了（电量涨过了上限）：清掉样本重新学，保留手动上限。
+    fn forget(&mut self, device: &str) {
+        if let Some(profile) = self.devices.get_mut(&device_key(device)) {
+            profile.samples.clear();
+            self.save();
+        }
+    }
+}
+
+/// 设备名可能是空串（卡片解析不到），归到同一个桶里。
+fn device_key(device: &str) -> String {
+    let name = device.trim();
+    if name.is_empty() { "未命名设备".to_string() } else { name.chars().take(64).collect() }
+}
+
 /// 卡片里电量写成 `"电池电量剩余 45%"` 或 JSON 转义的
 /// `"\u7535\u6C60\u7535\u91CF\u5269\u4F59 45%"`，两种都要认。
 /// 只有紧跟在电量关键字后面的百分比才算数，避免把布局里的百分数误当电量。
@@ -281,6 +461,50 @@ mod tests {
         assert!(next_charging(Some(45), 49, false));
         assert!(!next_charging(Some(80), 79, true));
         assert!(next_charging(Some(80), 80, true));
+    }
+
+    #[test]
+    fn 充电上限按样本推断() {
+        assert_eq!(infer(&[]), None);
+        assert_eq!(infer(&[80]), Some((80, 1)));
+        // ±1 视为同一档（手机上报会跳数）
+        assert_eq!(infer(&[80, 80, 81]), Some((80, 3)));
+        assert_eq!(infer(&[80, 80, 50]), Some((80, 2)));
+        // 并列时取更高的那个
+        assert_eq!(infer(&[65, 90]), Some((90, 1)));
+    }
+
+    #[test]
+    fn 确认时间随次数递减且不越过总时长() {
+        assert_eq!(confirm_seconds(false, 1), 600);
+        assert_eq!(confirm_seconds(false, 2), 240);
+        assert_eq!(confirm_seconds(false, 3), 120);
+        assert_eq!(confirm_seconds(false, 9), 60);
+        assert_eq!(confirm_seconds(true, 0), 60);
+        // 还没学到上限：沿用默认的 20 分钟
+        assert_eq!(idle_timeout(50, None, 0, false, false), CHARGE_IDLE);
+        // 离上限还远：也是 20 分钟，避免边用边充被误判成停住
+        assert_eq!(idle_timeout(60, Some(80), 4, false, false), CHARGE_IDLE);
+        // 到了上限才缩短
+        assert_eq!(idle_timeout(79, Some(80), 3, false, false), Duration::from_secs(120));
+        // 这次要充满（已越过常规上限）：退回 20 分钟，不提前判停
+        assert_eq!(idle_timeout(82, Some(80), 4, false, true), CHARGE_IDLE);
+        // 满电不用等
+        assert_eq!(idle_timeout(100, None, 0, false, false), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn 手动上限优先于样本() {
+        let manual = Profile { limit: 85, samples: vec![80, 80], ..Default::default() };
+        assert!(manual.is_manual());
+        assert_eq!(manual.limit(), Some(85));
+        assert_eq!(manual.count(), 0);
+        let learned = Profile { samples: vec![80, 80, 80], ..Default::default() };
+        assert!(!learned.is_manual());
+        assert_eq!(learned.limit(), Some(80));
+        assert_eq!(learned.count(), 3);
+        // 空设备名归到同一个桶，不会每台都新建一条
+        assert_eq!(device_key("  "), device_key(""));
     }
 
     #[test]
