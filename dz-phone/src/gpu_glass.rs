@@ -85,6 +85,8 @@ static BG_LUMA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new
 /// DWM 捕获排除是否已经尝试过 / 成功设置了几个窗口。
 static EXCLUSION_TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static EXCLUSION_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 冻结诊断模式的预热帧数：前 24 帧保持排除以收集干净壁纸，之后取消排除、冻结。
+static FREEZE_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static EXCLUDED_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// 桌面平均亮度。非 Windows / 未抓屏时给一个偏浅的默认值。
@@ -152,117 +154,104 @@ fn rr_sdf(p : vec2<f32>, b : vec2<f32>, r : f32) -> f32 {
     return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - r;
 }
 
-fn lens(t : f32) -> f32 {
-    // C¹ 零斜率剖面：两端导数为 0，边缘不会出现折角。
-    let x = clamp(t, 0.0, 1.0);
-    return 1.0 - x * x * (3.0 - 2.0 * x);
-}
-
-fn bg_at(uv : vec2<f32>) -> vec3<f32> {
-    // uv 是相对 capture 的 0..1；纹理是固定的 1280x512，只用了左上角 (tw,th)。
+// 纹理固定 1280x512，只写左上角 (tw,th)；px 是 capture 内的物理像素坐标。
+fn sample_px(px : vec2<f32>) -> vec3<f32> {
+    // FLAT=2：用棋盘格当背景，折射位移、色散、越界都会直接显形。
+    if (u.misc.w > 1.5) {
+        let cell = floor(px / 12.0);
+        let g = fract((cell.x + cell.y) * 0.5) * 2.0;
+        return mix(vec3<f32>(0.18, 0.22, 0.30), vec3<f32>(0.95, 0.96, 0.98), g);
+    }
+    let tex = vec2<f32>(u.extra.y, u.extra.z);
     let scale = vec2<f32>(u.extra.y / 1280.0, u.extra.z / 512.0);
-    let tuv = clamp(uv, vec2<f32>(0.001), vec2<f32>(0.999)) * scale;
-    // 不再人为压暗：兼容渲染下窗口底是黑的，玻璃颜色必须等于桌面才会「透」。
-    return textureSampleLevel(bg, samp, tuv, 0.0).rgb;
+    let uv = clamp(px / tex, vec2<f32>(0.001), vec2<f32>(0.999)) * scale;
+    return textureSampleLevel(bg, samp, uv, 0.0).rgb;
 }
 
-fn bg_blur(uv : vec2<f32>) -> vec3<f32> {
-    // 9 点大半径模糊：浅色材质要把桌面上的文字/窗口边界抹成柔和的磨砂，
-    // 否则玻璃太透，背景文字会和岛上的深色文字叠在一起。
-    let px = vec2<f32>(11.0 / u.extra.y, 11.0 / u.extra.z);
-    return (bg_at(uv) * 2.0
-        + bg_at(uv + vec2<f32>(px.x, 0.0)) + bg_at(uv - vec2<f32>(px.x, 0.0))
-        + bg_at(uv + vec2<f32>(0.0, px.y)) + bg_at(uv - vec2<f32>(0.0, px.y))
-        + bg_at(uv + px) + bg_at(uv - px)
-        + bg_at(uv + vec2<f32>(px.x, -px.y)) + bg_at(uv + vec2<f32>(-px.x, px.y))) / 10.0;
+// 分通道 5 点十字平均：R 采一侧、B 采另一侧，颜色差就是色散彩边。
+fn tap5(px : vec2<f32>, ca : vec2<f32>, blur : f32) -> vec3<f32> {
+    var off = array<vec2<f32>, 5>(
+        vec2<f32>(0.0, 0.0), vec2<f32>(blur, 0.0), vec2<f32>(-blur, 0.0),
+        vec2<f32>(0.0, blur), vec2<f32>(0.0, -blur)
+    );
+    var s = vec3<f32>(0.0);
+    for (var i : i32 = 0; i < 5; i = i + 1) {
+        let q = px + off[i];
+        s = s + vec3<f32>(sample_px(q + ca).r, sample_px(q).g, sample_px(q - ca).b);
+    }
+    return s / 5.0;
 }
 
 @fragment
 fn fs(i : VOut) -> @location(0) vec4<f32> {
     let tex = vec2<f32>(u.extra.y, u.extra.z);
-    let px = i.uv * tex;
+    let p = i.uv * tex;
     let half_size = u.bounds.zw * 0.5;
-    let local = px - u.bounds.xy - half_size;
+    let local = p - u.bounds.xy - half_size;
     let radius = min(u.extra.x, min(half_size.x, half_size.y));
     let d = rr_sdf(local, half_size, radius);
-
-    // 玻璃外面只留一圈 7px 定向接触阴影（朝右下，光源在左上）。
-    let outward = max(d, 0.0);
-    let shadow_dir = dot(normalize(local + vec2<f32>(1e-4)), vec2<f32>(0.58, 0.81));
-    // u.params.w 是 App 平滑后的材质系数：1 = 浅色材质（深字），0 = 深色材质（白字）。
     let mat = clamp(u.params.w, 0.0, 1.0);
-    let contact = (1.0 - smoothstep(0.0, 7.0, outward)) * max(shadow_dir, 0.0)
-                  * mix(0.09, 0.05, mat) * step(0.0, d);
-    let aa = 1.0 - smoothstep(-0.7, 0.7, d);
 
-    // SDF 梯度就是曲面法线。
+    // 岛体外：窗口被 SetWindowRgn 裁成岛体轮廓，但区域比岛体略大，
+    // 不能留纯透明（窗口底是不透明黑），给一圈很淡的接触阴影。
+    if (d > 1.0) {
+        let sh = (1.0 - smoothstep(0.0, 6.0, d - 1.0)) * mix(0.10, 0.055, mat);
+        return vec4<f32>(vec3<f32>(0.055, 0.062, 0.072) * sh, sh);
+    }
+
+    let aa = 1.0 - smoothstep(-0.8, 0.8, d);
+
+    // 对齐诊断：DAOZAI_LIQUID_FLAT=1 时玻璃内原样输出抓到的背景。
+    // 如果它与岛体外的壁纸无缝衔接，说明抓屏坐标与屏幕一致；错位就说明坐标有偏。
+    if (u.misc.w > 0.5) {
+        return vec4<f32>(sample_px(p) * aa, aa);
+    }
+
+    // SDF 梯度指向边缘外侧。
     let e = 1.0;
     let gx = rr_sdf(local + vec2<f32>(e, 0.0), half_size, radius) - rr_sdf(local - vec2<f32>(e, 0.0), half_size, radius);
     let gy = rr_sdf(local + vec2<f32>(0.0, e), half_size, radius) - rr_sdf(local - vec2<f32>(0.0, e), half_size, radius);
-    let n = normalize(vec2<f32>(gx, gy) + vec2<f32>(1e-5));
+    let g = normalize(vec2<f32>(gx, gy) + vec2<f32>(1e-6));
 
-    let bevel = max(radius * 0.55, 9.0);
-    let profile = lens((-d) / bevel);
-    let rim = 1.0 - smoothstep(0.0, bevel, -d);
+    // 折射带：边缘弯得最狠，往里 t 增大、k 迅速衰减。band 随玻璃高度缩放，
+    // 参考 LiquidGlass-Pack v2 的参数表（36 高用 36，190 高用 70）。
+    let band = clamp(u.bounds.w * 0.80, 30.0, 72.0);
+    let t = clamp(-d / band, 0.0, 1.0);
+    let k = pow(1.0 - pow(t, 0.30), 2.0);
 
-    // Snell 折射：按 IOR 与透镜厚度把背景采样 UV 推开。
-    let eta = (u.params.x - 1.0) * u.misc.z * profile;
-    let refr = n * eta * 16.0;
-    let base_uv = i.uv + refr / tex;
+    // 关键修复：折射方向朝玻璃**内部**（-g）。之前朝外，边缘会把岛体外的
+    // 壁纸折进来，玻璃里就出现「不属于该区域的壁纸像素块」，贴屏顶时还会
+    // 越界 clamp 成一条拉伸色带。
+    let strength = clamp(u.bounds.w * 0.90, 26.0, 56.0) * max(u.misc.z, 0.2);
+    let chroma = clamp(strength * 0.22, 5.0, 12.0);
+    let refr = -g * k * strength;
+    let ca = -g * k * chroma;
+    let bp = p + refr;
 
-    // Cauchy 色散：7 个波长各自错开一点，模拟 RGB 边缘分离。
-    let disp = clamp(u.params.y, 0.02, 0.30) * rim;
-    var w = array<f32, 7>(0.06, 0.09, 0.14, 0.22, 0.20, 0.17, 0.12);
-    var col = vec3<f32>(0.0);
-    for (var k = 0; k < 7; k = k + 1) {
-        // 各通道权重相同，色差只来自采样点错开；否则整块玻璃会被染成偏绿。
-        let shift = (f32(k) - 3.0) / 3.0 * disp * 26.0 * n;
-        col = col + bg_at(base_uv + shift / tex) * w[k];
-    }
+    var col = tap5(bp, ca, 1.5);
+    col = col * 1.005 + vec3<f32>(0.004, 0.006, 0.010);
 
-    // 磨砂底图（强模糊 + 白雾/暗雾）+ 少量清晰折射，桌面颜色与明暗始终透出来，
-    // 但背景文字与窗口边界被抹掉，不会和岛上的字打架。按 mat 在浅/深材质间平滑过渡。
-    let soft = bg_blur(base_uv);
-    let frost_light = mix(soft, vec3<f32>(0.96, 0.96, 0.975), vec3<f32>(0.34));
-    let frost_dark = mix(soft * 0.42, vec3<f32>(0.055, 0.062, 0.072), vec3<f32>(0.55));
-    let frost = mix(frost_dark, frost_light, vec3<f32>(mat));
-    col = mix(col, frost, vec3<f32>(0.78));
+    // 顶部一点冷色提亮，做出玻璃厚度。
+    let topk = 1.0 - smoothstep(0.0, max(u.bounds.w, 1.0), p.y - u.bounds.y);
+    col = col + vec3<f32>(0.05, 0.07, 0.10) * topk * 0.18;
 
-    // 玻璃本体：深色材质再压一点亮度，白字更稳。
-    let body = mix(0.94, 1.0, mat);
-    col = mix(col * body, col, vec3<f32>(0.35));
-    col = col + u.tint.rgb * u.tint.a * 0.10 * rim;
+    // 材质：浅色只加很轻的白雾（壁纸本来就亮，多一点都不透明），
+    // 深色压暗 + 冷调保证白字可读。
+    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), vec3<f32>(mat * 0.10));
+    col = mix(col, col * 0.40 + vec3<f32>(0.03, 0.035, 0.045), vec3<f32>((1.0 - mat) * 0.85));
 
-    // Schlick Fresnel：掠射角更亮。
-    let grazing = clamp(1.0 - (1.0 - abs(n.x)), 0.0, 1.0);
-    let fresnel = 0.04 + 0.96 * pow(grazing, 5.0);
-    col = col + vec3<f32>(fresnel * 0.28 * rim);
+    // 1~2px 细白边：液态玻璃要细，粗描边会显脏。
+    let line = 1.0 - smoothstep(0.0, 2.0, abs(d));
+    col = mix(col, vec3<f32>(1.0), line * 0.62);
 
-    // 只朝左上的 1px 级镜面高光，背光侧不给白边。
-    let L = normalize(vec2<f32>(-0.45, -0.65));
-    let ndl = max(dot(n, L), 0.0);
-    let glint = pow(ndl, 5.0) * pow(rim, 1.3);
-    col = col + vec3<f32>(glint * 1.00);
+    // 边缘光只给朝光源的一侧，背光侧很弱。
+    let rim = 1.0 - smoothstep(0.0, 7.0, -d);
+    let Ld = normalize(vec2<f32>(-0.45, -0.65));
+    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, Ld), 0.0), 2.0) * 0.34;
+    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.12;
+    col = col + u.tint.rgb * u.tint.a * 0.05 * rim;
 
-    // 光标追光：沿边缘把高光带过去。
-    let gd = length(px - u.bounds.xy - u.misc.xy) / 90.0;
-    let glow = exp(-gd * gd * 1.6);
-    col = col + vec3<f32>(0.16, 0.20, 0.26) * glow * rim;
-
-    // 底部内缘压暗，做出厚度。
-    let vy = (px.y - u.bounds.y) / max(u.bounds.w, 1.0);
-    col = col * (1.0 - 0.10 * pow(vy, 2.0) * rim);
-
-    // 岛体外面只留朝右下的接触阴影：颜色必须压暗，
-    // 否则 contact 这段 alpha 会带着浅色背景画成一圈亮描边。
-    let outside = smoothstep(0.0, 3.0, d);
-    col = mix(col, vec3<f32>(0.055, 0.065, 0.075), outside * 0.80);
-
-    // 兼容渲染（DX12）用 SetWindowRgn 把窗口裁成岛体轮廓，窗口底清成不透明黑，
-    // 逐像素透明不可用。预乘混合下最终颜色就是这里输出的颜色，所以岛体内部
-    // 必须 alpha=1 且颜色等于抓到的桌面，看起来才是「透明」而不是一块灰板。
-    // 折射/色散/高光叠在这张真实底图上，只有抗锯齿的 1px 边缘留半透明。
-    let alpha = clamp(aa + contact, 0.0, 1.0);
+    let alpha = clamp(aa, 0.0, 1.0);
     return vec4<f32>(col * alpha, alpha);
 }
 "#;
@@ -334,6 +323,13 @@ fn make_gpu_inner(device: &wgpu::Device, format: wgpu::TextureFormat) -> GlassGp
     GlassGpu { pipeline, layout, uniform, sampler, texture: None, bind_group: None, size: (0, 0) }
 }
 
+/// DAOZAI_LIQUID_FLAT=1：玻璃内原样输出背景，用于检查抓屏与屏幕是否对齐。
+fn flat_flag() -> f32 {
+    static FLAT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let v = FLAT.get_or_init(|| std::env::var("DAOZAI_LIQUID_FLAT").unwrap_or_default());
+    return match v.as_str() { "2" => 2.0, "1" => 1.0, _ => 0.0 };
+}
+
 fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
     Uniforms {
         bounds: f.bounds,
@@ -341,7 +337,7 @@ fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
         extra: [f.shape[0], tex.0 as f32, tex.1 as f32, f.shape[1]],
         tint: f.tint,
         quad: f.clip,
-        misc: [f.shape[2], f.shape[3], f.optics[1], 0.0],
+        misc: [f.shape[2], f.shape[3], f.optics[1], flat_flag()],
     }
 }
 
@@ -405,6 +401,24 @@ fn dump_capture(buf: &[u8], w: u32, h: u32, tag: &str) {
         out.push(buf[i]); out.push(buf[i + 1]); out.push(buf[i + 2]);
     }
     let _ = std::fs::write(path, out);
+}
+
+/// 取消捕获排除（冻结诊断模式预热结束后调用），让第三方截图重新能看到岛仔。
+#[cfg(windows)]
+fn disable_capture_exclusion() {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    unsafe extern "system" fn visit(hwnd: HWND, _: LPARAM) -> BOOL {
+        use windows::Win32::System::Threading::GetCurrentProcessId;
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == GetCurrentProcessId() && IsWindowVisible(hwnd).as_bool() {
+            let _ = SetWindowDisplayAffinity(hwnd, WDA_NONE);
+        }
+        BOOL(1)
+    }
+    unsafe { let _ = EnumWindows(Some(visit), LPARAM(0)); }
+    diag("exclude: 冻结模式预热完成，已取消排除（截图可见）");
 }
 
 /// 统计抓屏里「岛体排除区以外」的平均亮度，作为深/浅材质的依据。
@@ -550,7 +564,7 @@ fn dark_ratio_outside(buf: &[u8], w: u32, h: u32,
 /// 岛体内部因此最多滞后到最近一次干净帧，而不再是启动时的一张静态快照。
 #[cfg(windows)]
 fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
-                      body: [f32; 4], clean_frame: bool) -> Option<Vec<u8>> {
+                      body: [f32; 4], clean_frame: bool, frozen: bool) -> Option<Vec<u8>> {
     let (cx0, cy0, cx1, cy1) = (
         (body[0] - 10.0).max(0.0) as i32,
         (body[1] - 10.0).max(0.0) as i32,
@@ -580,11 +594,16 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
             ((body[0] + sx as f32 + body[2] + 10.0).min(pw as f32)) as i32,
             ((body[1] + sy as f32 + body[3] + 10.0).min(ph as f32)) as i32,
         );
-        // 骨架里岛体区域可能是 WDA 的黑色遮罩，先抹成上下桌面色的渐变。
+        // 冻结尾帧用于截图诊断时保留真实壁纸；否则骨架里岛体区域可能是
+        // WDA 的黑色遮罩，先抹成上下桌面色的渐变。
         let top = row_mean(&data, pw, ph, bx0, bx1, by0 - 6);
         let bot = row_mean(&data, pw, ph, bx0, bx1, by1 + 6);
-        fill_gradient(&mut data, pw, bx0, by0, bx1, by1, top, bot);
-        diag(&format!("plate: new {}x{} at ({},{})", pw, ph, fpx, fpy));
+        let inner = dark_ratio(&data, pw, ph, bx0, by0, bx1, by1);
+        if !frozen || inner > 0.30 {
+            fill_gradient(&mut data, pw, bx0, by0, bx1, by1, top, bot);
+        }
+        diag(&format!("plate: new {}x{} at ({},{}) frozen={} inner={:.2}",
+                      pw, ph, fpx, fpy, frozen, inner));
         *guard = Some(CleanPlate { x: fpx, y: fpy, w: pw, h: ph, data });
     }
     let p = guard.as_mut().unwrap();
@@ -596,7 +615,7 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
             let (qx, qy) = (ox + xx, oy + yy);
             let in_plate = qx >= 0 && qy >= 0 && qx < p.w as i32 && qy < p.h as i32;
             let excluded = xx >= cx0 && xx < cx1 && yy >= cy0 && yy < cy1;
-            let use_raw = clean_frame || !excluded || !in_plate;
+            let use_raw = if frozen { !in_plate } else { clean_frame || !excluded || !in_plate };
             if use_raw {
                 out[d..d + 4].copy_from_slice(&raw[d..d + 4]);
                 if in_plate {
@@ -617,10 +636,25 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
 #[cfg(windows)]
 fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u32, u32)> {
     if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
-    enable_capture_exclusion();
+    // 截图诊断模式：不排除自身（截图能看到岛仔），背景冻结成启动时的纯壁纸，
+    // 这样既能截到玻璃，又能看到真实的折射/色散细节。
+    let frozen_env = std::env::var("DAOZAI_LIQUID_FREEZE_BG").is_ok();
+    let warm_n = if frozen_env { FREEZE_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) } else { u64::MAX };
+    let warm = frozen_env && warm_n < 24;
+    let frozen = frozen_env && warm_n >= 24;
+    if !frozen_env || warm {
+        enable_capture_exclusion();
+    } else if warm_n == 24 {
+        disable_capture_exclusion();
+    }
     let (raw, bw, bh, from_wgc) = match crate::wgc::grab(x, y, w, h) {
-        Some((p, tw, th)) => (p, tw, th, true),
-        None => { let (p, tw, th) = grab_raw(x, y, w, h)?; (p, tw, th, false) },
+        crate::wgc::Grab::Frame(p, tw, th) => (p, tw, th, true),
+        // WGC 只是这一帧还没有新画面：复用上一帧纹理，别退回 GDI 造成闪烁。
+        crate::wgc::Grab::NoFrame => return None,
+        crate::wgc::Grab::Unavailable => {
+            let (p, tw, th) = grab_raw(x, y, w, h)?;
+            (p, tw, th, false)
+        }
     };
     let (cx0, cy0, cx1, cy1) = (
         (body[0] - 10.0).max(0.0) as i32,
@@ -644,7 +678,9 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
     }
     // 整块纯黑（WDA 刚生效的瞬态）直接跳过，复用上一帧纹理，避免闪黑。
     if whole > 0.95 { return None; }
-    let out = compose_with_plate(&raw, bw, bh, x, y, body, clean_frame)?;
+    let out = compose_with_plate(&raw, bw, bh, x, y, body,
+                                 if frozen { false } else { clean_frame }, frozen)?;
+    if frozen && warm_n == 24 { diag("freeze: 背景已冻结为启动时的干净壁纸"); }
     Some((out, bw, bh))
 }
 
@@ -691,8 +727,9 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let f = &self.frame;
         let (cw, ch) = (f.capture[2].max(1.0) as i32, f.capture[3].max(1.0) as i32);
         let mut tex_size = gpu.size;
-        // 每 2 帧抓一次屏：GDI BitBlt 与 CPU 填充是这段最重的部分。
-        if tick % 2 == 0 || gpu.texture.is_none() {
+        // 每帧都抓：节流会让「纹理内容」与「当前 bounds」错一帧，
+        // 展开动画里几何被拉伸，表现为抖动/错位。
+        {
             let Some((rgba, tw, th)) = capture(f.capture[0] as i32, f.capture[1] as i32, cw, ch, f.bounds) else {
                 if tick == 0 { diag("capture: GDI 抓屏失败"); }
                 return Vec::new();
@@ -747,10 +784,6 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                 wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
             );
             tex_size = (tw, th);
-        } else if gpu.size == (0, 0) {
-            return Vec::new();
-        } else {
-            tex_size = gpu.size;
         }
         let u = uniforms(f, tex_size);
         queue.write_buffer(&gpu.uniform, 0, u.bytes());

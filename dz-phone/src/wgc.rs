@@ -131,10 +131,17 @@ fn init(x: i32, y: i32, w: u32, h: u32) -> windows::core::Result<Wgc> {
     }
 }
 
+/// 抓屏结果。必须区分「没有新帧」和「WGC 不可用」：
+/// 前者应当复用上一帧纹理，后者才回退 GDI —— 否则会 GDI/WGC 交替导致闪烁。
+pub enum Grab {
+    Frame(Vec<u8>, u32, u32),
+    NoFrame,
+    Unavailable,
+}
+
 /// 抓屏幕物理矩形 (x,y,w,h) 的**实时 DWM 合成帧**，返回自上而下的 RGBA。
-/// 没有新帧或任何一步失败时返回 None，调用方复用上一帧纹理。
-pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
-    if FAILED.load(Ordering::Relaxed) || w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
+pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
+    if FAILED.load(Ordering::Relaxed) || w <= 0 || h <= 0 || w > 2048 || h > 1024 { return Grab::Unavailable; }
     let (bw, bh) = (w as u32, h as u32);
     let mut guard = WGC.lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_none() {
@@ -147,21 +154,21 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
                 Err(e) => {
                     FAILED.store(true, Ordering::Relaxed);
                     log(&format!("wgc: init FAILED {:?}，回退 GDI + 底片", e));
-                    return None;
+                    return Grab::Unavailable;
                 }
             }
-        } else { return None; }
+        } else { return Grab::Unavailable; }
     }
-    let s = guard.as_mut()?;
+    let Some(s) = guard.as_mut() else { return Grab::Unavailable };
     // 展开动画里抓屏矩形会变，staging 纹理跟着重建（只在尺寸变化时）。
     if s.stage_w != bw || s.stage_h != bh {
         match staging(&s._device, bw, bh) {
             Ok(t) => { s.staging = t; s.stage_w = bw; s.stage_h = bh; }
-            Err(e) => { log(&format!("wgc: staging resize FAILED {:?}", e)); return None; }
+            Err(e) => { log(&format!("wgc: staging resize FAILED {:?}", e)); return Grab::Unavailable; }
         }
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
-    if sx < 0 || sy < 0 || sx + w > s.sw || sy + h > s.sh { return None; }
+    if sx < 0 || sy < 0 || sx + w > s.sw || sy + h > s.sh { return Grab::Unavailable; }
     let src_box = D3D11_BOX {
         left: sx as u32, top: sy as u32, front: 0,
         right: (sx + w) as u32, bottom: (sy + h) as u32, back: 1,
@@ -173,13 +180,13 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
         for _ in 0..4 {
             match s.pool.TryGetNextFrame() { Ok(f) => frame = Some(f), Err(_) => break }
         }
-        let frame = frame?;
-        let surface = match frame.Surface() { Ok(v) => v, Err(_) => return None };
-        let access: IDirect3DDxgiInterfaceAccess = match surface.cast() { Ok(v) => v, Err(_) => return None };
-        let src_tex: ID3D11Texture2D = match access.GetInterface() { Ok(v) => v, Err(_) => return None };
+        let Some(frame) = frame else { return Grab::NoFrame };
+        let surface = match frame.Surface() { Ok(v) => v, Err(_) => return Grab::NoFrame };
+        let access: IDirect3DDxgiInterfaceAccess = match surface.cast() { Ok(v) => v, Err(_) => return Grab::Unavailable };
+        let src_tex: ID3D11Texture2D = match access.GetInterface() { Ok(v) => v, Err(_) => return Grab::Unavailable };
         s.context.CopySubresourceRegion(&s.staging, 0, 0, 0, 0, &src_tex, 0, Some(&src_box));
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        if s.context.Map(&s.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).is_err() { return None; }
+        if s.context.Map(&s.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).is_err() { return Grab::Unavailable; }
         let mut rgba = vec![0u8; (bw * bh * 4) as usize];
         if !mapped.pData.is_null() {
             let ptr = mapped.pData as *const u8;
@@ -199,7 +206,7 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
         drop(frame);
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 || n % 600 == 0 { log(&format!("wgc: frame {} cap={}x{}", n, bw, bh)); }
-        if mapped.pData.is_null() { return None; }
-        Some((rgba, bw, bh))
+        if mapped.pData.is_null() { return Grab::NoFrame; }
+        Grab::Frame(rgba, bw, bh)
     }
 }
