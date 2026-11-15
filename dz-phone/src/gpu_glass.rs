@@ -242,7 +242,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 展开/折叠过渡：形变过程中折射带临时加宽、色散随之增强，玻璃看起来像被
     // 「拉」开再稳住。morph 是「展开进度的变化速度」（0..1，带衰减），
     // 静止时恒为 0，所以折叠态和展开态完全不受影响。
-    let morph = clamp(u.extra.w, 0.0, 1.0);
+    // morph 平时由形变速度驱动；params.y > 0.5 时钉成常数，只用于验证。
+    let ms = max(u.params.z, 0.0);
+    let morph = select(clamp(u.extra.w, 0.0, 1.0) * ms, ms, u.params.y > 0.5);
     let band = clamp(u.bounds.w * 0.80, 30.0, 130.0) * (1.0 + morph * 0.55);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
@@ -440,10 +442,31 @@ fn flat_flag() -> f32 {
     return match v.as_str() { "2" => 2.0, "1" => 1.0, _ => 0.0 };
 }
 
+/// DAOZAI_LIQUID_MORPH：形变期光学增强的倍数（默认 1.0，0 = 完全关闭）。
+/// 存在的意义有两个：① 精确 A/B 验证过渡效果；② 让用户不用重编译就能调手感。
+fn morph_scale() -> f32 {
+    static V: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("DAOZAI_LIQUID_MORPH").ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .map(|v| v.clamp(0.0, 3.0))
+            .unwrap_or(1.0)
+    })
+}
+
+/// DAOZAI_LIQUID_MORPH_FORCE=1：把形变强度钉成常数，用于确定性验证
+/// （动画只有约 100ms，抓帧时序对不齐，不钉住就没法做 A/B）。
+fn morph_force() -> f32 {
+    static V: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *V.get_or_init(|| if std::env::var("DAOZAI_LIQUID_MORPH_FORCE").is_ok() { 1.0 } else { 0.0 })
+}
+
 fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
     Uniforms {
         bounds: f.bounds,
-        params: [1.52, f.optics[2].max(0.08), f.optics[0], f.optics[3]],
+        // params.z 原来是 time，shader 里一直没人用，这里改放形变倍数；
+        // params.y 原来也是空的，改放「强制」开关。
+        params: [1.52, morph_force(), morph_scale(), f.optics[3]],
         extra: [f.shape[0], tex.0 as f32, tex.1 as f32, f.shape[1]],
         tint: f.tint,
         quad: f.clip,
