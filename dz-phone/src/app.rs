@@ -2370,14 +2370,16 @@ impl App {
             if !self.open || self.page!=0 || self.media.title.is_empty(){self.fluid.set_seek(None,0.0);}
             self.fluid.advance(env.t,dt);
         }
-        self.paint_body(&painter, body, flare, flare_h, radius, feather);
+        // 内容坐标系的原点（页内局部点 → 屏幕）要在画岛体之前算出来：
+        // 液态玻璃的「控件玻璃」是跟岛体同一个 GPU pass 画的，需要屏幕坐标。
+        let origin = self.content_origin(win);
+        self.paint_body(&painter, body, flare, flare_h, radius, feather, origin);
         if lifted > 0.01 {self.paint_lift_halo(&painter, body, flare, flare_h, radius, lifted.min(1.0));}
         let content_from=crate::skin_paint::shape_count(&ctx,layer);
 
         // 内容只随形体「揭开」：不缩放，按面板裁剪，到 55% 才开始淡入
         let reveal = if self.open { smoothstep(0.50, 0.97, p) } else { smoothstep(0.55, 0.92, p) };
         self.reveal = reveal;
-        let origin = self.content_origin(win);
         let clip = panel.intersect(win);
         let base = Card::new(ui, origin, clip);
         self.cursor_local = env.cursor.map(|p| base.to_local(p));
@@ -2790,10 +2792,10 @@ impl App {
     }
 
     /// 绘制岛体（或通知胶囊）的本体：经典皮肤为纯黑；毛玻璃为着色底 + 顶部柔光 + 边缘高光。
-    fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32){
+    fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32,origin:Pos2){
         let skin=self.settings.skin;
         if skin==model::Skin::Liquid {
-            self.paint_gpu_glass(painter,rect,radius);
+            self.paint_gpu_glass(painter,rect,radius,origin);
             return;
         }
         if skin==model::Skin::Fluid {
@@ -2860,9 +2862,39 @@ impl App {
         }
     }
 
+    /// 岛内需要「真折射」的大控件：页内局部矩形 + 圆角，**按绘制顺序**给
+    /// （靠后的压在前面的上面，`pick_ctl` 命中即覆盖）。
+    ///
+    /// 只给大到能看见折射的块。30~40 点的按钮走 egui 的半透明玻璃片
+    /// （`paint::glass_chip` / `glass_disc`）：这种尺寸上跑一遍 GPU 透镜看不出区别，
+    /// 只会白烧 15 次纹理采样。
+    fn glass_controls(&self,origin:Pos2)->Vec<(Rect,f32)>{
+        if self.settings.skin!=model::Skin::Liquid {return Vec::new();}
+        // 只在完全展开、内容已经揭开时生效：形变过程中面板几何每帧都在变，
+        // 控件玻璃会跟着一起被拉伸，看起来像「卡片被扯开」。
+        if !self.open || self.page!=0 || self.video_page() || self.progress()<0.985 || self.reveal<0.6 {
+            return Vec::new();
+        }
+        let at=|r:Rect|Rect::from_min_size(origin+r.min.to_vec2(),r.size());
+        let mut out=Vec::new();
+        // 歌词区：整块玻璃卡。它是面板里最大的一块「装内容的表面」，
+        // 放在岛体玻璃上就是典型的玻璃叠玻璃。
+        if self.show_lyrics && !self.media.title.is_empty() {
+            out.push((at(Rect::from_min_size(Pos2::new(238.0,26.0),Vec2::new(144.0,78.0))),14.0));
+        }
+        // 音量浮层**不**走 GPU 玻璃：它盖住的是歌词，而歌词是 egui 在 GPU pass
+        // 之后画的 —— 着色器再磨砂也挡不住后画的文字（实测字直接浮在浮层上）。
+        // 它改用 egui 的实心玻璃片（见 pages::draw_music_volume）。
+        out
+    }
+
+    /// 当前皮肤是不是「液态玻璃」：只有它用玻璃控件（其他皮肤没有折射层，
+    /// 半透明玻璃片会露出后面的壁纸，反而更脏）。
+    pub(crate) fn glassy(&self)->bool{self.settings.skin==model::Skin::Liquid}
+
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
-    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,radius:f32){
+    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,radius:f32,origin:Pos2){
         let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
         let Some(format)=self.wgpu_format else {
             painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,225));
@@ -2886,7 +2918,8 @@ impl App {
             rect,capture,((win.x*ppp) as u32,(win.y*ppp) as u32),ppp,radius,
             self.glass_morph,
             crate::gpu_glass::NEUTRAL_TINT,self.t as f32,
-            (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]),self.liquid_k);
+            (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]),self.liquid_k,
+            &self.glass_controls(origin));
         painter.add(eframe::egui_wgpu::Callback::new_paint_callback(
             capture,crate::gpu_glass::GlassCallback{frame,format}));
     }
@@ -3451,7 +3484,11 @@ impl App {
     fn panel_body(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
         let settings=c.hit(380.0,4.0,28.0,28.0,"page-settings").on_hover_text(format!("打开{}设置窗口",PAGE_NAMES[self.page]));
         let (hover,press)=c.hover_t(&settings);
-        c.circle(394.0,18.0,13.0,Color32::from_white_alpha((hover*24.0) as u8));
+        if self.glassy() {
+            paint::glass_disc(&c.scaled(394.0,18.0,1.0-press*0.06),394.0,18.0,13.0,0.12+hover*0.72);
+        } else {
+            c.circle(394.0,18.0,13.0,Color32::from_white_alpha((hover*24.0) as u8));
+        }
         paint::gear(&c.scaled(394.0,18.0,0.8*(1.0-press*0.08)),394.0,18.0,paint::mix(theme::GRAY,theme::WHITE,hover));
         if settings.clicked(){self.settings_tab=PAGE_SETTINGS_TABS[self.page];self.open_settings();}
         if self.subpage==Some(self.page) {
@@ -3521,8 +3558,8 @@ impl App {
         let r = c.hit(385.0, arrow_y-13.0, 26.0, 26.0, "nav-r");
         let (lh, lp) = c.hover_t(&l);
         let (rh, rp) = c.hover_t(&r);
-        paint::chevron(c, 21.0, arrow_y, -1.0, lh, lp);
-        paint::chevron(c, 398.0, arrow_y, 1.0, rh, rp);
+        paint::chevron(c, 21.0, arrow_y, -1.0, lh, lp, self.glassy());
+        paint::chevron(c, 398.0, arrow_y, 1.0, rh, rp, self.glassy());
         if l.clicked() { self.navigate_page(false); }
         if r.clicked() { self.navigate_page(true); }
         // 页码豆：宽度由弹簧驱动，整行实时居中；当前页是白色长条

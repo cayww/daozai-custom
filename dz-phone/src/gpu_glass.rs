@@ -36,6 +36,10 @@ pub struct GlassFrame {
     pub optics: [f32; 4],
     /// 抓取矩形的 clip-space 坐标 x0,y0,x1,y1。
     pub clip: [f32; 4],
+    /// 岛内控件玻璃：每块的 x,y,w,h（capture 内物理像素）。最多 4 块。
+    pub controls: [[f32; 4]; 4],
+    /// 每块控件的 (圆角半径 px, 是否启用, _, _)。
+    pub control_params: [[f32; 4]; 4],
 }
 
 /// 每帧挂到 egui painter 上的回调。
@@ -53,6 +57,8 @@ struct Uniforms {
     tint: [f32; 4],
     quad: [f32; 4],
     misc: [f32; 4],     // pointer_x, pointer_y, refraction, _
+    crect: [[f32; 4]; 4],
+    cprm: [[f32; 4]; 4],
 }
 
 impl Uniforms {
@@ -130,6 +136,10 @@ struct U {
     tint   : vec4<f32>,
     quad   : vec4<f32>,
     misc   : vec4<f32>,
+    // 岛内控件玻璃：crect = (x, y, w, h)（capture 内物理像素），
+    // cprm = (圆角半径, 是否启用, 保留, 保留)。
+    crect  : array<vec4<f32>, 4>,
+    cprm   : array<vec4<f32>, 4>,
 }
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var bg : texture_2d<f32>;
@@ -199,6 +209,86 @@ fn tap5(px : vec2<f32>, ca : vec2<f32>, blur : f32) -> vec3<f32> {
     return s / 5.0;
 }
 
+// 岛内控件玻璃：岛体那块玻璃的「小尺寸版本」。
+//
+// 关键前提：控件底下没有别的纹理可采 —— 抓屏抓到的是**桌面**，不是已经画好的面板。
+// 所以控件玻璃折射的仍然是桌面，只是透镜更小更紧，读起来就像「贴在玻璃上的一小块
+// 更厚的玻璃」。材质、色散、倒角、导光全都沿用岛体那一套，只是：
+//   · 折射带按**短边**缩放（岛体按高度，控件的高度往往很小，不能照搬）
+//   · 材质照抄岛体，只多 1% 提亮 —— 层次感交给边缘
+//   · 白边更细更亮（岛体 3px，控件 1.4px）
+fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d : f32, mat : f32, Ld : vec2<f32>, edge_bg : vec3<f32>) -> vec4<f32> {
+    let e = 1.0;
+    let gx = rr_sdf(local + vec2<f32>(e, 0.0), hs, radius) - rr_sdf(local - vec2<f32>(e, 0.0), hs, radius);
+    let gy = rr_sdf(local + vec2<f32>(0.0, e), hs, radius) - rr_sdf(local - vec2<f32>(0.0, e), hs, radius);
+    let g = normalize(vec2<f32>(gx, gy) + vec2<f32>(1e-6));
+
+    let short = max(min(hs.x, hs.y), 1.0);
+    let band = clamp(short * 1.30, 12.0, 72.0);
+    let t = clamp(-d / band, 0.0, 1.0);
+    let k = pow(1.0 - pow(t, 0.30), 2.0);
+    let strength = clamp(short * 0.70, 9.0, 54.0);
+    let cxn = clamp((abs(local.x) - (hs.x - radius)) / max(radius, 1.0), 0.0, 1.0);
+    let cyn = clamp((abs(local.y) - (hs.y - radius)) / max(radius, 1.0), 0.0, 1.0);
+    let chroma = clamp(strength * 0.040, 0.7, 2.0) * mix(0.20, 1.0, cxn * cyn);
+    let bp = p - g * k * strength;
+
+    var col = tap5(bp, -g * k * chroma, 1.2);
+    // 材质必须和岛体**完全一致**，否则控件会明显比面板亮一档 —— 实测漏掉下面
+    // 这两步时，浅色壁纸下卡片内部 240、面板 197，看起来是一块白纸而不是玻璃。
+    // （亮暗反相补偿 + 逐像素 scrim，都照抄 fs 里的岛体版本。）
+    let lum_c = dot(col, vec3<f32>(0.299, 0.587, 0.114));
+    col = col * (1.0 + mix(0.045, -0.035, smoothstep(0.42, 0.88, lum_c)));
+    let bg_l = dot(edge_bg, vec3<f32>(0.299, 0.587, 0.114));
+    col = mix(col, vec3<f32>(0.30), smoothstep(0.48, 0.96, bg_l) * 0.16 * mat);
+    // 抬起感：比岛体略亮一点点。幅度必须小 —— 大了就变成「贴了一块浅色纸」。
+    col = col * 1.010 + vec3<f32>(0.004, 0.006, 0.010);
+    // 深色材质的压暗系数和岛体**一模一样**（0.58 / 0.70）。第一版给控件用了
+    // 更轻的 0.72 / 0.55 想让它们「浮起来」，结果是卡片比面板亮 20%，像贴了一块
+    // 灰纸。玻璃叠玻璃的层次应该只由**边缘**（白线 + 倒角暗带 + 导光）表达。
+    col = mix(col, col * 0.58 + vec3<f32>(0.010, 0.014, 0.020), vec3<f32>((1.0 - mat) * 0.70));
+    // 顶部冷光：玻璃厚度。
+    let topk = 1.0 - smoothstep(0.0, max(hs.y * 2.0, 1.0), local.y + hs.y);
+    col = col + vec3<f32>(0.06, 0.08, 0.11) * topk * 0.16;
+    // 倒角暗带（比岛体更贴近边缘、更窄）。
+    let tq = (d + 1.7) / 0.80;
+    let bevel = exp(-tq * tq);
+    col = col * (1.0 - bevel * 0.10);
+    // 向内导光：衰减长度取控件短边的一半以内，小控件才有一圈"透亮"。
+    let t_in = max(-d, 0.0);
+    let bleed = exp(-t_in / clamp(short * 0.45, 5.0, 22.0)) * (1.0 - bevel * 0.5);
+    let lobe = pow(max(dot(g, Ld), 0.0), 1.5);
+    col = col + vec3<f32>(0.62, 0.86, 0.96) * bleed * (lobe * 0.15 + 0.055);
+    // 白边：1.4px、峰值在内侧 0.4px。
+    let lq = (d + 0.40) / 0.62;
+    let line = exp(-lq * lq);
+    let dirw = mix(0.55, 1.0, pow(max(dot(g, Ld), 0.0), 1.3));
+    let line_v = line * dirw;
+    col = mix(col, vec3<f32>(1.0), clamp(line_v * 0.90, 0.0, 1.0));
+    let aa = 1.0 - smoothstep(-1.0, 1.0, d);
+    return vec4<f32>(col, clamp(max(aa, line_v * 0.90), 0.0, 1.0));
+}
+
+// 选中的控件玻璃：SDF 距离、半尺寸、圆角、下标（4 = 没命中）。
+struct CtlSel { d : f32, hs : vec2<f32>, r : f32, idx : u32 }
+
+// 命中测试：**后一个覆盖前一个**（音量浮层必须压在歌词卡上面），
+// 所以是「命中就覆盖」，不是取 SDF 最小值。
+fn pick_ctl(p : vec2<f32>) -> CtlSel {
+    var out = CtlSel(0.0, vec2<f32>(1.0), 0.0, 4u);
+    for (var ci = 0u; ci < 4u; ci = ci + 1u) {
+        if (u.cprm[ci].y < 0.5) { continue; }
+        let cr = u.crect[ci];
+        // 控件不需要岛体那个 3px 内缩（那是为了 SetWindowRgn 的硬裁剪），
+        // 只留半个像素让抗锯齿完全落在矩形内，边缘位置就和 egui 给的矩形重合。
+        let hs = max(cr.zw * 0.5 - vec2<f32>(0.5), vec2<f32>(1.0));
+        let rr = max(min(u.cprm[ci].x - 0.5, min(hs.x, hs.y)), 0.0);
+        let dd = rr_sdf(p - cr.xy - cr.zw * 0.5, hs, rr);
+        if (dd < 0.0) { out = CtlSel(dd, hs, rr, ci); }
+    }
+    return out;
+}
+
 @fragment
 fn fs(i : VOut) -> @location(0) vec4<f32> {
     let tex = vec2<f32>(u.extra.y, u.extra.z);
@@ -230,10 +320,36 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 边缘反而显得毛躁。
     let aa = 1.0 - smoothstep(-1.2, 1.2, d);
 
+    // 光源方向跟着指针走。桌面没有陀螺仪，指针是唯一能表达「用户正在动」的输入：
+    // Apple 的镜面高光随设备倾斜移动，这里把指针当成虚拟光源 —— 指针在哪一侧，
+    // 哪一侧的边缘光就亮。指针离岛心很近时退回默认的左上光，避免方向在中心乱跳。
+    // 限制在上半圈：指针只控制**水平摆动**，垂直方向永远保持「光从上方来」。
+    // 原因是岛仔贴在屏幕顶部，鼠标绝大多数时间在它下面 —— 真跟随的话静止状态
+    // 会一直是「从下往上打光」，观感很别扭。人类对光源在上方有本能预期。
+    // 放在这里而不是玻璃光学那一段，是因为诊断模式（FLAT）也要用它画控件玻璃。
+    let center = u.bounds.xy + u.bounds.zw * 0.5;
+    let to_ptr = u.misc.xy - center;
+    let plen = length(to_ptr);
+    let swung = to_ptr / max(plen, 1e-3);
+    let up_bias = vec2<f32>(swung.x, min(swung.y, -0.18));
+    let Ld = normalize(mix(normalize(vec2<f32>(-0.45, -0.65)), up_bias, smoothstep(3.0, 48.0, plen)) + vec2<f32>(1e-6));
+
+    // 背后未折射的桌面色：控件玻璃的材质补偿、局部 scrim 和最后的边缘混合都要用。
+    let edge_bg = sample_px(p);
+
     // 对齐诊断：DAOZAI_LIQUID_FLAT=1 时玻璃内原样输出抓到的背景。
     // 如果它与岛体外的壁纸无缝衔接，说明抓屏坐标与屏幕一致；错位就说明坐标有偏。
+    // 控件玻璃这里也要画 —— 棋盘格（FLAT=2）是唯一能直接看出「控件边界对不对、
+    // 折射带有多宽」的手段。
     if (u.misc.w > 0.5) {
-        return vec4<f32>(sample_px(p), 1.0);
+        var flat_col = sample_px(p);
+        let cs = pick_ctl(p);
+        if (cs.idx < 4u) {
+            let cr = u.crect[cs.idx];
+            let ce = ctrl_glass(p, p - cr.xy - cr.zw * 0.5, cs.hs, cs.r, cs.d, mat, Ld, edge_bg);
+            flat_col = mix(flat_col, ce.rgb, ce.a);
+        }
+        return vec4<f32>(flat_col, 1.0);
     }
 
     // SDF 梯度指向边缘外侧。
@@ -286,9 +402,6 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let topk = 1.0 - smoothstep(0.0, max(u.bounds.w, 1.0), p.y - u.bounds.y);
     col = col + vec3<f32>(0.05, 0.07, 0.10) * topk * 0.10;
 
-    // 背后未折射的桌面色，后面算局部 scrim 和边缘混合都要用，先取一次。
-    let edge_bg = sample_px(p);
-
     // 材质：不再无脑「加白」。亮背景下加白会把对比彻底压平 —— 实测背景亮度
     // 250 时白色高光只剩 +5 的余量，玻璃等于不存在（背景 60 时有 +124）。
     // 改成按背景亮度**反相补偿**：
@@ -322,20 +435,6 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let tq = (d + 2.2) / 0.9;
     let bevel = exp(-tq * tq);
     col = col * (1.0 - bevel * 0.08);
-
-    // 光源方向跟着指针走。桌面没有陀螺仪，指针是唯一能表达「用户正在动」的输入：
-    // Apple 的镜面高光随设备倾斜移动，这里把指针当成虚拟光源 —— 指针在哪一侧，
-    // 哪一侧的边缘光就亮。指针离岛心很近时退回默认的左上光，避免方向在中心乱跳。
-    let center = u.bounds.xy + u.bounds.zw * 0.5;
-    let to_ptr = u.misc.xy - center;
-    let plen = length(to_ptr);
-    let fallback = normalize(vec2<f32>(-0.45, -0.65));
-    let swung = to_ptr / max(plen, 1e-3);
-    // 限制在上半圈：指针只控制**水平摆动**，垂直方向永远保持「光从上方来」。
-    // 原因是岛仔贴在屏幕顶部，鼠标绝大多数时间在它下面 —— 真跟随的话静止状态
-    // 会一直是「从下往上打光」，观感很别扭。人类对光源在上方有本能预期。
-    let up_bias = vec2<f32>(swung.x, min(swung.y, -0.18));
-    let Ld = normalize(mix(fallback, up_bias, smoothstep(3.0, 48.0, plen)) + vec2<f32>(1e-6));
 
     // 向内延伸的柔光（导光）：光从倒角进入玻璃后被全内反射困住，再逐步泄漏出来。
     // 两个物理修正：
@@ -392,6 +491,16 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 会看成一条「暗边」。亮背景拉到 0.92 并用纯白，才顶得到 253 附近。
     let line_w = mix(0.62, 0.92, smoothstep(0.60, 0.92, lum_m));
     col = mix(col, vec3<f32>(1.0), clamp(line_v * line_w + glow, 0.0, 1.0));
+
+    // ---------- 岛内控件玻璃 ----------
+    // 一次抓屏、一次 pass 画多块玻璃：所有控件与岛体共用同一张背景纹理，各自再跑
+    // 一遍小尺寸透镜。这样控件边缘也有真实折射与白边，而不是贴一层半透明色块。
+    let cs = pick_ctl(p);
+    if (cs.idx < 4u) {
+        let cr = u.crect[cs.idx];
+        let ce = ctrl_glass(p, p - cr.xy - cr.zw * 0.5, cs.hs, cs.r, cs.d, mat, Ld, edge_bg);
+        col = mix(col, ce.rgb, ce.a);
+    }
 
     // 关键：边缘必须和「背后的桌面」混合。兼容渲染的窗口不透明，
     // 输出预乘 col*alpha 在 aa→0 时会变成纯黑，岛体轮廓外就是一圈黑线
@@ -522,6 +631,8 @@ fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
         tint: f.tint,
         quad: f.clip,
         misc: [f.shape[2], f.shape[3], f.optics[1], flat_flag()],
+        crect: f.controls,
+        cprm: f.control_params,
     }
 }
 
@@ -1078,6 +1189,9 @@ pub fn frame_for(
     pointer: (f32, f32),
     origin: (f32, f32),
     lightness: f32,
+    // 岛内控件玻璃（屏幕坐标的逻辑点矩形 + 圆角），**按绘制顺序**给：
+    // 靠后的压在前面的上面。
+    controls: &[(eframe::egui::Rect, f32)],
 ) -> GlassFrame {
     // 抓屏用屏幕绝对物理坐标，clip-space / bounds 用窗口内坐标。
     let c = ((capture.min.x + origin.0) * ppp, (capture.min.y + origin.1) * ppp);
@@ -1089,6 +1203,24 @@ pub fn frame_for(
         body.width() * ppp,
         body.height() * ppp,
     ];
+    // 控件矩形换算到「capture 内物理像素」，着色器里直接用。
+    // 只接受完整落在抓屏矩形内的控件：越界时着色器会 clamp 到边缘像素，
+    // 表现为一条被拉长的色带。
+    let mut crect = [[0.0f32; 4]; 4];
+    let mut cprm = [[0.0f32; 4]; 4];
+    let mut slot = 0usize;
+    for (r, radius) in controls.iter() {
+        if slot == 4 { break; }
+        if r.width() < 6.0 || r.height() < 6.0 || !capture.contains_rect(*r) { continue; }
+        crect[slot] = [
+            (r.min.x - capture.min.x) * ppp,
+            (r.min.y - capture.min.y) * ppp,
+            r.width() * ppp,
+            r.height() * ppp,
+        ];
+        cprm[slot] = [radius * ppp, 1.0, 0.0, 0.0];
+        slot += 1;
+    }
     // egui-wgpu 在调用回调前已把 render pass 的 viewport 设成 callback.rect，
     // 所以 clip-space 只需铺满 [-1,1]；uv 0..1 正好对应抓到的那块纹理。
     let _ = screen_px;
@@ -1099,6 +1231,8 @@ pub fn frame_for(
         tint: [tint[0], tint[1], tint[2], 1.0],
         optics: [time, 1.0, 0.20, lightness],
         clip: [-1.0, 1.0, 1.0, -1.0],
+        controls: crect,
+        control_params: cprm,
     }
 }
 
@@ -1111,14 +1245,29 @@ mod tests {
         use eframe::egui::{Pos2, Rect};
         let body = Rect::from_min_size(Pos2::new(100.0, 20.0), eframe::egui::vec2(200.0, 30.0));
         let capture = Rect::from_min_size(Pos2::new(60.0, 0.0), eframe::egui::vec2(280.0, 90.0));
-        let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0);
+        let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0, &[]);
         assert_eq!(f.bounds, [40.0, 20.0, 200.0, 30.0]);
         assert_eq!(f.clip, [-1.0, 1.0, 1.0, -1.0], "viewport 已由 egui 设为 callback 矩形");
         assert_eq!(uniforms(&f, (280, 90)).params[0], 1.52);
     }
 
     #[test]
+    fn control_rects_map_into_capture_pixels() {
+        use eframe::egui::{Pos2, Rect};
+        let body = Rect::from_min_size(Pos2::new(100.0, 20.0), eframe::egui::vec2(200.0, 30.0));
+        let capture = Rect::from_min_size(Pos2::new(60.0, 0.0), eframe::egui::vec2(280.0, 90.0));
+        let lyric = Rect::from_min_size(Pos2::new(80.0, 25.0), eframe::egui::vec2(50.0, 20.0));
+        // 越界的控件必须被丢掉，否则着色器会 clamp 到边缘像素拉出色带。
+        let outside = Rect::from_min_size(Pos2::new(50.0, 25.0), eframe::egui::vec2(50.0, 20.0));
+        let f = frame_for(body, capture, (1920, 1080), 2.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0,
+                          &[(outside, 6.0), (lyric, 6.0)]);
+        assert_eq!(f.controls[0], [40.0, 50.0, 100.0, 40.0], "控件按 2x 换算到 capture 内物理像素");
+        assert_eq!(f.control_params[0], [12.0, 1.0, 0.0, 0.0]);
+        assert_eq!(f.control_params[1][1], 0.0, "越界的控件不参与绘制");
+    }
+
+    #[test]
     fn uniforms_are_packed_without_padding() {
-        assert_eq!(std::mem::size_of::<Uniforms>(), 96);
+        assert_eq!(std::mem::size_of::<Uniforms>(), 224);
     }
 }

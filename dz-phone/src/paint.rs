@@ -374,6 +374,72 @@ mod gradient_tests {
     }
 }
 
+// ======================= 玻璃控件（液态玻璃皮肤） =======================
+//
+// 小控件（30~40 点的按钮、胶囊、进度槽）不走 GPU 透镜：这个尺寸上的折射位移
+// 只有 1~2px，肉眼分辨不出来，白烧一遍纹理采样。这里用「同一套视觉语言」的
+// 矢量近似做出玻璃片：极淡的填充 + 顶部内高光（厚度）+ 细白边 + 底部内暗边。
+//
+// 颜色一律按「深色玻璃上的样子」给（白/黑半透明），浅色皮肤由 skin_paint
+// 统一换色（白→墨、黑→纸），所以这里不需要判断深/浅。
+
+/// 一小片玻璃（胶囊、圆角按钮的底）。
+///
+/// `level`：0 = 静止，1 = 悬停/按下。只影响填充与白边的强度。
+pub fn glass_chip(c: &Card, x: f32, y: f32, w: f32, h: f32, r: f32, level: f32) {
+    if w < 2.0 || h < 2.0 {
+        return;
+    }
+    let lv = level.clamp(0.0, 1.0);
+    let r = r.min(w.min(h) * 0.5);
+    // 主体：极淡的白。静止时几乎只有一圈边，悬停才「亮起来」。
+    c.fill(x, y, w, h, r, Color32::from_white_alpha((10.0 + 30.0 * lv) as u8));
+    // 顶部内高光：玻璃厚度的来源。整块高度做渐变，越往下越透明，
+    // 这样不会切出一条和圆角对不上的横边。
+    c.vgrad(x, y, w, h, r, Color32::from_white_alpha((22.0 + 24.0 * lv) as u8), Color32::TRANSPARENT);
+    // 底部内暗边：下缘「实」一点，不然整片会飘。
+    if h >= 8.0 {
+        let inset = r * 0.8;
+        c.fill(x + inset, y + h - 1.0, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_black_alpha(28));
+    }
+    // 白边 1.5px：液态玻璃要细、要亮，粗了就成描边贴纸。
+    c.stroke(x + 0.75, y + 0.75, w - 1.5, h - 1.5, (r - 0.75).max(0.0), 1.5,
+             Color32::from_white_alpha((120.0 + 60.0 * lv) as u8));
+}
+
+/// 圆形玻璃片：播放控制、齿轮、翻页箭头。
+pub fn glass_disc(c: &Card, cx: f32, cy: f32, r: f32, level: f32) {
+    if r < 2.0 {
+        return;
+    }
+    let lv = level.clamp(0.0, 1.0);
+    c.circle(cx, cy, r, Color32::from_white_alpha((10.0 + 28.0 * lv) as u8));
+    // 上半圈内高光（光源在上方，和 GPU 那边的 line/rim 同一个约定）。
+    c.arc(cx, cy, r - 0.8, PI * 1.12, PI * 1.88, 1.1, Color32::from_white_alpha((26.0 + 30.0 * lv) as u8));
+    c.ring(cx, cy, (r - 0.75).max(0.5), 1.5, Color32::from_white_alpha((110.0 + 60.0 * lv) as u8));
+}
+
+/// 玻璃凹槽：给**将来**的竖向滑槽留的口子 —— 试过用在进度条上，但浅色皮肤的
+/// 换色会把「压暗」变成「提亮」，整条槽反而看不见了，所以进度条仍是中性灰。
+/// 保留实现是因为它在中性色底上（深色玻璃）效果是对的，等有竖向控件再用。
+#[allow(dead_code)]
+pub fn glass_groove(c: &Card, x: f32, y: f32, w: f32, h: f32) {
+    if w < 2.0 || h < 1.5 {
+        return;
+    }
+    let r = h * 0.5;
+    c.fill(x, y, w, h, r, Color32::from_black_alpha(46));
+    if h >= 6.0 {
+        // 上缘阴影（光被槽壁挡掉）
+        let inset = (r * 0.9).min(w * 0.4);
+        c.fill(x + inset, y, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_black_alpha(56));
+    }
+    // 下缘反光：只有 1px，多一道就脏
+    let inset = (r * 0.9).min(w * 0.4);
+    c.fill(x + inset, y + h - 1.0, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_white_alpha(26));
+}
+
+
 /// 胶囊按钮：悬停提亮、按下轻微缩小，返回 (响应, 内容画布)。
 pub fn capsule<'a>(
     c: &Card<'a>,
@@ -400,10 +466,15 @@ pub fn close(c:&Card,cx:f32,cy:f32,r:f32,color:Color32) {
     c.seg((cx-r,cy+r),(cx+r,cy-r),1.2,color);
 }
 
-pub fn chevron(c: &Card, x: f32, y: f32, dir: f32, hover: f32, press: f32) {
+pub fn chevron(c: &Card, x: f32, y: f32, dir: f32, hover: f32, press: f32, glass: bool) {
     let k = 1.0 - 0.08 * press;
     let c = c.scaled(x, y, k);
-    c.circle(x, y, 9.0, mix(theme::ARROW_BG, Color32::from_rgb(78, 78, 82), hover));
+    if glass {
+        // 液态玻璃：整颗换成玻璃片，箭头保持白色（浅色皮肤由换色改成墨色）。
+        glass_disc(&c, x, y, 12.0, 0.18 + hover * 0.82);
+    } else {
+        c.circle(x, y, 9.0, mix(theme::ARROW_BG, Color32::from_rgb(78, 78, 82), hover));
+    }
     let nudge = dir * 0.8 * hover;
     let (cx, s) = (x + nudge + dir * 0.6, 2.7);
     c.path(&[(cx - dir * s * 0.75, y - s), (cx + dir * s * 0.45, y), (cx - dir * s * 0.75, y + s)], 1.6, Color32::WHITE);

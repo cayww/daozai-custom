@@ -50,6 +50,7 @@ impl App {
         let has=!np.title.is_empty();
         // 视频没有歌词；with_lyrics 会改变封面尺寸和文字列宽，必须一起关掉。
         let with_lyrics=has && self.show_lyrics && !video;
+        let glassy=self.glassy();
         let ctx=c.ui.ctx().clone();
         let playing_t=ctx.animate_bool_with_time(egui::Id::new("np-playing"),np.playing,0.22);
         let art_size=if with_lyrics {44.0}else{62.0};
@@ -67,6 +68,11 @@ impl App {
         } else {
             c.fill(44.0,13.0,62.0,62.0,13.0,Color32::from_rgb(25,25,27));
             paint::note(c,75.0,44.0,26.0,Color32::from_rgb(110,110,114));
+        }
+        // 封面本身是内容（不能是玻璃，否则会被折射糊掉），但需要一条玻璃边
+        // 把它和面板「焊」在一起，不然它就是一块贴纸。
+        if glassy && has {
+            c.stroke(44.0,art_y,art_size,art_size,10.0,1.2,Color32::from_white_alpha(70));
         }
 
         if !has {
@@ -110,6 +116,8 @@ impl App {
         let (bh,_)=c.hover_t(&bar);
         let bh=if has {bh}else{0.0};
         let th=lerp(3.5,5.0,bh);
+        // 底槽保持中性灰：它是「内容」而不是玻璃控件 —— 试过玻璃凹槽，浅色皮肤下
+        // 换色会把它变成比面板更亮的一层，整条进度反而看不见了。
         c.fill(bx,by-th/2.0,bw,th,th/2.0,if has {Color32::from_gray(90)}else{theme::TRACK});
         if self.settings.skin==crate::model::Skin::Fluid {
             let head=bx+bw*frac;
@@ -139,7 +147,10 @@ impl App {
         let btn=|x:f32,w:f32,id:&str| {
             let response=c.hit(x-w/2.0,y-12.0,w,24.0,id);
             let (hover,pressed)=c.hover_t(&response);
-            if has && hover>0.01 {c.faded(hover).circle(x,y,12.5,Color32::from_white_alpha(20));}
+            if has && glassy {
+                // 玻璃圆片：静止时只有一圈极淡的边，悬停才亮起来。
+                paint::glass_disc(&c.scaled(x,y,1.0-0.1*pressed),x,y,13.5,0.16+hover*0.74);
+            } else if has && hover>0.01 {c.faded(hover).circle(x,y,12.5,Color32::from_white_alpha(20));}
             (response,c.scaled(x,y,1.0-0.1*pressed))
         };
         // 视频页不画「词」和音乐应用音量：网页媒体没有歌词，也没有对应的应用内音量通道。
@@ -197,9 +208,18 @@ impl App {
         }
         // 岛上歌词是横向的，只在顶部停靠时提供，视频页没有歌词可显示。
         if has && !video && !self.side() {
-            let (button,button_card)=capsule(c,279.0,108.0,68.0,20.0,"m-island-lyrics",if self.settings.island_lyrics {Color32::from_gray(39)}else{Color32::from_gray(22)},Color32::from_gray(47));
-            button_card.text(313.0,122.0,"岛上歌词",10.0,W::Semibold,if self.settings.island_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
-            if button.on_hover_text(if self.settings.island_lyrics {"关闭收起时的歌词"}else{"收起时显示当前歌词"}).clicked() {
+            let on=self.settings.island_lyrics;
+            let (button,button_card)=if glassy {
+                // 玻璃胶囊：开着的时候整片「点亮」，关着时只是极淡的一圈边。
+                let button=c.hit(279.0,108.0,68.0,20.0,"m-island-lyrics");
+                let (hover,_)=c.hover_t(&button);
+                paint::glass_chip(c,279.0,108.0,68.0,20.0,10.0,if on {0.62+hover*0.3}else{0.10+hover*0.5});
+                (button,c.clone())
+            } else {
+                capsule(c,279.0,108.0,68.0,20.0,"m-island-lyrics",if on {Color32::from_gray(39)}else{Color32::from_gray(22)},Color32::from_gray(47))
+            };
+            button_card.text(313.0,122.0,"岛上歌词",10.0,W::Semibold,if on {theme::WHITE}else{theme::GRAY},H::Center);
+            if button.on_hover_text(if on {"关闭收起时的歌词"}else{"收起时显示当前歌词"}).clicked() {
                 self.settings.island_lyrics=!self.settings.island_lyrics;
                 self.settings.save();
             }
@@ -249,8 +269,18 @@ impl App {
         let popup=if self.music_volume_open{popup}else{popup.ghost()};
         // 浮条最后绘制并占据整块命中区域，防止点击穿到后面的翻页按钮。
         popup.hit(bounds.min.x,bounds.min.y,bounds.width(),bounds.height(),"m-volume-surface");
-        popup.fill(bounds.min.x,bounds.min.y,bounds.width(),bounds.height(),12.0,Color32::from_gray(36));
-        popup.stroke(bounds.min.x,bounds.min.y,bounds.width(),bounds.height(),12.0,1.0,Color32::from_gray(60));
+        if self.glassy() {
+            // 玻璃浮层：它盖住的是歌词，必须真的挡住 —— 换色会按 dark_alpha 把
+            // 「深色块」做成半透明（深色玻璃下只剩 50%），所以同一层叠 3 次把
+            // 不透明度补到 94%（颜色不变，只累加 alpha），再盖上玻璃片的
+            // 顶部内高光与细白边。
+            let (bx,by,bw,bh)=(bounds.min.x,bounds.min.y,bounds.width(),bounds.height());
+            for _ in 0..4 {popup.fill(bx,by,bw,bh,12.0,Color32::from_gray(26));}
+            paint::glass_chip(&popup,bx,by,bw,bh,12.0,0.0);
+        } else {
+            popup.fill(bounds.min.x,bounds.min.y,bounds.width(),bounds.height(),12.0,Color32::from_gray(36));
+            popup.stroke(bounds.min.x,bounds.min.y,bounds.width(),bounds.height(),12.0,1.0,Color32::from_gray(60));
+        }
         let track=popup.hit_drag(351.0,27.0,32.0,54.0,"m-volume-track");
         let mut command=None;
         if popup.live && (track.clicked() || track.dragged() || track.is_pointer_button_down_on()) {
@@ -268,17 +298,23 @@ impl App {
         let (volume,muted)=self.music_volume_ui.unwrap_or((volume,muted));
         let ink=if muted{theme::GRAY}else{theme::WHITE};
         popup.centered_text(367.0,20.0,&format!("{volume}%"),10.5,W::Semibold,ink,H::Center);
-        popup.fill(364.5,32.0,5.0,43.0,2.5,Color32::from_gray(68));
+        // 竖槽：玻璃凹槽的「上暗下亮」在竖直方向不成立，这里只用一层压暗的半透明底。
+        popup.fill(364.5,32.0,5.0,43.0,2.5,if self.glassy() {Color32::from_black_alpha(66)}else{Color32::from_gray(68)});
         let head=75.0-43.0*volume as f32/100.0;
         if volume>0 {popup.fill(364.5,head,5.0,(75.0-head).max(2.5),2.5,ink);}
         popup.circle(367.0,head,if track.dragged(){5.5}else{4.5},ink);
-        popup.fill(353.0,82.0,28.0,20.0,6.0,paint::mix(theme::BTN,theme::BTN_HOVER,if muted{1.0}else{hover}));
+        if self.glassy() {
+            paint::glass_chip(&popup,353.0,82.0,28.0,20.0,6.0,0.12+hover*0.6);
+        } else {
+            popup.fill(353.0,82.0,28.0,20.0,6.0,paint::mix(theme::BTN,theme::BTN_HOVER,if muted{1.0}else{hover}));
+        }
         popup.scaled(367.0,92.0,1.0-0.06*press).centered_text(367.0,92.0,if muted{"恢复"}else{"静音"},9.5,W::Semibold,theme::WHITE,H::Center);
     }
 
     fn draw_music_lyrics(&mut self,c:&Card) {
         let col=c.clipped(243.0,28.0,136.0,74.0);
-        c.seg((233.0,32.0),(233.0,98.0),1.0,Color32::from_gray(35));
+        // 液态玻璃下歌词区是一整块玻璃卡（GPU 画的），左侧那条竖线就成了重复的第二道边。
+        if !self.glassy() {c.seg((233.0,32.0),(233.0,98.0),1.0,Color32::from_gray(35));}
         if let Some(lyrics)=&self.ly.lyrics {
             let current=if lyrics.synced {lyrics.index_at(self.lyric_position())}else{Some(0)};
             let target=current.unwrap_or(0);
