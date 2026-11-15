@@ -612,6 +612,29 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**一键关闭其它应用的系统通知横幅（custom-123）**
+
+起因：用户发现「手机连接」的通知只在岛仔上出现、右下角不弹。查注册表
+`HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings\Microsoft.YourPhone_8wekyb3d8bbwe!App`
+是 `ShowBanner=0`（横幅被关），而通知仍写入通知中心，岛仔的 `UserNotificationListener`
+读的是通知中心、不看横幅开关，所以照常显示。用户希望能在岛仔里直接关其它应用的横幅，
+不用去 Windows 设置逐个点。
+
+- Windows **没有公开 API** 改其它应用的通知设置；`ShowBanner` 是 HKCU 下的内部项，
+  写 `REG_DWORD 0` = 不弹横幅。岛仔用项目已有的 `Win32_System_Registry` 封装读写。
+- `system.rs` 新增 `close_notification_banners` / `restore_notification_banners` /
+  `banner_overridden_count` / `open_notification_settings`。
+  **只动岛仔应用列表里已勾选的应用**，不碰用户没在意的其它程序。
+- 原值记在 `%APPDATA%\Daozai\banner-overrides.json`（原本没有该值记 `null`），
+  「恢复」按原值写回或删掉，不会把用户自己关掉的应用误开成横幅。
+- 设置页 → 通知 → 新增「系统通知横幅」卡片：说明、已关闭数量、关闭 / 恢复 /
+  打开 Windows 通知设置三个按钮。**默认不改任何系统设置**，必须用户主动点。
+- 界面明确写出三个限制：Windows 未公开的设置项（升级可能变）、只影响当前用户、
+  直接写注册表不一定立刻生效（可能需要重新登录）；「打开 Windows 通知设置」是官方兜底。
+
+验证：`1171 passed / 0 failed / 119 ignored`；干净重放 198 处、跳过 0、diff 空。
+实机写入与生效性需用户点一次按钮后确认。
+
 **删除自动托管（custom-122）**
 
 用户要求把「自动托管」整个功能删掉。删除清单：

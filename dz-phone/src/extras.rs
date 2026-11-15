@@ -2695,6 +2695,33 @@ impl App {
                             settings_hint(ui,"卡片停留时长；验证码至少 10 秒");
                             });
                         });
+                        settings_label(ui,"系统通知横幅");
+                        settings_card(ui,|ui|{
+                            ui.small("关闭后这些应用不再在右下角弹窗，但通知仍会进通知中心，岛仔照常显示。");
+                            ui.small("改的是 Windows 未公开的设置项，只影响当前用户；关闭和恢复都能一键还原。若没有立刻生效，重新登录一次 Windows。");
+                            ui.separator();
+                            let closed=crate::system::banner_overridden_count();
+                            ui.label(egui::RichText::new(format!("已关闭 {closed} 个应用的横幅")).size(12.5).strong());
+                            ui.horizontal_wrapped(|ui|{
+                                if ui.button("关闭系统横幅").clicked(){
+                                    let apps:Vec<String>=self.notification_apps.items.iter()
+                                        .filter(|(_,_,on)|*on).map(|(id,_,_)|id.clone()).collect();
+                                    match crate::system::close_notification_banners(&apps){
+                                        Ok(count)=>self.say(format!("已关闭 {count} 个应用的横幅")),
+                                        Err(error)=>self.say(error),
+                                    }
+                                }
+                                if closed>0 && ui.button("恢复").clicked(){
+                                    match crate::system::restore_notification_banners(){
+                                        Ok(count)=>self.say(format!("已恢复 {count} 个应用")),
+                                        Err(error)=>self.say(error),
+                                    }
+                                }
+                                if ui.button("打开 Windows 通知设置").clicked(){
+                                    if let Err(error)=crate::system::open_notification_settings(){self.say(error);}
+                                }
+                            });
+                        });
                     }
                     14=>{
                         settings_label(ui,"安装");

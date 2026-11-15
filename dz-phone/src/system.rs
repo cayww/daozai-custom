@@ -549,6 +549,98 @@ pub fn pick_exe(title:&str) -> Result<Option<std::path::PathBuf>> {
     }
 }
 
+// —— 关闭其它应用的 Windows 通知横幅 ——
+// Windows 没有公开 API 改别人的通知设置；ShowBanner 是 HKCU 下的内部项，
+// 写 0 表示「不弹右下角横幅」，通知仍会进通知中心，岛仔照常读取。
+// 原值记在 banner-overrides.json，随时可以一键恢复。
+const BANNER_ROOT:&str="SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings";
+const BANNER_VALUE:&str="ShowBanner";
+const BANNER_FILE:&str="banner-overrides.json";
+
+fn banner_wide(text:&str)->Vec<u16>{text.encode_utf16().chain(Some(0)).collect()}
+
+#[derive(Default,serde::Serialize,serde::Deserialize)]
+struct BannerOverrides{entries:std::collections::BTreeMap<String,Option<u32>>}
+fn banner_file()->std::path::PathBuf{crate::model::config_dir().join(BANNER_FILE)}
+fn banner_load()->BannerOverrides{
+    std::fs::read(banner_file()).ok().and_then(|bytes|serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+}
+fn banner_save(state:&BannerOverrides)->std::result::Result<(),String>{
+    let bytes=serde_json::to_vec_pretty(state).map_err(|error|error.to_string())?;
+    std::fs::write(banner_file(),bytes).map_err(|error|format!("保存失败：{error}"))
+}
+
+/// None = 这个值原本不存在（默认会弹横幅）；Some(0) = 原本就关闭。
+fn banner_original(app:&str)->Option<u32>{
+    use windows::{core::PCWSTR,Win32::System::Registry::*};
+    let path=banner_wide(&format!("{BANNER_ROOT}\\{app}"));
+    let name=banner_wide(BANNER_VALUE);
+    let mut value=0u32;let mut size=std::mem::size_of::<u32>() as u32;
+    let rc=unsafe{RegGetValueW(HKEY_CURRENT_USER,PCWSTR(path.as_ptr()),PCWSTR(name.as_ptr()),
+        RRF_RT_REG_DWORD,None,Some((&mut value as *mut u32).cast()),Some(&mut size))};
+    (rc.0==0).then_some(value)
+}
+
+/// Some(v) 写值；None 删掉该值（回到默认弹横幅）。
+fn banner_set(app:&str,value:Option<u32>)->std::result::Result<(),String>{
+    use windows::{core::PCWSTR,Win32::System::Registry::*};
+    let path=banner_wide(&format!("{BANNER_ROOT}\\{app}"));
+    let name=banner_wide(BANNER_VALUE);
+    let mut key=HKEY::default();
+    unsafe{
+        if RegCreateKeyExW(HKEY_CURRENT_USER,PCWSTR(path.as_ptr()),0,PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,KEY_QUERY_VALUE|KEY_SET_VALUE,None,&mut key,None).0!=0{
+            return Err(format!("打不开 {app} 的通知设置"));
+        }
+        let rc=match value{
+            Some(v)=>RegSetValueExW(key,PCWSTR(name.as_ptr()),0,REG_DWORD,Some(&v.to_le_bytes())),
+            None=>{
+                // 值不存在本来就是默认状态，删不掉也无所谓。
+                let _=RegDeleteValueW(key,PCWSTR(name.as_ptr()));
+                let _ = RegCloseKey(key);
+                return Ok(());
+            },
+        };
+        let _ = RegCloseKey(key);
+        if rc.0==0{Ok(())}else{Err(format!("写 {app} 失败：{}",rc.0))}
+    }
+}
+
+pub fn banner_overridden_count()->usize{banner_load().entries.len()}
+
+/// 只动岛仔应用列表里已勾选的应用，不碰用户没在意的其它程序。
+pub fn close_notification_banners(apps:&[String])->std::result::Result<usize,String>{
+    let mut state=banner_load();
+    let mut done=0;
+    for app in apps{
+        if app.trim().is_empty(){continue;}
+        if !state.entries.contains_key(app){
+            state.entries.insert(app.clone(),banner_original(app));
+        }
+        banner_set(app,Some(0))?;
+        done+=1;
+    }
+    banner_save(&state)?;
+    Ok(done)
+}
+
+pub fn restore_notification_banners()->std::result::Result<usize,String>{
+    let state=banner_load();
+    let mut done=0;
+    for (app,original) in &state.entries{
+        banner_set(app,*original)?;
+        done+=1;
+    }
+    banner_save(&BannerOverrides::default())?;
+    Ok(done)
+}
+
+/// 兜底：直接改注册表不一定立刻生效，给用户一个官方设置入口。
+pub fn open_notification_settings()->std::result::Result<(),String>{
+    std::process::Command::new("explorer.exe").arg("ms-settings:notifications")
+        .spawn().map(|_|()).map_err(|error|format!("打开设置失败：{error}"))
+}
+
 pub fn pick_files_for(title:&str,multiple:bool) -> Result<Vec<std::path::PathBuf>> {
     unsafe {
         use windows::Win32::UI::Shell::*;
