@@ -198,7 +198,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     if (d > 1.0) {
         let bg = sample_px(p);
         // 紧贴边缘留一点极淡的接触阴影，玻璃才不像凭空浮着。
-        let sh = (1.0 - smoothstep(0.0, 7.0, d - 1.0)) * mix(0.10, 0.05, mat);
+        let sh = (1.0 - smoothstep(0.0, 7.0, d - 1.0)) * mix(0.06, 0.02, mat);
         let col = bg * (1.0 - sh) + vec3<f32>(0.05, 0.06, 0.07) * sh;
         return vec4<f32>(col, 1.0);
     }
@@ -208,7 +208,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 对齐诊断：DAOZAI_LIQUID_FLAT=1 时玻璃内原样输出抓到的背景。
     // 如果它与岛体外的壁纸无缝衔接，说明抓屏坐标与屏幕一致；错位就说明坐标有偏。
     if (u.misc.w > 0.5) {
-        return vec4<f32>(sample_px(p) * aa, aa);
+        return vec4<f32>(sample_px(p), 1.0);
     }
 
     // SDF 梯度指向边缘外侧。
@@ -255,8 +255,12 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.12;
     col = col + u.tint.rgb * u.tint.a * 0.05 * rim;
 
-    let alpha = clamp(aa, 0.0, 1.0);
-    return vec4<f32>(col * alpha, alpha);
+    // 关键：边缘必须和「背后的桌面」混合。兼容渲染的窗口不透明，
+    // 输出预乘 col*alpha 在 aa→0 时会变成纯黑，岛体轮廓外就是一圈黑线
+    // （圆角处最明显）。这里直接 mix 桌面色，边缘永远不会有黑。
+    let edge_bg = sample_px(p);
+    let cov = clamp(aa, 0.0, 1.0);
+    return vec4<f32>(mix(edge_bg, col, vec3<f32>(cov)), 1.0);
 }
 "#;
 
