@@ -8569,3 +8569,39 @@ fn browser_playback_is_kept_on_the_music_page(){
     h.frame(vec![]);
     assert!(h.app.media.title.is_empty(),"非浏览器 Unknown 会话仍应上不了岛");
 }
+
+fn rendered_text(h:&H)->Vec<String>{
+    h.shapes.iter().filter_map(|s|match &s.shape{
+        egui::Shape::Text(t)=>Some(t.galley.text().to_string()),_=>None}).collect()
+}
+
+#[test]
+fn browser_video_has_its_own_page_and_collapsed_summary(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.media=crate::smtc::NowPlaying{source:"Chrome".into(),title:"《刚烈界魏延》".into(),
+        playing:true,duration:1358.0,position:120.0,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.frame(vec![]);h.frame(vec![]);
+    assert!(h.app.video_page(),"浏览器网页媒体应走视频页");
+    let collapsed=rendered_text(&h);
+    assert!(collapsed.iter().any(|t|t.contains("刚烈界魏延")),"收起态应显示视频标题");
+    assert!(collapsed.iter().any(|t|t.contains("Chrome")),"收起态应显示来源");
+
+    h.app.show_page(0);
+    h.hover(H::local(200.0,40.0),1.0);
+    let expanded=rendered_text(&h);
+    assert!(expanded.iter().any(|t|t.contains("网页视频")),"视频页应有网页视频标识");
+    assert!(!expanded.iter().any(|t|t.contains("岛上歌词")),"视频页不该有岛上歌词开关");
+    assert!(!expanded.iter().any(|t|t=="词"),"视频页不该有歌词按钮");
+
+    // 有歌手/专辑的普通音乐仍走原音乐页，控件一个不少。
+    h.media=crate::smtc::NowPlaying{source:"cloudmusic.exe".into(),title:"某首歌".into(),
+        artist:"歌手".into(),album:"专辑".into(),playing:true,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.frame(vec![]);
+    assert!(!h.app.video_page());
+    let music=rendered_text(&h);
+    assert!(music.iter().any(|t|t.contains("岛上歌词")),"音乐页仍保留岛上歌词开关");
+    assert!(music.iter().any(|t|t=="词"),"音乐页仍保留歌词按钮");
+}

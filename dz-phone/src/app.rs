@@ -26,6 +26,9 @@ use std::path::PathBuf;
 pub const PW: f32 = 419.0; // 展开面板宽
 pub const PH: f32 = 140.0; // 展开面板高
 pub const MUSIC_PAGE: usize = 0;
+/// 收起态网页视频摘要的宽度（逻辑点）；MUSIC 槽原本只有 14 点，需要加宽容纳标题和进度条。
+pub(crate) const VIDEO_PILL_W: f32 = 132.0;
+const VIDEO_PILL_EXTRA: f32 = VIDEO_PILL_W - 14.0;
 pub const FOCUS_PAGE: usize = 1;
 pub const WATER_PAGE: usize = 2;
 /// 久坐提醒的标题（通知按钮据此区分喝水提醒）。
@@ -1806,6 +1809,12 @@ impl App {
         else {crate::smtc::POLL_BACKGROUND}
     }
 
+    /// 浏览器里正在播放的网页媒体（视频 / 播客 / 有声书）走视频展开页。
+    /// 网页音乐若补齐了歌手和专辑，is_music() 为真，仍走原来的音乐页。
+    pub(crate) fn video_page(&self)->bool{
+        self.media.is_island_media() && self.media.is_browser() && !self.media.is_music()
+    }
+
     fn island_lyrics_active(&self)->bool {
         if self.side() {return false;}
         self.settings.island_lyrics && self.settings.visible_pages[0] && self.media.is_music()
@@ -2083,6 +2092,8 @@ impl App {
         self.clipboard.flush();
         if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
         let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
+        // 视频摘要要占一整块，其余常驻组件对称让位。
+        if self.video_page(){layout.widen(bar::MUSIC,VIDEO_PILL_EXTRA);}
         // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
         let status_width=self.status_total_width();
         if status_width>0.0 {layout.add_status(status_width);}
@@ -2204,7 +2215,7 @@ impl App {
                 let cursor=env.cursor.unwrap()-self.content_origin(win).to_vec2();
                 let mail_reading=self.page==5 && self.mail.open_uid.is_some();
                 let mail_list=self.page==5 && !self.mail.accounts.is_empty() && self.mail.open_uid.is_none() && self.mail_list_bounds().contains(cursor);
-                let music_volume=self.page==0 && (Rect::from_min_max(Pos2::new(354.0,106.0),Pos2::new(380.0,130.0)).contains(cursor)
+                let music_volume=self.page==0 && !self.video_page() && (Rect::from_min_max(Pos2::new(354.0,106.0),Pos2::new(380.0,130.0)).contains(cursor)
                     || self.music_volume_open && crate::pages::MUSIC_VOLUME_RECT.contains(cursor));
                 if mail_reading || mail_list || music_volume {self.wheel_delta=0.0;}
                 else {
@@ -3222,10 +3233,22 @@ impl App {
         if has_music && (p>0.1 || layout.x[bar::MUSIC].is_some()) {
             let x=lerp(local_cx+layout.x[bar::MUSIC].unwrap_or(0.0),367.0,m);
             let y=lerp(15.0,18.0,m);
-            paint::playback_bars(base,x,y,self.t,self.media.playing,theme::WHITE);
-            if self.open && reveal>0.6 && base.hit(x-13.0,y-14.0,26.0,28.0,"header-music")
-                .on_hover_text(if self.settings.visible_pages[0]{"返回音乐播放页"}else{"打开音乐设置"})
-                .on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){self.show_page(0);}
+            let video=self.video_page();
+            if video {
+                // 展开时淡出，让位给视频展开页；收起态才显示标题、来源和进度。
+                let a=1.0-smoothstep(0.15,0.55,m);
+                if a>0.01 {self.draw_video_pill(&base.faded(a),x,y);}
+            } else {
+                paint::playback_bars(base,x,y,self.t,self.media.playing,theme::WHITE);
+            }
+            // 保持原来的短路语义：收起态不注册命中区，免得吞掉胶囊上的其它点击。
+            if self.open && reveal>0.6 {
+                let hit=if video {base.hit(x-VIDEO_PILL_W/2.0,y-14.0,VIDEO_PILL_W,34.0,"header-music")}
+                        else {base.hit(x-13.0,y-14.0,26.0,28.0,"header-music")};
+                if hit.on_hover_text(if self.settings.visible_pages[0]{
+                        if video{"返回网页视频页"}else{"返回音乐播放页"}}else{"打开音乐设置"})
+                    .on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){self.show_page(0);}
+            }
         }
         let compact_alpha=1.0-smoothstep(0.0,0.22,p);
         if self.t<self.notification_bell_until&&!self.compact_notices()&&p<0.1 {
@@ -3375,7 +3398,7 @@ impl App {
             self.render_page(self.page, c, env, cmds);
         }
         self.nav(c);
-        if self.page==0 && c.live {self.draw_music_volume(c,cmds);}
+        if self.page==0 && !self.video_page() && c.live {self.draw_music_volume(c,cmds);}
     }
 
     fn page_title(&self, page: usize, c: &Card) {
@@ -3442,7 +3465,7 @@ impl App {
 
     fn render_page(&mut self, page: usize, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
         match page {
-            0 => self.page_music(c, env, cmds),
+            0 => if self.video_page(){self.page_video(c, env, cmds)}else{self.page_music(c, env, cmds)},
             1 => self.page_focus(c, env),
             2 => self.page_water(c, env),
             3 => self.page_shelf(c, env, cmds),

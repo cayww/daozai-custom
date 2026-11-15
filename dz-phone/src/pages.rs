@@ -36,11 +36,20 @@ fn cover_colors(title: &str) -> (Color32, Color32) {
 }
 
 impl App {
-    // ================= 音乐 =================
-    pub(crate) fn page_music(&mut self, c: &Card, _env: &Env, cmds: &mut Vec<Cmd>) {
+    // ================= 音乐 / 网页视频 =================
+    /// 音乐展开页。
+    pub(crate) fn page_music(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+        self.page_media(c, env, cmds, false);
+    }
+    /// 网页视频展开页：同一张卡片骨架，但按视频取舍控件。
+    pub(crate) fn page_video(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+        self.page_media(c, env, cmds, true);
+    }
+    fn page_media(&mut self, c: &Card, _env: &Env, cmds: &mut Vec<Cmd>, video: bool) {
         let np=self.media.clone();
         let has=!np.title.is_empty();
-        let with_lyrics=has && self.show_lyrics;
+        // 视频没有歌词；with_lyrics 会改变封面尺寸和文字列宽，必须一起关掉。
+        let with_lyrics=has && self.show_lyrics && !video;
         let ctx=c.ui.ctx().clone();
         let playing_t=ctx.animate_bool_with_time(egui::Id::new("np-playing"),np.playing,0.22);
         let art_size=if with_lyrics {44.0}else{62.0};
@@ -68,7 +77,9 @@ impl App {
             let title_size=if with_lyrics {12.0}else{14.0};
             c.text(text_x,if with_lyrics {41.0}else{53.0},&c.fit(&np.title,title_size,W::Bold,text_width),title_size,W::Bold,theme::WHITE,H::Left);
             // 网页媒体常没有歌手；这时把浏览器来源写在副标题，别留一行空白。
-            let subtitle=if np.artist.trim().is_empty() && np.is_browser() {np.source.clone()} else {np.artist.clone()};
+            let subtitle=if video {format!("{} · 网页播放",np.source)}
+                else if np.artist.trim().is_empty() && np.is_browser() {np.source.clone()}
+                else {np.artist.clone()};
             c.text(text_x,if with_lyrics {57.0}else{67.0},&c.fit(&subtitle,size::BODY,W::Regular,text_width),size::BODY,W::Regular,theme::GRAY,H::Left);
             if with_lyrics {self.draw_music_lyrics(c);}
         }
@@ -131,26 +142,34 @@ impl App {
             if has && hover>0.01 {c.faded(hover).circle(x,y,12.5,Color32::from_white_alpha(20));}
             (response,c.scaled(x,y,1.0-0.1*pressed))
         };
-        let (lyrics_button,lyrics_card)=btn(74.0,26.0,"m-lyr");
-        lyrics_card.text(74.0,y+5.0,"词",14.0,W::Semibold,if !has {ic}else if self.show_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
+        // 视频页不画「词」和音乐应用音量：网页媒体没有歌词，也没有对应的应用内音量通道。
+        let lyrics=if video {None}else{
+            let (button,card)=btn(74.0,26.0,"m-lyr");
+            card.text(74.0,y+5.0,"词",14.0,W::Semibold,if !has {ic}else if self.show_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
+            Some(button)
+        };
         let (previous,previous_card)=btn(162.0,30.0,"m-prev");
         paint::skip(&previous_card,162.0,y,-1.0,ic);
         let (play,play_card)=btn(210.5,30.0,"m-play");
         paint::play_pause(&play_card,211.0,y,15.0,playing_t,ic);
         let (next,next_card)=btn(258.0,30.0,"m-next");
         paint::skip(&next_card,258.0,y,1.0,ic);
-        let (volume_button,volume_card)=btn(367.0,26.0,"m-volume");
-        let (volume,muted)=self.music_volume_ui.unwrap_or((0,false));
-        paint::speaker(&volume_card,367.0,y,muted,if self.music_volume_ui.is_some(){ic}else{theme::GRAY});
-        let hint=if self.music_volume_ui.is_some(){format!("音乐应用音量 {volume}%{} · 点击展开 · 滚轮调节",if muted{"（已静音）"}else{""})}else{"暂无可调节的音乐音频会话".into()};
-        let volume_button=volume_button.on_hover_text(hint);
-        if c.live && has && self.music_volume_ui.is_some() {
-            if volume_button.clicked(){self.music_volume_open=!self.music_volume_open;}
-            if volume_button.hovered(){
+        let volume=if video {None}else{
+            let (button,card)=btn(367.0,26.0,"m-volume");
+            let (value,muted)=self.music_volume_ui.unwrap_or((0,false));
+            paint::speaker(&card,367.0,y,muted,if self.music_volume_ui.is_some(){ic}else{theme::GRAY});
+            let hint=if self.music_volume_ui.is_some(){format!("音乐应用音量 {value}%{} · 点击展开 · 滚轮调节",if muted{"（已静音）"}else{""})}else{"暂无可调节的音乐音频会话".into()};
+            Some((button.on_hover_text(hint),value))
+        };
+        if let Some((button,value))=volume {
+            if c.live && has && self.music_volume_ui.is_some() {
+                if button.clicked(){self.music_volume_open=!self.music_volume_open;}
+                if button.hovered(){
                     let delta=c.ui.ctx().input(|i|i.raw_scroll_delta.y);
                     if delta.abs()>0.5 {
-                        self.change_music_volume(Transport::SetVolume((volume as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32),cmds);
+                        self.change_music_volume(Transport::SetVolume((value as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32),cmds);
                     }
+                }
             }
         }
         if has {
@@ -158,16 +177,18 @@ impl App {
             if play.clicked() {cmds.push(Cmd::Media(Transport::Toggle));}
             if next.clicked() {self.music_restart_at=Some(self.t);self.music_seek_ui=None;cmds.push(Cmd::Media(Transport::Next));}
         }
-        if lyrics_button.on_hover_text(if self.show_lyrics {"隐藏歌词"}else{"显示歌词"}).clicked() {
-            if !has {self.say("先放一首歌吧");}
-            else {
-                self.show_lyrics=!self.show_lyrics;
-                self.settings.lyrics_enabled=self.show_lyrics;
-                self.settings.save();
+        if let Some(button)=lyrics {
+            if button.on_hover_text(if self.show_lyrics {"隐藏歌词"}else{"显示歌词"}).clicked() {
+                if !has {self.say("先放一首歌吧");}
+                else {
+                    self.show_lyrics=!self.show_lyrics;
+                    self.settings.lyrics_enabled=self.show_lyrics;
+                    self.settings.save();
+                }
             }
         }
-        // 岛上歌词是横向的，只在顶部停靠时提供。
-        if has && !self.side() {
+        // 岛上歌词是横向的，只在顶部停靠时提供，视频页没有歌词可显示。
+        if has && !video && !self.side() {
             let (button,button_card)=capsule(c,279.0,108.0,68.0,20.0,"m-island-lyrics",if self.settings.island_lyrics {Color32::from_gray(39)}else{Color32::from_gray(22)},Color32::from_gray(47));
             button_card.text(313.0,122.0,"岛上歌词",10.0,W::Semibold,if self.settings.island_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
             if button.on_hover_text(if self.settings.island_lyrics {"关闭收起时的歌词"}else{"收起时显示当前歌词"}).clicked() {
@@ -175,6 +196,24 @@ impl App {
                 self.settings.save();
             }
         }
+        if video && has {
+            c.text(375.0,25.0,"网页视频",10.0,W::Semibold,theme::GRAY,H::Right);
+        }
+    }
+
+    /// 收起态网页视频：标题 + 来源/时间 + 细进度条，代替音乐的小播放条。
+    pub(crate) fn draw_video_pill(&self,c:&Card,cx:f32,cy:f32){
+        let w=crate::app::VIDEO_PILL_W;
+        let left=cx-w/2.0;
+        let np=&self.media;
+        // 收起药丸只有 30 点高，三行内容必须压在 cy-12..cy+13 内。
+        paint::play_pause(c,left+9.0,cy+1.0,6.0,if np.playing{1.0}else{0.0},theme::WHITE);
+        c.text(left+20.0,cy-11.0,&c.fit(&np.title,10.5,W::Semibold,w-24.0),10.5,W::Semibold,theme::WHITE,H::Left);
+        let detail=if np.duration>0.0 {format!("{} · {}",np.source,mmss(np.position))} else {np.source.clone()};
+        c.text(left+20.0,cy+1.0,&c.fit(&detail,9.0,W::Regular,w-24.0),9.0,W::Regular,theme::GRAY,H::Left);
+        let frac=if np.duration>0.0 {(np.position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
+        c.fill(left,cy+11.0,w,2.0,1.0,Color32::from_gray(70));
+        if frac>0.0 {c.fill(left,cy+11.0,w*frac,2.0,1.0,theme::WHITE);}
     }
 
     fn change_music_volume(&mut self,command:Transport,cmds:&mut Vec<Cmd>){

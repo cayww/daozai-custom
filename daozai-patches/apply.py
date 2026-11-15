@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-126"
+PATCH_ID = "custom-127"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -9500,6 +9500,317 @@ fn browser_playback_is_kept_on_the_music_page(){
     h.media=crate::smtc::NowPlaying{source:"SomeApp".into(),title:"一个未知会话".into(),playing:true,..Default::default()};
     h.frame(vec![]);
     assert!(h.app.media.title.is_empty(),"非浏览器 Unknown 会话仍应上不了岛");
+}
+'''),
+
+    # custom-127：视频专用展开页 + 收起态视频摘要（标题/来源/进度）
+    ("src/app.rs",
+     '''pub const PH: f32 = 140.0; // 展开面板高
+pub const MUSIC_PAGE: usize = 0;
+pub const FOCUS_PAGE: usize = 1;
+pub const WATER_PAGE: usize = 2;''',
+     '''pub const PH: f32 = 140.0; // 展开面板高
+pub const MUSIC_PAGE: usize = 0;
+/// 收起态网页视频摘要的宽度（逻辑点）；MUSIC 槽原本只有 14 点，需要加宽容纳标题和进度条。
+pub(crate) const VIDEO_PILL_W: f32 = 132.0;
+const VIDEO_PILL_EXTRA: f32 = VIDEO_PILL_W - 14.0;
+pub const FOCUS_PAGE: usize = 1;
+pub const WATER_PAGE: usize = 2;'''),
+    ("src/app.rs",
+     '''    }
+
+    fn island_lyrics_active(&self)->bool {
+        if self.side() {return false;}''',
+     '''    }
+
+    /// 浏览器里正在播放的网页媒体（视频 / 播客 / 有声书）走视频展开页。
+    /// 网页音乐若补齐了歌手和专辑，is_music() 为真，仍走原来的音乐页。
+    pub(crate) fn video_page(&self)->bool{
+        self.media.is_island_media() && self.media.is_browser() && !self.media.is_music()
+    }
+
+    fn island_lyrics_active(&self)->bool {
+        if self.side() {return false;}'''),
+    ("src/app.rs",
+     '''        if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
+        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
+        let status_width=self.status_total_width();''',
+     '''        if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
+        // 视频摘要要占一整块，其余常驻组件对称让位。
+        if self.video_page(){layout.widen(bar::MUSIC,VIDEO_PILL_EXTRA);}
+        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
+        let status_width=self.status_total_width();'''),
+    ("src/app.rs",
+     '''                let mail_reading=self.page==5 && self.mail.open_uid.is_some();
+                let mail_list=self.page==5 && !self.mail.accounts.is_empty() && self.mail.open_uid.is_none() && self.mail_list_bounds().contains(cursor);
+                let music_volume=self.page==0 && (Rect::from_min_max(Pos2::new(354.0,106.0),Pos2::new(380.0,130.0)).contains(cursor)
+                    || self.music_volume_open && crate::pages::MUSIC_VOLUME_RECT.contains(cursor));
+                if mail_reading || mail_list || music_volume {self.wheel_delta=0.0;}''',
+     '''                let mail_reading=self.page==5 && self.mail.open_uid.is_some();
+                let mail_list=self.page==5 && !self.mail.accounts.is_empty() && self.mail.open_uid.is_none() && self.mail_list_bounds().contains(cursor);
+                let music_volume=self.page==0 && !self.video_page() && (Rect::from_min_max(Pos2::new(354.0,106.0),Pos2::new(380.0,130.0)).contains(cursor)
+                    || self.music_volume_open && crate::pages::MUSIC_VOLUME_RECT.contains(cursor));
+                if mail_reading || mail_list || music_volume {self.wheel_delta=0.0;}'''),
+    ("src/app.rs",
+     '''            let x=lerp(local_cx+layout.x[bar::MUSIC].unwrap_or(0.0),367.0,m);
+            let y=lerp(15.0,18.0,m);
+            paint::playback_bars(base,x,y,self.t,self.media.playing,theme::WHITE);
+            if self.open && reveal>0.6 && base.hit(x-13.0,y-14.0,26.0,28.0,"header-music")
+                .on_hover_text(if self.settings.visible_pages[0]{"返回音乐播放页"}else{"打开音乐设置"})
+                .on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){self.show_page(0);}
+        }
+        let compact_alpha=1.0-smoothstep(0.0,0.22,p);''',
+     '''            let x=lerp(local_cx+layout.x[bar::MUSIC].unwrap_or(0.0),367.0,m);
+            let y=lerp(15.0,18.0,m);
+            let video=self.video_page();
+            if video {
+                // 展开时淡出，让位给视频展开页；收起态才显示标题、来源和进度。
+                let a=1.0-smoothstep(0.15,0.55,m);
+                if a>0.01 {self.draw_video_pill(&base.faded(a),x,y);}
+            } else {
+                paint::playback_bars(base,x,y,self.t,self.media.playing,theme::WHITE);
+            }
+            // 保持原来的短路语义：收起态不注册命中区，免得吞掉胶囊上的其它点击。
+            if self.open && reveal>0.6 {
+                let hit=if video {base.hit(x-VIDEO_PILL_W/2.0,y-14.0,VIDEO_PILL_W,34.0,"header-music")}
+                        else {base.hit(x-13.0,y-14.0,26.0,28.0,"header-music")};
+                if hit.on_hover_text(if self.settings.visible_pages[0]{
+                        if video{"返回网页视频页"}else{"返回音乐播放页"}}else{"打开音乐设置"})
+                    .on_hover_cursor(egui::CursorIcon::PointingHand).clicked(){self.show_page(0);}
+            }
+        }
+        let compact_alpha=1.0-smoothstep(0.0,0.22,p);'''),
+    ("src/app.rs",
+     '''        }
+        self.nav(c);
+        if self.page==0 && c.live {self.draw_music_volume(c,cmds);}
+    }
+''',
+     '''        }
+        self.nav(c);
+        if self.page==0 && !self.video_page() && c.live {self.draw_music_volume(c,cmds);}
+    }
+'''),
+    ("src/app.rs",
+     '''    fn render_page(&mut self, page: usize, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+        match page {
+            0 => self.page_music(c, env, cmds),
+            1 => self.page_focus(c, env),
+            2 => self.page_water(c, env),''',
+     '''    fn render_page(&mut self, page: usize, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+        match page {
+            0 => if self.video_page(){self.page_video(c, env, cmds)}else{self.page_music(c, env, cmds)},
+            1 => self.page_focus(c, env),
+            2 => self.page_water(c, env),'''),
+    ("src/pages.rs",
+     '''
+impl App {
+    // ================= 音乐 =================
+    pub(crate) fn page_music(&mut self, c: &Card, _env: &Env, cmds: &mut Vec<Cmd>) {
+        let np=self.media.clone();
+        let has=!np.title.is_empty();
+        let with_lyrics=has && self.show_lyrics;
+        let ctx=c.ui.ctx().clone();
+        let playing_t=ctx.animate_bool_with_time(egui::Id::new("np-playing"),np.playing,0.22);''',
+     '''
+impl App {
+    // ================= 音乐 / 网页视频 =================
+    /// 音乐展开页。
+    pub(crate) fn page_music(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+        self.page_media(c, env, cmds, false);
+    }
+    /// 网页视频展开页：同一张卡片骨架，但按视频取舍控件。
+    pub(crate) fn page_video(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+        self.page_media(c, env, cmds, true);
+    }
+    fn page_media(&mut self, c: &Card, _env: &Env, cmds: &mut Vec<Cmd>, video: bool) {
+        let np=self.media.clone();
+        let has=!np.title.is_empty();
+        // 视频没有歌词；with_lyrics 会改变封面尺寸和文字列宽，必须一起关掉。
+        let with_lyrics=has && self.show_lyrics && !video;
+        let ctx=c.ui.ctx().clone();
+        let playing_t=ctx.animate_bool_with_time(egui::Id::new("np-playing"),np.playing,0.22);'''),
+    ("src/pages.rs",
+     '''            c.text(text_x,if with_lyrics {41.0}else{53.0},&c.fit(&np.title,title_size,W::Bold,text_width),title_size,W::Bold,theme::WHITE,H::Left);
+            // 网页媒体常没有歌手；这时把浏览器来源写在副标题，别留一行空白。
+            let subtitle=if np.artist.trim().is_empty() && np.is_browser() {np.source.clone()} else {np.artist.clone()};
+            c.text(text_x,if with_lyrics {57.0}else{67.0},&c.fit(&subtitle,size::BODY,W::Regular,text_width),size::BODY,W::Regular,theme::GRAY,H::Left);
+            if with_lyrics {self.draw_music_lyrics(c);}''',
+     '''            c.text(text_x,if with_lyrics {41.0}else{53.0},&c.fit(&np.title,title_size,W::Bold,text_width),title_size,W::Bold,theme::WHITE,H::Left);
+            // 网页媒体常没有歌手；这时把浏览器来源写在副标题，别留一行空白。
+            let subtitle=if video {format!("{} · 网页播放",np.source)}
+                else if np.artist.trim().is_empty() && np.is_browser() {np.source.clone()}
+                else {np.artist.clone()};
+            c.text(text_x,if with_lyrics {57.0}else{67.0},&c.fit(&subtitle,size::BODY,W::Regular,text_width),size::BODY,W::Regular,theme::GRAY,H::Left);
+            if with_lyrics {self.draw_music_lyrics(c);}'''),
+    ("src/pages.rs",
+     '''            (response,c.scaled(x,y,1.0-0.1*pressed))
+        };
+        let (lyrics_button,lyrics_card)=btn(74.0,26.0,"m-lyr");
+        lyrics_card.text(74.0,y+5.0,"词",14.0,W::Semibold,if !has {ic}else if self.show_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
+        let (previous,previous_card)=btn(162.0,30.0,"m-prev");
+        paint::skip(&previous_card,162.0,y,-1.0,ic);
+        let (play,play_card)=btn(210.5,30.0,"m-play");
+        paint::play_pause(&play_card,211.0,y,15.0,playing_t,ic);
+        let (next,next_card)=btn(258.0,30.0,"m-next");
+        paint::skip(&next_card,258.0,y,1.0,ic);
+        let (volume_button,volume_card)=btn(367.0,26.0,"m-volume");
+        let (volume,muted)=self.music_volume_ui.unwrap_or((0,false));
+        paint::speaker(&volume_card,367.0,y,muted,if self.music_volume_ui.is_some(){ic}else{theme::GRAY});
+        let hint=if self.music_volume_ui.is_some(){format!("音乐应用音量 {volume}%{} · 点击展开 · 滚轮调节",if muted{"（已静音）"}else{""})}else{"暂无可调节的音乐音频会话".into()};
+        let volume_button=volume_button.on_hover_text(hint);
+        if c.live && has && self.music_volume_ui.is_some() {
+            if volume_button.clicked(){self.music_volume_open=!self.music_volume_open;}
+            if volume_button.hovered(){
+                    let delta=c.ui.ctx().input(|i|i.raw_scroll_delta.y);
+                    if delta.abs()>0.5 {
+                        self.change_music_volume(Transport::SetVolume((volume as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32),cmds);
+                    }
+            }
+        }
+        if has {
+            if previous.clicked() {self.music_restart_at=Some(self.t);self.music_seek_ui=None;cmds.push(Cmd::Media(Transport::Prev));}
+            if play.clicked() {cmds.push(Cmd::Media(Transport::Toggle));}
+            if next.clicked() {self.music_restart_at=Some(self.t);self.music_seek_ui=None;cmds.push(Cmd::Media(Transport::Next));}
+        }
+        if lyrics_button.on_hover_text(if self.show_lyrics {"隐藏歌词"}else{"显示歌词"}).clicked() {
+            if !has {self.say("先放一首歌吧");}
+            else {
+                self.show_lyrics=!self.show_lyrics;
+                self.settings.lyrics_enabled=self.show_lyrics;
+                self.settings.save();
+            }
+        }
+        // 岛上歌词是横向的，只在顶部停靠时提供。
+        if has && !self.side() {
+            let (button,button_card)=capsule(c,279.0,108.0,68.0,20.0,"m-island-lyrics",if self.settings.island_lyrics {Color32::from_gray(39)}else{Color32::from_gray(22)},Color32::from_gray(47));
+            button_card.text(313.0,122.0,"岛上歌词",10.0,W::Semibold,if self.settings.island_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
+            if button.on_hover_text(if self.settings.island_lyrics {"关闭收起时的歌词"}else{"收起时显示当前歌词"}).clicked() {
+                self.settings.island_lyrics=!self.settings.island_lyrics;
+                self.settings.save();
+            }
+        }
+    }
+''',
+     '''            (response,c.scaled(x,y,1.0-0.1*pressed))
+        };
+        // 视频页不画「词」和音乐应用音量：网页媒体没有歌词，也没有对应的应用内音量通道。
+        let lyrics=if video {None}else{
+            let (button,card)=btn(74.0,26.0,"m-lyr");
+            card.text(74.0,y+5.0,"词",14.0,W::Semibold,if !has {ic}else if self.show_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
+            Some(button)
+        };
+        let (previous,previous_card)=btn(162.0,30.0,"m-prev");
+        paint::skip(&previous_card,162.0,y,-1.0,ic);
+        let (play,play_card)=btn(210.5,30.0,"m-play");
+        paint::play_pause(&play_card,211.0,y,15.0,playing_t,ic);
+        let (next,next_card)=btn(258.0,30.0,"m-next");
+        paint::skip(&next_card,258.0,y,1.0,ic);
+        let volume=if video {None}else{
+            let (button,card)=btn(367.0,26.0,"m-volume");
+            let (value,muted)=self.music_volume_ui.unwrap_or((0,false));
+            paint::speaker(&card,367.0,y,muted,if self.music_volume_ui.is_some(){ic}else{theme::GRAY});
+            let hint=if self.music_volume_ui.is_some(){format!("音乐应用音量 {value}%{} · 点击展开 · 滚轮调节",if muted{"（已静音）"}else{""})}else{"暂无可调节的音乐音频会话".into()};
+            Some((button.on_hover_text(hint),value))
+        };
+        if let Some((button,value))=volume {
+            if c.live && has && self.music_volume_ui.is_some() {
+                if button.clicked(){self.music_volume_open=!self.music_volume_open;}
+                if button.hovered(){
+                    let delta=c.ui.ctx().input(|i|i.raw_scroll_delta.y);
+                    if delta.abs()>0.5 {
+                        self.change_music_volume(Transport::SetVolume((value as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32),cmds);
+                    }
+                }
+            }
+        }
+        if has {
+            if previous.clicked() {self.music_restart_at=Some(self.t);self.music_seek_ui=None;cmds.push(Cmd::Media(Transport::Prev));}
+            if play.clicked() {cmds.push(Cmd::Media(Transport::Toggle));}
+            if next.clicked() {self.music_restart_at=Some(self.t);self.music_seek_ui=None;cmds.push(Cmd::Media(Transport::Next));}
+        }
+        if let Some(button)=lyrics {
+            if button.on_hover_text(if self.show_lyrics {"隐藏歌词"}else{"显示歌词"}).clicked() {
+                if !has {self.say("先放一首歌吧");}
+                else {
+                    self.show_lyrics=!self.show_lyrics;
+                    self.settings.lyrics_enabled=self.show_lyrics;
+                    self.settings.save();
+                }
+            }
+        }
+        // 岛上歌词是横向的，只在顶部停靠时提供，视频页没有歌词可显示。
+        if has && !video && !self.side() {
+            let (button,button_card)=capsule(c,279.0,108.0,68.0,20.0,"m-island-lyrics",if self.settings.island_lyrics {Color32::from_gray(39)}else{Color32::from_gray(22)},Color32::from_gray(47));
+            button_card.text(313.0,122.0,"岛上歌词",10.0,W::Semibold,if self.settings.island_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
+            if button.on_hover_text(if self.settings.island_lyrics {"关闭收起时的歌词"}else{"收起时显示当前歌词"}).clicked() {
+                self.settings.island_lyrics=!self.settings.island_lyrics;
+                self.settings.save();
+            }
+        }
+        if video && has {
+            c.text(375.0,25.0,"网页视频",10.0,W::Semibold,theme::GRAY,H::Right);
+        }
+    }
+
+    /// 收起态网页视频：标题 + 来源/时间 + 细进度条，代替音乐的小播放条。
+    pub(crate) fn draw_video_pill(&self,c:&Card,cx:f32,cy:f32){
+        let w=crate::app::VIDEO_PILL_W;
+        let left=cx-w/2.0;
+        let np=&self.media;
+        // 收起药丸只有 30 点高，三行内容必须压在 cy-12..cy+13 内。
+        paint::play_pause(c,left+9.0,cy+1.0,6.0,if np.playing{1.0}else{0.0},theme::WHITE);
+        c.text(left+20.0,cy-11.0,&c.fit(&np.title,10.5,W::Semibold,w-24.0),10.5,W::Semibold,theme::WHITE,H::Left);
+        let detail=if np.duration>0.0 {format!("{} · {}",np.source,mmss(np.position))} else {np.source.clone()};
+        c.text(left+20.0,cy+1.0,&c.fit(&detail,9.0,W::Regular,w-24.0),9.0,W::Regular,theme::GRAY,H::Left);
+        let frac=if np.duration>0.0 {(np.position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
+        c.fill(left,cy+11.0,w,2.0,1.0,Color32::from_gray(70));
+        if frac>0.0 {c.fill(left,cy+11.0,w*frac,2.0,1.0,theme::WHITE);}
+    }
+'''),
+    ("src/ui_tests.rs",
+     '''    assert!(h.app.media.title.is_empty(),"非浏览器 Unknown 会话仍应上不了岛");
+}
+''',
+     '''    assert!(h.app.media.title.is_empty(),"非浏览器 Unknown 会话仍应上不了岛");
+}
+
+fn rendered_text(h:&H)->Vec<String>{
+    h.shapes.iter().filter_map(|s|match &s.shape{
+        egui::Shape::Text(t)=>Some(t.galley.text().to_string()),_=>None}).collect()
+}
+
+#[test]
+fn browser_video_has_its_own_page_and_collapsed_summary(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.media=crate::smtc::NowPlaying{source:"Chrome".into(),title:"《刚烈界魏延》".into(),
+        playing:true,duration:1358.0,position:120.0,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.frame(vec![]);h.frame(vec![]);
+    assert!(h.app.video_page(),"浏览器网页媒体应走视频页");
+    let collapsed=rendered_text(&h);
+    assert!(collapsed.iter().any(|t|t.contains("刚烈界魏延")),"收起态应显示视频标题");
+    assert!(collapsed.iter().any(|t|t.contains("Chrome")),"收起态应显示来源");
+
+    h.app.show_page(0);
+    h.hover(H::local(200.0,40.0),1.0);
+    let expanded=rendered_text(&h);
+    assert!(expanded.iter().any(|t|t.contains("网页视频")),"视频页应有网页视频标识");
+    assert!(!expanded.iter().any(|t|t.contains("岛上歌词")),"视频页不该有岛上歌词开关");
+    assert!(!expanded.iter().any(|t|t=="词"),"视频页不该有歌词按钮");
+
+    // 有歌手/专辑的普通音乐仍走原音乐页，控件一个不少。
+    h.media=crate::smtc::NowPlaying{source:"cloudmusic.exe".into(),title:"某首歌".into(),
+        artist:"歌手".into(),album:"专辑".into(),playing:true,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.frame(vec![]);
+    assert!(!h.app.video_page());
+    let music=rendered_text(&h);
+    assert!(music.iter().any(|t|t.contains("岛上歌词")),"音乐页仍保留岛上歌词开关");
+    assert!(music.iter().any(|t|t=="词"),"音乐页仍保留歌词按钮");
 }
 '''),
 ]
