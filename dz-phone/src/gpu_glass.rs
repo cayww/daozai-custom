@@ -192,11 +192,15 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let d = rr_sdf(local, half_size, radius);
     let mat = clamp(u.params.w, 0.0, 1.0);
 
-    // 岛体外：窗口被 SetWindowRgn 裁成岛体轮廓，但区域比岛体略大，
-    // 不能留纯透明（窗口底是不透明黑），给一圈很淡的接触阴影。
+    // 岛体外：SetWindowRgn 的窗口区域比岛体大一圈（展开时左右各约 38px），
+    // 而兼容渲染的窗口底是不透明黑。这里必须把**背后的桌面**画回去，
+    // 否则这圈余量会变成明显的黑边/黑色背景 —— 之前涂近黑就是这么来的。
     if (d > 1.0) {
-        let sh = (1.0 - smoothstep(0.0, 6.0, d - 1.0)) * mix(0.10, 0.055, mat);
-        return vec4<f32>(vec3<f32>(0.055, 0.062, 0.072) * sh, sh);
+        let bg = sample_px(p);
+        // 紧贴边缘留一点极淡的接触阴影，玻璃才不像凭空浮着。
+        let sh = (1.0 - smoothstep(0.0, 7.0, d - 1.0)) * mix(0.10, 0.05, mat);
+        let col = bg * (1.0 - sh) + vec3<f32>(0.05, 0.06, 0.07) * sh;
+        return vec4<f32>(col, 1.0);
     }
 
     let aa = 1.0 - smoothstep(-0.8, 0.8, d);
