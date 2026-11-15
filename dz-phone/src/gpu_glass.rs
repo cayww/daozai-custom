@@ -186,9 +186,13 @@ fn tap5(px : vec2<f32>, ca : vec2<f32>, blur : f32) -> vec3<f32> {
 fn fs(i : VOut) -> @location(0) vec4<f32> {
     let tex = vec2<f32>(u.extra.y, u.extra.z);
     let p = i.uv * tex;
-    let half_size = u.bounds.zw * 0.5;
-    let local = p - u.bounds.xy - half_size;
-    let radius = min(u.extra.x, min(half_size.x, half_size.y));
+    // 形状整体内缩 1.2px：SetWindowRgn 的裁剪是每像素硬边、没有抗锯齿，
+    // 玻璃边缘正好压在区域边界上时，半透明像素会被切掉 → 阶梯锯齿。
+    // 内缩后抗锯齿完整落在窗口区域内，区域只裁到已经完全透明的部分。
+    let inset = 1.2;
+    let half_size = max(u.bounds.zw * 0.5 - vec2<f32>(inset), vec2<f32>(2.0));
+    let local = p - u.bounds.xy - u.bounds.zw * 0.5;
+    let radius = max(min(u.extra.x - inset, min(half_size.x, half_size.y)), 0.0);
     let d = rr_sdf(local, half_size, radius);
     let mat = clamp(u.params.w, 0.0, 1.0);
 
