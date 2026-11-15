@@ -398,9 +398,12 @@ fn enable_capture_exclusion() {
         BOOL(1)
     }
     let tick = EXCLUSION_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // 必须每帧刷新！SetWindowRgn / 样式变化会重置 affinity，降频到每 30 帧试过：
+    // 中间那 29 帧 WGC 会抓回岛仔自己，而岛仔背景又来自上一帧纹理 → 直接反馈成
+    // 满屏竖条纹，而且会写进底片固化下来。EnumWindows 的几十次调用开销远小于这个代价。
     let _ = EXCLUDED_N.swap(0, std::sync::atomic::Ordering::Relaxed);
     unsafe { let _ = EnumWindows(Some(visit), LPARAM(0)); }
-    if tick == 0 || tick % 600 == 0 {
+    if tick == 0 || tick % 1800 == 0 {
         diag(&format!("exclude: 刷新 #{} 命中 {} 个窗口", tick,
                       EXCLUDED_N.load(std::sync::atomic::Ordering::Relaxed)));
     }
@@ -454,7 +457,8 @@ fn sample_luma(buf: &[u8], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -
         for x in (0..w as i32).step_by(16) {
             if x >= x0 && x < x1 && y >= y0 && y < y1 { continue; }
             let i = ((y as u32 * w + x as u32) * 4) as usize;
-            sum += (0.299 * buf[i] as f32 + 0.587 * buf[i + 1] as f32 + 0.114 * buf[i + 2] as f32) / 255.0;
+            // 用平均亮度：纹理是 BGRA，R/B 对调对平均值无影响。
+            sum += (buf[i] as f32 + buf[i + 1] as f32 + buf[i + 2] as f32) / 3.0 / 255.0;
             n += 1.0;
         }
     }
@@ -536,13 +540,9 @@ fn grab_raw(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
         let (bw, bh) = (w as u32, h as u32);
         let mut rgba = vec![0u8; (bw * bh * 4) as usize];
         if ok && !bits.is_null() {
+            // DIB 是 BGRA，纹理格式也用 Bgra8Unorm，整块拷贝即可（省掉每帧 4 次/像素的转换）。
             let src = std::slice::from_raw_parts(bits as *const u8, rgba.len());
-            for i in (0..rgba.len()).step_by(4) {
-                rgba[i] = src[i + 2];
-                rgba[i + 1] = src[i + 1];
-                rgba[i + 2] = src[i];
-                rgba[i + 3] = 255;
-            }
+            rgba.copy_from_slice(src);
         }
         SelectObject(mem, old_bmp);
         let _ = DeleteObject(HGDIOBJ(bmp.0));
@@ -631,6 +631,17 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
     let p = guard.as_mut().unwrap();
     let (ox, oy) = (x - p.x, y - p.y);
     let mut out = vec![0u8; (bw * bh * 4) as usize];
+    // 快速路径：干净帧且底片完全覆盖当前矩形时，输出就是 raw 本身，
+    // 只要整块刷进底片。省掉每帧 90k+ 次逐像素判断（这是抓屏路径里最重的一段）。
+    if clean_frame && ox >= 0 && oy >= 0 && ox + bw as i32 <= p.w as i32 && oy + bh as i32 <= p.h as i32 {
+        out.copy_from_slice(raw);
+        let row = (bw * 4) as usize;
+        for yy in 0..bh as usize {
+            let d = ((oy as usize + yy) * p.w as usize + ox as usize) * 4;
+            p.data[d..d + row].copy_from_slice(&raw[yy * row..yy * row + row]);
+        }
+        return Some(out);
+    }
     for yy in 0..bh as i32 {
         for xx in 0..bw as i32 {
             let d = ((yy as u32 * bw + xx as u32) * 4) as usize;
@@ -775,7 +786,7 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    format: wgpu::TextureFormat::Bgra8Unorm,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 });

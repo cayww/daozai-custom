@@ -2047,6 +2047,12 @@ impl App {
         self.current_hour=env.hour();
         self.system_idle=env.idle_seconds;
         self.dt = dt;
+        // 液态玻璃的背景来自实时抓屏：动态壁纸/视频一直在动，但 Windows 下 vsync 关闭、
+        // 重绘完全由输入事件驱动。鼠标不动时 egui 不重绘 → prepare 不调用 → 抓屏停止，
+        // 玻璃背景就「冻住」了，看起来正好像卡顿。这里主动按 60fps 预约重绘。
+        if self.settings.skin == model::Skin::Liquid && self.wgpu_format.is_some() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+        }
         // 液态玻璃：背景亮度决定深/浅材质。0.52/0.66 之间是滞回区，
         // 避免在阈值附近来回闪；平滑系数让 shader 与文字颜色同步过渡。
         let luma=crate::gpu_glass::background_luma();

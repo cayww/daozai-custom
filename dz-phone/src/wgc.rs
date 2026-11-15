@@ -193,19 +193,17 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         s.context.CopySubresourceRegion(&s.staging, 0, 0, 0, 0, &src_tex, 0, Some(&src_box));
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         if s.context.Map(&s.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).is_err() { return Grab::Unavailable; }
+        // 帧格式本来就是 B8G8R8A8，和 wgpu 纹理的 Bgra8Unorm 一致，
+        // 按行整段拷贝即可 —— 之前每帧做 4 次/像素的逐字节转换，在展开态
+        // （820x291≈24 万像素）是明显开销。
         let mut rgba = vec![0u8; (bw * bh * 4) as usize];
         if !mapped.pData.is_null() {
             let ptr = mapped.pData as *const u8;
             let pitch = mapped.RowPitch as usize;
+            let row_bytes = (bw * 4) as usize;
             for row in 0..bh as usize {
-                for col in 0..bw as usize {
-                    let a = row * pitch + col * 4;
-                    let b = (row * bw as usize + col) * 4;
-                    rgba[b] = *ptr.add(a + 2);
-                    rgba[b + 1] = *ptr.add(a + 1);
-                    rgba[b + 2] = *ptr.add(a);
-                    rgba[b + 3] = 255;
-                }
+                let src = std::slice::from_raw_parts(ptr.add(row * pitch), row_bytes);
+                rgba[row * row_bytes..(row + 1) * row_bytes].copy_from_slice(src);
             }
         }
         s.context.Unmap(&s.staging, 0);
