@@ -2702,20 +2702,27 @@ impl App {
                             ui.separator();
                             let closed=crate::system::banner_overridden_count();
                             ui.label(egui::RichText::new(format!("已关闭 {closed} 个应用的横幅")).size(12.5).strong());
+                            if let Some(summary)=crate::system::banner_last_summary(){
+                                ui.label(egui::RichText::new(format!("上次：{summary}")).size(11.0)
+                                    .color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            }
                             ui.horizontal_wrapped(|ui|{
                                 if ui.button("关闭系统横幅").clicked(){
                                     let apps:Vec<String>=self.notification_apps.items.iter()
                                         .filter(|(_,_,on)|*on).map(|(id,_,_)|id.clone()).collect();
                                     match crate::system::close_notification_banners(&apps){
-                                        Ok(count)=>self.say(format!("已关闭 {count} 个应用的横幅")),
+                                        Ok((ok,fail))=>self.say(format!("关闭完成：成功 {ok} 个，失败 {fail} 个；详情见通知横幅日志")),
                                         Err(error)=>self.say(error),
                                     }
                                 }
                                 if closed>0 && ui.button("恢复").clicked(){
                                     match crate::system::restore_notification_banners(){
-                                        Ok(count)=>self.say(format!("已恢复 {count} 个应用")),
+                                        Ok((ok,fail))=>self.say(format!("恢复完成：成功 {ok} 个，失败 {fail} 个；详情见通知横幅日志")),
                                         Err(error)=>self.say(error),
                                     }
+                                }
+                                if ui.button("查看日志").clicked(){
+                                    if let Err(error)=crate::system::open_banner_log(){self.say(error);}
                                 }
                                 if ui.button("打开 Windows 通知设置").clicked(){
                                     if let Err(error)=crate::system::open_notification_settings(){self.say(error);}
