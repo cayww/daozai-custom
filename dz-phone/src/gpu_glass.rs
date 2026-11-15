@@ -442,16 +442,17 @@ fn flat_flag() -> f32 {
     return match v.as_str() { "2" => 2.0, "1" => 1.0, _ => 0.0 };
 }
 
-/// DAOZAI_LIQUID_MORPH：形变期光学增强的倍数（默认 1.0，0 = 完全关闭）。
-/// 存在的意义有两个：① 精确 A/B 验证过渡效果；② 让用户不用重编译就能调手感。
+/// 形变增强倍数，由设置项 `liquid_morph` 每帧写入（默认 1.0）。
+/// 用一个原子存 f32 的位模式，避免为了一个标量去改 frame_for 的签名。
+static MORPH_SCALE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x3F80_0000); // = 1.0f32
+
+pub fn set_morph_scale(v: f32) {
+    MORPH_SCALE.store(v.clamp(0.0, 3.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
 fn morph_scale() -> f32 {
-    static V: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("DAOZAI_LIQUID_MORPH").ok()
-            .and_then(|s| s.parse::<f32>().ok())
-            .map(|v| v.clamp(0.0, 3.0))
-            .unwrap_or(1.0)
-    })
+    f32::from_bits(MORPH_SCALE.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// DAOZAI_LIQUID_MORPH_FORCE=1：把形变强度钉成常数，用于确定性验证

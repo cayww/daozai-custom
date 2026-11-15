@@ -2078,6 +2078,8 @@ impl App {
         let dp=((prog-self.last_progress)/dt.max(0.001)).abs();
         self.last_progress=prog;
         self.glass_morph=(self.glass_morph*0.74).max((dp*0.30).min(1.0));
+        // 形变强度倍数来自设置项，每帧同步给着色器（成本就是一次原子写）。
+        crate::gpu_glass::set_morph_scale(self.settings.liquid_morph);
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
         self.window_origin=env.window_origin;
