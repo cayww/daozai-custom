@@ -8605,3 +8605,26 @@ fn browser_video_has_its_own_page_and_collapsed_summary(){
     assert!(music.iter().any(|t|t.contains("岛上歌词")),"音乐页仍保留岛上歌词开关");
     assert!(music.iter().any(|t|t=="词"),"音乐页仍保留歌词按钮");
 }
+
+#[test]
+fn video_page_offers_open_tab_and_gap_keeps_media(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.media=crate::smtc::NowPlaying{source:"Chrome".into(),title:"《刚烈界魏延》".into(),
+        playing:true,duration:1358.0,position:120.0,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.app.show_page(0);
+    h.hover(H::local(200.0,40.0),1.0);
+    let expanded=rendered_text(&h);
+    assert!(expanded.iter().any(|t|t=="打开"),"视频页应有跳到浏览器窗口的按钮");
+    assert!(!expanded.iter().any(|t|t=="词"),"视频页不该有歌词按钮");
+    h.app.open=false;
+
+    // 切换视频时 SMTC 会短暂返回空会话，2 秒宽限内不能闪「暂无音乐」。
+    h.media=crate::smtc::NowPlaying::default();
+    h.frame(vec![]);
+    assert_eq!(h.app.media.title,"《刚烈界魏延》","会话短暂消失时应保留上一帧");
+    h.t+=2.5;
+    h.frame(vec![]);
+    assert!(h.app.media.title.is_empty(),"超过宽限期后应收起");
+}

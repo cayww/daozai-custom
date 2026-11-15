@@ -143,7 +143,15 @@ impl App {
             (response,c.scaled(x,y,1.0-0.1*pressed))
         };
         // 视频页不画「词」和音乐应用音量：网页媒体没有歌词，也没有对应的应用内音量通道。
-        let lyrics=if video {None}else{
+        let lyrics=if video {
+            let (button,card)=btn(74.0,26.0,"m-open-tab");
+            card.text(74.0,y+4.0,"打开",11.0,W::Semibold,ic,H::Center);
+            if c.live && has && button.on_hover_text("跳到播放中的浏览器窗口").clicked(){
+                if crate::system::focus_browser_tab(&np.title){self.say("已切到播放中的浏览器窗口");}
+                else{self.say("没找到播放中的浏览器窗口");}
+            }
+            None
+        }else{
             let (button,card)=btn(74.0,26.0,"m-lyr");
             card.text(74.0,y+5.0,"词",14.0,W::Semibold,if !has {ic}else if self.show_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
             Some(button)
@@ -206,14 +214,15 @@ impl App {
         let w=crate::app::VIDEO_PILL_W;
         let left=cx-w/2.0;
         let np=&self.media;
-        // 收起药丸只有 30 点高，三行内容必须压在 cy-12..cy+13 内。
-        paint::play_pause(c,left+9.0,cy+1.0,6.0,if np.playing{1.0}else{0.0},theme::WHITE);
-        c.text(left+20.0,cy-11.0,&c.fit(&np.title,10.5,W::Semibold,w-24.0),10.5,W::Semibold,theme::WHITE,H::Left);
+        // Card::text 的 y 是基线（左上角 = y - ascent），不是顶部；收起药丸只有 30 点高，
+        // 原来标题基线 cy-11 会把字画到胶囊上方被裁掉。两行基线都收进胶囊内。
+        paint::play_pause(c,left+9.0,cy+2.0,6.0,if np.playing{1.0}else{0.0},theme::WHITE);
+        c.text(left+20.0,cy-2.0,&c.fit(&np.title,10.5,W::Semibold,w-30.0),10.5,W::Semibold,theme::WHITE,H::Left);
         let detail=if np.duration>0.0 {format!("{} · {}",np.source,mmss(np.position))} else {np.source.clone()};
-        c.text(left+20.0,cy+1.0,&c.fit(&detail,9.0,W::Regular,w-24.0),9.0,W::Regular,theme::GRAY,H::Left);
+        c.text(left+20.0,cy+8.0,&c.fit(&detail,9.0,W::Regular,w-30.0),9.0,W::Regular,theme::GRAY,H::Left);
         let frac=if np.duration>0.0 {(np.position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
-        c.fill(left,cy+11.0,w,2.0,1.0,Color32::from_gray(70));
-        if frac>0.0 {c.fill(left,cy+11.0,w*frac,2.0,1.0,theme::WHITE);}
+        c.fill(left,cy+10.0,w,2.0,1.0,Color32::from_gray(90));
+        if frac>0.0 {c.fill(left,cy+10.0,w*frac,2.0,1.0,theme::WHITE);}
     }
 
     fn change_music_volume(&mut self,command:Transport,cmds:&mut Vec<Cmd>){

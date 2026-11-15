@@ -927,6 +927,8 @@ pub struct App {
     /// 等它的新位置追上（或超时、换歌）再交还，避免滑块先弹回旧位置。
     pub(crate) music_seek_ui: Option<(f64,String)>,
     pub(crate) music_seek_quiet_until: f64,
+    /// 媒体会话短暂消失时的宽限截止时刻：期间保留上一帧，别让展开页闪空态。
+    pub(crate) media_gap_until: f64,
     /// 点了上一首/下一首的时刻：先本地把进度归零，等播放器报回新歌位置再交还。
     pub(crate) music_restart_at: Option<f64>,
     /// 上一次看到的蓝牙设备，用来只在连接/断开时提示一次。
@@ -1127,6 +1129,7 @@ impl App {
             music_volume_open: false,
             music_seek_ui: None,
             music_seek_quiet_until: 0.0,
+            media_gap_until: 0.0,
             music_restart_at: None,
             bt_shown: Vec::new(),
             bt_initialized: false,
@@ -3633,6 +3636,10 @@ impl App {
     fn update_media(&mut self, env: &Env, ctx: &egui::Context) {
         let m = &env.media;
         if !m.is_island_media() {
+            // 网页切集时 SMTC 会短暂返回空会话；浏览器视频没有歌手，
+            // smtc 的 MediaMemory 只记「完整音乐」，这里顶住 2 秒，别闪「暂无音乐」。
+            // 只对「浏览器视频 → 空会话」生效：换成别的来源或音乐播放器退出时仍立即清空。
+            if self.video_page() && m.source.trim().is_empty() && self.t<self.media_gap_until {return;}
             self.music_volume_ui=None;
             self.music_volume_quiet_until=0.0;
             self.music_volume_open=false;
@@ -3642,6 +3649,7 @@ impl App {
             self.ly=LyricsState::default();
             return;
         }
+        self.media_gap_until=self.t+2.0;
         let a = &self.media_anchor;
         if a.0 != m.title || (a.1 - m.position).abs() > 0.01 || a.3 != m.playing {
             self.media_anchor = (m.title.clone(), m.position, env.t, m.playing);

@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-127"
+PATCH_ID = "custom-128"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -9811,6 +9811,169 @@ fn browser_video_has_its_own_page_and_collapsed_summary(){
     let music=rendered_text(&h);
     assert!(music.iter().any(|t|t.contains("岛上歌词")),"音乐页仍保留岛上歌词开关");
     assert!(music.iter().any(|t|t=="词"),"音乐页仍保留歌词按钮");
+}
+'''),
+
+    # custom-128：修视频摘要溢出 + 跳转浏览器窗口 + 切换时空态闪烁
+    ("src/app.rs",
+     '''    pub(crate) music_seek_ui: Option<(f64,String)>,
+    pub(crate) music_seek_quiet_until: f64,
+    /// 点了上一首/下一首的时刻：先本地把进度归零，等播放器报回新歌位置再交还。
+    pub(crate) music_restart_at: Option<f64>,''',
+     '''    pub(crate) music_seek_ui: Option<(f64,String)>,
+    pub(crate) music_seek_quiet_until: f64,
+    /// 媒体会话短暂消失时的宽限截止时刻：期间保留上一帧，别让展开页闪空态。
+    pub(crate) media_gap_until: f64,
+    /// 点了上一首/下一首的时刻：先本地把进度归零，等播放器报回新歌位置再交还。
+    pub(crate) music_restart_at: Option<f64>,'''),
+    ("src/app.rs",
+     '''            music_seek_ui: None,
+            music_seek_quiet_until: 0.0,
+            music_restart_at: None,
+            bt_shown: Vec::new(),''',
+     '''            music_seek_ui: None,
+            music_seek_quiet_until: 0.0,
+            media_gap_until: 0.0,
+            music_restart_at: None,
+            bt_shown: Vec::new(),'''),
+    ("src/app.rs",
+     '''        let m = &env.media;
+        if !m.is_island_media() {
+            self.music_volume_ui=None;
+            self.music_volume_quiet_until=0.0;''',
+     '''        let m = &env.media;
+        if !m.is_island_media() {
+            // 网页切集时 SMTC 会短暂返回空会话；浏览器视频没有歌手，
+            // smtc 的 MediaMemory 只记「完整音乐」，这里顶住 2 秒，别闪「暂无音乐」。
+            // 只对「浏览器视频 → 空会话」生效：换成别的来源或音乐播放器退出时仍立即清空。
+            if self.video_page() && m.source.trim().is_empty() && self.t<self.media_gap_until {return;}
+            self.music_volume_ui=None;
+            self.music_volume_quiet_until=0.0;'''),
+    ("src/app.rs",
+     '''            return;
+        }
+        let a = &self.media_anchor;
+        if a.0 != m.title || (a.1 - m.position).abs() > 0.01 || a.3 != m.playing {''',
+     '''            return;
+        }
+        self.media_gap_until=self.t+2.0;
+        let a = &self.media_anchor;
+        if a.0 != m.title || (a.1 - m.position).abs() > 0.01 || a.3 != m.playing {'''),
+    ("src/pages.rs",
+     '''        };
+        // 视频页不画「词」和音乐应用音量：网页媒体没有歌词，也没有对应的应用内音量通道。
+        let lyrics=if video {None}else{
+            let (button,card)=btn(74.0,26.0,"m-lyr");
+            card.text(74.0,y+5.0,"词",14.0,W::Semibold,if !has {ic}else if self.show_lyrics {theme::WHITE}else{theme::GRAY},H::Center);''',
+     '''        };
+        // 视频页不画「词」和音乐应用音量：网页媒体没有歌词，也没有对应的应用内音量通道。
+        let lyrics=if video {
+            let (button,card)=btn(74.0,26.0,"m-open-tab");
+            card.text(74.0,y+4.0,"打开",11.0,W::Semibold,ic,H::Center);
+            if c.live && has && button.on_hover_text("跳到播放中的浏览器窗口").clicked(){
+                if crate::system::focus_browser_tab(&np.title){self.say("已切到播放中的浏览器窗口");}
+                else{self.say("没找到播放中的浏览器窗口");}
+            }
+            None
+        }else{
+            let (button,card)=btn(74.0,26.0,"m-lyr");
+            card.text(74.0,y+5.0,"词",14.0,W::Semibold,if !has {ic}else if self.show_lyrics {theme::WHITE}else{theme::GRAY},H::Center);'''),
+    ("src/pages.rs",
+     '''        let left=cx-w/2.0;
+        let np=&self.media;
+        // 收起药丸只有 30 点高，三行内容必须压在 cy-12..cy+13 内。
+        paint::play_pause(c,left+9.0,cy+1.0,6.0,if np.playing{1.0}else{0.0},theme::WHITE);
+        c.text(left+20.0,cy-11.0,&c.fit(&np.title,10.5,W::Semibold,w-24.0),10.5,W::Semibold,theme::WHITE,H::Left);
+        let detail=if np.duration>0.0 {format!("{} · {}",np.source,mmss(np.position))} else {np.source.clone()};
+        c.text(left+20.0,cy+1.0,&c.fit(&detail,9.0,W::Regular,w-24.0),9.0,W::Regular,theme::GRAY,H::Left);
+        let frac=if np.duration>0.0 {(np.position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
+        c.fill(left,cy+11.0,w,2.0,1.0,Color32::from_gray(70));
+        if frac>0.0 {c.fill(left,cy+11.0,w*frac,2.0,1.0,theme::WHITE);}
+    }
+''',
+     '''        let left=cx-w/2.0;
+        let np=&self.media;
+        // Card::text 的 y 是基线（左上角 = y - ascent），不是顶部；收起药丸只有 30 点高，
+        // 原来标题基线 cy-11 会把字画到胶囊上方被裁掉。两行基线都收进胶囊内。
+        paint::play_pause(c,left+9.0,cy+2.0,6.0,if np.playing{1.0}else{0.0},theme::WHITE);
+        c.text(left+20.0,cy-2.0,&c.fit(&np.title,10.5,W::Semibold,w-30.0),10.5,W::Semibold,theme::WHITE,H::Left);
+        let detail=if np.duration>0.0 {format!("{} · {}",np.source,mmss(np.position))} else {np.source.clone()};
+        c.text(left+20.0,cy+8.0,&c.fit(&detail,9.0,W::Regular,w-30.0),9.0,W::Regular,theme::GRAY,H::Left);
+        let frac=if np.duration>0.0 {(np.position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
+        c.fill(left,cy+10.0,w,2.0,1.0,Color32::from_gray(90));
+        if frac>0.0 {c.fill(left,cy+10.0,w*frac,2.0,1.0,theme::WHITE);}
+    }
+'''),
+    ("src/system.rs",
+     '''}
+
+fn avoidance_matches(path:&str,settings:&crate::model::Settings)->bool {
+    settings.browser_minimal && (crate::avoidance::contains_app(&settings.avoid_apps,path)''',
+     '''}
+
+/// 把正在播放网页媒体的浏览器窗口带到前台。
+/// Chrome / Edge 的窗口标题就是当前活动标签的标题，先用媒体标题前几个字匹配；
+/// 匹配不到就激活 Z 序最前的浏览器窗口（EnumWindows 按 Z 序返回）。
+/// 只能定位到窗口，没法切换窗口里的非活动标签（扩展路线才做得到）。
+pub(crate) fn focus_browser_tab(title:&str)->bool{
+    use windows::Win32::Foundation::{BOOL,LPARAM};
+    struct Found { hwnd:Option<isize>, matched:bool, needle:String }
+    unsafe extern "system" fn visit(hwnd:HWND,param:LPARAM)->BOOL{
+        if !IsWindowVisible(hwnd).as_bool(){return BOOL(1);}
+        let mut class=[0u16;64];let n=GetClassNameW(hwnd,&mut class);
+        if n<=0 || String::from_utf16_lossy(&class[..n as usize])!="Chrome_WidgetWin_1" {return BOOL(1);}
+        let mut text=[0u16;1024];let len=GetWindowTextW(hwnd,&mut text);
+        if len<=0{return BOOL(1);}
+        let window_title=String::from_utf16_lossy(&text[..len as usize]);
+        let state=&mut *(param.0 as *mut Found);
+        let hit=!state.needle.is_empty() && window_title.contains(state.needle.as_str());
+        if state.hwnd.is_none() || (hit && !state.matched){
+            state.hwnd=Some(hwnd.0 as isize);state.matched=hit;
+        }
+        BOOL(1)
+    }
+    let mut found=Found{hwnd:None,matched:false,needle:title.chars().take(8).collect()};
+    unsafe{let _=EnumWindows(Some(visit),LPARAM(&mut found as *mut _ as isize));}
+    let Some(handle)=found.hwnd else{return false};
+    let hwnd=HWND(handle as *mut _);
+    unsafe{
+        let _=ShowWindow(hwnd,SW_RESTORE);
+        let _=SetForegroundWindow(hwnd);
+        let _=BringWindowToTop(hwnd);
+    }
+    true
+}
+
+fn avoidance_matches(path:&str,settings:&crate::model::Settings)->bool {
+    settings.browser_minimal && (crate::avoidance::contains_app(&settings.avoid_apps,path)'''),
+    ("src/ui_tests.rs",
+     '''    assert!(music.iter().any(|t|t=="词"),"音乐页仍保留歌词按钮");
+}
+''',
+     '''    assert!(music.iter().any(|t|t=="词"),"音乐页仍保留歌词按钮");
+}
+
+#[test]
+fn video_page_offers_open_tab_and_gap_keeps_media(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.media=crate::smtc::NowPlaying{source:"Chrome".into(),title:"《刚烈界魏延》".into(),
+        playing:true,duration:1358.0,position:120.0,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.app.show_page(0);
+    h.hover(H::local(200.0,40.0),1.0);
+    let expanded=rendered_text(&h);
+    assert!(expanded.iter().any(|t|t=="打开"),"视频页应有跳到浏览器窗口的按钮");
+    assert!(!expanded.iter().any(|t|t=="词"),"视频页不该有歌词按钮");
+    h.app.open=false;
+
+    // 切换视频时 SMTC 会短暂返回空会话，2 秒宽限内不能闪「暂无音乐」。
+    h.media=crate::smtc::NowPlaying::default();
+    h.frame(vec![]);
+    assert_eq!(h.app.media.title,"《刚烈界魏延》","会话短暂消失时应保留上一帧");
+    h.t+=2.5;
+    h.frame(vec![]);
+    assert!(h.app.media.title.is_empty(),"超过宽限期后应收起");
 }
 '''),
 ]

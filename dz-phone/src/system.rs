@@ -941,6 +941,39 @@ mod tests {
     }
 }
 
+/// 把正在播放网页媒体的浏览器窗口带到前台。
+/// Chrome / Edge 的窗口标题就是当前活动标签的标题，先用媒体标题前几个字匹配；
+/// 匹配不到就激活 Z 序最前的浏览器窗口（EnumWindows 按 Z 序返回）。
+/// 只能定位到窗口，没法切换窗口里的非活动标签（扩展路线才做得到）。
+pub(crate) fn focus_browser_tab(title:&str)->bool{
+    use windows::Win32::Foundation::{BOOL,LPARAM};
+    struct Found { hwnd:Option<isize>, matched:bool, needle:String }
+    unsafe extern "system" fn visit(hwnd:HWND,param:LPARAM)->BOOL{
+        if !IsWindowVisible(hwnd).as_bool(){return BOOL(1);}
+        let mut class=[0u16;64];let n=GetClassNameW(hwnd,&mut class);
+        if n<=0 || String::from_utf16_lossy(&class[..n as usize])!="Chrome_WidgetWin_1" {return BOOL(1);}
+        let mut text=[0u16;1024];let len=GetWindowTextW(hwnd,&mut text);
+        if len<=0{return BOOL(1);}
+        let window_title=String::from_utf16_lossy(&text[..len as usize]);
+        let state=&mut *(param.0 as *mut Found);
+        let hit=!state.needle.is_empty() && window_title.contains(state.needle.as_str());
+        if state.hwnd.is_none() || (hit && !state.matched){
+            state.hwnd=Some(hwnd.0 as isize);state.matched=hit;
+        }
+        BOOL(1)
+    }
+    let mut found=Found{hwnd:None,matched:false,needle:title.chars().take(8).collect()};
+    unsafe{let _=EnumWindows(Some(visit),LPARAM(&mut found as *mut _ as isize));}
+    let Some(handle)=found.hwnd else{return false};
+    let hwnd=HWND(handle as *mut _);
+    unsafe{
+        let _=ShowWindow(hwnd,SW_RESTORE);
+        let _=SetForegroundWindow(hwnd);
+        let _=BringWindowToTop(hwnd);
+    }
+    true
+}
+
 fn avoidance_matches(path:&str,settings:&crate::model::Settings)->bool {
     settings.browser_minimal && (crate::avoidance::contains_app(&settings.avoid_apps,path)
         || settings.avoid_browsers && std::path::Path::new(path).file_name().and_then(|name|name.to_str()).is_some_and(is_browser_process))
