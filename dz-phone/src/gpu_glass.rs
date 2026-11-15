@@ -227,11 +227,12 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let band = clamp(short * 1.30, 12.0, 72.0);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
-    // 和岛体共用同一对设置项（折射 / 色散倍数），调一处两处一起变。
-    let strength = clamp(short * 0.70, 9.0, 54.0) * max(u.misc.z, 0.0);
+    // 和岛体共用同一对设置项（折射 / 色散），但控件小得多 —— 同样的像素位移在
+    // 它上面占比更大，所以打 0.55 折，读起来才和岛体是同一块材料的延伸。
+    let strength = max(u.misc.z, 0.0) * 0.55;
     let cxn = clamp((abs(local.x) - (hs.x - radius)) / max(radius, 1.0), 0.0, 1.0);
     let cyn = clamp((abs(local.y) - (hs.y - radius)) / max(radius, 1.0), 0.0, 1.0);
-    let chroma = clamp(short * 0.028, 0.7, 2.0) * mix(0.38, 1.0, cxn * cyn) * max(u.params.x, 0.0);
+    let chroma = max(u.params.x, 0.0) * 0.55 * mix(0.60, 1.0, cxn * cyn);
     let bp = p - g * k * strength;
 
     var col = tap5(bp, -g * k * chroma, 1.2);
@@ -379,23 +380,19 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 关键修复：折射方向朝玻璃**内部**（-g）。之前朝外，边缘会把岛体外的
     // 壁纸折进来，玻璃里就出现「不属于该区域的壁纸像素块」，贴屏顶时还会
     // 越界 clamp 成一条拉伸色带。
-    // `strength_base` 是纯几何量（按面板高度缩放 + 形变增强），两个设置项
-    // （折射 / 色散倍数）都乘在它上面，所以两个滑块互不影响，可以分别调。
-    let strength_base = clamp(u.bounds.w * 0.90, 26.0, 78.0) * (1.0 + morph * 0.15);
-    let strength = strength_base * max(u.misc.z, 0.0);
-    // 色散：参考实现的默认值是 chroma=12（R/B 采样点相距 24px），但那是给
-    // 平滑照片准备的。我们是 1:1 的**锐利桌面抓屏**，24px 分离在树枝这种硬边上
-    // 就是一条彩虹故障带 —— 黑白壁纸实测顶边饱和度 0.073，而背景只有 0.003。
-    // 第一版收到 4.5px 后圆角仍能看到彩边（p95 还有 0.13），再收一半到 2.6px。
-    // 现在这个收敛值改成可调（设置项「色散强度」，默认 ×2 ≈ 5.2px）。
-    // 角部权重：直边上色散会拉成一条贯穿整条边的彩带（噪声 0.40），所以给一个
-    // 小于 1 的权重；但这个权重**不能太小** —— 0.22 时直边只剩 0.57px（亚像素），
-    // 等于没有色散，实测肉眼完全看不出来。0.38 是「看得见一点彩边、又不糊成故障带」
-    // 的折中，再往上就交给设置项（色散强度）自己拧。
+    //
+    // 折射强度：直接取设置项（设备像素），形变期间再乘一点增益。以前是
+    // `clamp(bounds.w*0.90, 26, 78)` —— 那个自适应在展开面板上饱和到 78，
+    // 和参考包的 48 CSS px（面板 1.5x 屏 = 72 设备 px）本来就是一个量级，
+    // 改成绝对值只是把「拧不动」变成「拧得动」。
+    let strength = max(u.misc.z, 0.0) * (1.0 + morph * 0.15);
+    // 色散：参考包默认 chroma=12 CSS px（设备 px 下 R/B 相距 48px），而且**整圈边缘一视同仁**。
+    // 我们原来把直边收到 0.22 倍（只剩 0.57px，肉眼等于没有），现在只收到 0.60：
+    // 直边留一点彩边、圆角保持完整色散，和参考包的观感一致。
     let cxn = clamp((abs(local.x) - (half_size.x - radius)) / max(radius, 1.0), 0.0, 1.0);
     let cyn = clamp((abs(local.y) - (half_size.y - radius)) / max(radius, 1.0), 0.0, 1.0);
     let corner = cxn * cyn;
-    let chroma = clamp(strength_base * 0.045, 1.2, 2.6) * mix(0.38, 1.0, corner) * max(u.params.x, 0.0);
+    let chroma = max(u.params.x, 0.0) * mix(0.60, 1.0, corner);
     let refr = -g * k * strength;
     let ca = -g * k * chroma;
     let bp = p + refr;
@@ -622,20 +619,21 @@ fn morph_scale() -> f32 {
     f32::from_bits(MORPH_SCALE.load(std::sync::atomic::Ordering::Relaxed))
 }
 
-/// 折射 / 色散倍数，由设置项每帧写入（默认 1.0 / 2.0）。
+/// 折射 / 色散强度，由设置项每帧写入（单位 CSS px，与参考包 `LiquidGlass-Pack`
+/// 的 `strength` / `chroma` 同单位同量级：48 / 12）。
 ///
-/// 这两个值原来是我按实测结果硬编码在着色器里的（strength 按高度缩放、
-/// chroma 收到 2.6px），调一次要改代码、重新编译三分钟 —— 判断「色散够不够」
+/// 这两个数原来是我按实测硬编码在着色器里的（strength 按面板高度缩放、chroma 收到
+/// 2.6px 还乘了 0.22 的角部权重），调一次要改代码重编三分钟 —— 而「色散够不够」
 /// 是纯观感问题，必须能边看边拧。
 static OPTICS: [std::sync::atomic::AtomicU32; 2] = [
-    std::sync::atomic::AtomicU32::new(0x3F80_0000), // strength = 1.0
-    std::sync::atomic::AtomicU32::new(0x4040_0000), // chroma   = 3.0（与设置项默认一致）
+    std::sync::atomic::AtomicU32::new(0x4240_0000), // refract = 48.0
+    std::sync::atomic::AtomicU32::new(0x4100_0000), // chroma  = 8.0
 ];
 
-pub fn set_liquid_optics(strength: f32, chroma: f32) {
+pub fn set_liquid_optics(refract_px: f32, chroma_px: f32) {
     use std::sync::atomic::Ordering::Relaxed;
-    OPTICS[0].store(strength.clamp(0.0, 2.5).to_bits(), Relaxed);
-    OPTICS[1].store(chroma.clamp(0.0, 5.0).to_bits(), Relaxed);
+    OPTICS[0].store(refract_px.clamp(0.0, 120.0).to_bits(), Relaxed);
+    OPTICS[1].store(chroma_px.clamp(0.0, 30.0).to_bits(), Relaxed);
 }
 
 fn strength_scale() -> f32 {
@@ -1263,8 +1261,9 @@ pub fn frame_for(
         bounds,
         shape: [radius * ppp, morph, (pointer.0 - capture.min.x) * ppp, (pointer.1 - capture.min.y) * ppp],
         tint: [tint[0], tint[1], tint[2], 1.0],
-        // optics = (time, 折射倍数, 色散倍数, 亮/暗)
-        optics: [time, strength_scale(), chroma_scale(), lightness],
+        // optics = (time, 折射 CSS px, 色散 CSS px, 亮/暗)。着色器全程按设备像素算，
+        // 所以这里乘 ppp —— 和参考包 `uniform4f(uP, strength*DPR, chroma*DPR, ...)` 一致。
+        optics: [time, strength_scale() * ppp, chroma_scale() * ppp, lightness],
         clip: [-1.0, 1.0, 1.0, -1.0],
         controls: crect,
         control_params: cprm,
@@ -1283,14 +1282,15 @@ mod tests {
         let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0, &[]);
         assert_eq!(f.bounds, [40.0, 20.0, 200.0, 30.0]);
         assert_eq!(f.clip, [-1.0, 1.0, 1.0, -1.0], "viewport 已由 egui 设为 callback 矩形");
-        // 折射 / 色散倍数走原子量 → optics → uniform 的两个不同槽位：
+        // 折射 / 色散走原子量 → optics → uniform 的两个不同槽位：
         // 折射进 misc.z（乘在 strength 上），色散进 params.x（乘在 chroma 上）。
-        set_liquid_optics(1.25, 4.5);
-        let u = uniforms(&frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0,
+        // 设置项单位是 CSS px，进 uniform 前要乘 ppp（着色器全程设备像素）。
+        set_liquid_optics(60.0, 15.0);
+        let u = uniforms(&frame_for(body, capture, (1920, 1080), 2.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0,
                                    (150.0, 30.0), (0.0, 0.0), 1.0, &[]), (280, 90));
-        assert_eq!(u.params[0], 4.5, "色散倍数要进 params.x");
-        assert_eq!(u.misc[2], 1.25, "折射倍数要进 misc.z");
-        set_liquid_optics(1.0, 3.0);
+        assert_eq!(u.params[0], 30.0, "色散进 params.x，并按 ppp 换算到设备像素");
+        assert_eq!(u.misc[2], 120.0, "折射进 misc.z，并按 ppp 换算到设备像素");
+        set_liquid_optics(48.0, 8.0);
     }
 
     #[test]

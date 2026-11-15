@@ -2350,20 +2350,20 @@ impl App {
                                 settings_control_row(ui,"折射强度",56.0,|ui|{
                                     ui.horizontal(|ui|{
                                         ui.spacing_mut().slider_width=180.0;
-                                        ui.add(egui::Slider::new(&mut self.settings.liquid_strength,0.2..=2.5).fixed_decimals(2));
-                                        if ui.add_enabled((self.settings.liquid_strength-1.0).abs()>0.001,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_strength=1.0;}
+                                        ui.add(egui::Slider::new(&mut self.settings.liquid_refract_px,0.0..=120.0).fixed_decimals(0));
+                                        if ui.add_enabled((self.settings.liquid_refract_px-48.0).abs()>0.05,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_refract_px=48.0;}
                                     }).response
                                 });
-                                settings_hint(ui,"边缘弯折的幅度（×1 = 现在的默认）；调大像更厚的透镜，调小更平");
+                                settings_hint(ui,"边缘处背景被弯折的像素数（参考包默认 48）；调大像更厚的透镜，调小更平");
                                 ui.separator();
                                 settings_control_row(ui,"色散强度",56.0,|ui|{
                                     ui.horizontal(|ui|{
                                         ui.spacing_mut().slider_width=180.0;
-                                        ui.add(egui::Slider::new(&mut self.settings.liquid_chroma,0.0..=5.0).fixed_decimals(2));
-                                        if ui.add_enabled((self.settings.liquid_chroma-3.0).abs()>0.001,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_chroma=3.0;}
+                                        ui.add(egui::Slider::new(&mut self.settings.liquid_chroma_px,0.0..=30.0).fixed_decimals(0));
+                                        if ui.add_enabled((self.settings.liquid_chroma_px-8.0).abs()>0.05,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_chroma_px=8.0;}
                                     }).response
                                 });
-                                settings_hint(ui,"边缘红蓝彩边的强度（×1 ≈ 上一版几乎看不见的值，×4.6 ≈ 参考包的 12px）；0 = 关掉色散");
+                                settings_hint(ui,"红蓝彩边的强度，红蓝实际分离是它的两倍（参考包默认 12，这里默认 8：锐利抓屏在字边会更早出彩边）；0 = 关掉色散");
                             }
                             ui.separator();
                             let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
