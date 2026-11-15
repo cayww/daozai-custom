@@ -306,18 +306,15 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let lum0 = dot(col, vec3<f32>(0.299, 0.587, 0.114));
     col = mix(vec3<f32>(lum0), col, 1.06);
 
-    // 内侧厚度：紧挨高光下方压一道很薄的暗，玻璃才有厚度，而不是一张贴纸。
-    // 位置在内侧 3px、σ≈2.4、只压 14%，再多就显脏。
-    let tq = (d + 3.2) / 2.4;
+    // 内侧厚度：原来是紧贴高光 3px 处压 14% 暗，等于给高光画了一条「截止线」，
+    // 光到那里就断了。改成往里挪到 ~9px、只压 6%，读作深度渐变而不是暗环。
+    let tq = (d + 9.0) / 3.5;
     let thick = exp(-tq * tq);
-    col = col * (1.0 - thick * 0.14);
+    col = col * (1.0 - thick * 0.06);
 
-    // 边缘光只给朝光源的一侧，背光侧很弱。
-    let rim = 1.0 - smoothstep(0.0, 6.0, -d);
     // 光源方向跟着指针走。桌面没有陀螺仪，指针是唯一能表达「用户正在动」的输入：
     // Apple 的镜面高光随设备倾斜移动，这里把指针当成虚拟光源 —— 指针在哪一侧，
     // 哪一侧的边缘光就亮。指针离岛心很近时退回默认的左上光，避免方向在中心乱跳。
-    // （misc.xy 就是指针在 capture 内的物理坐标，原来一直传进来但没人用。）
     let center = u.bounds.xy + u.bounds.zw * 0.5;
     let to_ptr = u.misc.xy - center;
     let plen = length(to_ptr);
@@ -328,9 +325,17 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 会一直是「从下往上打光」，观感很别扭。人类对光源在上方有本能预期。
     let up_bias = vec2<f32>(swung.x, min(swung.y, -0.18));
     let Ld = normalize(mix(fallback, up_bias, smoothstep(3.0, 48.0, plen)) + vec2<f32>(1e-6));
-    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, Ld), 0.0), 2.0) * 0.34;
-    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.06;
-    col = col + u.tint.rgb * u.tint.a * 0.05 * rim;
+
+    // 向内延伸的柔光：从边缘往里按指数衰减，长度随玻璃高度缩放（8~26px）。
+    // 原来这里是 `1 - smoothstep(0, 6, -d)`，也就是光到 6px 处**突然归零** ——
+    // 观感就是「边缘一圈很宽的亮，再往里什么都没有」。换成指数尾巴之后，
+    // 边缘的核心高光收窄，但光能顺着往内部铺开，不再有一条硬截止线。
+    let blen = clamp(u.bounds.w * 0.35, 8.0, 26.0);
+    let t_in = max(-d, 0.0);
+    let bleed = exp(-t_in / blen);
+    col = col + vec3<f32>(0.85, 0.90, 1.0) * bleed * pow(max(dot(g, Ld), 0.0), 1.6) * 0.15;
+    col = col + vec3<f32>(0.85, 0.90, 1.0) * bleed * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.04;
+    col = col + u.tint.rgb * u.tint.a * 0.05 * bleed;
 
     // 高光：玻璃质感的命门。必须是**一条锐利的亮线**，不是一圈雾。
     // 之前 exp(-d²/3.61)（σ=1.9，有效宽约 8px）把高光摊成了雾：实测 45px 高的
@@ -338,10 +343,10 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 上下各 10px 就吃掉 44% 的高度，观感自然从「玻璃」变成「磨砂塑料」。
     // 现在峰值落在边缘内侧 0.7px、σ≈1.15（有效宽约 3px）；整条线都在形状
     // 内部，所以不影响外缘覆盖率，外缘依旧交给 aa，不会退回 1px 硬跳。
-    let lq = (d + 0.7) / 1.15;
+    let lq = (d + 0.45) / 0.82;
     let line = exp(-lq * lq);
-    let gq = (d + 1.2) / 4.5;
-    let glow = exp(-gq * gq) * 0.05;
+    let gq = (d + 1.0) / 3.2;
+    let glow = exp(-gq * gq) * 0.04;
     // 高光**沿边缘方向调制**：迎光侧最亮，背光侧只留一条淡淡的边。
     // 这一步才是「液态感」的关键 —— 把 line 均匀铺满整圈，看起来只是一圈描边；
     // 让它的强度随光源方向变化，才像一块会反光的玻璃。
