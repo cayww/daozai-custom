@@ -822,6 +822,10 @@ pub struct App {
     liquid_k:f32,
     window_origin:[f32;2],
     screen:Option<Rect>,
+    /// 指针在窗口内的逻辑坐标（来自全局光标，不是 egui 的 hover_pos）。
+    /// egui 的 hover_pos 只在指针位于岛仔窗口内部时才有值，而折叠态只有 45px 高，
+    /// 指针绝大多数时间在外面 —— 那样液态玻璃的镜面高光就永远是死的。
+    cursor_win:Option<egui::Pos2>,
     pub(crate) settings_focus_requested:bool,
     pub(crate) settings_tab:usize,
     pub(crate) settings_category:usize,
@@ -1085,6 +1089,7 @@ impl App {
             wgpu_format:None,
             liquid_k:1.0,
             window_origin:[0.0,0.0],
+            cursor_win:None,
             wechat_status:String::new(),
             phone_counts:Default::default(),
             phone_icons:Default::default(),
@@ -2061,6 +2066,7 @@ impl App {
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
         self.window_origin=env.window_origin;
+        self.cursor_win=env.cursor;
         if self.settings.skin.is_glass() {
             let target=if self.settings.skin==model::Skin::GlassLight {glass::light_tint(env.backdrop,env.glass_blur)}else{glass::glass_tint(env.backdrop,env.glass_blur)};
             self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
@@ -2850,7 +2856,9 @@ impl App {
         let capture=rect.expand2(egui::vec2(64.0,48.0))
             .intersect(Rect::from_min_size(Pos2::ZERO,win));
         if capture.width()<8.0 || capture.height()<8.0 {return;}
-        let pointer=ctx.input(|i|i.pointer.hover_pos()).unwrap_or(rect.center());
+        // 用全局光标而不是 hover_pos：后者只在指针位于岛仔窗口内才有值，
+        // 折叠态只有 45px 高，指针大部分时间在外面，高光会一直是死的。
+        let pointer=self.cursor_win.unwrap_or_else(||rect.center());
         let frame=crate::gpu_glass::frame_for(
             rect,capture,((win.x*ppp) as u32,(win.y*ppp) as u32),ppp,radius,
             self.progress().clamp(0.0,1.0),

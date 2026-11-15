@@ -301,9 +301,18 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
 
     // 边缘光只给朝光源的一侧，背光侧很弱。
     let rim = 1.0 - smoothstep(0.0, 6.0, -d);
-    let Ld = normalize(vec2<f32>(-0.45, -0.65));
-    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, Ld), 0.0), 2.0) * 0.30;
-    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.10;
+    // 光源方向跟着指针走。桌面没有陀螺仪，指针是唯一能表达「用户正在动」的输入：
+    // Apple 的镜面高光随设备倾斜移动，这里把指针当成虚拟光源 —— 指针在哪一侧，
+    // 哪一侧的边缘光就亮。指针离岛心很近时退回默认的左上光，避免方向在中心乱跳。
+    // （misc.xy 就是指针在 capture 内的物理坐标，原来一直传进来但没人用。）
+    let center = u.bounds.xy + u.bounds.zw * 0.5;
+    let to_ptr = u.misc.xy - center;
+    let plen = length(to_ptr);
+    let fallback = normalize(vec2<f32>(-0.45, -0.65));
+    let swung = to_ptr / max(plen, 1e-3);
+    let Ld = normalize(mix(fallback, swung, smoothstep(3.0, 48.0, plen)) + vec2<f32>(1e-6));
+    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, Ld), 0.0), 2.0) * 0.34;
+    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.06;
     col = col + u.tint.rgb * u.tint.a * 0.05 * rim;
 
     // 高光：玻璃质感的命门。必须是**一条锐利的亮线**，不是一圈雾。
@@ -316,18 +325,25 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let line = exp(-lq * lq);
     let gq = (d + 1.2) / 4.5;
     let glow = exp(-gq * gq) * 0.05;
+    // 高光**沿边缘方向调制**：迎光侧最亮，背光侧只留一条淡淡的边。
+    // 这一步才是「液态感」的关键 —— 把 line 均匀铺满整圈，看起来只是一圈描边；
+    // 让它的强度随光源方向变化，才像一块会反光的玻璃。
+    // 实测（指针左/右/下三帧）：只加方向性的 rim 时侧边亮度差只有 3.6，
+    // 调制 line 之后同一对比变成 19.6，肉眼才看得出光在动。
+    let dirw = mix(0.28, 1.0, pow(max(dot(g, Ld), 0.0), 1.5));
+    let line_v = line * dirw;
     // 高光权重也要跟背景走：暗背景下 0.62 就够亮（184 vs 背景 60，很抢眼），
     // 但亮背景下材质被压到 231、背景 250，权重不够高光反而比背景还暗，
     // 会看成一条「暗边」。亮背景拉到 0.92 并用纯白，才顶得到 253 附近。
     let line_w = mix(0.62, 0.92, smoothstep(0.60, 0.92, lum_m));
-    col = mix(col, vec3<f32>(1.0), clamp(line * line_w + glow, 0.0, 1.0));
+    col = mix(col, vec3<f32>(1.0), clamp(line_v * line_w + glow, 0.0, 1.0));
 
     // 关键：边缘必须和「背后的桌面」混合。兼容渲染的窗口不透明，
     // 输出预乘 col*alpha 在 aa→0 时会变成纯黑，岛体轮廓外就是一圈黑线
     // （圆角处最明显）。这里直接 mix 桌面色，边缘永远不会有黑。
     // 覆盖率取 max(aa, line*0.9)：高光自带覆盖率，不能被 aa 归零，
     // 否则白边的外半部分会被 mix(edge_bg, col, 0) 整个丢弃，边缘只剩 1px 硬跳。
-    let cov = clamp(max(aa, line * 0.90), 0.0, 1.0);
+    let cov = clamp(max(aa, line_v * 0.90), 0.0, 1.0);
     return vec4<f32>(mix(edge_bg, col, vec3<f32>(cov)), 1.0);
 }
 "#;
