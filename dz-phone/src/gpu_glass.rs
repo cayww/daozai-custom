@@ -228,17 +228,26 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let gy = rr_sdf(local + vec2<f32>(0.0, e), half_size, radius) - rr_sdf(local - vec2<f32>(0.0, e), half_size, radius);
     let g = normalize(vec2<f32>(gx, gy) + vec2<f32>(1e-6));
 
-    // 折射带：边缘弯得最狠，往里 t 增大、k 迅速衰减。band 随玻璃高度缩放，
-    // 参考 LiquidGlass-Pack v2 的参数表（36 高用 36，190 高用 70）。
-    let band = clamp(u.bounds.w * 0.80, 30.0, 72.0);
+    // 折射带：边缘弯得最狠，往里 t 增大、k 迅速衰减。
+    // band 上限原来卡在 72 —— 实测展开态面板高 210px 时只有外侧 72px 参与折射，
+    // 内侧 138px（66% 的高度）k≈0，等于 1:1 复制。这就是「小胶囊像玻璃、
+    // 大面板像半透明贴纸」的根因。上限提到 130，strength 同步放宽到 78。
+    let band = clamp(u.bounds.w * 0.80, 30.0, 130.0);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
 
     // 关键修复：折射方向朝玻璃**内部**（-g）。之前朝外，边缘会把岛体外的
     // 壁纸折进来，玻璃里就出现「不属于该区域的壁纸像素块」，贴屏顶时还会
     // 越界 clamp 成一条拉伸色带。
-    let strength = clamp(u.bounds.w * 0.90, 26.0, 56.0) * max(u.misc.z, 0.2);
-    let chroma = clamp(strength * 0.22, 5.0, 12.0);
+    let strength = clamp(u.bounds.w * 0.90, 26.0, 78.0) * max(u.misc.z, 0.2);
+    // 色散：参考实现的默认值是 chroma=12（R/B 采样点相距 24px），但那是给
+    // 平滑照片准备的。我们是 1:1 的**锐利桌面抓屏**，24px 分离在树枝这种硬边上
+    // 就是一条彩虹故障带 —— 黑白壁纸实测顶边饱和度 0.073，而背景只有 0.003。
+    // 收到约 1/3，并且只在曲率大的圆角处保留，直边几乎不产生彩边。
+    let cxn = clamp((abs(local.x) - (half_size.x - radius)) / max(radius, 1.0), 0.0, 1.0);
+    let cyn = clamp((abs(local.y) - (half_size.y - radius)) / max(radius, 1.0), 0.0, 1.0);
+    let corner = cxn * cyn;
+    let chroma = clamp(strength * 0.07, 1.6, 4.5) * mix(0.40, 1.0, corner);
     let refr = -g * k * strength;
     let ca = -g * k * chroma;
     let bp = p + refr;
@@ -253,11 +262,20 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let topk = 1.0 - smoothstep(0.0, max(u.bounds.w, 1.0), p.y - u.bounds.y);
     col = col + vec3<f32>(0.05, 0.07, 0.10) * topk * 0.10;
 
-    // 材质：浅色只加极轻的白雾（0.10 → 0.045）；深色压暗但**必须保留背景的
-    // 明暗层次**，否则就是一整块实心深灰 —— 之前 col*0.40 再混 85%，
-    // 背景只剩 6% 的贡献，那不是玻璃，是不透明面板。
-    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), vec3<f32>(mat * 0.045));
-    col = mix(col, col * 0.70 + vec3<f32>(0.012, 0.016, 0.022), vec3<f32>((1.0 - mat) * 0.55));
+    // 材质：不再无脑「加白」。亮背景下加白会把对比彻底压平 —— 实测背景亮度
+    // 250 时白色高光只剩 +5 的余量，玻璃等于不存在（背景 60 时有 +124）。
+    // 改成按背景亮度**反相补偿**：
+    //   暗背景(<0.42) → 轻微提亮，材质才有存在感
+    //   亮背景(>0.88) → 轻微压暗，把高光的对比空间腾出来
+    let lum_m = dot(col, vec3<f32>(0.299, 0.587, 0.114));
+    let lift = mix(0.045, -0.075, smoothstep(0.42, 0.88, lum_m));
+    col = col * (1.0 + lift);
+
+    // 深色材质：保留背景明暗层次，但必须明显比背景沉。0.70 太轻（实测只暗 5.9，
+    // 几乎看不出来），0.58 才能让深色玻璃成为「第二层材质」而不是一层蓝雾。
+    col = mix(col, col * 0.58 + vec3<f32>(0.010, 0.014, 0.020), vec3<f32>((1.0 - mat) * 0.70));
+    // 极淡冷白雾，只用来统一色相，不再承担材质感
+    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), vec3<f32>(mat * 0.02));
 
     // 白雾会洗掉饱和度，补回来一点，玻璃才有「透过一层介质」的颜色感。
     let lum0 = dot(col, vec3<f32>(0.299, 0.587, 0.114));
@@ -286,7 +304,11 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let line = exp(-lq * lq);
     let gq = (d + 1.2) / 4.5;
     let glow = exp(-gq * gq) * 0.05;
-    col = mix(col, vec3<f32>(0.98, 0.99, 1.0), clamp(line * 0.62 + glow, 0.0, 1.0));
+    // 高光权重也要跟背景走：暗背景下 0.62 就够亮（184 vs 背景 60，很抢眼），
+    // 但亮背景下材质被压到 231、背景 250，权重不够高光反而比背景还暗，
+    // 会看成一条「暗边」。亮背景拉到 0.92 并用纯白，才顶得到 253 附近。
+    let line_w = mix(0.62, 0.92, smoothstep(0.60, 0.92, lum_m));
+    col = mix(col, vec3<f32>(1.0), clamp(line * line_w + glow, 0.0, 1.0));
 
     // 关键：边缘必须和「背后的桌面」混合。兼容渲染的窗口不透明，
     // 输出预乘 col*alpha 在 aa→0 时会变成纯黑，岛体轮廓外就是一圈黑线
