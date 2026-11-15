@@ -67,7 +67,9 @@ impl App {
             let text_width=if with_lyrics {123.0}else{220.0};
             let title_size=if with_lyrics {12.0}else{14.0};
             c.text(text_x,if with_lyrics {41.0}else{53.0},&c.fit(&np.title,title_size,W::Bold,text_width),title_size,W::Bold,theme::WHITE,H::Left);
-            c.text(text_x,if with_lyrics {57.0}else{67.0},&c.fit(&np.artist,size::BODY,W::Regular,text_width),size::BODY,W::Regular,theme::GRAY,H::Left);
+            // 网页媒体常没有歌手；这时把浏览器来源写在副标题，别留一行空白。
+            let subtitle=if np.artist.trim().is_empty() && np.is_browser() {np.source.clone()} else {np.artist.clone()};
+            c.text(text_x,if with_lyrics {57.0}else{67.0},&c.fit(&subtitle,size::BODY,W::Regular,text_width),size::BODY,W::Regular,theme::GRAY,H::Left);
             if with_lyrics {self.draw_music_lyrics(c);}
         }
 

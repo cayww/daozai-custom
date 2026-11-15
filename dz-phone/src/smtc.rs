@@ -73,7 +73,7 @@ impl NowPlaying {
         }
         let source=self.source.to_lowercase();
         if (matches!(source.as_str(),"kugou"|"kugou.exe"|"qqmusic"|"qqmusic.exe"|"cloudmusic.exe"|"汽水音乐"|"sodamusic.exe"|"spotify"|"spotify.exe"|"kwmusic.exe"|"bodian_pc.exe") || apple_music::is_source(&source)) && self.playback_type==MediaKind::Music{return MediaKind::Music;}
-        if ["chrome","msedge","firefox","brave","opera"].iter().any(|name|source.contains(name)) {
+        if self.is_browser() {
             let album=self.album.trim().to_lowercase();
             if ["youtube","bilibili","抖音","哔哩哔哩"].contains(&album.as_str()){return MediaKind::Video;}
             // 视频作者也可能被放进 Artist；浏览器缺少专辑信息时不自动认作歌曲。
@@ -83,6 +83,20 @@ impl NowPlaying {
     }
 
     pub fn is_music(&self)->bool {self.kind()==MediaKind::Music}
+
+    /// 媒体是否来自浏览器标签页。Chrome/Edge 会把网页的 Media Session 映射成
+    /// 系统媒体会话，来源常是 `Chrome` / `msedge.exe` 而不是页面域名。
+    pub fn is_browser(&self)->bool{
+        let source=self.source.to_lowercase();
+        ["chrome","msedge","firefox","brave","opera"].iter().any(|name|source.contains(name))
+    }
+
+    /// 是否允许进音乐页：音乐，或浏览器里正在播放的媒体（视频、播客、有声书都算）。
+    /// 网页常缺 album / artist，kind() 会保守判成 Unknown，但它们同样该上岛；
+    /// 歌词与「视频不遮挡音乐」的优先级仍只认 is_music()，不受这里影响。
+    pub fn is_island_media(&self)->bool{
+        self.is_music() || (self.is_browser() && !self.title.trim().is_empty())
+    }
 }
 
 type ArtworkRequest=(String,Box<dyn FnOnce()->Option<Vec<u8>>+Send>);
@@ -650,7 +664,7 @@ fn init_winrt() {}
 struct PlaybackClock { previous: Option<NowPlaying> }
 impl PlaybackClock {
     fn update(&mut self, media: &mut NowPlaying) {
-        if !media.is_music() || media.sampled_at.is_none() {
+        if !media.is_island_media() || media.sampled_at.is_none() {
             self.previous=None;
             return;
         }
@@ -1258,6 +1272,23 @@ mod tests {
         np.title="Movie - YouTube".into();assert_eq!(np.kind(),MediaKind::Video);
         np.title="阿拉斯加海湾".into();np.artist="蓝心羽".into();assert!(np.is_music());
         np.artist.clear();assert_eq!(np.kind(),MediaKind::Unknown,"只有页面标题不能确认是歌曲");
+    }
+
+    #[test]
+    fn browser_media_without_album_is_allowed_on_island(){
+        // 实机采样：source=Chrome / title=《刚烈界魏延》 / artist、album 都空。
+        // kind() 仍判 Unknown（不给网页媒体搜歌词），但音乐页应当照常显示。
+        let mut np=NowPlaying{source:"Chrome".into(),title:"《刚烈界魏延》".into(),playing:true,playback_type:MediaKind::Music,..Default::default()};
+        assert!(np.is_browser());
+        assert!(!np.is_music());
+        assert!(np.is_island_media(),"浏览器正在播放的媒体应能上岛");
+        np.playback_type=MediaKind::Video;
+        assert!(np.is_island_media(),"网页视频同样上岛");
+        np.source="cloudmusic.exe".into();
+        assert!(!np.is_browser());
+        assert!(!np.is_island_media(),"非浏览器的 Unknown 媒体仍不上岛");
+        np.source="Chrome".into();np.title.clear();
+        assert!(!np.is_island_media(),"空标题的浏览器会话不上岛");
     }
 
     #[test]

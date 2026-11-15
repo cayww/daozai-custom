@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-125"
+PATCH_ID = "custom-126"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -9348,6 +9348,160 @@ fn island_size_slider(ui:&mut egui::Ui,value:&mut u32)->egui::Response {
                         }
                         settings_label(ui,"会议提醒");
                         settings_card(ui,|ui|{'''),
+
+    # custom-126：浏览器正在播放的媒体进音乐页：新增 is_island_media，放开显示门槛
+    ("src/smtc.rs",
+     '''        let source=self.source.to_lowercase();
+        if (matches!(source.as_str(),"kugou"|"kugou.exe"|"qqmusic"|"qqmusic.exe"|"cloudmusic.exe"|"汽水音乐"|"sodamusic.exe"|"spotify"|"spotify.exe"|"kwmusic.exe"|"bodian_pc.exe") || apple_music::is_source(&source)) && self.playback_type==MediaKind::Music{return MediaKind::Music;}
+        if ["chrome","msedge","firefox","brave","opera"].iter().any(|name|source.contains(name)) {
+            let album=self.album.trim().to_lowercase();
+            if ["youtube","bilibili","抖音","哔哩哔哩"].contains(&album.as_str()){return MediaKind::Video;}''',
+     '''        let source=self.source.to_lowercase();
+        if (matches!(source.as_str(),"kugou"|"kugou.exe"|"qqmusic"|"qqmusic.exe"|"cloudmusic.exe"|"汽水音乐"|"sodamusic.exe"|"spotify"|"spotify.exe"|"kwmusic.exe"|"bodian_pc.exe") || apple_music::is_source(&source)) && self.playback_type==MediaKind::Music{return MediaKind::Music;}
+        if self.is_browser() {
+            let album=self.album.trim().to_lowercase();
+            if ["youtube","bilibili","抖音","哔哩哔哩"].contains(&album.as_str()){return MediaKind::Video;}'''),
+    ("src/smtc.rs",
+     '''
+    pub fn is_music(&self)->bool {self.kind()==MediaKind::Music}
+}
+''',
+     '''
+    pub fn is_music(&self)->bool {self.kind()==MediaKind::Music}
+
+    /// 媒体是否来自浏览器标签页。Chrome/Edge 会把网页的 Media Session 映射成
+    /// 系统媒体会话，来源常是 `Chrome` / `msedge.exe` 而不是页面域名。
+    pub fn is_browser(&self)->bool{
+        let source=self.source.to_lowercase();
+        ["chrome","msedge","firefox","brave","opera"].iter().any(|name|source.contains(name))
+    }
+
+    /// 是否允许进音乐页：音乐，或浏览器里正在播放的媒体（视频、播客、有声书都算）。
+    /// 网页常缺 album / artist，kind() 会保守判成 Unknown，但它们同样该上岛；
+    /// 歌词与「视频不遮挡音乐」的优先级仍只认 is_music()，不受这里影响。
+    pub fn is_island_media(&self)->bool{
+        self.is_music() || (self.is_browser() && !self.title.trim().is_empty())
+    }
+}
+'''),
+    ("src/smtc.rs",
+     '''impl PlaybackClock {
+    fn update(&mut self, media: &mut NowPlaying) {
+        if !media.is_music() || media.sampled_at.is_none() {
+            self.previous=None;
+            return;''',
+     '''impl PlaybackClock {
+    fn update(&mut self, media: &mut NowPlaying) {
+        if !media.is_island_media() || media.sampled_at.is_none() {
+            self.previous=None;
+            return;'''),
+    ("src/smtc.rs",
+     '''
+    #[test]
+    fn browser_video_authors_are_not_enough_to_identify_a_song(){
+        let mut np=NowPlaying{title:"A video".into(),artist:"Video creator".into(),source:"Chrome".into(),playback_type:MediaKind::Music,..Default::default()};''',
+     '''
+    #[test]
+    fn browser_media_without_album_is_allowed_on_island(){
+        // 实机采样：source=Chrome / title=《刚烈界魏延》 / artist、album 都空。
+        // kind() 仍判 Unknown（不给网页媒体搜歌词），但音乐页应当照常显示。
+        let mut np=NowPlaying{source:"Chrome".into(),title:"《刚烈界魏延》".into(),playing:true,playback_type:MediaKind::Music,..Default::default()};
+        assert!(np.is_browser());
+        assert!(!np.is_music());
+        assert!(np.is_island_media(),"浏览器正在播放的媒体应能上岛");
+        np.playback_type=MediaKind::Video;
+        assert!(np.is_island_media(),"网页视频同样上岛");
+        np.source="cloudmusic.exe".into();
+        assert!(!np.is_browser());
+        assert!(!np.is_island_media(),"非浏览器的 Unknown 媒体仍不上岛");
+        np.source="Chrome".into();np.title.clear();
+        assert!(!np.is_island_media(),"空标题的浏览器会话不上岛");
+    }
+
+    #[test]
+    fn browser_video_authors_are_not_enough_to_identify_a_song(){
+        let mut np=NowPlaying{title:"A video".into(),artist:"Video creator".into(),source:"Chrome".into(),playback_type:MediaKind::Music,..Default::default()};'''),
+    ("src/app.rs",
+     '''        self.clipboard.flush();
+        if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
+        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
+        let status_width=self.status_total_width();''',
+     '''        self.clipboard.flush();
+        if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
+        // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
+        let status_width=self.status_total_width();'''),
+    ("src/app.rs",
+     '''        let pet_visible=self.pet_a>0.01 && !self.open && !minimal_pill;
+        let ambient=self.settings.skin==model::Skin::Fluid && self.fluid.animating() || self.pomo.running && (self.open && self.page==1 || !self.open && !minimal_pill && self.notice.is_none() && bar::animations_enabled())
+            || self.media.playing && (self.open && self.page==0 || !self.open && !minimal_pill && self.notice.is_none() && self.media.is_music())
+            || self.notice.as_ref().is_some_and(|notice|notice.meeting.is_some());
+        // 长歌词滚动时必须持续重绘；暂停时也要——人正是这时候才想读完一整句。''',
+     '''        let pet_visible=self.pet_a>0.01 && !self.open && !minimal_pill;
+        let ambient=self.settings.skin==model::Skin::Fluid && self.fluid.animating() || self.pomo.running && (self.open && self.page==1 || !self.open && !minimal_pill && self.notice.is_none() && bar::animations_enabled())
+            || self.media.playing && (self.open && self.page==0 || !self.open && !minimal_pill && self.notice.is_none() && self.media.is_island_media())
+            || self.notice.as_ref().is_some_and(|notice|notice.meeting.is_some());
+        // 长歌词滚动时必须持续重绘；暂停时也要——人正是这时候才想读完一整句。'''),
+    ("src/app.rs",
+     '''        let hc = hd + date_w + 8.0;
+        // 药丸起点布局
+        let has_music=self.media.is_music();
+        let layout=self.resident.current();
+        let pb=(local_cx+layout.x[bar::BATTERY].unwrap_or(0.0),15.0);''',
+     '''        let hc = hd + date_w + 8.0;
+        // 药丸起点布局
+        let has_music=self.media.is_island_media();
+        let layout=self.resident.current();
+        let pb=(local_cx+layout.x[bar::BATTERY].unwrap_or(0.0),15.0);'''),
+    ("src/app.rs",
+     '''    fn update_media(&mut self, env: &Env, ctx: &egui::Context) {
+        let m = &env.media;
+        if !m.is_music() {
+            self.music_volume_ui=None;
+            self.music_volume_quiet_until=0.0;''',
+     '''    fn update_media(&mut self, env: &Env, ctx: &egui::Context) {
+        let m = &env.media;
+        if !m.is_island_media() {
+            self.music_volume_ui=None;
+            self.music_volume_quiet_until=0.0;'''),
+    ("src/pages.rs",
+     '''            let title_size=if with_lyrics {12.0}else{14.0};
+            c.text(text_x,if with_lyrics {41.0}else{53.0},&c.fit(&np.title,title_size,W::Bold,text_width),title_size,W::Bold,theme::WHITE,H::Left);
+            c.text(text_x,if with_lyrics {57.0}else{67.0},&c.fit(&np.artist,size::BODY,W::Regular,text_width),size::BODY,W::Regular,theme::GRAY,H::Left);
+            if with_lyrics {self.draw_music_lyrics(c);}
+        }''',
+     '''            let title_size=if with_lyrics {12.0}else{14.0};
+            c.text(text_x,if with_lyrics {41.0}else{53.0},&c.fit(&np.title,title_size,W::Bold,text_width),title_size,W::Bold,theme::WHITE,H::Left);
+            // 网页媒体常没有歌手；这时把浏览器来源写在副标题，别留一行空白。
+            let subtitle=if np.artist.trim().is_empty() && np.is_browser() {np.source.clone()} else {np.artist.clone()};
+            c.text(text_x,if with_lyrics {57.0}else{67.0},&c.fit(&subtitle,size::BODY,W::Regular,text_width),size::BODY,W::Regular,theme::GRAY,H::Left);
+            if with_lyrics {self.draw_music_lyrics(c);}
+        }'''),
+    ("src/ui_tests.rs",
+     '''    assert!(h.app.toast_now().is_none(),"超过 6 秒后应消失");
+}
+''',
+     '''    assert!(h.app.toast_now().is_none(),"超过 6 秒后应消失");
+}
+
+#[test]
+fn browser_playback_is_kept_on_the_music_page(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    // 实机采到的形状：Chrome 会话、标题有、歌手和专辑都空，被 kind() 判成 Unknown。
+    h.media=crate::smtc::NowPlaying{source:"Chrome".into(),title:"《刚烈界魏延》".into(),
+        playing:true,duration:1358.0,position:120.0,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.frame(vec![]);
+    assert_eq!(h.app.media.title,"《刚烈界魏延》","浏览器媒体不该被 update_media 清空");
+    assert_eq!(h.app.media.source,"Chrome");
+    // 非浏览器、非音乐的未知会话仍不上岛，别把旧行为放开过头。
+    h.media=crate::smtc::NowPlaying{source:"SomeApp".into(),title:"一个未知会话".into(),playing:true,..Default::default()};
+    h.frame(vec![]);
+    assert!(h.app.media.title.is_empty(),"非浏览器 Unknown 会话仍应上不了岛");
+}
+'''),
 ]
 
 

@@ -2082,7 +2082,7 @@ impl App {
         }
         self.clipboard.flush();
         if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
-        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_music()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
         // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
         let status_width=self.status_total_width();
         if status_width>0.0 {layout.add_status(status_width);}
@@ -2486,7 +2486,7 @@ impl App {
             || !self.notice_width.settled(1.0);
         let pet_visible=self.pet_a>0.01 && !self.open && !minimal_pill;
         let ambient=self.settings.skin==model::Skin::Fluid && self.fluid.animating() || self.pomo.running && (self.open && self.page==1 || !self.open && !minimal_pill && self.notice.is_none() && bar::animations_enabled())
-            || self.media.playing && (self.open && self.page==0 || !self.open && !minimal_pill && self.notice.is_none() && self.media.is_music())
+            || self.media.playing && (self.open && self.page==0 || !self.open && !minimal_pill && self.notice.is_none() && self.media.is_island_media())
             || self.notice.as_ref().is_some_and(|notice|notice.meeting.is_some());
         // 长歌词滚动时必须持续重绘；暂停时也要——人正是这时候才想读完一整句。
         let lyric_scrolling=self.island_lyric_scroll.is_some();
@@ -3159,7 +3159,7 @@ impl App {
         let hd = gx + battery_space;
         let hc = hd + date_w + 8.0;
         // 药丸起点布局
-        let has_music=self.media.is_music();
+        let has_music=self.media.is_island_media();
         let layout=self.resident.current();
         let pb=(local_cx+layout.x[bar::BATTERY].unwrap_or(0.0),15.0);
         let pcx=local_cx+layout.x[bar::CLOCK].unwrap()-paint::clock_width(base,&clock,size::PILL_CLOCK)/2.0;
@@ -3609,7 +3609,7 @@ impl App {
     /// 媒体进度在两次 SMTC 刷新之间按时间外推，进度条才会连续走动。
     fn update_media(&mut self, env: &Env, ctx: &egui::Context) {
         let m = &env.media;
-        if !m.is_music() {
+        if !m.is_island_media() {
             self.music_volume_ui=None;
             self.music_volume_quiet_until=0.0;
             self.music_volume_open=false;

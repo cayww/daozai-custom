@@ -612,6 +612,40 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**浏览器正在播放的媒体上岛（custom-126）**
+
+用户想通过 daozai-bridge 扩展把浏览器播放的音乐/视频送上岛。调研后发现
+**SMTC 本来就收得到**：本机 `smtc::tests::live_sessions_metadata` 实机打印出
+
+```
+source=Chrome title=《刚烈界魏延》 artist=(空) album=(空) type=Music duration=22:38
+```
+
+Chrome/Edge 在 Windows 上把网页 Media Session 映射成系统媒体会话，岛仔 `query_system()`
+也确实枚举全部会话。真正挡住它的是两处判定：`NowPlaying::kind()` 对「浏览器来源 +
+album 空」保守返回 `Unknown`（避免把视频作者当成歌手），而 `app.rs::update_media()` 用
+`is_music()` 当门槛，非音乐直接 `self.media=NowPlaying::default()` 清空 —— 采到了也不上岛。
+
+用户选择「只改岛仔判定」，不动扩展。改法：
+
+- `smtc.rs` 新增 `is_browser()`（chrome/msedge/firefox/brave/opera，复用 kind 里原有名单）
+  与 `is_island_media()` = `is_music() || (is_browser() && 标题非空)`。
+  **`is_music()` 语义完全不变**：歌词、岛形歌词、`media_rank` 的「视频不遮挡音乐」、
+  `MediaMemory` 仍按原逻辑，不给网页视频搜歌词、也不抢正在播放的音乐。
+- 只把「显示 / 留位 / 重绘 / 清空」四处门槛换成 `is_island_media()`：
+  `update_media()`（核心）、`Layout::new`、`ambient`、`has_music`；
+  `PlaybackClock::update` 同步放开，浏览器媒体的进度条一样平滑外推。
+- `pages.rs` 音乐页副标题：浏览器媒体没有歌手时显示来源（如 `Chrome`）而不是留白。
+- 控制沿用 SMTC 原生接口：播放/暂停/上下首、进度拖动（页面注册了 `seekto` 才能跳）。
+
+验证：新增 `browser_media_without_album_is_allowed_on_island`（判定）与
+`browser_playback_is_kept_on_the_music_page`（UI 回归，锁住 update_media 不再清空）；
+全量 `1173 passed / 0 failed / 119 ignored`；干净重放 216 处、跳过 0、diff 空。
+
+**边界**：只覆盖设置了 Media Session 的站点（YouTube Music / Spotify Web / B 站等）。
+扩展路线（补站点名、URL、覆盖只有声音没元数据的标签）本轮按用户选择未做；
+桥已支持 `t:"status"` 通用透传，将来要做只需改扩展，但扩展当前并未加载。
+
 **设置页结构优化：长区块可折叠（custom-125）**
 
 用户反馈「通知 / 邮箱 / 日程」三页太长太复杂，尤其通知页要一路滚到底。

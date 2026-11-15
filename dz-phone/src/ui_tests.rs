@@ -8552,3 +8552,20 @@ fn toast_stays_readable_after_a_modal_file_dialog_blocks_the_ui_loop(){
     h.t+=4.0;h.frame(vec![]);
     assert!(h.app.toast_now().is_none(),"超过 6 秒后应消失");
 }
+
+#[test]
+fn browser_playback_is_kept_on_the_music_page(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    // 实机采到的形状：Chrome 会话、标题有、歌手和专辑都空，被 kind() 判成 Unknown。
+    h.media=crate::smtc::NowPlaying{source:"Chrome".into(),title:"《刚烈界魏延》".into(),
+        playing:true,duration:1358.0,position:120.0,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.frame(vec![]);
+    assert_eq!(h.app.media.title,"《刚烈界魏延》","浏览器媒体不该被 update_media 清空");
+    assert_eq!(h.app.media.source,"Chrome");
+    // 非浏览器、非音乐的未知会话仍不上岛，别把旧行为放开过头。
+    h.media=crate::smtc::NowPlaying{source:"SomeApp".into(),title:"一个未知会话".into(),playing:true,..Default::default()};
+    h.frame(vec![]);
+    assert!(h.app.media.title.is_empty(),"非浏览器 Unknown 会话仍应上不了岛");
+}
