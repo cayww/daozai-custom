@@ -158,9 +158,12 @@ fn rr_sdf(p : vec2<f32>, b : vec2<f32>, r : f32) -> f32 {
 fn sample_px(px : vec2<f32>) -> vec3<f32> {
     // FLAT=2：用棋盘格当背景，折射位移、色散、越界都会直接显形。
     if (u.misc.w > 1.5) {
-        let cell = floor(px / 12.0);
-        let g = fract((cell.x + cell.y) * 0.5) * 2.0;
-        return mix(vec3<f32>(0.18, 0.22, 0.30), vec3<f32>(0.95, 0.96, 0.98), g);
+        // 20px 网格 + 1.6px 抗锯齿细线：硬棋盘本身的格子边缘也是一级级像素，
+        // 很容易被当成「玻璃锯齿」，换成带 AA 的网格线就不会混淆。
+        let q = px / 20.0;
+        let dl = min(abs(fract(q.x) - 0.5), abs(fract(q.y) - 0.5)) * 20.0;
+        let ln = 1.0 - smoothstep(0.6, 1.8, dl);
+        return mix(vec3<f32>(0.80, 0.84, 0.90), vec3<f32>(0.18, 0.22, 0.30), ln);
     }
     let tex = vec2<f32>(u.extra.y, u.extra.z);
     let scale = vec2<f32>(u.extra.y / 1280.0, u.extra.z / 512.0);
@@ -191,7 +194,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 内缩后抗锯齿完整落在窗口区域内，区域只裁到已经完全透明的部分。
     // inset 必须大于「白边半宽(1.6) + aa 半宽(0.8)」，否则白边外半部分被区域裁掉，
     // 边缘会变成 1px 硬跳变（实测 y:43 → 181，跨 138）—— 这就是看到的锯齿。
-    let inset = 2.6;
+    let inset = 3.0;
     let half_size = max(u.bounds.zw * 0.5 - vec2<f32>(inset), vec2<f32>(2.0));
     let local = p - u.bounds.xy - u.bounds.zw * 0.5;
     let radius = max(min(u.extra.x - inset, min(half_size.x, half_size.y)), 0.0);
@@ -252,10 +255,11 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     col = mix(col, vec3<f32>(0.96, 0.97, 1.0), vec3<f32>(mat * 0.10));
     col = mix(col, col * 0.40 + vec3<f32>(0.03, 0.035, 0.045), vec3<f32>((1.0 - mat) * 0.85));
 
-    // 1~2px 细白边：液态玻璃要细，粗描边会显脏。
-    let line = 1.0 - smoothstep(0.0, 1.6, abs(d));
-    // 白边别太亮：高对比壁纸上 0.62 的纯白细线会显得生硬，像锯齿。
-    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), line * 0.40);
+    // 白边用高斯核（σ=1.9，有效宽度约 8px）而不是带截断的 smoothstep：
+    // smoothstep 只有 1~2px 宽，在 1px 采样间距下相邻像素的差值必然很大，
+    // 看上去就是一条硬线/锯齿。高斯没有截断点，逐像素差值平滑。
+    let line = exp(-(d * d) / 3.61);
+    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), line * 0.28);
 
     // 边缘光只给朝光源的一侧，背光侧很弱。
     let rim = 1.0 - smoothstep(0.0, 7.0, -d);
