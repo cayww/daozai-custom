@@ -244,38 +244,57 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let bp = p + refr;
 
     var col = tap5(bp, ca, 1.5);
-    col = col * 1.005 + vec3<f32>(0.004, 0.006, 0.010);
+    // 玻璃比空气「多一层」，但这点提亮必须极轻。以前这里是四层白色叠加：
+    // +0.004 冷色、10% 白雾、顶部冷光、外加一圈白边，浅色壁纸下整体被推成
+    // 一片发白的雾 —— 玻璃感就是这么没的（实测岛内亮度只比壁纸高 8，却全糊了）。
+    col = col * 1.004 + vec3<f32>(0.002, 0.003, 0.006);
 
-    // 顶部一点冷色提亮，做出玻璃厚度。
+    // 顶部一点冷色提亮，做出玻璃厚度（幅度从 0.18 砍到 0.10）。
     let topk = 1.0 - smoothstep(0.0, max(u.bounds.w, 1.0), p.y - u.bounds.y);
-    col = col + vec3<f32>(0.05, 0.07, 0.10) * topk * 0.18;
+    col = col + vec3<f32>(0.05, 0.07, 0.10) * topk * 0.10;
 
-    // 材质：浅色只加很轻的白雾（壁纸本来就亮，多一点都不透明），
-    // 深色压暗 + 冷调保证白字可读。
-    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), vec3<f32>(mat * 0.10));
-    col = mix(col, col * 0.40 + vec3<f32>(0.03, 0.035, 0.045), vec3<f32>((1.0 - mat) * 0.85));
+    // 材质：浅色只加极轻的白雾（0.10 → 0.045）；深色压暗但**必须保留背景的
+    // 明暗层次**，否则就是一整块实心深灰 —— 之前 col*0.40 再混 85%，
+    // 背景只剩 6% 的贡献，那不是玻璃，是不透明面板。
+    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), vec3<f32>(mat * 0.045));
+    col = mix(col, col * 0.70 + vec3<f32>(0.012, 0.016, 0.022), vec3<f32>((1.0 - mat) * 0.55));
 
-    // 白边用高斯核（σ=1.9，有效宽度约 8px）而不是带截断的 smoothstep：
-    // smoothstep 只有 1~2px 宽，在 1px 采样间距下相邻像素的差值必然很大，
-    // 看上去就是一条硬线/锯齿。高斯没有截断点，逐像素差值平滑。
-    let line = exp(-(d * d) / 3.61);
-    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), line * 0.28);
+    // 白雾会洗掉饱和度，补回来一点，玻璃才有「透过一层介质」的颜色感。
+    let lum0 = dot(col, vec3<f32>(0.299, 0.587, 0.114));
+    col = mix(vec3<f32>(lum0), col, 1.06);
+
+    // 内侧厚度：紧挨高光下方压一道很薄的暗，玻璃才有厚度，而不是一张贴纸。
+    // 位置在内侧 3px、σ≈2.4、只压 14%，再多就显脏。
+    let tq = (d + 3.2) / 2.4;
+    let thick = exp(-tq * tq);
+    col = col * (1.0 - thick * 0.14);
 
     // 边缘光只给朝光源的一侧，背光侧很弱。
-    let rim = 1.0 - smoothstep(0.0, 7.0, -d);
+    let rim = 1.0 - smoothstep(0.0, 6.0, -d);
     let Ld = normalize(vec2<f32>(-0.45, -0.65));
-    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, Ld), 0.0), 2.0) * 0.34;
-    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.12;
+    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, Ld), 0.0), 2.0) * 0.30;
+    col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.10;
     col = col + u.tint.rgb * u.tint.a * 0.05 * rim;
+
+    // 高光：玻璃质感的命门。必须是**一条锐利的亮线**，不是一圈雾。
+    // 之前 exp(-d²/3.61)（σ=1.9，有效宽约 8px）把高光摊成了雾：实测 45px 高的
+    // 胶囊上边缘有整整 10px 是白的（255,255,255,252,244,231,220,213…），
+    // 上下各 10px 就吃掉 44% 的高度，观感自然从「玻璃」变成「磨砂塑料」。
+    // 现在峰值落在边缘内侧 0.7px、σ≈1.15（有效宽约 3px）；整条线都在形状
+    // 内部，所以不影响外缘覆盖率，外缘依旧交给 aa，不会退回 1px 硬跳。
+    let lq = (d + 0.7) / 1.15;
+    let line = exp(-lq * lq);
+    let gq = (d + 1.2) / 4.5;
+    let glow = exp(-gq * gq) * 0.05;
+    col = mix(col, vec3<f32>(0.98, 0.99, 1.0), clamp(line * 0.62 + glow, 0.0, 1.0));
 
     // 关键：边缘必须和「背后的桌面」混合。兼容渲染的窗口不透明，
     // 输出预乘 col*alpha 在 aa→0 时会变成纯黑，岛体轮廓外就是一圈黑线
     // （圆角处最明显）。这里直接 mix 桌面色，边缘永远不会有黑。
     let edge_bg = sample_px(p);
-    // 覆盖率取 max(aa, line)：白边自带覆盖率，不能被 aa 归零。
-    // 否则 d>0.8 处 aa=0，白边的外半部分会被 mix(edge_bg, col, 0) 整个丢弃，
-    // 边缘就只剩 1px 硬跳（实测 y:10 壁纸 → y:11 亮 213，跨 141）—— 那就是锯齿。
-    let cov = clamp(max(aa, line), 0.0, 1.0);
+    // 覆盖率取 max(aa, line*0.9)：高光自带覆盖率，不能被 aa 归零，
+    // 否则白边的外半部分会被 mix(edge_bg, col, 0) 整个丢弃，边缘只剩 1px 硬跳。
+    let cov = clamp(max(aa, line * 0.90), 0.0, 1.0);
     return vec4<f32>(mix(edge_bg, col, vec3<f32>(cov)), 1.0);
 }
 "#;
@@ -616,12 +635,15 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
             ((body[0] + sx as f32 + body[2] + 10.0).min(pw as f32)) as i32,
             ((body[1] + sy as f32 + body[3] + 10.0).min(ph as f32)) as i32,
         );
-        // 冻结尾帧用于截图诊断时保留真实壁纸；否则骨架里岛体区域可能是
-        // WDA 的黑色遮罩，先抹成上下桌面色的渐变。
+        // 岛体区域在底片里是黑的时候（WDA 排除的竞态残留）才抹成上下桌面色的
+        // 渐变。之前是「只要不是冻结模式就无条件抹」，于是**干净帧也被抹掉了**：
+        // 底片里岛体位置永远是一条竖直渐变，玻璃取样到它就永远是平的，
+        // 冻结模式截图诊断看到的全是假背景 —— 玻璃感被判死刑主要就是这条。
         let top = row_mean(&data, pw, ph, bx0, bx1, by0 - 6);
         let bot = row_mean(&data, pw, ph, bx0, bx1, by1 + 6);
         let inner = mean_luma(&data, pw, ph, bx0, by0, bx1, by1);
-        if !frozen || inner < 70.0 {
+        let ring = (top[0] + top[1] + top[2] + bot[0] + bot[1] + bot[2]) / 6.0;
+        if inner < 45.0 && ring - inner > 80.0 {
             fill_gradient(&mut data, pw, bx0, by0, bx1, by1, top, bot);
         }
         diag(&format!("plate: new {}x{} at ({},{}) frozen={} inner={:.0}",
