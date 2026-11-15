@@ -2414,7 +2414,6 @@ impl App {
                         #[cfg(windows)]
                         {
                             use crate::smtc::netease_control as ctl;
-                            let auto_host=ctl::config().auto_host;
                             let mut authoritative=crate::music_volume::authoritative();
                             settings_label(ui,"音乐音量");
                             settings_card(ui,|ui|{
@@ -2444,15 +2443,6 @@ impl App {
                                             Err(error)=>self.say(format!("打开文件对话框失败：{}",error)),
                                         }
                                     }
-                                ui.separator();
-                                let mut auto=auto_host;
-                                setting_row(ui,"自动托管","开启后会重启未连接到岛仔的网易云进程",&mut auto);
-                                if auto!=auto_host{
-                                    match ctl::set_auto_host(auto){
-                                        Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
-                                        Err(error)=>self.say(format!("保存失败：{}",error)),
-                                    }
-                                }
                             });
                         }
                     }

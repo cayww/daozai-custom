@@ -36,9 +36,9 @@ const MAX_FRAME:usize=2*1024*1024;
 const DEFAULT_COMMANDS:&[&str]=&["audioplayer.seek"];
 
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub struct Config{pub port:u16,pub commands:Vec<String>,pub auto_host:bool,pub exe_path:Option<String>}
+pub struct Config{pub port:u16,pub commands:Vec<String>}
 impl Default for Config{
-    fn default()->Self{Config{port:DEFAULT_PORT,commands:DEFAULT_COMMANDS.iter().map(|s|(*s).to_string()).collect(),auto_host:false,exe_path:None}}
+    fn default()->Self{Config{port:DEFAULT_PORT,commands:DEFAULT_COMMANDS.iter().map(|s|(*s).to_string()).collect()}}
 }
 
 /// 命令名会被拼进 JS 字符串，只放行安全的字符集。
@@ -56,27 +56,8 @@ pub fn config()->Config{
     let Ok(value)=serde_json::from_slice::<serde_json::Value>(&bytes) else{return cfg;};
     if let Some(port)=value["port"].as_u64(){if (1..=65535).contains(&port){cfg.port=port as u16;}}
     if let Some(commands)=sanitize_commands(&value["commands"]){cfg.commands=commands;}
-    if let Some(flag)=value["auto_host"].as_bool(){cfg.auto_host=flag;}
-    if let Some(path)=value["exe_path"].as_str(){cfg.exe_path=Some(path.to_string());}
     cfg
 }
-
-/// 把开关 / 客户端路径写回 netease-cdp.json（保留 port、commands 等已有键）。
-fn set_flag(auto_host:Option<bool>,exe_path:Option<&str>)->Result<(),String>{
-    let dir=crate::model::config_dir();
-    std::fs::create_dir_all(&dir).map_err(|error|format!("建配置目录失败：{error}"))?;
-    let file=dir.join("netease-cdp.json");
-    let mut value=std::fs::read(&file).ok()
-        .and_then(|bytes|serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .unwrap_or_else(||serde_json::Value::Object(serde_json::Map::new()));
-    if !value.is_object(){value=serde_json::Value::Object(serde_json::Map::new());}
-    if let Some(flag)=auto_host{value["auto_host"]=serde_json::Value::Bool(flag);}
-    if let Some(path)=exe_path{value["exe_path"]=serde_json::Value::String(path.to_string());}
-    let text=serde_json::to_string_pretty(&value).map_err(|error|format!("序列化失败：{error}"))?;
-    std::fs::write(&file,text.as_bytes()).map_err(|error|format!("写配置失败：{error}"))
-}
-pub fn set_auto_host(enabled:bool)->Result<(),String>{set_flag(Some(enabled),None)}
-pub fn set_exe_path(path:&str)->Result<(),String>{set_flag(None,Some(path))}
 
 fn le16(b:&[u8],at:usize)->Option<u16>{Some(u16::from_le_bytes([*b.get(at)?,*b.get(at+1)?]))}
 fn le32(b:&[u8],at:usize)->Option<u32>{Some(u32::from_le_bytes([*b.get(at)?,*b.get(at+1)?,*b.get(at+2)?,*b.get(at+3)?]))}
@@ -250,11 +231,6 @@ pub fn boot_scan_shortcuts(){
     });
 }
 
-fn persist_launch(exe:&str,port:u16)->bool{
-    let _=set_exe_path(exe);
-    ensure_shortcut(port)
-}
-
 /// 用户手动选一条网易云快捷方式：确认它确实指向客户端后，把这条和扫描到的其它快捷方式
 /// 一起修（与自动托管重启里同一套修法）。只修所选那条时，用户从开始菜单子文件夹点开的
 /// 往往是另一条，看起来就像「选择文件没生效」。
@@ -304,28 +280,6 @@ pub fn shortcut_fixed()->bool{
 
 static FIXED_CACHE:Mutex<Option<(Instant,bool)>>=Mutex::new(None);
 
-static HOST_LAST:Mutex<Option<Instant>>=Mutex::new(None);
-static HOST_RESTART_AT:Mutex<Option<Instant>>=Mutex::new(None);
-/// 每帧调用：开关打开时，检测到网易云在跑但调试端口不通就自动带参数重启。
-/// 5 秒节流 + 重启后 30 秒冷却，避免启动慢导致反复重启；端口探测走后台缓存，不阻塞 UI。
-pub fn auto_host_tick(){
-    {
-        let Ok(mut guard)=HOST_LAST.lock() else{return};
-        if let Some(at)=*guard{if at.elapsed()<Duration::from_secs(5){return;}}
-        *guard=Some(Instant::now());
-    }
-    if !config().auto_host{return;}
-    if let Ok(guard)=HOST_RESTART_AT.lock(){
-        if let Some(at)=*guard{if at.elapsed()<Duration::from_secs(30){return;}}
-    }
-    if super::player_process::pids_named("cloudmusic.exe").is_empty(){return;}
-    if let Some(false)=port_status(){
-        if restart_with_debug_port().is_ok(){
-            if let Ok(mut guard)=HOST_RESTART_AT.lock(){*guard=Some(Instant::now());}
-        }
-    }
-}
-
 /// 调试端口是否已打开：网易云只有带 `--remote-debugging-port` 启动时才有。
 pub fn port_open()->bool{
     let addr=std::net::SocketAddr::from(([127,0,0,1],config().port));
@@ -347,120 +301,6 @@ pub fn set_volume(percent:u32)->bool{
         "(()=>{{const c=window.legacyNativeCmder;if(!c||typeof c.call!=='function')return false;c.call('audioplayer.setVolume','','',{value});return true;}})()"
     );
     matches!(evaluate(config().port,&expression),Some(serde_json::Value::Bool(true)))
-}
-
-/// 设置页用：CDP 调试端口状态。探测放在后台线程，绝不阻塞 UI 线程；
-/// `None` 表示第一次探测还没回来。
-static READY_CACHE:Mutex<Option<(Instant,bool)>>=Mutex::new(None);
-static PROBE_BUSY:Mutex<bool>=Mutex::new(false);
-pub fn port_status()->Option<bool>{
-    // 测试构建固定状态：异步探测会让两次设置页绘制的文本不同，像素基准测试会误报。
-    if cfg!(test){return Some(false);}
-    let stale=match READY_CACHE.lock(){
-        Ok(guard)=>match *guard{Some((at,_))=>at.elapsed()>=Duration::from_secs(5),None=>true},
-        Err(_)=>false,
-    };
-    if stale{
-        if let Ok(mut busy)=PROBE_BUSY.lock(){
-            if !*busy{
-                *busy=true;
-                std::thread::spawn(||{
-                    let ready=http_get(config().port,"/json/version").is_some();
-                    if let Ok(mut guard)=READY_CACHE.lock(){*guard=Some((Instant::now(),ready));}
-                    if let Ok(mut flag)=PROBE_BUSY.lock(){*flag=false;}
-                });
-            }
-        }
-    }
-    READY_CACHE.lock().ok().and_then(|guard|guard.map(|(_,ready)|ready))
-}
-
-/// 设置页「重启网易云」：结束进程 → 等它真的退干净 → 带调试端口重新拉起。
-/// 岛仔是常驻进程，它派生的客户端不受会话清理影响。
-/// 关键在「等」：网易云是单实例应用，旧进程没退完时新进程会把参数交给旧实例然后自己退出，
-/// 结果就是「重启了但端口永远不开」——之前只有手动退出客户端再启动才生效，就是这里的原因。
-pub fn restart_with_debug_port()->Result<String,String>{
-    use windows::Win32::{
-        Foundation::CloseHandle,
-        System::Threading::{OpenProcess,TerminateProcess,QueryFullProcessImageNameW,
-            PROCESS_NAME_WIN32,PROCESS_QUERY_LIMITED_INFORMATION,PROCESS_TERMINATE},
-    };
-    let cfg=config();
-    let pids=super::player_process::pids_named("cloudmusic.exe");
-    // 主进程与 CEF 子进程的映像路径相同，取任意一个即可。
-    let mut path=None;
-    for pid in &pids{
-        if !super::player_process::image_is(*pid,"cloudmusic.exe"){continue;}
-        unsafe{
-            let Ok(process)=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,*pid) else{continue};
-            let mut buffer=[0u16;1024];let mut length=buffer.len() as u32;
-            let ok=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,
-                windows::core::PWSTR(buffer.as_mut_ptr()),&mut length).is_ok();
-            let _=CloseHandle(process);
-            if ok{path=Some(String::from_utf16_lossy(&buffer[..length as usize]));break;}
-        }
-    }
-    let path=path.ok_or_else(||"未检测到运行中的网易云，请先启动客户端".to_string())?;
-    let mut killed=0;
-    for pid in &pids{
-        unsafe{
-            let Ok(process)=OpenProcess(PROCESS_TERMINATE,false,*pid) else{continue};
-            if TerminateProcess(process,1).is_ok(){killed+=1;}
-            let _=CloseHandle(process);
-        }
-    }
-    if killed==0{return Err("无法结束网易云进程，可能权限不足".to_string());}
-    // 先把快捷方式补齐（递归扫描所有位置），下次从开始菜单启动也带参数。
-    let _=persist_launch(&path,cfg.port);
-    if let Ok(mut guard)=READY_CACHE.lock(){*guard=None;}
-    // 等待与重启都放到后台：等进程退干净最多 6 秒、等端口最多 12 秒，不能卡住设置页。
-    std::thread::spawn(move||{
-        let start=Instant::now();
-        while start.elapsed()<Duration::from_secs(6){
-            if super::player_process::pids_named("cloudmusic.exe").is_empty(){break;}
-            std::thread::sleep(Duration::from_millis(120));
-        }
-        // 还有残留就再清一次，避免新进程又被旧实例接管。
-        if !super::player_process::pids_named("cloudmusic.exe").is_empty(){
-            for pid in super::player_process::pids_named("cloudmusic.exe"){
-                unsafe{
-                    let Ok(process)=OpenProcess(PROCESS_TERMINATE,false,pid) else{continue};
-                    let _=TerminateProcess(process,1);
-                    let _=CloseHandle(process);
-                }
-            }
-            let deadline=Instant::now()+Duration::from_secs(3);
-            while Instant::now()<deadline && !super::player_process::pids_named("cloudmusic.exe").is_empty(){
-                std::thread::sleep(Duration::from_millis(120));
-            }
-        }
-        let spawned=std::process::Command::new(&path)
-            .arg(format!("--remote-debugging-port={}",cfg.port))
-            .spawn()
-            .is_ok();
-        let message=if !spawned{
-            "重新启动失败，请从开始菜单打开网易云".to_string()
-        }else{
-            let start=Instant::now();
-            let mut ready=false;
-            while start.elapsed()<Duration::from_secs(12){
-                if port_open(){ready=true;break;}
-                std::thread::sleep(Duration::from_millis(300));
-            }
-            if let Ok(mut guard)=READY_CACHE.lock(){*guard=None;}
-            if ready{"已重启网易云，调试端口就绪".to_string()}
-            else{"已重启网易云，但调试端口还没打开。若一直如此，请手动退出客户端再从开始菜单启动".to_string()}
-        };
-        if let Ok(mut guard)=RESTART_RESULT.lock(){*guard=Some(message);}
-    });
-    Ok("正在重启网易云…".to_string())
-}
-
-static RESTART_RESULT:Mutex<Option<String>>=Mutex::new(None);
-
-/// 设置页每帧取一次后台重启的结果（取到就清空）。
-pub fn take_restart_result()->Option<String>{
-    RESTART_RESULT.lock().ok().and_then(|mut guard|guard.take())
 }
 
 fn valid(seconds:f64)->bool{seconds.is_finite() && (0.0..86400.0).contains(&seconds)}

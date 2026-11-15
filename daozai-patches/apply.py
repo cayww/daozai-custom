@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-121"
+PATCH_ID = "custom-122"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -8146,6 +8146,42 @@ fn toast_stays_readable_after_a_modal_file_dialog_blocks_the_ui_loop(){
     h.t+=4.0;h.frame(vec![]);
     assert!(h.app.toast_now().is_none(),"超过 6 秒后应消失");
 }'''),
+
+    # custom-122：删除自动托管：设置页开关、后台轮询与自动重启、结果队列及相关配置字段
+    ("src/app.rs",
+     '''        #[cfg(windows)]
+        {
+            crate::smtc::netease_control::boot_scan_shortcuts();
+            if let Some(message)=crate::smtc::netease_control::take_restart_result(){self.say(message);}
+            crate::smtc::netease_control::auto_host_tick();
+        }
+''',
+     '''        #[cfg(windows)] crate::smtc::netease_control::boot_scan_shortcuts();
+'''),
+    ("src/extras.rs",
+     '''                            use crate::smtc::netease_control as ctl;
+                            let auto_host=ctl::config().auto_host;
+''',
+     '''                            use crate::smtc::netease_control as ctl;
+'''),
+    ("src/extras.rs",
+     '''                                            Err(error)=>self.say(format!("打开文件对话框失败：{}",error)),
+                                        }
+                                    }
+                                ui.separator();
+                                let mut auto=auto_host;
+                                setting_row(ui,"自动托管","开启后会重启未连接到岛仔的网易云进程",&mut auto);
+                                if auto!=auto_host{
+                                    match ctl::set_auto_host(auto){
+                                        Ok(())=>self.say(if auto{"已开启自动托管"}else{"已关闭自动托管"}),
+                                        Err(error)=>self.say(format!("保存失败：{}",error)),
+                                    }
+                                }
+                            });''',
+     '''                                            Err(error)=>self.say(format!("打开文件对话框失败：{}",error)),
+                                        }
+                                    }
+                            });'''),
 ]
 
 

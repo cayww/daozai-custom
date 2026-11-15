@@ -612,6 +612,30 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**删除自动托管（custom-122）**
+
+用户要求把「自动托管」整个功能删掉。删除清单：
+
+- 设置页「自动托管」开关（`extras.rs`）；`app.rs` 的 `tick()` 只留 `boot_scan_shortcuts()`；
+- `Config.auto_host` / `Config.exe_path`、`config()` 里对应的读取，以及写配置的
+  `set_flag` / `set_auto_host` / `set_exe_path`；
+- 后台轮询 `auto_host_tick()` 与 `HOST_LAST` / `HOST_RESTART_AT`（5 秒节流、30 秒冷却）；
+- `restart_with_debug_port()`（结束并带参数重拉客户端）、`RESTART_RESULT` /
+  `take_restart_result()` 结果队列、`persist_launch()`；
+- `port_status()` 与 `READY_CACHE` / `PROBE_BUSY`（只服务于自动托管的 CDP 端口探测）。
+
+保留：`port_open()` / `bridge_ready()` / `set_volume()`（`music_volume.rs` 在用）、
+`player_process`（多家播放器共用）、启动扫描 `boot_scan_shortcuts()`、
+「选择文件」修全部快捷方式、CDP 跳转与歌词基准、custom-121 的 toast 修复。
+
+**影响**：岛仔不再动运行中的客户端。如果网易云比岛仔先启动且没带调试端口，
+只能自己退出客户端、再从已修好的快捷方式启动。`%APPDATA%\Daozai\netease-cdp.json`
+里已有的 `auto_host` / `exe_path` 键成为遗留数据（代码不再读写），不必清理；
+`port` / `commands` 仍然有效。
+
+验证：`1171 passed / 0 failed / 119 ignored`；干净重放 196 处、跳过 0、diff 空；
+编译无新增警告。PR #161 本来就不含自动托管，无需改动。
+
 **提示不显示 / 停留太短，以及取消周期补扫（custom-121）**
 
 用户提了三件事：不需要 60 秒补扫；想弄清楚「自动托管」到底做什么；手动选文件修完没弹 toast，
