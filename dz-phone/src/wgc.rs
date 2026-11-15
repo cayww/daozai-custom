@@ -122,6 +122,12 @@ fn init(x: i32, y: i32, w: u32, h: u32) -> windows::core::Result<Wgc> {
         )?;
         let session = pool.CreateCaptureSession(&item)?;
         session.StartCapture()?;
+        // Windows 11 在显示器被 WGC 捕获时会在屏幕四周画一圈黄色提示边框。
+        // 尝试关掉它；这一步可能需要系统授权，失败就保持原样（不影响抓屏）。
+        match session.SetIsBorderRequired(false) {
+            Ok(()) => log("wgc: 已关闭系统捕获黄框"),
+            Err(e) => log(&format!("wgc: 关闭捕获黄框失败 {:?}", e)),
+        }
 
         let stage = staging(&device, w, h)?;
         Ok(Wgc {

@@ -491,6 +491,8 @@ impl Window {
                                 self.glass=Some(key);
                                 // 回到矩形区域时必须重新设置。
                                 self.region=(i32::MIN,0,0,0);
+                                // 区域变化后立刻让 DWM 重新合成，避免旧像素残留成「白色的岛」。
+                                let _ = windows::Win32::Graphics::Dwm::DwmFlush();
                             } else {
                                 let _ = DeleteObject(rgn);
                             }
@@ -504,6 +506,7 @@ impl Window {
                     if SetWindowRgn(self.hwnd, rgn, true) != 0 {
                         self.region = r;
                         self.glass=None;
+                        let _ = windows::Win32::Graphics::Dwm::DwmFlush();
                     } else {
                         let _ = DeleteObject(rgn);
                     }

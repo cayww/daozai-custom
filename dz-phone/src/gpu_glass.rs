@@ -536,36 +536,34 @@ fn grab_raw(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
     }
 }
 
-/// 某个矩形里「暗像素」的比例，用来识别 WGC 帧里的黑色岛形 / 岛上的深色文字。
+/// 区域平均亮度（0..255）。
 #[cfg(windows)]
-fn dark_ratio(buf: &[u8], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32 {
-    let (mut dark, mut n) = (0.0f32, 0.0f32);
-    for y in (y0.max(0)..y1.min(h as i32)).step_by(3) {
-        for x in (x0.max(0)..x1.min(w as i32)).step_by(3) {
+fn mean_luma(buf: &[u8], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32 {
+    let (mut s, mut n) = (0.0f32, 0.0f32);
+    for y in (y0.max(0)..y1.min(h as i32)).step_by(4) {
+        for x in (x0.max(0)..x1.min(w as i32)).step_by(4) {
             let i = ((y as u32 * w + x as u32) * 4) as usize;
-            let l = (buf[i] as f32 + buf[i + 1] as f32 + buf[i + 2] as f32) / 3.0;
-            if l < 120.0 { dark += 1.0; }
+            s += (buf[i] as f32 + buf[i + 1] as f32 + buf[i + 2] as f32) / 3.0;
             n += 1.0;
         }
     }
-    if n > 0.0 { dark / n } else { 0.0 }
+    if n > 0.0 { s / n } else { 0.0 }
 }
 
-/// 岛体以外（capture 外围环带）的暗像素比例，作为「干净桌面」的参照。
+/// 岛体以外（capture 外围环带）的平均亮度，作为「干净桌面」的参照。
 #[cfg(windows)]
-fn dark_ratio_outside(buf: &[u8], w: u32, h: u32,
-                      ex0: i32, ey0: i32, ex1: i32, ey1: i32) -> f32 {
-    let (mut dark, mut n) = (0.0f32, 0.0f32);
-    for y in (0..h as i32).step_by(3) {
-        for x in (0..w as i32).step_by(3) {
+fn mean_luma_outside(buf: &[u8], w: u32, h: u32,
+                     ex0: i32, ey0: i32, ex1: i32, ey1: i32) -> f32 {
+    let (mut s, mut n) = (0.0f32, 0.0f32);
+    for y in (0..h as i32).step_by(4) {
+        for x in (0..w as i32).step_by(4) {
             if x >= ex0 && x < ex1 && y >= ey0 && y < ey1 { continue; }
             let i = ((y as u32 * w + x as u32) * 4) as usize;
-            let l = (buf[i] as f32 + buf[i + 1] as f32 + buf[i + 2] as f32) / 3.0;
-            if l < 120.0 { dark += 1.0; }
+            s += (buf[i] as f32 + buf[i + 1] as f32 + buf[i + 2] as f32) / 3.0;
             n += 1.0;
         }
     }
-    if n > 0.0 { dark / n } else { 0.0 }
+    if n > 0.0 { s / n } else { 0.0 }
 }
 
 /// 滚动干净底片：干净帧把整块（含岛体）写进底片，污染帧只更新岛体以外。
@@ -606,11 +604,11 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
         // WDA 的黑色遮罩，先抹成上下桌面色的渐变。
         let top = row_mean(&data, pw, ph, bx0, bx1, by0 - 6);
         let bot = row_mean(&data, pw, ph, bx0, bx1, by1 + 6);
-        let inner = dark_ratio(&data, pw, ph, bx0, by0, bx1, by1);
-        if !frozen || inner > 0.30 {
+        let inner = mean_luma(&data, pw, ph, bx0, by0, bx1, by1);
+        if !frozen || inner < 70.0 {
             fill_gradient(&mut data, pw, bx0, by0, bx1, by1, top, bot);
         }
-        diag(&format!("plate: new {}x{} at ({},{}) frozen={} inner={:.2}",
+        diag(&format!("plate: new {}x{} at ({},{}) frozen={} inner={:.0}",
                       pw, ph, fpx, fpy, frozen, inner));
         *guard = Some(CleanPlate { x: fpx, y: fpy, w: pw, h: ph, data });
     }
@@ -673,21 +671,25 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
     BG_LUMA.store(sample_luma(&raw, bw, bh, cx0, cy0, cx1, cy1).to_bits(),
                   std::sync::atomic::Ordering::Relaxed);
     dump_capture(&raw, bw, bh, if from_wgc { "wgc" } else { "gdi" });
-    let inner = dark_ratio(&raw, bw, bh, cx0, cy0, cx1, cy1);
-    let outer = dark_ratio_outside(&raw, bw, bh, cx0, cy0, cx1, cy1);
-    let whole = dark_ratio(&raw, bw, bh, 0, 0, bw as i32, bh as i32);
-    // DX12 合成层与 WDA 排除有异步竞态：部分 WGC 帧仍是黑色岛形或残留文字。
-    // 展开态岛体会占满 capture，所以必须和「岛体外围环带」比，不能和整体比。
-    let contaminated = (inner > 0.35 && outer < 0.35) || inner - outer > 0.02;
-    let clean_frame = from_wgc && !contaminated;
-    if GRAB_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
-        diag(&format!("capture: src={} clean={} inner={:.2} outer={:.2} cap={}x{}",
-                      if from_wgc { "wgc" } else { "gdi" }, clean_frame, inner, outer, bw, bh));
+    let inner = mean_luma(&raw, bw, bh, cx0, cy0, cx1, cy1);
+    let outer = mean_luma_outside(&raw, bw, bh, cx0, cy0, cx1, cy1);
+    // 只丢弃「岛体几乎全黑、且明显比外围暗」的帧 —— 那是 WDA 排除的竞态残留。
+    // 之前用「暗像素比例」判断，深色壁纸会把正常帧全判成污染（实测 inner=0.97），
+    // 导致底片永远不更新、换壁纸也不生效。这里改用平均亮度对比，深色壁纸不受影响。
+    let black_island = inner < 45.0 && outer - inner > 80.0;
+    if black_island {
+        if GRAB_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 60 == 0 {
+            diag(&format!("capture: 丢弃黑岛形帧 inner={:.0} outer={:.0}", inner, outer));
+        }
+        return None;
     }
-    // 整块纯黑（WDA 刚生效的瞬态）直接跳过，复用上一帧纹理，避免闪黑。
-    if whole > 0.95 { return None; }
+    if GRAB_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+        diag(&format!("capture: src={} inner={:.0} outer={:.0} cap={}x{}",
+                      if from_wgc { "wgc" } else { "gdi" }, inner, outer, bw, bh));
+    }
+    // 默认信任 WGC 帧并整块刷新底片：换壁纸/窗口移动都能立即反映。
     let out = compose_with_plate(&raw, bw, bh, x, y, body,
-                                 if frozen { false } else { clean_frame }, frozen)?;
+                                 if frozen { false } else { true }, frozen)?;
     if frozen && warm_n == 24 { diag("freeze: 背景已冻结为启动时的干净壁纸"); }
     Some((out, bw, bh))
 }

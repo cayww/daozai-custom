@@ -324,7 +324,13 @@ impl eframe::App for Shell {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0; 4]
+        // 兼容渲染的窗口是不透明的：首帧清成黑色会「黑闪」一下。
+        // 液态玻璃皮肤下清成接近浅玻璃的灰白，等 GPU 内容覆盖，观感平滑很多。
+        if self.app.settings.skin == daozai::model::Skin::Liquid && self.app.wgpu_format.is_some() {
+            [0.93, 0.93, 0.94, 1.0]
+        } else {
+            [0.0; 4]
+        }
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
