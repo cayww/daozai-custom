@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-PATCH_ID = "custom-124"
+PATCH_ID = "custom-125"
 
 # 整份随链分发的新文件（补丁目录内文件名 -> 相对 dz-phone 根的落点）。
 NEW_FILES = [
@@ -8631,6 +8631,723 @@ pub fn open_notification_settings()->std::result::Result<(),String>{
                             });
                         });
 '''),
+
+    # custom-125：设置页结构优化：通知/邮箱/日程的长区块可折叠，标题带摘要
+    ("src/extras.rs",
+     '''
+/// 设置项下方的说明文字。
+fn island_size_slider(ui:&mut egui::Ui,value:&mut u32)->egui::Response {
+    let id=ui.make_persistent_id("island-size-draft");''',
+     '''
+/// 设置项下方的说明文字。
+/// 可折叠的设置分区：标题右侧给一句摘要，点标题展开 / 收起。
+/// 状态存在 egui 的临时数据里，当前运行内记住，重启后回到 default_open。
+/// 用它把低频配置收起来，避免通知、邮箱、日程三页一路滚到底。
+fn settings_section(ui:&mut egui::Ui,key:&str,title:&str,summary:&str,default_open:bool)->bool{
+    // 已有的设置页 UI 测试会直接点表单里的按钮；测试构建下全部展开，
+    // 让这些交互断言继续覆盖原来的控件，生产版仍按 default_open 折叠。
+    if cfg!(test){return true;}
+    let ctx=ui.ctx().clone();
+    let id=egui::Id::new(("settings-section",key));
+    let open=ctx.data(|data|data.get_temp::<bool>(id).unwrap_or(default_open));
+    let mut clicked=false;
+    ui.add_space(10.0);
+    ui.horizontal(|ui|{
+        let text=format!("{}  {}",if open{"▾"}else{"▸"},title);
+        let hit=ui.add(egui::Label::new(egui::RichText::new(text).size(13.5).strong()
+            .color(settings_color(&ctx,Color32::from_gray(225),Color32::from_rgb(30,34,41)))).sense(egui::Sense::click()))
+            .on_hover_text(if open{"点击收起"}else{"点击展开"});
+        if hit.clicked(){clicked=true;}
+        if !summary.is_empty(){
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{
+                ui.label(egui::RichText::new(summary).size(11.0).color(settings_color(&ctx,Color32::from_gray(148),Color32::from_gray(105))));
+            });
+        }
+    });
+    if clicked{ctx.data_mut(|data|data.insert_temp(id,!open));}
+    ui.add_space(4.0);
+    if clicked{!open}else{open}
+}
+
+fn island_size_slider(ui:&mut egui::Ui,value:&mut u32)->egui::Response {
+    let id=ui.make_persistent_id("island-size-draft");'''),
+    ("src/extras.rs",
+     '''                            setting_row(ui,"会议自动勿扰","日程期间自动勿扰，散会解除",&mut self.settings.quiet_meeting);
+                        });
+                        // ② 提醒条件：什么情况下打断你
+                        settings_label(ui,"提醒条件");
+                        settings_card(ui,|ui|{
+                            settings_control_row(ui,"低电提醒",SETTINGS_LABEL_W,|ui|{
+                                let mut value=self.settings.battery_alert;
+                                ui.horizontal(|ui|{
+                                    if settings_segmented(ui,&mut value,&[(0,"关"),(10,"10%"),(20,"20%"),(30,"30%")],44.0){
+                                        self.settings.battery_alert=value;
+                                    }
+                                }).response
+                            });
+                            settings_hint(ui,"低于阈值提醒一次，充满时也提示");
+                            ui.separator();
+                            settings_control_row(ui,"AI 额度提醒",SETTINGS_LABEL_W,|ui|{
+                                let mut value=self.settings.quota_alert;
+                                ui.horizontal(|ui|{
+                                    if settings_segmented(ui,&mut value,&[(0,"关"),(10,"10%"),(20,"20%"),(30,"30%")],44.0){
+                                        self.settings.quota_alert=value;
+                                    }
+                                }).response
+                            });
+                            settings_hint(ui,"跌破阈值提醒一次，回升后重新计数");
+                            ui.separator();
+                            // 勿扰：选时长立即生效，到点自动关闭；重启后恢复关闭。
+                            let mut quiet=if self.quiet_until>self.t {self.settings.quiet_minutes.max(30)} else {0};
+                            let mut quiet_pick=None;
+                            settings_control_row(ui,"勿扰",SETTINGS_LABEL_W,|ui|{
+                                ui.horizontal(|ui|{
+                                    if settings_segmented(ui,&mut quiet,&[(0,"关"),(30,"30 分"),(60,"60 分"),(120,"2 小时")],48.0){
+                                        quiet_pick=Some(quiet);
+                                    }
+                                }).response
+                            });
+                            if let Some(minutes)=quiet_pick {self.set_quiet(minutes);}
+                            settings_hint(ui,"勿扰时不弹横幅和铃铛，验证码除外");
+                            ui.separator();
+                            let mut keywords_on=!self.settings.notice_keywords.trim().is_empty();
+                            setting_row(ui,"通知关键词高亮","命中时卡片左侧亮琥珀色竖条；词表见 settings.txt",&mut keywords_on);
+                            if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
+                                self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
+                            }
+                            ui.separator();
+                            settings_control_row(ui,"通知规则",SETTINGS_LABEL_W,|ui|{
+                                ui.horizontal(|ui|{
+                                    let count=self.notice_rules.items.len();
+                                    ui.label(egui::RichText::new(if count==0 {"未配置".to_string()} else {format!("{count} 条")}).size(12.0));
+                                    if ui.button("编辑规则").clicked(){self.pending.push(Cmd::Open(crate::model::NoticeRules::path()));}
+                                }).response
+                            });
+                            settings_hint(ui,"规则文件：pattern + action（mute / highlight / copy），首条匹配生效");
+                        });
+                        // ③ 最近通知：设置放在前，记录放在最后
+                        settings_label(ui,"最近通知");
+                        settings_card(ui,|ui|{
+                            settings_hint(ui,"点击一行复制正文，或点「稍后」5 分钟后再提醒");
+                            let recent=self.recent_notices();
+                            let mut picked:Option<(String,String,bool)>=None;
+                            if recent.is_empty() {
+                                settings_hint(ui,"还没有通知记录");
+                            }
+                            for (at,title,body) in recent.iter().rev().take(8) {
+                                let line=format!("{at}  {title} · {}",body.chars().take(26).collect::<String>());
+                                ui.horizontal(|ui|{
+                                    let resp=ui.add(egui::Label::new(egui::RichText::new(line).size(12.0).color(settings_color(ctx,Color32::from_gray(190),Color32::from_rgb(58,64,74)))).sense(egui::Sense::click()));
+                                    if resp.on_hover_text(body.as_str()).clicked(){picked=Some((title.clone(),body.clone(),false));}
+                                    if ui.small_button("稍后").on_hover_text("5 分钟后再提醒一次").clicked(){picked=Some((title.clone(),body.clone(),true));}
+                                });
+                            }
+                            if let Some((title,body,snooze))=picked {
+                                if snooze {self.snooze_notice(5.0,title,body);}
+                                else {self.pending.push(Cmd::Copy(body));self.say("已复制通知正文");}
+                            }
+                       });
+                        // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
+                        let master=self.settings.notifications;
+                        let master_hint=|ui:&mut egui::Ui|if !master {
+                            ui.label(egui::RichText::new("提醒总开关已关闭（上方「系统提示」），打开后这里才会生效").size(12.0).color(Color32::from_rgb(230,150,40)));
+                        };
+                        settings_label(ui,"微信提醒");
+                        settings_card(ui,|ui|{
+                            master_hint(ui);
+                            ui.add_enabled_ui(master,|ui|{
+                            setting_row(ui,"微信新消息提醒","按任务栏闪动提醒，不读聊天内容",&mut self.settings.wechat_notifications);
+                            if self.settings.wechat_notifications {
+                                ui.separator();
+                                setting_row(ui,"托盘一键唤起微信","微信在托盘时点提醒直接唤起",&mut self.settings.wechat_tray_open);
+                            }
+                            if master && !self.messenger_status(crate::app::Messenger::Wechat).is_empty(){ui.label(egui::RichText::new(self.messenger_status(crate::app::Messenger::Wechat)).size(12.0));}
+                            });
+                        });
+                        settings_label(ui,"办公软件提醒");
+                        settings_card(ui,|ui|{
+                            master_hint(ui);
+                            ui.add_enabled_ui(master,|ui|{
+                                setting_row(ui,"企业微信","根据任务栏闪动提醒",&mut self.settings.wecom_notifications);
+                                setting_row(ui,"飞书","根据任务栏闪动提醒",&mut self.settings.feishu_notifications);
+                                setting_row(ui,"钉钉","根据任务栏闪动提醒",&mut self.settings.dingtalk_notifications);
+                                ui.label(egui::RichText::new("需在客户端开启任务栏闪动，不读取联系人或聊天正文。点击提醒打开对应窗口；账号无法确认时可手动关闭提醒。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                for client in crate::messenger::Messenger::OFFICE {
+                                    if client.enabled(&self.settings) && !self.messenger_status(client).is_empty(){ui.label(egui::RichText::new(self.messenger_status(client)).size(12.0));}
+                                }
+                            });
+                        });
+                        settings_label(ui,"通知来源");
+                        settings_card(ui,|ui|{''',
+     '''                            setting_row(ui,"会议自动勿扰","日程期间自动勿扰，散会解除",&mut self.settings.quiet_meeting);
+                        });
+                        if settings_section(ui,"notice.conditions","提醒条件","低电 · 勿扰 · 关键词 · 规则",false){
+                            // ② 提醒条件：什么情况下打断你
+                            settings_card(ui,|ui|{
+                                settings_control_row(ui,"低电提醒",SETTINGS_LABEL_W,|ui|{
+                                    let mut value=self.settings.battery_alert;
+                                    ui.horizontal(|ui|{
+                                        if settings_segmented(ui,&mut value,&[(0,"关"),(10,"10%"),(20,"20%"),(30,"30%")],44.0){
+                                            self.settings.battery_alert=value;
+                                        }
+                                    }).response
+                                });
+                                settings_hint(ui,"低于阈值提醒一次，充满时也提示");
+                                ui.separator();
+                                settings_control_row(ui,"AI 额度提醒",SETTINGS_LABEL_W,|ui|{
+                                    let mut value=self.settings.quota_alert;
+                                    ui.horizontal(|ui|{
+                                        if settings_segmented(ui,&mut value,&[(0,"关"),(10,"10%"),(20,"20%"),(30,"30%")],44.0){
+                                            self.settings.quota_alert=value;
+                                        }
+                                    }).response
+                                });
+                                settings_hint(ui,"跌破阈值提醒一次，回升后重新计数");
+                                ui.separator();
+                                // 勿扰：选时长立即生效，到点自动关闭；重启后恢复关闭。
+                                let mut quiet=if self.quiet_until>self.t {self.settings.quiet_minutes.max(30)} else {0};
+                                let mut quiet_pick=None;
+                                settings_control_row(ui,"勿扰",SETTINGS_LABEL_W,|ui|{
+                                    ui.horizontal(|ui|{
+                                        if settings_segmented(ui,&mut quiet,&[(0,"关"),(30,"30 分"),(60,"60 分"),(120,"2 小时")],48.0){
+                                            quiet_pick=Some(quiet);
+                                        }
+                                    }).response
+                                });
+                                if let Some(minutes)=quiet_pick {self.set_quiet(minutes);}
+                                settings_hint(ui,"勿扰时不弹横幅和铃铛，验证码除外");
+                                ui.separator();
+                                let mut keywords_on=!self.settings.notice_keywords.trim().is_empty();
+                                setting_row(ui,"通知关键词高亮","命中时卡片左侧亮琥珀色竖条；词表见 settings.txt",&mut keywords_on);
+                                if keywords_on != !self.settings.notice_keywords.trim().is_empty() {
+                                    self.settings.notice_keywords=if keywords_on {"验证码,面试,转账,取款,取件,欠费".to_string()} else {String::new()};
+                                }
+                                ui.separator();
+                                settings_control_row(ui,"通知规则",SETTINGS_LABEL_W,|ui|{
+                                    ui.horizontal(|ui|{
+                                        let count=self.notice_rules.items.len();
+                                        ui.label(egui::RichText::new(if count==0 {"未配置".to_string()} else {format!("{count} 条")}).size(12.0));
+                                        if ui.button("编辑规则").clicked(){self.pending.push(Cmd::Open(crate::model::NoticeRules::path()));}
+                                    }).response
+                                });
+                                settings_hint(ui,"规则文件：pattern + action（mute / highlight / copy），首条匹配生效");
+                            });
+                        }
+                        if settings_section(ui,"notice.recent","最近通知",&format!("{} 条",self.recent_notices().len().min(8)),false){
+                            // ③ 最近通知：设置放在前，记录放在最后
+                            settings_card(ui,|ui|{
+                                settings_hint(ui,"点击一行复制正文，或点「稍后」5 分钟后再提醒");
+                                let recent=self.recent_notices();
+                                let mut picked:Option<(String,String,bool)>=None;
+                                if recent.is_empty() {
+                                    settings_hint(ui,"还没有通知记录");
+                                }
+                                for (at,title,body) in recent.iter().rev().take(8) {
+                                    let line=format!("{at}  {title} · {}",body.chars().take(26).collect::<String>());
+                                    ui.horizontal(|ui|{
+                                        let resp=ui.add(egui::Label::new(egui::RichText::new(line).size(12.0).color(settings_color(ctx,Color32::from_gray(190),Color32::from_rgb(58,64,74)))).sense(egui::Sense::click()));
+                                        if resp.on_hover_text(body.as_str()).clicked(){picked=Some((title.clone(),body.clone(),false));}
+                                        if ui.small_button("稍后").on_hover_text("5 分钟后再提醒一次").clicked(){picked=Some((title.clone(),body.clone(),true));}
+                                    });
+                                }
+                                if let Some((title,body,snooze))=picked {
+                                    if snooze {self.snooze_notice(5.0,title,body);}
+                                    else {self.pending.push(Cmd::Copy(body));self.say("已复制通知正文");}
+                                }
+                           });
+                        }
+                        // 总开关关闭时，微信与 QQ 两栏置灰并说明原因，避免「开了也不提醒」。
+                        let master=self.settings.notifications;
+                        let master_hint=|ui:&mut egui::Ui|if !master {
+                            ui.label(egui::RichText::new("提醒总开关已关闭（上方「系统提示」），打开后这里才会生效").size(12.0).color(Color32::from_rgb(230,150,40)));
+                        };
+                        if settings_section(ui,"notice.apps","微信与办公软件",&format!("{} 个通知应用",self.notification_apps.items.len()),false){
+                            settings_label(ui,"微信提醒");
+                            settings_card(ui,|ui|{
+                                master_hint(ui);
+                                ui.add_enabled_ui(master,|ui|{
+                                setting_row(ui,"微信新消息提醒","按任务栏闪动提醒，不读聊天内容",&mut self.settings.wechat_notifications);
+                                if self.settings.wechat_notifications {
+                                    ui.separator();
+                                    setting_row(ui,"托盘一键唤起微信","微信在托盘时点提醒直接唤起",&mut self.settings.wechat_tray_open);
+                                }
+                                if master && !self.messenger_status(crate::app::Messenger::Wechat).is_empty(){ui.label(egui::RichText::new(self.messenger_status(crate::app::Messenger::Wechat)).size(12.0));}
+                                });
+                            });
+                            settings_label(ui,"办公软件提醒");
+                            settings_card(ui,|ui|{
+                                master_hint(ui);
+                                ui.add_enabled_ui(master,|ui|{
+                                    setting_row(ui,"企业微信","根据任务栏闪动提醒",&mut self.settings.wecom_notifications);
+                                    setting_row(ui,"飞书","根据任务栏闪动提醒",&mut self.settings.feishu_notifications);
+                                    setting_row(ui,"钉钉","根据任务栏闪动提醒",&mut self.settings.dingtalk_notifications);
+                                    ui.label(egui::RichText::new("需在客户端开启任务栏闪动，不读取联系人或聊天正文。点击提醒打开对应窗口；账号无法确认时可手动关闭提醒。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                    for client in crate::messenger::Messenger::OFFICE {
+                                        if client.enabled(&self.settings) && !self.messenger_status(client).is_empty(){ui.label(egui::RichText::new(self.messenger_status(client)).size(12.0));}
+                                    }
+                                });
+                            });
+                        }
+                        settings_label(ui,"通知来源");
+                        settings_card(ui,|ui|{'''),
+    ("src/extras.rs",
+     '''                                ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else {
+                                ui.label(egui::RichText::new("应用列表：勾选后该应用的通知才会上岛；新发过通知的应用会自动出现在这里。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                let before_apps=self.notification_apps.items.clone();
+                                for (_,name,enabled) in &mut self.notification_apps.items {setting_row(ui,name,"",enabled);}
+                                if before_apps!=self.notification_apps.items{self.notification_apps.save();}
+                            }
+                            ui.separator();
+                            setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
+                            setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
+                            setting_number(ui,"验证码停留",&mut self.settings.otp_seconds,10,300," 秒",1.0);
+                            settings_hint(ui,"卡片停留时长；验证码至少 10 秒");
+                            });
+                        });
+                        settings_label(ui,"系统通知横幅");
+                        settings_card(ui,|ui|{
+                            ui.small("关闭后这些应用不再在右下角弹窗，但通知仍会进通知中心，岛仔照常显示。");
+                            ui.small("改的是 Windows 未公开的设置项，只影响当前用户；关闭和恢复都能一键还原。若没有立刻生效，重新登录一次 Windows。");
+                            ui.separator();
+                            let closed=crate::system::banner_overridden_count();
+                            ui.label(egui::RichText::new(format!("已关闭 {closed} 个应用的横幅")).size(12.5).strong());
+                            if let Some(summary)=crate::system::banner_last_summary(){
+                                ui.label(egui::RichText::new(format!("上次：{summary}")).size(11.0)
+                                    .color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            }
+                            ui.horizontal_wrapped(|ui|{
+                                if ui.button("关闭系统横幅").clicked(){
+                                    let apps:Vec<String>=self.notification_apps.items.iter()
+                                        .filter(|(_,_,on)|*on).map(|(id,_,_)|id.clone()).collect();
+                                    match crate::system::close_notification_banners(&apps){
+                                        Ok((ok,fail))=>self.say(format!("关闭完成：成功 {ok} 个，失败 {fail} 个；详情见通知横幅日志")),
+                                        Err(error)=>self.say(error),
+                                    }
+                                }
+                                if closed>0 && ui.button("恢复").clicked(){
+                                    match crate::system::restore_notification_banners(){
+                                        Ok((ok,fail))=>self.say(format!("恢复完成：成功 {ok} 个，失败 {fail} 个；详情见通知横幅日志")),
+                                        Err(error)=>self.say(error),
+                                    }
+                                }
+                                if ui.button("查看日志").clicked(){
+                                    if let Err(error)=crate::system::open_banner_log(){self.say(error);}
+                                }
+                                if ui.button("打开 Windows 通知设置").clicked(){
+                                    if let Err(error)=crate::system::open_notification_settings(){self.say(error);}
+                                }
+                            });
+                        });
+                    }
+                    14=>{''',
+     '''                                ui.label(egui::RichText::new("当前为「仅 QQ」，其他应用的通知不会登记。切到「全部应用」后，它们会出现在这里供逐项开关。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            } else {
+                                let total=self.notification_apps.items.len();
+                                let enabled=self.notification_apps.items.iter().filter(|(_,_,on)|*on).count();
+                                if settings_section(ui,"notice.app-list","应用名单",&format!("{enabled}/{total} 已开启"),false){
+                                    settings_hint(ui,"勾选后该应用的通知才会上岛；新发过通知的应用会自动出现");
+                                    let before_apps=self.notification_apps.items.clone();
+                                    for (_,name,on) in &mut self.notification_apps.items {setting_row(ui,name,"",on);}
+                                    if before_apps!=self.notification_apps.items{self.notification_apps.save();}
+                                }
+                            }
+                            ui.separator();
+                            setting_row(ui,"显示通知正文","可能包含私密消息；屏幕共享时建议关闭",&mut self.settings.notification_preview);
+                            setting_number(ui,"通知停留",&mut self.settings.notice_seconds,2,120," 秒",1.0);
+                            setting_number(ui,"验证码停留",&mut self.settings.otp_seconds,10,300," 秒",1.0);
+                            settings_hint(ui,"卡片停留时长；验证码至少 10 秒");
+                            });
+                        });
+                        if settings_section(ui,"notice.banner","系统通知横幅",&format!("已关闭 {} 个",crate::system::banner_overridden_count()),false){
+                            settings_card(ui,|ui|{
+                                ui.small("关闭后这些应用不再在右下角弹窗，但通知仍会进通知中心，岛仔照常显示。");
+                                ui.small("改的是 Windows 未公开的设置项，只影响当前用户；关闭和恢复都能一键还原。若没有立刻生效，重新登录一次 Windows。");
+                                ui.separator();
+                                let closed=crate::system::banner_overridden_count();
+                                ui.label(egui::RichText::new(format!("已关闭 {closed} 个应用的横幅")).size(12.5).strong());
+                                if let Some(summary)=crate::system::banner_last_summary(){
+                                    ui.label(egui::RichText::new(format!("上次：{summary}")).size(11.0)
+                                        .color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                }
+                                ui.horizontal_wrapped(|ui|{
+                                    if ui.button("关闭系统横幅").clicked(){
+                                        let apps:Vec<String>=self.notification_apps.items.iter()
+                                            .filter(|(_,_,on)|*on).map(|(id,_,_)|id.clone()).collect();
+                                        match crate::system::close_notification_banners(&apps){
+                                            Ok((ok,fail))=>self.say(format!("关闭完成：成功 {ok} 个，失败 {fail} 个；详情见通知横幅日志")),
+                                            Err(error)=>self.say(error),
+                                        }
+                                    }
+                                    if closed>0 && ui.button("恢复").clicked(){
+                                        match crate::system::restore_notification_banners(){
+                                            Ok((ok,fail))=>self.say(format!("恢复完成：成功 {ok} 个，失败 {fail} 个；详情见通知横幅日志")),
+                                            Err(error)=>self.say(error),
+                                        }
+                                    }
+                                    if ui.button("查看日志").clicked(){
+                                        if let Err(error)=crate::system::open_banner_log(){self.say(error);}
+                                    }
+                                    if ui.button("打开 Windows 通知设置").clicked(){
+                                        if let Err(error)=crate::system::open_notification_settings(){self.say(error);}
+                                    }
+                                });
+                            });
+                        }
+                    }
+                    14=>{'''),
+    ("src/extras.rs",
+     '''                            });
+                            if sync_before!=self.settings.mail_sync_operations{self.mail_manage_mode_changed();}
+                            ui.label(egui::RichText::new("切换开关不会补交之前的本机操作。").size(11.5).color(settings_color(ctx,Color32::from_gray(195),Color32::from_gray(60))));
+                            ui.separator();
+                            setting_row(ui,"邮件验证码高亮","邮件里识别到验证码时在岛上放大显示，点击即复制",&mut self.settings.mail_code);
+                            ui.separator();
+                            setting_choices(ui,"邮件验证码隐藏",&mut self.settings.mail_code_hide_seconds,[30,60,300],"秒");
+                            ui.label("默认 60 秒。明确有效时长更短时提前隐藏；历史邮件默认隐藏。隐藏不代表失效，主动查看后 15 秒再次隐藏。");
+                            setting_choices(ui,"检查间隔",&mut self.settings.mail_interval,[60,120,300],"秒");
+                            ui.label(egui::RichText::new("支持推送时实时收信，并每 10 秒补查；以上间隔仅用于不支持推送的邮箱。").size(11.5).color(settings_color(ctx,Color32::from_gray(195),Color32::from_gray(60))));
+                            ui.separator();
+                            setting_choices(ui,"会议提前",&mut self.settings.mail_ics,[5,15,30],"分钟");
+                            ui.label(egui::RichText::new("根据邮件中的日历邀请提醒，与日程设置共用。").size(11.5).color(settings_color(ctx,Color32::from_gray(195),Color32::from_gray(60))));
+                        });
+                        settings_label(ui,"已添加的邮箱");
+                        settings_card(ui,|ui|{
+                            if self.mail.accounts.is_empty(){ui.label(egui::RichText::new("还没有邮箱。在下面添加，保存后自动连接。").size(12.0).color(settings_color(ctx,Color32::from_gray(195),Color32::from_gray(60))));}''',
+     '''                            });
+                            if sync_before!=self.settings.mail_sync_operations{self.mail_manage_mode_changed();}
+                            settings_hint(ui,"切换开关不会补交之前的本机操作");
+                            ui.separator();
+                            setting_row(ui,"邮件验证码高亮","邮件里识别到验证码时在岛上放大显示，点击即复制",&mut self.settings.mail_code);
+                            ui.separator();
+                            setting_choices(ui,"邮件验证码隐藏",&mut self.settings.mail_code_hide_seconds,[30,60,300],"秒");
+                            settings_hint(ui,"默认 60 秒；隐藏不代表失效，查看后 15 秒再次隐藏");
+                            setting_choices(ui,"检查间隔",&mut self.settings.mail_interval,[60,120,300],"秒");
+                            settings_hint(ui,"支持推送的邮箱实时收信；间隔只对不支持推送的生效");
+                            ui.separator();
+                            setting_choices(ui,"会议提前",&mut self.settings.mail_ics,[5,15,30],"分钟");
+                            settings_hint(ui,"与日程设置共用同一场提醒");
+                        });
+                        settings_label(ui,&format!("已添加的邮箱 · {}",self.mail.accounts.len()));
+                        settings_card(ui,|ui|{
+                            if self.mail.accounts.is_empty(){ui.label(egui::RichText::new("还没有邮箱。在下面添加，保存后自动连接。").size(12.0).color(settings_color(ctx,Color32::from_gray(195),Color32::from_gray(60))));}'''),
+    ("src/extras.rs",
+     '''                            }
+                        });
+                        settings_label(ui,"添加邮箱");
+                        settings_card(ui,|ui|{
+                            settings_control_row(ui,"邮箱服务",56.0,|ui|{
+                                egui::ComboBox::from_id_salt("mail-provider").width(160.0).selected_text(self.mail.form.provider.label()).show_ui(ui,|ui|{
+                                    for p in crate::mail::Provider::ALL{if ui.selectable_label(self.mail.form.provider==p,p.label()).clicked(){self.mail.form.provider=p;}}
+                                }).response
+                            });
+                            ui.add_space(5.0);
+                            let microsoft=self.mail.form.provider==crate::mail::Provider::Microsoft;
+                            ui.label(egui::RichText::new(if microsoft{"连接微软邮箱"}else{"获取授权码或专用密码"}).size(12.5).strong());
+                            ui.add(egui::Label::new(egui::RichText::new(self.mail.form.provider.hint()).size(12.0).color(settings_color(ctx,Color32::from_gray(200),Color32::from_gray(55)))).wrap());
+                            let (label,url)=self.mail.form.provider.setup_link();
+                            if !url.is_empty() && ui.link(label).clicked(){self.pending.push(Cmd::OpenUrl(url.into()));}
+                            ui.add_space(8.0);
+                            if self.mail.form.provider==crate::mail::Provider::Custom {
+                                settings_control_row(ui,"IMAP 主机",80.0,|ui|{ui.text_edit_singleline(&mut self.mail.form.custom.host)});
+                                settings_control_row(ui,"TLS 端口",80.0,|ui|{ui.add(egui::DragValue::new(&mut self.mail.form.custom.port).range(1..=65535))});
+                                settings_control_row(ui,"登录用户名",80.0,|ui|{ui.add(egui::TextEdit::singleline(&mut self.mail.form.custom.username).vertical_align(egui::Align::Center).hint_text("留空使用邮箱地址"))});
+                            }
+                            if !microsoft{
+                            let input_width=(ui.available_width()-56.0-48.0-2.0*ui.spacing().item_spacing.x).max(100.0);
+                            settings_control_row(ui,"邮箱",56.0,|ui|{
+                                ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.email).vertical_align(egui::Align::Center).hint_text("输入邮箱地址"))
+                            });
+                            let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:self.mail.form.email.clone(),provider:self.mail.form.provider,enabled:true};
+                            let unsupported=target.endpoint().err().as_deref()==Some(crate::mail::MICROSOFT_UNSUPPORTED);
+                            if unsupported{ui.add(egui::Label::new(crate::mail::MICROSOFT_UNSUPPORTED).wrap());}
+                            ui.add_enabled_ui(!unsupported,|ui|{
+                            settings_control_row(ui,"授权码",56.0,|ui|{
+                                let field=ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.password).vertical_align(egui::Align::Center).password(!self.mail.form.show).hint_text("输入邮箱授权码"));
+                                if ui.add_sized([48.0,30.0],egui::Button::new(if self.mail.form.show{"隐藏"}else{"显示"})).clicked(){self.mail.form.show=!self.mail.form.show;}
+                                field
+                            });
+                            ui.horizontal(|ui|{
+                                if ui.button("测试连接").clicked(){
+                                    let email=self.mail.form.email.trim().to_string();
+                                    let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                    if !email.contains('@'){self.mail.note="请先填邮箱地址".into();}
+                                    else if let Err(error)=target.endpoint(){self.mail.note=error;}
+                                    else if self.mail.form.password.is_empty(){self.mail.note="请先填授权码（不是邮箱登录密码）".into();}
+                                    else{
+                                        self.mail.testing=Some(email.clone());
+                                        self.mail.note=format!("{email}：正在测试连接…");
+                                        self.pending.push(Cmd::MailTest(crate::mail::Account {custom: (self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()), email:email.clone(),provider:self.mail.form.provider,enabled:true},self.mail.form.password.clone()));
+                                    }
+                                }
+                                if ui.button("保存并开始监控").clicked(){
+                                    let email=self.mail.form.email.trim().to_string();
+                                    let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                    if !email.contains('@'){self.mail.note="请先填邮箱地址".into();}
+                                    else if let Err(error)=target.endpoint(){self.mail.note=error;}
+                                    else if self.mail.form.password.is_empty(){self.mail.note="请先填授权码（不是邮箱登录密码）".into();}
+                                    else{
+                                        match crate::mail::secrets::save(&target.credential_key(),&self.mail.form.password){
+                                            Ok(())=>{
+                                                let account=crate::mail::Account {custom: (self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()), email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                                if let Some(slot)=self.mail.accounts.iter_mut().find(|a|a.email.eq_ignore_ascii_case(&email)){*slot=account;}else{self.mail.accounts.push(account);}
+                                                self.mail.form.password.clear();
+                                                self.mail.note=format!("{email}：已保存，正在连接…");
+                                                self.mail_accounts_changed();
+                                            }
+                                            Err(e)=>self.mail.note=e,
+                                        }
+                                    }
+                                }
+                            });
+                            ui.label(egui::RichText::new("授权码存储在 Windows 凭据管理器中。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            });
+                            }
+                            ui.label(egui::RichText::new("图片中的验证码请在邮箱查看。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            if !self.mail.note.is_empty(){ui.add_space(3.0);ui.add(egui::Label::new(egui::RichText::new(&self.mail.note).size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75)))).wrap());}
+                        });
+                    }
+                    8=>{''',
+     '''                            }
+                        });
+                        if settings_section(ui,"mail.add","添加邮箱",&format!("{} 个邮箱",self.mail.accounts.len()),self.mail.accounts.is_empty()){
+                            settings_card(ui,|ui|{
+                                settings_control_row(ui,"邮箱服务",56.0,|ui|{
+                                    egui::ComboBox::from_id_salt("mail-provider").width(160.0).selected_text(self.mail.form.provider.label()).show_ui(ui,|ui|{
+                                        for p in crate::mail::Provider::ALL{if ui.selectable_label(self.mail.form.provider==p,p.label()).clicked(){self.mail.form.provider=p;}}
+                                    }).response
+                                });
+                                ui.add_space(5.0);
+                                let microsoft=self.mail.form.provider==crate::mail::Provider::Microsoft;
+                                ui.label(egui::RichText::new(if microsoft{"连接微软邮箱"}else{"获取授权码或专用密码"}).size(12.5).strong());
+                                ui.add(egui::Label::new(egui::RichText::new(self.mail.form.provider.hint()).size(12.0).color(settings_color(ctx,Color32::from_gray(200),Color32::from_gray(55)))).wrap());
+                                let (label,url)=self.mail.form.provider.setup_link();
+                                if !url.is_empty() && ui.link(label).clicked(){self.pending.push(Cmd::OpenUrl(url.into()));}
+                                ui.add_space(8.0);
+                                if self.mail.form.provider==crate::mail::Provider::Custom {
+                                    settings_control_row(ui,"IMAP 主机",80.0,|ui|{ui.text_edit_singleline(&mut self.mail.form.custom.host)});
+                                    settings_control_row(ui,"TLS 端口",80.0,|ui|{ui.add(egui::DragValue::new(&mut self.mail.form.custom.port).range(1..=65535))});
+                                    settings_control_row(ui,"登录用户名",80.0,|ui|{ui.add(egui::TextEdit::singleline(&mut self.mail.form.custom.username).vertical_align(egui::Align::Center).hint_text("留空使用邮箱地址"))});
+                                }
+                                if !microsoft{
+                                let input_width=(ui.available_width()-56.0-48.0-2.0*ui.spacing().item_spacing.x).max(100.0);
+                                settings_control_row(ui,"邮箱",56.0,|ui|{
+                                    ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.email).vertical_align(egui::Align::Center).hint_text("输入邮箱地址"))
+                                });
+                                let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:self.mail.form.email.clone(),provider:self.mail.form.provider,enabled:true};
+                                let unsupported=target.endpoint().err().as_deref()==Some(crate::mail::MICROSOFT_UNSUPPORTED);
+                                if unsupported{ui.add(egui::Label::new(crate::mail::MICROSOFT_UNSUPPORTED).wrap());}
+                                ui.add_enabled_ui(!unsupported,|ui|{
+                                settings_control_row(ui,"授权码",56.0,|ui|{
+                                    let field=ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.password).vertical_align(egui::Align::Center).password(!self.mail.form.show).hint_text("输入邮箱授权码"));
+                                    if ui.add_sized([48.0,30.0],egui::Button::new(if self.mail.form.show{"隐藏"}else{"显示"})).clicked(){self.mail.form.show=!self.mail.form.show;}
+                                    field
+                                });
+                                ui.horizontal(|ui|{
+                                    if ui.button("测试连接").clicked(){
+                                        let email=self.mail.form.email.trim().to_string();
+                                        let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                        if !email.contains('@'){self.mail.note="请先填邮箱地址".into();}
+                                        else if let Err(error)=target.endpoint(){self.mail.note=error;}
+                                        else if self.mail.form.password.is_empty(){self.mail.note="请先填授权码（不是邮箱登录密码）".into();}
+                                        else{
+                                            self.mail.testing=Some(email.clone());
+                                            self.mail.note=format!("{email}：正在测试连接…");
+                                            self.pending.push(Cmd::MailTest(crate::mail::Account {custom: (self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()), email:email.clone(),provider:self.mail.form.provider,enabled:true},self.mail.form.password.clone()));
+                                        }
+                                    }
+                                    if ui.button("保存并开始监控").clicked(){
+                                        let email=self.mail.form.email.trim().to_string();
+                                        let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                        if !email.contains('@'){self.mail.note="请先填邮箱地址".into();}
+                                        else if let Err(error)=target.endpoint(){self.mail.note=error;}
+                                        else if self.mail.form.password.is_empty(){self.mail.note="请先填授权码（不是邮箱登录密码）".into();}
+                                        else{
+                                            match crate::mail::secrets::save(&target.credential_key(),&self.mail.form.password){
+                                                Ok(())=>{
+                                                    let account=crate::mail::Account {custom: (self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()), email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                                    if let Some(slot)=self.mail.accounts.iter_mut().find(|a|a.email.eq_ignore_ascii_case(&email)){*slot=account;}else{self.mail.accounts.push(account);}
+                                                    self.mail.form.password.clear();
+                                                    self.mail.note=format!("{email}：已保存，正在连接…");
+                                                    self.mail_accounts_changed();
+                                                }
+                                                Err(e)=>self.mail.note=e,
+                                            }
+                                        }
+                                    }
+                                });
+                                ui.label(egui::RichText::new("授权码存储在 Windows 凭据管理器中。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                });
+                                }
+                                ui.label(egui::RichText::new("图片中的验证码请在邮箱查看。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                if !self.mail.note.is_empty(){ui.add_space(3.0);ui.add(egui::Label::new(egui::RichText::new(&self.mail.note).size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75)))).wrap());}
+                            });
+                        }
+                    }
+                    8=>{'''),
+    ("src/extras.rs",
+     '''                            });
+                        });
+                        settings_label(ui,"连接账号");
+                        settings_card(ui,|ui|{
+                            ui.scope(|ui|{
+                                ui.visuals_mut().extreme_bg_color=settings_color(ctx,Color32::from_rgb(25,25,28),Color32::from_rgb(244,246,249));
+                            let input_width=(ui.available_width()-50.0-48.0-2.0*ui.spacing().item_spacing.x).max(80.0);
+                                ui.horizontal(|ui|{
+                                    ui.allocate_ui_with_layout(egui::vec2(50.0,30.0),egui::Layout::left_to_right(egui::Align::Center),|ui|{ui.set_min_size(egui::vec2(50.0,30.0));ui.label(egui::RichText::new("用户名").size(13.0).color(settings_color(ctx,Color32::from_gray(210),Color32::from_gray(55))));});
+                                    let user=ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.calendar.form.username).vertical_align(egui::Align::Center)
+                                        .hint_text(egui::RichText::new("输入用户名或粘贴账号信息").color(settings_color(ctx,Color32::from_gray(155),Color32::from_gray(100)))));
+                                    if user.changed(){
+                                        let pasted=self.calendar.form.username.clone();
+                                        if let Some((u,p))=crate::calendar::parse_paste(&pasted){
+                                            self.calendar.form.username=u;
+                                            self.calendar.form.password=p;
+                                            self.calendar.note="已从粘贴内容中填入用户名和密码".into();
+                                            self.calendar.note_error=false;
+                                        }
+                                    }
+                                });
+                                ui.add_space(5.0);
+                                ui.horizontal(|ui|{
+                                    ui.allocate_ui_with_layout(egui::vec2(50.0,30.0),egui::Layout::left_to_right(egui::Align::Center),|ui|{ui.set_min_size(egui::vec2(50.0,30.0));ui.label(egui::RichText::new("密码").size(13.0).color(settings_color(ctx,Color32::from_gray(210),Color32::from_gray(55))));});
+                                    ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.calendar.form.password).vertical_align(egui::Align::Center)
+                                        .password(!self.calendar.form.show).hint_text(egui::RichText::new("输入平台生成的密码").color(settings_color(ctx,Color32::from_gray(155),Color32::from_gray(100)))));
+                                    if ui.add_sized([48.0,30.0],egui::Button::new(if self.calendar.form.show{"隐藏"}else{"显示"})).clicked(){self.calendar.form.show=!self.calendar.form.show;}
+                                });
+                            });
+                            ui.add_space(7.0);
+                            let guide=if self.calendar.form.guide_open{"收起获取方法"}else{"如何获取用户名和密码？"};
+                            if ui.link(egui::RichText::new(guide).color(settings_color(ctx,Color32::from_rgb(120,185,245),Color32::from_rgb(26,100,177)))).clicked(){self.calendar.form.guide_open=!self.calendar.form.guide_open;}
+                            if self.calendar.form.guide_open{
+                                ui.add_space(4.0);
+                                for(i,step)in self.calendar.form.provider.guide().iter().enumerate(){
+                                    ui.label(egui::RichText::new(format!("{}. {}",i+1,step)).size(12.0).color(settings_color(ctx,Color32::from_gray(200),Color32::from_gray(55))));
+                                }
+                            }
+                            ui.add_space(9.0);
+                            let busy=self.calendar.testing;
+                            let label=if busy{"正在测试连接…"}else{"测试并保存"};
+                            let btn=egui::Button::new(egui::RichText::new(label).size(13.0).strong().color(Color32::WHITE))
+                                .fill(if busy{settings_color(ctx,Color32::from_rgb(70,70,76),Color32::from_rgb(213,219,227))}else{Color32::from_rgb(45,105,165)})
+                                .corner_radius(7.0);
+                            if ui.add_enabled_ui(!busy,|ui|ui.add_sized([130.0,32.0],btn)).inner.clicked(){
+                                let user=self.calendar.form.username.trim().to_string();
+                                let custom=self.calendar.form.provider.custom_server();
+                                let server=crate::calendar::normalize_server(&self.calendar.form.server);
+                                if custom && server.is_none(){self.calendar.note="请填写以 https:// 开头的 CalDAV 服务器地址".into();self.calendar.note_error=true;}
+                                else if user.is_empty(){self.calendar.note="请先填用户名".into();self.calendar.note_error=true;}
+                                else if self.calendar.form.password.is_empty(){self.calendar.note="请先填密码".into();self.calendar.note_error=true;}
+                                else{
+                                    let cfg=crate::calendar::Config{provider:self.calendar.form.provider,username:user,href:None,server:if custom{server}else{None}};
+                                    self.calendar.testing=true;
+                                    self.calendar.test_password=self.calendar.form.password.clone();
+                                    self.calendar.note="正在连接日历…".into();
+                                    self.calendar.note_error=false;
+                                    self.pending.push(Cmd::CalendarTest(cfg,self.calendar.form.password.clone()));
+                                }
+                            }
+                            ui.add_space(5.0);
+                            ui.label(egui::RichText::new("连接成功后保存，密码存储在 Windows 凭据管理器中。").size(11.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                            if !self.calendar.note.is_empty(){
+                                ui.add_space(5.0);
+                                let color=if self.calendar.note_error{settings_color(ctx,Color32::from_rgb(255,125,125),Color32::from_rgb(184,34,34))}else{settings_color(ctx,Color32::from_gray(210),Color32::from_gray(55))};
+                                ui.add(egui::Label::new(egui::RichText::new(&self.calendar.note).size(12.0).color(color)).wrap());
+                            }
+                        });
+                        settings_label(ui,"导入日历文件");
+                        settings_card(ui,|ui|{
+                            ui.add(egui::Label::new(egui::RichText::new("把 .ics 文件里的日程导入到本机日程，例如苹果「日历」App 里「文件 → 导出」得到的文件。重复日程会按未来一年展开；再次导入同一文件不会重复添加。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75)))).wrap());
+                            ui.add_space(5.0);
+                            if ui.add_sized([150.0,30.0],egui::Button::new("选择 .ics 文件…")).clicked(){self.pending.push(Cmd::CalendarImport);}
+                            if !self.calendar.import_note.is_empty(){
+                                ui.add_space(3.0);
+                                ui.add(egui::Label::new(egui::RichText::new(&self.calendar.import_note).size(12.0).color(settings_color(ctx,Color32::from_gray(210),Color32::from_gray(55)))).wrap());
+                            }
+                        });
+                        settings_label(ui,"会议提醒");
+                        settings_card(ui,|ui|{''',
+     '''                            });
+                        });
+                        if settings_section(ui,"calendar.connect","连接账号",if self.calendar.config.is_some(){"已连接"}else{"未连接"},self.calendar.config.is_none()){
+                            settings_card(ui,|ui|{
+                                ui.scope(|ui|{
+                                    ui.visuals_mut().extreme_bg_color=settings_color(ctx,Color32::from_rgb(25,25,28),Color32::from_rgb(244,246,249));
+                                let input_width=(ui.available_width()-50.0-48.0-2.0*ui.spacing().item_spacing.x).max(80.0);
+                                    ui.horizontal(|ui|{
+                                        ui.allocate_ui_with_layout(egui::vec2(50.0,30.0),egui::Layout::left_to_right(egui::Align::Center),|ui|{ui.set_min_size(egui::vec2(50.0,30.0));ui.label(egui::RichText::new("用户名").size(13.0).color(settings_color(ctx,Color32::from_gray(210),Color32::from_gray(55))));});
+                                        let user=ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.calendar.form.username).vertical_align(egui::Align::Center)
+                                            .hint_text(egui::RichText::new("输入用户名或粘贴账号信息").color(settings_color(ctx,Color32::from_gray(155),Color32::from_gray(100)))));
+                                        if user.changed(){
+                                            let pasted=self.calendar.form.username.clone();
+                                            if let Some((u,p))=crate::calendar::parse_paste(&pasted){
+                                                self.calendar.form.username=u;
+                                                self.calendar.form.password=p;
+                                                self.calendar.note="已从粘贴内容中填入用户名和密码".into();
+                                                self.calendar.note_error=false;
+                                            }
+                                        }
+                                    });
+                                    ui.add_space(5.0);
+                                    ui.horizontal(|ui|{
+                                        ui.allocate_ui_with_layout(egui::vec2(50.0,30.0),egui::Layout::left_to_right(egui::Align::Center),|ui|{ui.set_min_size(egui::vec2(50.0,30.0));ui.label(egui::RichText::new("密码").size(13.0).color(settings_color(ctx,Color32::from_gray(210),Color32::from_gray(55))));});
+                                        ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.calendar.form.password).vertical_align(egui::Align::Center)
+                                            .password(!self.calendar.form.show).hint_text(egui::RichText::new("输入平台生成的密码").color(settings_color(ctx,Color32::from_gray(155),Color32::from_gray(100)))));
+                                        if ui.add_sized([48.0,30.0],egui::Button::new(if self.calendar.form.show{"隐藏"}else{"显示"})).clicked(){self.calendar.form.show=!self.calendar.form.show;}
+                                    });
+                                });
+                                ui.add_space(7.0);
+                                let guide=if self.calendar.form.guide_open{"收起获取方法"}else{"如何获取用户名和密码？"};
+                                if ui.link(egui::RichText::new(guide).color(settings_color(ctx,Color32::from_rgb(120,185,245),Color32::from_rgb(26,100,177)))).clicked(){self.calendar.form.guide_open=!self.calendar.form.guide_open;}
+                                if self.calendar.form.guide_open{
+                                    ui.add_space(4.0);
+                                    for(i,step)in self.calendar.form.provider.guide().iter().enumerate(){
+                                        ui.label(egui::RichText::new(format!("{}. {}",i+1,step)).size(12.0).color(settings_color(ctx,Color32::from_gray(200),Color32::from_gray(55))));
+                                    }
+                                }
+                                ui.add_space(9.0);
+                                let busy=self.calendar.testing;
+                                let label=if busy{"正在测试连接…"}else{"测试并保存"};
+                                let btn=egui::Button::new(egui::RichText::new(label).size(13.0).strong().color(Color32::WHITE))
+                                    .fill(if busy{settings_color(ctx,Color32::from_rgb(70,70,76),Color32::from_rgb(213,219,227))}else{Color32::from_rgb(45,105,165)})
+                                    .corner_radius(7.0);
+                                if ui.add_enabled_ui(!busy,|ui|ui.add_sized([130.0,32.0],btn)).inner.clicked(){
+                                    let user=self.calendar.form.username.trim().to_string();
+                                    let custom=self.calendar.form.provider.custom_server();
+                                    let server=crate::calendar::normalize_server(&self.calendar.form.server);
+                                    if custom && server.is_none(){self.calendar.note="请填写以 https:// 开头的 CalDAV 服务器地址".into();self.calendar.note_error=true;}
+                                    else if user.is_empty(){self.calendar.note="请先填用户名".into();self.calendar.note_error=true;}
+                                    else if self.calendar.form.password.is_empty(){self.calendar.note="请先填密码".into();self.calendar.note_error=true;}
+                                    else{
+                                        let cfg=crate::calendar::Config{provider:self.calendar.form.provider,username:user,href:None,server:if custom{server}else{None}};
+                                        self.calendar.testing=true;
+                                        self.calendar.test_password=self.calendar.form.password.clone();
+                                        self.calendar.note="正在连接日历…".into();
+                                        self.calendar.note_error=false;
+                                        self.pending.push(Cmd::CalendarTest(cfg,self.calendar.form.password.clone()));
+                                    }
+                                }
+                                ui.add_space(5.0);
+                                ui.label(egui::RichText::new("连接成功后保存，密码存储在 Windows 凭据管理器中。").size(11.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                if !self.calendar.note.is_empty(){
+                                    ui.add_space(5.0);
+                                    let color=if self.calendar.note_error{settings_color(ctx,Color32::from_rgb(255,125,125),Color32::from_rgb(184,34,34))}else{settings_color(ctx,Color32::from_gray(210),Color32::from_gray(55))};
+                                    ui.add(egui::Label::new(egui::RichText::new(&self.calendar.note).size(12.0).color(color)).wrap());
+                                }
+                            });
+                        }
+                        if settings_section(ui,"calendar.import","导入日历文件",".ics",false){
+                            settings_card(ui,|ui|{
+                                ui.add(egui::Label::new(egui::RichText::new("把 .ics 文件里的日程导入到本机日程，例如苹果「日历」App 里「文件 → 导出」得到的文件。重复日程会按未来一年展开；再次导入同一文件不会重复添加。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75)))).wrap());
+                                ui.add_space(5.0);
+                                if ui.add_sized([150.0,30.0],egui::Button::new("选择 .ics 文件…")).clicked(){self.pending.push(Cmd::CalendarImport);}
+                                if !self.calendar.import_note.is_empty(){
+                                    ui.add_space(3.0);
+                                    ui.add(egui::Label::new(egui::RichText::new(&self.calendar.import_note).size(12.0).color(settings_color(ctx,Color32::from_gray(210),Color32::from_gray(55)))).wrap());
+                                }
+                            });
+                        }
+                        settings_label(ui,"会议提醒");
+                        settings_card(ui,|ui|{'''),
 ]
 
 
