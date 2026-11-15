@@ -310,7 +310,11 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let plen = length(to_ptr);
     let fallback = normalize(vec2<f32>(-0.45, -0.65));
     let swung = to_ptr / max(plen, 1e-3);
-    let Ld = normalize(mix(fallback, swung, smoothstep(3.0, 48.0, plen)) + vec2<f32>(1e-6));
+    // 限制在上半圈：指针只控制**水平摆动**，垂直方向永远保持「光从上方来」。
+    // 原因是岛仔贴在屏幕顶部，鼠标绝大多数时间在它下面 —— 真跟随的话静止状态
+    // 会一直是「从下往上打光」，观感很别扭。人类对光源在上方有本能预期。
+    let up_bias = vec2<f32>(swung.x, min(swung.y, -0.18));
+    let Ld = normalize(mix(fallback, up_bias, smoothstep(3.0, 48.0, plen)) + vec2<f32>(1e-6));
     col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, Ld), 0.0), 2.0) * 0.34;
     col = col + vec3<f32>(0.85, 0.90, 1.0) * rim * pow(max(dot(g, -Ld), 0.0), 3.0) * 0.06;
     col = col + u.tint.rgb * u.tint.a * 0.05 * rim;
