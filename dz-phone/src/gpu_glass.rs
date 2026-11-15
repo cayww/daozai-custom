@@ -227,10 +227,11 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let band = clamp(short * 1.30, 12.0, 72.0);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
-    let strength = clamp(short * 0.70, 9.0, 54.0);
+    // 和岛体共用同一对设置项（折射 / 色散倍数），调一处两处一起变。
+    let strength = clamp(short * 0.70, 9.0, 54.0) * max(u.misc.z, 0.0);
     let cxn = clamp((abs(local.x) - (hs.x - radius)) / max(radius, 1.0), 0.0, 1.0);
     let cyn = clamp((abs(local.y) - (hs.y - radius)) / max(radius, 1.0), 0.0, 1.0);
-    let chroma = clamp(strength * 0.040, 0.7, 2.0) * mix(0.20, 1.0, cxn * cyn);
+    let chroma = clamp(short * 0.028, 0.7, 2.0) * mix(0.38, 1.0, cxn * cyn) * max(u.params.x, 0.0);
     let bp = p - g * k * strength;
 
     var col = tap5(bp, -g * k * chroma, 1.2);
@@ -378,16 +379,23 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 关键修复：折射方向朝玻璃**内部**（-g）。之前朝外，边缘会把岛体外的
     // 壁纸折进来，玻璃里就出现「不属于该区域的壁纸像素块」，贴屏顶时还会
     // 越界 clamp 成一条拉伸色带。
-    let strength = clamp(u.bounds.w * 0.90, 26.0, 78.0) * max(u.misc.z, 0.2) * (1.0 + morph * 0.15);
+    // `strength_base` 是纯几何量（按面板高度缩放 + 形变增强），两个设置项
+    // （折射 / 色散倍数）都乘在它上面，所以两个滑块互不影响，可以分别调。
+    let strength_base = clamp(u.bounds.w * 0.90, 26.0, 78.0) * (1.0 + morph * 0.15);
+    let strength = strength_base * max(u.misc.z, 0.0);
     // 色散：参考实现的默认值是 chroma=12（R/B 采样点相距 24px），但那是给
     // 平滑照片准备的。我们是 1:1 的**锐利桌面抓屏**，24px 分离在树枝这种硬边上
     // 就是一条彩虹故障带 —— 黑白壁纸实测顶边饱和度 0.073，而背景只有 0.003。
-    // 第一版收到 4.5px 后圆角仍能看到彩边（p95 还有 0.13），再收一半到 2.6px；
-    // 直边的底噪从 0.40 压到 0.22，几乎只剩圆角处一点点色边。
+    // 第一版收到 4.5px 后圆角仍能看到彩边（p95 还有 0.13），再收一半到 2.6px。
+    // 现在这个收敛值改成可调（设置项「色散强度」，默认 ×2 ≈ 5.2px）。
+    // 角部权重：直边上色散会拉成一条贯穿整条边的彩带（噪声 0.40），所以给一个
+    // 小于 1 的权重；但这个权重**不能太小** —— 0.22 时直边只剩 0.57px（亚像素），
+    // 等于没有色散，实测肉眼完全看不出来。0.38 是「看得见一点彩边、又不糊成故障带」
+    // 的折中，再往上就交给设置项（色散强度）自己拧。
     let cxn = clamp((abs(local.x) - (half_size.x - radius)) / max(radius, 1.0), 0.0, 1.0);
     let cyn = clamp((abs(local.y) - (half_size.y - radius)) / max(radius, 1.0), 0.0, 1.0);
     let corner = cxn * cyn;
-    let chroma = clamp(strength * 0.045, 1.2, 2.6) * mix(0.22, 1.0, corner);
+    let chroma = clamp(strength_base * 0.045, 1.2, 2.6) * mix(0.38, 1.0, corner) * max(u.params.x, 0.0);
     let refr = -g * k * strength;
     let ca = -g * k * chroma;
     let bp = p + refr;
@@ -614,6 +622,30 @@ fn morph_scale() -> f32 {
     f32::from_bits(MORPH_SCALE.load(std::sync::atomic::Ordering::Relaxed))
 }
 
+/// 折射 / 色散倍数，由设置项每帧写入（默认 1.0 / 2.0）。
+///
+/// 这两个值原来是我按实测结果硬编码在着色器里的（strength 按高度缩放、
+/// chroma 收到 2.6px），调一次要改代码、重新编译三分钟 —— 判断「色散够不够」
+/// 是纯观感问题，必须能边看边拧。
+static OPTICS: [std::sync::atomic::AtomicU32; 2] = [
+    std::sync::atomic::AtomicU32::new(0x3F80_0000), // strength = 1.0
+    std::sync::atomic::AtomicU32::new(0x4040_0000), // chroma   = 3.0（与设置项默认一致）
+];
+
+pub fn set_liquid_optics(strength: f32, chroma: f32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    OPTICS[0].store(strength.clamp(0.0, 2.5).to_bits(), Relaxed);
+    OPTICS[1].store(chroma.clamp(0.0, 5.0).to_bits(), Relaxed);
+}
+
+fn strength_scale() -> f32 {
+    f32::from_bits(OPTICS[0].load(std::sync::atomic::Ordering::Relaxed))
+}
+
+fn chroma_scale() -> f32 {
+    f32::from_bits(OPTICS[1].load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// DAOZAI_LIQUID_MORPH_FORCE=1：把形变强度钉成常数，用于确定性验证
 /// （动画只有约 100ms，抓帧时序对不齐，不钉住就没法做 A/B）。
 fn morph_force() -> f32 {
@@ -625,11 +657,13 @@ fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
     Uniforms {
         bounds: f.bounds,
         // params.z 原来是 time，shader 里一直没人用，这里改放形变倍数；
-        // params.y 原来也是空的，改放「强制」开关。
-        params: [1.52, morph_force(), morph_scale(), f.optics[3]],
+        // params.y 原来也是空的，改放「强制」开关；
+        // params.x 原来是 ior（1.52，shader 里从没用过），改放色散倍数。
+        params: [f.optics[2], morph_force(), morph_scale(), f.optics[3]],
         extra: [f.shape[0], tex.0 as f32, tex.1 as f32, f.shape[1]],
         tint: f.tint,
         quad: f.clip,
+        // misc.z = 折射倍数（shader 里直接乘在 strength 上）。
         misc: [f.shape[2], f.shape[3], f.optics[1], flat_flag()],
         crect: f.controls,
         cprm: f.control_params,
@@ -1229,7 +1263,8 @@ pub fn frame_for(
         bounds,
         shape: [radius * ppp, morph, (pointer.0 - capture.min.x) * ppp, (pointer.1 - capture.min.y) * ppp],
         tint: [tint[0], tint[1], tint[2], 1.0],
-        optics: [time, 1.0, 0.20, lightness],
+        // optics = (time, 折射倍数, 色散倍数, 亮/暗)
+        optics: [time, strength_scale(), chroma_scale(), lightness],
         clip: [-1.0, 1.0, 1.0, -1.0],
         controls: crect,
         control_params: cprm,
@@ -1248,7 +1283,14 @@ mod tests {
         let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0, &[]);
         assert_eq!(f.bounds, [40.0, 20.0, 200.0, 30.0]);
         assert_eq!(f.clip, [-1.0, 1.0, 1.0, -1.0], "viewport 已由 egui 设为 callback 矩形");
-        assert_eq!(uniforms(&f, (280, 90)).params[0], 1.52);
+        // 折射 / 色散倍数走原子量 → optics → uniform 的两个不同槽位：
+        // 折射进 misc.z（乘在 strength 上），色散进 params.x（乘在 chroma 上）。
+        set_liquid_optics(1.25, 4.5);
+        let u = uniforms(&frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0,
+                                   (150.0, 30.0), (0.0, 0.0), 1.0, &[]), (280, 90));
+        assert_eq!(u.params[0], 4.5, "色散倍数要进 params.x");
+        assert_eq!(u.misc[2], 1.25, "折射倍数要进 misc.z");
+        set_liquid_optics(1.0, 3.0);
     }
 
     #[test]

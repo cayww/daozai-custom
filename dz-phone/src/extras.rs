@@ -2346,6 +2346,24 @@ impl App {
                                     }).response
                                 });
                                 settings_hint(ui,"展开/折叠瞬间边缘折射的增强倍数；0 = 关闭，默认 1.0");
+                                ui.separator();
+                                settings_control_row(ui,"折射强度",56.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        ui.spacing_mut().slider_width=180.0;
+                                        ui.add(egui::Slider::new(&mut self.settings.liquid_strength,0.2..=2.5).fixed_decimals(2));
+                                        if ui.add_enabled((self.settings.liquid_strength-1.0).abs()>0.001,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_strength=1.0;}
+                                    }).response
+                                });
+                                settings_hint(ui,"边缘弯折的幅度（×1 = 现在的默认）；调大像更厚的透镜，调小更平");
+                                ui.separator();
+                                settings_control_row(ui,"色散强度",56.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        ui.spacing_mut().slider_width=180.0;
+                                        ui.add(egui::Slider::new(&mut self.settings.liquid_chroma,0.0..=5.0).fixed_decimals(2));
+                                        if ui.add_enabled((self.settings.liquid_chroma-3.0).abs()>0.001,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_chroma=3.0;}
+                                    }).response
+                                });
+                                settings_hint(ui,"边缘红蓝彩边的强度（×1 ≈ 上一版几乎看不见的值，×4.6 ≈ 参考包的 12px）；0 = 关掉色散");
                             }
                             ui.separator();
                             let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
