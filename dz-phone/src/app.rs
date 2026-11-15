@@ -2825,8 +2825,9 @@ impl App {
             painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
             return;
         };
-        // 先铺一层兜底底色：GPU pass 若因驱动/shader 编译失败没有输出，岛体也不会变成全透明。
-        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(28,32,40,170));
+        // GPU 未就绪时铺一层可见的兜底底色；就绪后几乎透明，别把折射压黑。
+        let backup=if crate::gpu_glass::gpu_ready(){20}else{170};
+        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(28,32,40,backup));
         let ctx=painter.ctx();
         let ppp=ctx.pixels_per_point();
         let win=ctx.screen_rect().size();
