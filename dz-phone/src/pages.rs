@@ -148,7 +148,7 @@ impl App {
             card.text(74.0,y+4.0,"打开",11.0,W::Semibold,ic,H::Center);
             if c.live && has && button.on_hover_text("跳到播放中的浏览器窗口").clicked(){
                 if crate::system::focus_browser_tab(&np.title){self.say("已切到播放中的浏览器窗口");}
-                else{self.say("没找到播放中的浏览器窗口");}
+                else{self.say("没能切到浏览器窗口，请再点一次或手动切换");}
             }
             None
         }else{

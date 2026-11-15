@@ -12,9 +12,9 @@ use windows::Win32::Media::Audio::{eConsole, eRender, IMMDevice, IMMDeviceEnumer
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
 };
-use windows::Win32::System::Threading::{GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, GetLastInputInfo, LASTINPUTINFO,
+    GetKeyState, GetLastInputInfo, LASTINPUTINFO, SetActiveWindow, keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::UI::Notifications::Management::{
@@ -945,33 +945,88 @@ mod tests {
 /// Chrome / Edge 的窗口标题就是当前活动标签的标题，先用媒体标题前几个字匹配；
 /// 匹配不到就激活 Z 序最前的浏览器窗口（EnumWindows 按 Z 序返回）。
 /// 只能定位到窗口，没法切换窗口里的非活动标签（扩展路线才做得到）。
+/// 把正在播放网页媒体的浏览器窗口带到前台。
+/// Chrome/Edge 的窗口标题就是当前活动标签标题，用媒体标题前 8 个字匹配窗口；
+/// 匹配不到就取 Z 序最前的浏览器窗口。只能定位窗口，切不了窗口内的非活动标签。
 pub(crate) fn focus_browser_tab(title:&str)->bool{
     use windows::Win32::Foundation::{BOOL,LPARAM};
-    struct Found { hwnd:Option<isize>, matched:bool, needle:String }
+    struct Found { hwnd:Option<isize>, matched:bool, needle:String, candidates:usize, detail:String }
     unsafe extern "system" fn visit(hwnd:HWND,param:LPARAM)->BOOL{
         if !IsWindowVisible(hwnd).as_bool(){return BOOL(1);}
         let mut class=[0u16;64];let n=GetClassNameW(hwnd,&mut class);
         if n<=0 || String::from_utf16_lossy(&class[..n as usize])!="Chrome_WidgetWin_1" {return BOOL(1);}
+        // 虚拟桌面 / 隐藏窗口不选。
+        let mut cloaked=0u32;
+        let _=windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(hwnd,
+            windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,(&mut cloaked as *mut u32).cast(),4);
+        if cloaked!=0{return BOOL(1);}
+        let mut pid=0u32;GetWindowThreadProcessId(hwnd,Some(&mut pid));
+        let Ok(process)=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,pid)else{return BOOL(1)};
+        let mut path=[0u16;1024];let mut length=path.len() as u32;
+        let ok=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,PWSTR(path.as_mut_ptr()),&mut length).is_ok();
+        let _=CloseHandle(process);
+        if !ok{return BOOL(1);}
+        let exe=std::path::Path::new(&String::from_utf16_lossy(&path[..length as usize]))
+            .file_name().and_then(|s|s.to_str()).unwrap_or("").to_string();
+        // Chrome_WidgetWin_1 是 Electron/CEF 通用类名：WorkBuddy、VS Code、QQ 都是。
+        // 不按进程名过滤就会激活当前前台的 Electron 应用，看起来像「点了没反应」。
+        if !is_browser_process(&exe){return BOOL(1);}
         let mut text=[0u16;1024];let len=GetWindowTextW(hwnd,&mut text);
         if len<=0{return BOOL(1);}
         let window_title=String::from_utf16_lossy(&text[..len as usize]);
         let state=&mut *(param.0 as *mut Found);
+        state.candidates+=1;
         let hit=!state.needle.is_empty() && window_title.contains(state.needle.as_str());
         if state.hwnd.is_none() || (hit && !state.matched){
             state.hwnd=Some(hwnd.0 as isize);state.matched=hit;
+            state.detail=format!("{exe} | {window_title}");
         }
         BOOL(1)
     }
-    let mut found=Found{hwnd:None,matched:false,needle:title.chars().take(8).collect()};
+    let mut found=Found{hwnd:None,matched:false,needle:title.chars().take(8).collect(),candidates:0,detail:String::new()};
     unsafe{let _=EnumWindows(Some(visit),LPARAM(&mut found as *mut _ as isize));}
-    let Some(handle)=found.hwnd else{return false};
+    let Some(handle)=found.hwnd else{
+        focus_browser_log(&format!("未找到浏览器窗口 | needle={:?} | 候选=0",found.needle));
+        return false;
+    };
     let hwnd=HWND(handle as *mut _);
-    unsafe{
-        let _=ShowWindow(hwnd,SW_RESTORE);
-        let _=SetForegroundWindow(hwnd);
-        let _=BringWindowToTop(hwnd);
+    let ok=unsafe{
+        if IsIconic(hwnd).as_bool(){let _=ShowWindow(hwnd,SW_RESTORE);}
+        if GetForegroundWindow().0==hwnd.0 {true} else {
+            // 岛仔主窗口是 WS_EX_NOACTIVATE，自己永远不是前台进程；
+            // 把输入队列附到前台线程再抢前台，绕过 Windows 的前台锁。
+            let fg=GetForegroundWindow();
+            let fg_thread=GetWindowThreadProcessId(fg,None);
+            let our=GetCurrentThreadId();
+            let attached=fg_thread!=0 && fg_thread!=our && AttachThreadInput(our,fg_thread,true).as_bool();
+            let _=BringWindowToTop(hwnd);
+            let _=SetActiveWindow(hwnd);
+            let mut done=SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow().0==hwnd.0;
+            if attached{let _=AttachThreadInput(our,fg_thread,false);}
+            if !done {
+                // 少数情况前台锁仍不认，模拟一次 ALT 松开再试。
+                keybd_event(0x12,0,KEYBD_EVENT_FLAGS(0),0);
+                keybd_event(0x12,0,KEYEVENTF_KEYUP,0);
+                let _=SetForegroundWindow(hwnd);
+                done=GetForegroundWindow().0==hwnd.0;
+            }
+            done
+        }
+    };
+    focus_browser_log(&format!("needle={:?} | 候选={} | 命中标题={} | 选中={} | 前台={}",
+        found.needle,found.candidates,found.matched,found.detail,ok));
+    ok
+}
+
+fn focus_browser_log(message:&str){
+    use std::io::Write as _;
+    let path=crate::model::config_dir().join("diagnostics").join("focus-browser.log");
+    if let Some(dir)=path.parent(){let _=std::fs::create_dir_all(dir);}
+    if std::fs::metadata(&path).is_ok_and(|meta|meta.len()>256*1024){let _=std::fs::write(&path,b"");}
+    if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(&path){
+        let stamp=chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _=writeln!(file,"{stamp} | {message}");
     }
-    true
 }
 
 fn avoidance_matches(path:&str,settings:&crate::model::Settings)->bool {
@@ -1151,5 +1206,17 @@ mod phone_channel_tests {
         assert_eq!(phone_app("电话 · 130 8646 4686 · 未接来电",&apps),Some(("电话".to_string(),true)));
         // 名单外的短名字直接用名字当标签。
         assert_eq!(phone_app("WorkBuddy · 任务已完成",&apps),Some(("WorkBuddy".to_string(),true)));
+    }
+
+    #[test]
+    fn only_real_browsers_pass_the_chromium_window_class_filter(){
+        // Chrome_WidgetWin_1 是 Electron/CEF 通用类名：WorkBuddy、VS Code、QQ 都用它。
+        // 只按类名挑窗口会激活前台的 Electron 应用，看起来像「点了没反应」。
+        assert!(super::is_browser_process("chrome.exe"));
+        assert!(super::is_browser_process("msedge.exe"));
+        assert!(!super::is_browser_process("WorkBuddy.exe"));
+        assert!(!super::is_browser_process("Code.exe"));
+        assert!(!super::is_browser_process("QQ.exe"));
+        assert!(!super::is_browser_process(""));
     }
 }

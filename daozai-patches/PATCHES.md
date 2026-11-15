@@ -612,6 +612,40 @@ exe SHA256 `c4d807f1b49df3b4`，旧版备份 `daozai.exe.bak-custom84`。
 **待实机确认**：三处都是视觉改动（账号控件位置、收起态验证码、短歌词居中），
 自动化只保证了像素/布局断言与编译，建议用户启动岛仔后目测一遍。
 
+**「打开」按钮切不到浏览器前台（custom-129）**
+
+用户实测点「打开」没有把浏览器切到前台。现场枚举 + 源码排查发现三个叠加原因：
+
+1. **类名误判**：`Chrome_WidgetWin_1` 是 Electron/CEF 通用类名，本机 WorkBuddy、
+   VS Code、QQ、QQEX 全是这个类。原实现只按类名挑窗口，Z 序最前的是当前前台的
+   WorkBuddy，于是把 WorkBuddy 又激活了一遍 —— 看起来就是「点了没反应」。
+   真正的 `chrome.exe` 窗口排在后面而且是最小化状态。
+2. **前台锁**：岛仔主窗口是 `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`（composition.rs），
+   自己永远不会成为前台进程，`SetForegroundWindow` 会被 Windows 前台锁拒绝。
+3. **掩盖失败**：原实现 `let _=SetForegroundWindow(...)` 后无条件 `return true`，
+   失败也提示「已切到播放中的浏览器窗口」。
+
+修法（`system.rs::focus_browser_tab`）：
+
+- 枚举时补 `DWMWA_CLOAKED` 排除、按 PID 取映像名并复用 `is_browser_process()`
+  过滤，只认真正的浏览器窗口；仍用媒体标题前 8 字匹配窗口标题，匹配不到取 Z 序最前。
+- 最小化时先 `ShowWindow(SW_RESTORE)`；`AttachThreadInput` 把当前线程附到前台线程，
+  再 `BringWindowToTop` + `SetActiveWindow` + `SetForegroundWindow`，随后解除附加；
+  仍失败则模拟一次 ALT 松开再试（绕前台锁）。
+- **检查 `GetForegroundWindow()==hwnd` 作为返回值**，失败时 UI 提示改成
+  「没能切到浏览器窗口，请再点一次或手动切换」。
+- 新增 `diagnostics/focus-browser.log`：记录匹配词、候选窗口数、是否命中标题、
+  选中的进程/标题、前台切换结果。
+- 新增单测 `only_real_browsers_pass_the_chromium_window_class_filter`，
+  锁住 WorkBuddy / VS Code / QQ 不会通过进程名过滤。
+
+部署前用 Python ctypes 复刻该逻辑在本机实测：`AttachThreadInput=True`、
+`SetForegroundWindow=True`、`前台已切换=True`，并已把 Chrome 还原成最小化、
+前台切回 WorkBuddy。
+
+验证：全量 `1176 passed / 0 failed / 119 ignored`；干净重放 239 处、
+跳过 0、diff 空（EDITS 237 / NEW_FILES 12）。
+
 **视频页三处体验修复（custom-128）**
 
 用户实机截图反馈「内容超出了」，并追加两个问题：展开态想跳到正在播放的浏览器
