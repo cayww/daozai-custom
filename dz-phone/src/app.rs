@@ -2715,7 +2715,7 @@ impl App {
 
     /// 当前皮肤的换色调色板（经典为 None）。
     pub(crate) fn skin_palette(&self)->Option<crate::skin_paint::Palette> {
-        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Classic|model::Skin::Fluid|model::Skin::Liquid=>None}
+        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Liquid=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::Classic|model::Skin::Fluid=>None}
     }
 
     /// 设置页预览用的岛体底色：没有真实模糊，毛玻璃按较实的玻璃表现。
@@ -2736,7 +2736,7 @@ impl App {
             model::Skin::Cream=>{let [r,g,b]=crate::skin_paint::CREAM.paper;Color32::from_rgb(r,g,b)}
             model::Skin::Classic=>Color32::BLACK,
             model::Skin::Fluid=>self.fluid.compose(0.5,0.5,1.0,1.0,0.0),
-            model::Skin::Liquid=>Color32::from_rgba_unmultiplied(28,32,40,190),
+            model::Skin::Liquid=>Color32::from_rgba_unmultiplied(248,248,250,215),
         }
     }
 
@@ -2821,13 +2821,13 @@ impl App {
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
     fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,radius:f32){
         let Some(format)=self.wgpu_format else {
-            painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(28,32,40,190));
-            painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
+            painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(248,248,250,225));
+            painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_rgba_unmultiplied(120,120,128,110)),egui::StrokeKind::Inside);
             return;
         };
         // GPU 未就绪时铺一层可见的兜底底色；就绪后几乎透明，别把折射压黑。
         let backup=if crate::gpu_glass::gpu_ready(){20}else{170};
-        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(28,32,40,backup));
+        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(248,248,250,backup));
         let ctx=painter.ctx();
         let ppp=ctx.pixels_per_point();
         let win=ctx.screen_rect().size();

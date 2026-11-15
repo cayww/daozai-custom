@@ -79,6 +79,7 @@ struct GlassGpu {
 static GPU: Mutex<Option<GlassGpu>> = Mutex::new(None);
 static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static GRAB_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// GPU 通道已经成功跑起来：此时兜底底色可以几乎透明，让折射层自己说话。
 pub fn gpu_ready() -> bool {
@@ -146,17 +147,19 @@ fn bg_at(uv : vec2<f32>) -> vec3<f32> {
     // uv 是相对 capture 的 0..1；纹理是固定的 1280x512，只用了左上角 (tw,th)。
     let scale = vec2<f32>(u.extra.y / 1280.0, u.extra.z / 512.0);
     let tuv = clamp(uv, vec2<f32>(0.001), vec2<f32>(0.999)) * scale;
-    let c = textureSampleLevel(bg, samp, tuv, 0.0).rgb;
-    // 背景太亮时白字会糊；把采样值压到上限，玻璃底色稳定在中灰。
-    return min(c, vec3<f32>(0.72));
+    // 不再人为压暗：兼容渲染下窗口底是黑的，玻璃颜色必须等于桌面才会「透」。
+    return textureSampleLevel(bg, samp, tuv, 0.0).rgb;
 }
 
 fn bg_blur(uv : vec2<f32>) -> vec3<f32> {
-    // 5 点模糊：抹平壁纸与窗口的内容边界，避免展开态出现水平硬切线。
-    let px = vec2<f32>(5.0 / u.extra.y, 5.0 / u.extra.z);
-    return (bg_at(uv)
+    // 9 点大半径模糊：浅色材质要把桌面上的文字/窗口边界抹成柔和的磨砂，
+    // 否则玻璃太透，背景文字会和岛上的深色文字叠在一起。
+    let px = vec2<f32>(11.0 / u.extra.y, 11.0 / u.extra.z);
+    return (bg_at(uv) * 2.0
         + bg_at(uv + vec2<f32>(px.x, 0.0)) + bg_at(uv - vec2<f32>(px.x, 0.0))
-        + bg_at(uv + vec2<f32>(0.0, px.y)) + bg_at(uv - vec2<f32>(0.0, px.y))) * 0.2;
+        + bg_at(uv + vec2<f32>(0.0, px.y)) + bg_at(uv - vec2<f32>(0.0, px.y))
+        + bg_at(uv + px) + bg_at(uv - px)
+        + bg_at(uv + vec2<f32>(px.x, -px.y)) + bg_at(uv + vec2<f32>(-px.x, px.y))) / 10.0;
 }
 
 @fragment
@@ -200,12 +203,14 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
         col = col + bg_at(base_uv + shift / tex) * w[k];
     }
 
-    // 把色散采样与模糊背景混合：保留边缘彩边，抹掉背景里的内容硬边。
-    col = mix(col, bg_blur(base_uv), vec3<f32>(0.35));
+    // 浅色液态玻璃 = 磨砂底图（强模糊 + 一点白雾）+ 少量清晰折射。
+    // 桌面颜色/明暗仍然透出来，但文字与窗口边界被抹掉，深色字才不会和背景字打架。
+    let frost = mix(bg_blur(base_uv), vec3<f32>(0.96, 0.96, 0.975), vec3<f32>(0.34));
+    col = mix(col, frost, vec3<f32>(0.78));
 
     // 玻璃本体：压一点亮度保证白字可读，亮背景压得更深。
     let light = u.params.w;
-    let body = mix(0.95, 0.80, light);
+    let body = mix(1.0, 0.94, light);
     col = mix(col * body, col, vec3<f32>(0.35));
     col = col + u.tint.rgb * u.tint.a * 0.10 * rim;
 
@@ -232,10 +237,13 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 岛体外面只留朝右下的接触阴影：颜色必须压暗，
     // 否则 contact 这段 alpha 会带着浅色背景画成一圈亮描边。
     let outside = smoothstep(0.0, 3.0, d);
-    col = mix(col, vec3<f32>(0.055, 0.065, 0.075), outside * 0.92);
+    col = mix(col, vec3<f32>(0.055, 0.065, 0.075), outside * 0.80);
 
-    let alpha = clamp(aa * mix(0.50, 0.70, u.extra.w) + contact, 0.0, 1.0);
-    // egui 的 pass 使用预乘 alpha 混合。
+    // 兼容渲染（DX12）用 SetWindowRgn 把窗口裁成岛体轮廓，窗口底清成不透明黑，
+    // 逐像素透明不可用。预乘混合下最终颜色就是这里输出的颜色，所以岛体内部
+    // 必须 alpha=1 且颜色等于抓到的桌面，看起来才是「透明」而不是一块灰板。
+    // 折射/色散/高光叠在这张真实底图上，只有抗锯齿的 1px 边缘留半透明。
+    let alpha = clamp(aa + contact, 0.0, 1.0);
     return vec4<f32>(col * alpha, alpha);
 }
 "#;
@@ -318,10 +326,63 @@ fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
     }
 }
 
-/// 抓屏幕上一块矩形，返回自上而下的 RGBA。岛体矩形内用上边缘像素填充，
-/// 免得折射到上一帧已经画好的岛仔自己。
+/// 首帧岛仔还没画出来时抓的「干净桌面底片」。
+/// 之后每帧只把岛体以外的像素写回底片，岛体内部一直用这张底片：
+/// 折射能采到真实桌面细节，又不会把上一帧的自己（文字、控件）抓进来产生鬼影。
 #[cfg(windows)]
-fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u32, u32)> {
+const PLATE_W: u32 = 1024;
+#[cfg(windows)]
+const PLATE_H: u32 = 512;
+/// 底片锚点比首帧抓屏矩形左移 256px：展开时抓屏矩形会向左变宽，
+/// 锚点固定才不会在动画里重建底片（重建时岛仔已可见，会被抹成灰渐变）。
+#[cfg(windows)]
+const PLATE_ANCHOR: i32 = 256;
+
+#[cfg(windows)]
+struct CleanPlate {
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    data: Vec<u8>,
+}
+
+#[cfg(windows)]
+static PLATE: Mutex<Option<CleanPlate>> = Mutex::new(None);
+
+#[cfg(windows)]
+fn row_mean(buf: &[u8], w: u32, h: u32, x0: i32, x1: i32, y: i32) -> [f32; 3] {
+    let yy = y.clamp(0, h as i32 - 1) as u32;
+    let a = x0.max(0) as u32;
+    let b = (x1.min(w as i32)).max(a as i32) as u32;
+    let (mut r, mut g, mut bl, mut n) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    for x in a..b {
+        let i = ((yy * w + x) * 4) as usize;
+        r += buf[i] as f32; g += buf[i + 1] as f32; bl += buf[i + 2] as f32; n += 1.0;
+    }
+    if n > 0.0 { [r / n, g / n, bl / n] } else { [238.0, 238.0, 238.0] }
+}
+
+/// 只在「首帧就已经能看到岛仔」时兜底：把岛体区域抹成上下边缘平均色的渐变。
+#[cfg(windows)]
+fn fill_gradient(buf: &mut [u8], w: u32, x0: i32, y0: i32, x1: i32, y1: i32, top: [f32; 3], bot: [f32; 3]) {
+    if x1 <= x0 || y1 <= y0 { return; }
+    let hh = (y1 - y0) as f32;
+    for yy in y0..y1 {
+        let k = (yy - y0) as f32 / hh;
+        for xx in x0..x1 {
+            let i = ((yy as u32 * w + xx as u32) * 4) as usize;
+            buf[i] = (top[0] + (bot[0] - top[0]) * k) as u8;
+            buf[i + 1] = (top[1] + (bot[1] - top[1]) * k) as u8;
+            buf[i + 2] = (top[2] + (bot[2] - top[2]) * k) as u8;
+            buf[i + 3] = 255;
+        }
+    }
+}
+
+/// 纯 GDI 抓屏，返回自上而下的 RGBA；不做任何岛体处理。
+#[cfg(windows)]
+fn grab_raw(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::Graphics::Gdi::HGDIOBJ;
     if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
@@ -338,60 +399,106 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
         info.bmiHeader.biCompression = BI_RGB.0;
         let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
         let bmp = CreateDIBSection(mem, &info, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
-        let old = SelectObject(mem, HGDIOBJ(bmp.0));
+        let old_bmp = SelectObject(mem, HGDIOBJ(bmp.0));
         let ok = BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY).is_ok();
         let (bw, bh) = (w as u32, h as u32);
         let mut rgba = vec![0u8; (bw * bh * 4) as usize];
         if ok && !bits.is_null() {
             let src = std::slice::from_raw_parts(bits as *const u8, rgba.len());
-            for row in 0..bh {
-                let s = (row * bw * 4) as usize;
-                let d = (row * bw * 4) as usize;
-                for col in 0..bw {
-                    let (a, b) = (s + col as usize * 4, d + col as usize * 4);
-                    rgba[b] = src[a + 2];
-                    rgba[b + 1] = src[a + 1];
-                    rgba[b + 2] = src[a];
-                    rgba[b + 3] = 255;
-                }
-            }
-            // 岛体区域填成「上下边界平均色」的平滑垂直渐变。
-            // 逐行左右插值会保留壁纸→窗口的水平内容边界，展开态会出现一条硬切线；
-            // 用整行平均后做垂直渐变，玻璃内的背景才是连续的。
-            let (bx, by, bwid, bhei) = (
-                body[0].max(0.0) as u32, body[1].max(0.0) as u32,
-                body[2].min(bw as f32) as u32, body[3].min(bh as f32) as u32,
-            );
-            if bwid > 0 && bhei > 0 && bx < bw && by < bh {
-                let top_y = by.saturating_sub(6).min(bh - 1);
-                let bot_y = (by + bhei + 6).min(bh - 1);
-                let row_avg = |yy: u32| -> [f32; 3] {
-                    let (mut r, mut g, mut b, mut n) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-                    for xx in bx..(bx + bwid).min(bw) {
-                        let i = ((yy * bw + xx) * 4) as usize;
-                        r += rgba[i] as f32; g += rgba[i + 1] as f32; b += rgba[i + 2] as f32; n += 1.0;
-                    }
-                    if n > 0.0 { [r / n, g / n, b / n] } else { [242.0, 238.0, 238.0] }
-                };
-                let (top, bot) = (row_avg(top_y), row_avg(bot_y));
-                for yy in by..(by + bhei).min(bh) {
-                    let k = (yy - by) as f32 / bhei as f32;
-                    for xx in bx..(bx + bwid).min(bw) {
-                        let d = ((yy * bw + xx) * 4) as usize;
-                        rgba[d] = (top[0] + (bot[0] - top[0]) * k) as u8;
-                        rgba[d + 1] = (top[1] + (bot[1] - top[1]) * k) as u8;
-                        rgba[d + 2] = (top[2] + (bot[2] - top[2]) * k) as u8;
-                        rgba[d + 3] = 255;
-                    }
-                }
+            for i in (0..rgba.len()).step_by(4) {
+                rgba[i] = src[i + 2];
+                rgba[i + 1] = src[i + 1];
+                rgba[i + 2] = src[i];
+                rgba[i + 3] = 255;
             }
         }
-        SelectObject(mem, old);
+        SelectObject(mem, old_bmp);
         let _ = DeleteObject(HGDIOBJ(bmp.0));
         let _ = DeleteDC(mem);
         ReleaseDC(None, screen);
         if ok { Some((rgba, bw, bh)) } else { None }
     }
+}
+
+/// 抓当前岛体外扩矩形，但与「干净底片」合成：岛体内部用底片（真实桌面），
+/// 岛体外部用本帧抓屏并顺手写回底片，让底片跟着桌面变化更新。
+#[cfg(windows)]
+fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u32, u32)> {
+    if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
+    let (raw, bw, bh) = grab_raw(x, y, w, h)?;
+    let mut guard = PLATE.lock().unwrap_or_else(|e| e.into_inner());
+    // 只有抓屏矩形跑出底片范围才重建；展开动画里 x 左移 ~100px 属于正常范围。
+    let need_new = match guard.as_ref() {
+        None => true,
+        Some(p) => {
+            let (ox, oy) = (x - p.x, y - p.y);
+            ox < 0 || oy < 0 || ox + w > p.w as i32 || oy + h > p.h as i32
+        }
+    };
+    if need_new {
+        let ax = x - PLATE_ANCHOR;
+        let big = grab_raw(ax, y, PLATE_W as i32, PLATE_H as i32);
+        let (mut data, pw, ph, fpx, fpy) = if let Some((d, pw, ph)) = big {
+            (d, pw, ph, ax, y)
+        } else {
+            (raw.clone(), bw, bh, x, y)
+        };
+        let (sx, sy) = (x - fpx, y - fpy);
+        let (bx0, by0, bx1, by1) = (
+            (body[0] + sx as f32 - 10.0).max(0.0) as i32,
+            (body[1] + sy as f32 - 10.0).max(0.0) as i32,
+            ((body[0] + sx as f32 + body[2] + 10.0).min(pw as f32)) as i32,
+            ((body[1] + sy as f32 + body[3] + 10.0).min(ph as f32)) as i32,
+        );
+        let top = row_mean(&data, pw, ph, bx0, bx1, by0 - 6);
+        let bot = row_mean(&data, pw, ph, bx0, bx1, by1 + 6);
+        // 首帧通常岛仔还没画出来；万一已经画出来了，中心会明显比左侧桌面暗，
+        // 这时把岛体区域抹成渐变，避免底片里存进自己的深色玻璃。
+        let cx = ((bx0 + bx1) / 2).clamp(0, pw as i32 - 1) as u32;
+        let cy = ((by0 + by1) / 2).clamp(0, ph as i32 - 1) as u32;
+        let ci = ((cy * pw + cx) * 4) as usize;
+        let li = ((cy * pw + bx0.clamp(0, pw as i32 - 1) as u32) * 4) as usize;
+        let bright = |i: usize| (data[i] as i32 + data[i + 1] as i32 + data[i + 2] as i32) / 3;
+        let (cb, lb) = (bright(ci), bright(li));
+        let feedback = lb - cb > 40;
+        if feedback { fill_gradient(&mut data, pw, bx0, by0, bx1, by1, top, bot); }
+        diag(&format!("plate: new {}x{} at ({},{}) feedback={} center={} desktop={}",
+                      pw, ph, fpx, fpy, feedback, cb, lb));
+        *guard = Some(CleanPlate { x: fpx, y: fpy, w: pw, h: ph, data });
+    }
+    let p = guard.as_mut().unwrap();
+    let (ox, oy) = (x - p.x, y - p.y);
+    // 排除区（capture 坐标）：岛体 + 10px，连窗口阴影/描边一起排掉。
+    let (cx0, cy0, cx1, cy1) = (
+        (body[0] - 10.0).max(0.0) as i32,
+        (body[1] - 10.0).max(0.0) as i32,
+        ((body[0] + body[2] + 10.0).min(bw as f32)) as i32,
+        ((body[1] + body[3] + 10.0).min(bh as f32)) as i32,
+    );
+    if GRAB_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+        diag(&format!("plate: cap={}x{} off=({},{}) body=({},{},{},{})",
+                      bw, bh, ox, oy, cx0, cy0, cx1, cy1));
+    }
+    let mut out = vec![0u8; (bw * bh * 4) as usize];
+    for yy in 0..bh as i32 {
+        for xx in 0..bw as i32 {
+            let d = ((yy as u32 * bw + xx as u32) * 4) as usize;
+            let (qx, qy) = (ox + xx, oy + yy);
+            let in_plate = qx >= 0 && qy >= 0 && qx < p.w as i32 && qy < p.h as i32;
+            let excluded = xx >= cx0 && xx < cx1 && yy >= cy0 && yy < cy1;
+            if excluded && in_plate {
+                let s = ((qy as u32 * p.w + qx as u32) * 4) as usize;
+                out[d..d + 4].copy_from_slice(&p.data[s..s + 4]);
+            } else {
+                out[d..d + 4].copy_from_slice(&raw[d..d + 4]);
+                if in_plate {
+                    let s = ((qy as u32 * p.w + qx as u32) * 4) as usize;
+                    p.data[s..s + 4].copy_from_slice(&raw[d..d + 4]);
+                }
+            }
+        }
+    }
+    Some((out, bw, bh))
 }
 
 #[cfg(not(windows))]
@@ -436,60 +543,69 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let gpu = guard.as_mut().unwrap();
         let f = &self.frame;
         let (cw, ch) = (f.capture[2].max(1.0) as i32, f.capture[3].max(1.0) as i32);
-        let Some((rgba, tw, th)) = capture(f.capture[0] as i32, f.capture[1] as i32, cw, ch, f.bounds) else {
-            if tick == 0 { diag("capture: GDI 抓屏失败"); }
+        let mut tex_size = gpu.size;
+        // 每 2 帧抓一次屏：GDI BitBlt 与 CPU 填充是这段最重的部分。
+        if tick % 2 == 0 || gpu.texture.is_none() {
+            let Some((rgba, tw, th)) = capture(f.capture[0] as i32, f.capture[1] as i32, cw, ch, f.bounds) else {
+                if tick == 0 { diag("capture: GDI 抓屏失败"); }
+                return Vec::new();
+            };
+            if tick % 120 == 0 {
+                let mut sum = 0u64;
+                let mut n = 0u64;
+                let mut i = 0usize;
+                while i + 4 <= rgba.len() { sum += rgba[i] as u64; n += 1; i += 4004; }
+                let mean = if n > 0 { sum / n } else { 0 };
+                diag(&format!("tick={tick} cap={tw}x{th} mean_r={mean} tex={:?} clip={:?} bounds={:?}", gpu.size, f.clip, f.bounds));
+            }
+            if gpu.texture.is_none() {
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("daozai-glass-backdrop"),
+                    size: wgpu::Extent3d { width: TEX_W, height: TEX_H, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                gpu.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("daozai-glass-bind"),
+                    layout: &gpu.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: gpu.uniform.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&gpu.sampler) },
+                    ],
+                }));
+                gpu.texture = Some(texture);
+            }
+            gpu.size = (tw, th);
+            // wgpu 要求 bytes_per_row 是 256 的倍数；不对齐会触发 validation error
+            // （纹理保持未初始化 → 整块黑），所以每行补 padding 再上传。
+            if tw > TEX_W || th > TEX_H { return Vec::new(); }
+            let bpr = (tw * 4 + 255) / 256 * 256;
+            let mut padded = vec![0u8; bpr as usize * th as usize];
+            let row = (tw * 4) as usize;
+            for y in 0..th as usize {
+                let (s, d) = (y * row, y * bpr as usize);
+                padded[d..d + row].copy_from_slice(&rgba[s..s + row]);
+            }
+            if tick == 0 { diag(&format!("upload: bpr={bpr} (raw={}) rows={th}", tw * 4)); }
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: gpu.texture.as_ref().unwrap(), mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                &padded,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(th) },
+                wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+            );
+            tex_size = (tw, th);
+        } else if gpu.size == (0, 0) {
             return Vec::new();
-        };
-        if tick % 120 == 0 {
-            let mut sum = 0u64;
-            let mut n = 0u64;
-            let mut i = 0usize;
-            while i + 4 <= rgba.len() { sum += rgba[i] as u64; n += 1; i += 4004; }
-            let mean = if n > 0 { sum / n } else { 0 };
-            diag(&format!("tick={tick} cap={tw}x{th} mean_r={mean} tex={:?} clip={:?} bounds={:?}", gpu.size, f.clip, f.bounds));
+        } else {
+            tex_size = gpu.size;
         }
-        if gpu.texture.is_none() {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("daozai-glass-backdrop"),
-                size: wgpu::Extent3d { width: TEX_W, height: TEX_H, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            gpu.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("daozai-glass-bind"),
-                layout: &gpu.layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: gpu.uniform.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&gpu.sampler) },
-                ],
-            }));
-            gpu.texture = Some(texture);
-        }
-        gpu.size = (tw, th);
-        // wgpu 要求 bytes_per_row 是 256 的倍数；不对齐会触发 validation error
-        // （纹理保持未初始化 → 整块黑），所以每行补 padding 再上传。
-        if tw > TEX_W || th > TEX_H { return Vec::new(); }
-        let bpr = (tw * 4 + 255) / 256 * 256;
-        let mut padded = vec![0u8; bpr as usize * th as usize];
-        let row = (tw * 4) as usize;
-        for y in 0..th as usize {
-            let (s, d) = (y * row, y * bpr as usize);
-            padded[d..d + row].copy_from_slice(&rgba[s..s + row]);
-        }
-        if tick == 0 { diag(&format!("upload: bpr={bpr} (raw={}) rows={th}", tw * 4)); }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: gpu.texture.as_ref().unwrap(), mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            &padded,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(th) },
-            wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
-        );
-        let u = uniforms(f, (tw, th));
+        let u = uniforms(f, tex_size);
         queue.write_buffer(&gpu.uniform, 0, u.bytes());
         Vec::new()
     }
