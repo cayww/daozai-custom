@@ -151,6 +151,8 @@ pub struct Env {
     pub bt_ready: bool,
     /// 岛所在屏幕（与 `win` 同一坐标系，逻辑点）；用于让通知详情留在屏幕内。
     pub screen: Option<Rect>,
+    /// 窗口左上角在屏幕上的逻辑坐标：GPU 折射抓屏要用它换到屏幕绝对位置。
+    pub window_origin: [f32; 2],
     /// 毛玻璃皮肤：岛体四周采样得到的背景色（sRGB 0..1）。
     pub backdrop: Option<[f32; 3]>,
     /// 毛玻璃皮肤：系统背景模糊当前是否生效。
@@ -814,6 +816,9 @@ pub struct App {
     fluid_title:String,
     /// 悬浮云每帧刷新的颜色纹理：低分辨率交给 GPU 双线性插值，避免每帧生成上万顶点。
     fluid_tex:Option<egui::TextureHandle>,
+    /// wgpu 目标格式；只有兼容渲染（Direct3D 12）后端才有，液态玻璃皮肤据此决定走不走 GPU。
+    pub wgpu_format:Option<eframe::egui_wgpu::wgpu::TextureFormat>,
+    window_origin:[f32;2],
     screen:Option<Rect>,
     pub(crate) settings_focus_requested:bool,
     pub(crate) settings_tab:usize,
@@ -1075,6 +1080,8 @@ impl App {
             subpage:None,
             task_dialog:None,
             fluid_tex:None,
+            wgpu_format:None,
+            window_origin:[0.0,0.0],
             wechat_status:String::new(),
             phone_counts:Default::default(),
             phone_icons:Default::default(),
@@ -2039,6 +2046,7 @@ impl App {
         self.dt = dt;
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
+        self.window_origin=env.window_origin;
         if self.settings.skin.is_glass() {
             let target=if self.settings.skin==model::Skin::GlassLight {glass::light_tint(env.backdrop,env.glass_blur)}else{glass::glass_tint(env.backdrop,env.glass_blur)};
             self.glass_tint=if self.glass_tint<=0.0 {target}else{anim::approach(self.glass_tint,target,3.0,dt)};
@@ -2707,7 +2715,7 @@ impl App {
 
     /// 当前皮肤的换色调色板（经典为 None）。
     pub(crate) fn skin_palette(&self)->Option<crate::skin_paint::Palette> {
-        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Classic|model::Skin::Fluid=>None}
+        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Classic|model::Skin::Fluid|model::Skin::Liquid=>None}
     }
 
     /// 设置页预览用的岛体底色：没有真实模糊，毛玻璃按较实的玻璃表现。
@@ -2728,6 +2736,7 @@ impl App {
             model::Skin::Cream=>{let [r,g,b]=crate::skin_paint::CREAM.paper;Color32::from_rgb(r,g,b)}
             model::Skin::Classic=>Color32::BLACK,
             model::Skin::Fluid=>self.fluid.compose(0.5,0.5,1.0,1.0,0.0),
+            model::Skin::Liquid=>Color32::from_rgba_unmultiplied(28,32,40,190),
         }
     }
 
@@ -2740,6 +2749,10 @@ impl App {
     /// 绘制岛体（或通知胶囊）的本体：经典皮肤为纯黑；毛玻璃为着色底 + 顶部柔光 + 边缘高光。
     fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32){
         let skin=self.settings.skin;
+        if skin==model::Skin::Liquid {
+            self.paint_gpu_glass(painter,rect,radius);
+            return;
+        }
         if skin==model::Skin::Fluid {
             // 胶囊 + 顶部停靠：和毛玻璃共用 egui 的精确圆角矩形，颜色走一张小纹理。
             // 旧的「按行梯形条 + 折线圆弧 + 手工羽化带」只在悬浮云上用，
@@ -2802,6 +2815,33 @@ impl App {
             let edge=Rect::from_min_max(rect.min+Vec2::new(0.5,0.0),rect.max-Vec2::new(0.5,0.5));
             painter.add(egui::Shape::line(shape::outline(edge,flare,flare_h,(radius-0.5).max(0.0)),egui::Stroke::new(1.0_f32,self.glass_rim())));
         }
+    }
+
+    /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
+    /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
+    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,radius:f32){
+        let Some(format)=self.wgpu_format else {
+            painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(28,32,40,190));
+            painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
+            return;
+        };
+        // 先铺一层兜底底色：GPU pass 若因驱动/shader 编译失败没有输出，岛体也不会变成全透明。
+        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(28,32,40,170));
+        let ctx=painter.ctx();
+        let ppp=ctx.pixels_per_point();
+        let win=ctx.screen_rect().size();
+        // 折射要把采样 UV 推到岛体外，所以抓一块比岛体大的矩形。
+        let capture=rect.expand2(egui::vec2(64.0,48.0))
+            .intersect(Rect::from_min_size(Pos2::ZERO,win));
+        if capture.width()<8.0 || capture.height()<8.0 {return;}
+        let pointer=ctx.input(|i|i.pointer.hover_pos()).unwrap_or(rect.center());
+        let frame=crate::gpu_glass::frame_for(
+            rect,capture,((win.x*ppp) as u32,(win.y*ppp) as u32),ppp,radius,
+            self.progress().clamp(0.0,1.0),
+            crate::gpu_glass::NEUTRAL_TINT,self.t as f32,
+            (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]));
+        painter.add(eframe::egui_wgpu::Callback::new_paint_callback(
+            capture,crate::gpu_glass::GlassCallback{frame,format}));
     }
 
     /// 悬浮云主体：轮廓交给 `RectShape` 的精确圆角，流动颜色做成一张固定尺寸的小纹理。

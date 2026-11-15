@@ -121,6 +121,7 @@ impl Shell {
         diagnostics::startup("加载本地配置");
         let mut app = App::new(&cc.egui_ctx, Options::default());
         app.render_compat_running=running_compat;
+        app.wgpu_format=cc.wgpu_render_state.as_ref().map(|state|state.target_format);
         #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
         #[cfg(not(feature="record"))] let quota_demo=false;
         diagnostics::startup("初始化额度配置");
@@ -306,6 +307,7 @@ impl Shell {
             bt: self.bt.clone(),
             bt_ready: self.bt_ready,
             screen,
+            window_origin:[origin.x,origin.y],
             backdrop,
             glass_blur,
             opaque_surface: {
