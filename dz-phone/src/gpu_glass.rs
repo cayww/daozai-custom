@@ -554,8 +554,12 @@ fn enable_capture_exclusion() {
     let tick = EXCLUSION_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut hosts = HOSTS.lock().unwrap_or_else(|e| e.into_inner());
 
-    // 句柄失效（窗口销毁）或定期重扫，兜住「运行期间新开的窗口」（比如设置页）。
-    let mut rescan = hosts.is_empty() || tick % 120 == 0;
+    // 句柄失效（窗口销毁）、启动初期、定期重扫，三者任一成立就重新枚举。
+    // 「启动初期每帧重扫」是必须的：岛仔窗口在第一帧可能还没可见，缓存里只填到
+    // 别的窗口，就会把「岛仔还没被排除」这个状态一直维持到下次定期重扫（2 秒），
+    // 期间 WGC 抓到岛仔自己 → 玻璃里出现正反馈条纹。
+    // 前 240 帧（约 4 秒）每帧枚举，之后退回缓存 + 每 120 帧重扫。
+    let mut rescan = hosts.is_empty() || tick < 240 || tick % 120 == 0;
     if !rescan {
         for h in hosts.iter() {
             let mut aff = 0u32;
@@ -877,14 +881,12 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
     let want = ((w as u64) << 32) | (h as u64);
     let (raw, bw, bh, from_wgc) = match crate::wgc::grab(x, y, w, h) {
         crate::wgc::Grab::Frame(p, tw, th) => (p, tw, th, true),
-        // WGC 这一帧还没有新画面。尺寸没变 → 复用上一帧纹理是安全的（省一次 GDI）；
-        // 尺寸变了（展开/折叠动画）→ 必须重新抓，否则旧 uniform 会把玻璃按旧几何
-        // 画进新视口，出现「缩小的岛仔套在大轮廓里」的错位。
-        crate::wgc::Grab::NoFrame => {
-            if LAST_CAP.load(std::sync::atomic::Ordering::Relaxed) == want { return None; }
-            let (p, tw, th) = grab_raw(x, y, w, h)?;
-            (p, tw, th, false)
-        }
+        // WGC 这一帧还没有新画面：复用上一帧纹理。
+        // **绝对不能退回 GDI**：GDI BitBlt 读的是桌面 DC，WDA_EXCLUDEFROMCAPTURE
+        // 在那里不生效（只会把窗口变黑、或异步失效后抓到窗口自己），
+        // 一旦抓到岛仔自己就会形成「玻璃里显示玻璃」的正反馈条纹。
+        // 复用旧纹理最多让玻璃的几何错一帧，退回 GDI 会让整块玻璃糊成条纹。
+        crate::wgc::Grab::NoFrame => return None,
         crate::wgc::Grab::Unavailable => {
             let (p, tw, th) = grab_raw(x, y, w, h)?;
             (p, tw, th, false)
