@@ -2064,7 +2064,13 @@ impl App {
         // 重绘完全由输入事件驱动。鼠标不动时 egui 不重绘 → prepare 不调用 → 抓屏停止，
         // 玻璃背景就「冻住」了，看起来正好像卡顿。这里主动按 60fps 预约重绘。
         if self.settings.skin == model::Skin::Liquid && self.wgpu_format.is_some() {
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+            // 预约 16ms 后重绘 —— 但 16ms 是「从现在算」，而当前帧后面还有活要干
+            // （绘制、抓屏、present）。实测帧周期 = 16 + 净工作 ≈ 20.8ms，只有 48fps。
+            // 用上一帧周期反推净工作时间，从 16.7ms 里扣掉它，才能真的跑满 60。
+            let period_ms = (dt * 1000.0).max(0.0);
+            let work_ms = (period_ms - 16.0).clamp(0.0, 12.0);
+            let wait_ms = (16.7 - work_ms).clamp(1.0, 17.0);
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f32(wait_ms as f32 / 1000.0));
         }
         // 液态玻璃：背景亮度决定深/浅材质。0.52/0.66 之间是滞回区，
         // 避免在阈值附近来回闪；平滑系数让 shader 与文字颜色同步过渡。

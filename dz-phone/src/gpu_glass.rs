@@ -489,6 +489,18 @@ pub fn set_morph_scale(v: f32) {
     MORPH_SCALE.store(v.clamp(0.0, 3.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
+/// DAOZAI_LIQUID_CAPTURE_EVERY：抓屏节流倍数（默认 1 = 每帧都抓）。
+/// 设为 2 时玻璃背景按 30fps 更新，岛体自身动画仍是 60fps。
+fn capture_every() -> u64 {
+    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("DAOZAI_LIQUID_CAPTURE_EVERY").ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|v| v.clamp(1, 4))
+            .unwrap_or(1)
+    })
+}
+
 fn morph_scale() -> f32 {
     f32::from_bits(MORPH_SCALE.load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -531,29 +543,60 @@ fn enable_capture_exclusion() {
     }
     // 实机证明：SetWindowRgn / 窗口样式变更会把 display affinity 重置，
     // 只设一次的话后面 WGC 帧又会抓到岛仔自己（dump 第 2 帧干净、第 7 帧有残影）。
-    // 每帧重新声明一次，EnumWindows 几十个窗口的开销可以忽略。
-    unsafe extern "system" fn visit(hwnd: HWND, _: LPARAM) -> BOOL {
-        use windows::Win32::System::Threading::GetCurrentProcessId;
-        let mut pid = 0u32;
-        windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == GetCurrentProcessId()
-            && windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd).as_bool()
-            && windows::Win32::UI::WindowsAndMessaging::SetWindowDisplayAffinity(
-                hwnd, windows::Win32::UI::WindowsAndMessaging::WDA_EXCLUDEFROMCAPTURE).is_ok()
-        {
-            EXCLUDED_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        BOOL(1)
-    }
+    // 所以「每帧必须检查」这条不能破。
+    //
+    // 但「每帧检查」不等于「每帧 EnumWindows + 无条件重设」：
+    //   · 本进程的窗口集合几乎不变 → 句柄缓存起来，只在失效/定期时才重扫；
+    //   · affinity 没丢时 SetWindowDisplayAffinity 是纯浪费 → 先 GetWindowDisplayAffinity，
+    //     确认丢了才重设。
+    // 从「枚举全部顶层窗口 + N 次重设」降到「N 次查询」，N 通常只有 1~2。
+    static HOSTS: std::sync::Mutex<Vec<isize>> = std::sync::Mutex::new(Vec::new());
     let tick = EXCLUSION_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // 必须每帧刷新！SetWindowRgn / 样式变化会重置 affinity，降频到每 30 帧试过：
-    // 中间那 29 帧 WGC 会抓回岛仔自己，而岛仔背景又来自上一帧纹理 → 直接反馈成
-    // 满屏竖条纹，而且会写进底片固化下来。EnumWindows 的几十次调用开销远小于这个代价。
-    let _ = EXCLUDED_N.swap(0, std::sync::atomic::Ordering::Relaxed);
-    unsafe { let _ = EnumWindows(Some(visit), LPARAM(0)); }
+    let mut hosts = HOSTS.lock().unwrap_or_else(|e| e.into_inner());
+
+    // 句柄失效（窗口销毁）或定期重扫，兜住「运行期间新开的窗口」（比如设置页）。
+    let mut rescan = hosts.is_empty() || tick % 120 == 0;
+    if !rescan {
+        for h in hosts.iter() {
+            let mut aff = 0u32;
+            if unsafe { GetWindowDisplayAffinity(HWND(*h as *mut _), &mut aff) }.is_err() {
+                rescan = true;
+                break;
+            }
+        }
+    }
+    if rescan {
+        hosts.clear();
+        unsafe extern "system" fn visit(hwnd: HWND, l: LPARAM) -> BOOL {
+            use windows::Win32::System::Threading::GetCurrentProcessId;
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if pid == GetCurrentProcessId() && IsWindowVisible(hwnd).as_bool() {
+                (*(l.0 as *mut Vec<isize>)).push(hwnd.0 as isize);
+            }
+            BOOL(1)
+        }
+        unsafe {
+            let _ = EnumWindows(Some(visit), LPARAM(&mut *hosts as *mut Vec<isize> as isize));
+        }
+    }
+
+    let mut fixed = 0u32;
+    for h in hosts.iter() {
+        let hwnd = HWND(*h as *mut _);
+        let mut aff = 0u32;
+        if unsafe { GetWindowDisplayAffinity(hwnd, &mut aff) }.is_ok()
+            && aff == WDA_EXCLUDEFROMCAPTURE.0
+        {
+            continue;
+        }
+        if unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) }.is_ok() {
+            fixed += 1;
+        }
+    }
+    EXCLUDED_N.store(fixed, std::sync::atomic::Ordering::Relaxed);
     if tick == 0 || tick % 1800 == 0 {
-        diag(&format!("exclude: 刷新 #{} 命中 {} 个窗口", tick,
-                      EXCLUDED_N.load(std::sync::atomic::Ordering::Relaxed)));
+        diag(&format!("exclude: 检查 #{} 窗口 {} 个，重设 {} 个", tick, hosts.len(), fixed));
     }
 }
 
@@ -908,6 +951,9 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
     ) -> Vec<wgpu::CommandBuffer> {
         let mut guard = GPU.lock().unwrap_or_else(|e| e.into_inner());
         let tick = TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // 帧率探针：tick 每帧 +1，定期落盘就能算出实际 fps（日志里其它行只在
+        // 抓到新帧时才写，静态背景根本测不出帧率）。
+        if tick % 600 == 0 { diag(&format!("perf: tick={tick}")); }
         if FAILED.load(std::sync::atomic::Ordering::Relaxed) { return Vec::new(); }
         if guard.is_none() {
             match make_gpu(device, self.format) {
@@ -923,6 +969,19 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let f = &self.frame;
         let (cw, ch) = (f.capture[2].max(1.0) as i32, f.capture[3].max(1.0) as i32);
         let mut tex_size = gpu.size;
+
+        // 抓屏节流：每帧回读一次屏幕是这条链路里最贵的一段（WGC Map 是 GPU→CPU
+        // 同步等待，再加两次 1MB 级拷贝）。几何没变时可以隔帧抓，纹理和 uniform
+        // 沿用上一帧 —— 玻璃背景降频到 30fps，但岛体自身的动画仍是 60fps。
+        // 几何在变（展开/折叠）时绝不节流，否则又会错位。
+        static LAST_BOUNDS: std::sync::Mutex<[f32; 4]> = std::sync::Mutex::new([0.0; 4]);
+        let every = capture_every();
+        if every > 1 && tick % every as u64 != 0 {
+            let same = *LAST_BOUNDS.lock().unwrap_or_else(|e| e.into_inner()) == f.bounds;
+            if same { return Vec::new(); }
+        }
+        *LAST_BOUNDS.lock().unwrap_or_else(|e| e.into_inner()) = f.bounds;
+
         // 每帧都抓：节流会让「纹理内容」与「当前 bounds」错一帧，
         // 展开动画里几何被拉伸，表现为抖动/错位。
         {
