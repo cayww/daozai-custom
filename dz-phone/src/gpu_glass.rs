@@ -16,6 +16,10 @@ use std::sync::Mutex;
 
 /// 没有封面时的中性淡彩。
 pub const NEUTRAL_TINT: [f32; 3] = [0.62, 0.66, 0.74];
+/// 背景纹理固定尺寸：展开动画里 capture 每帧都变，重建纹理会闪烁并拖慢合成。
+/// shader 里用同样的常量把 uv 映射到纹理左上角的有效子区。
+const TEX_W: u32 = 1280;
+const TEX_H: u32 = 512;
 
 /// 光学参数与几何，全部按物理像素给。
 #[derive(Clone, Copy)]
@@ -139,7 +143,20 @@ fn lens(t : f32) -> f32 {
 }
 
 fn bg_at(uv : vec2<f32>) -> vec3<f32> {
-    return textureSampleLevel(bg, samp, clamp(uv, vec2<f32>(0.001), vec2<f32>(0.999)), 0.0).rgb;
+    // uv 是相对 capture 的 0..1；纹理是固定的 1280x512，只用了左上角 (tw,th)。
+    let scale = vec2<f32>(u.extra.y / 1280.0, u.extra.z / 512.0);
+    let tuv = clamp(uv, vec2<f32>(0.001), vec2<f32>(0.999)) * scale;
+    let c = textureSampleLevel(bg, samp, tuv, 0.0).rgb;
+    // 背景太亮时白字会糊；把采样值压到上限，玻璃底色稳定在中灰。
+    return min(c, vec3<f32>(0.72));
+}
+
+fn bg_blur(uv : vec2<f32>) -> vec3<f32> {
+    // 5 点模糊：抹平壁纸与窗口的内容边界，避免展开态出现水平硬切线。
+    let px = vec2<f32>(5.0 / u.extra.y, 5.0 / u.extra.z);
+    return (bg_at(uv)
+        + bg_at(uv + vec2<f32>(px.x, 0.0)) + bg_at(uv - vec2<f32>(px.x, 0.0))
+        + bg_at(uv + vec2<f32>(0.0, px.y)) + bg_at(uv - vec2<f32>(0.0, px.y))) * 0.2;
 }
 
 @fragment
@@ -155,7 +172,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let outward = max(d, 0.0);
     let shadow_dir = dot(normalize(local + vec2<f32>(1e-4)), vec2<f32>(0.58, 0.81));
     let contact = (1.0 - smoothstep(0.0, 7.0, outward)) * max(shadow_dir, 0.0)
-                  * select(0.035, 0.07, u.params.w > 0.5) * step(0.0, d);
+                  * select(0.05, 0.09, u.params.w > 0.5) * step(0.0, d);
     let aa = 1.0 - smoothstep(-0.7, 0.7, d);
 
     // SDF 梯度就是曲面法线。
@@ -179,13 +196,16 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     var col = vec3<f32>(0.0);
     for (var k = 0; k < 7; k = k + 1) {
         // 各通道权重相同，色差只来自采样点错开；否则整块玻璃会被染成偏绿。
-        let shift = (f32(k) - 3.0) / 3.0 * disp * 18.0 * n;
+        let shift = (f32(k) - 3.0) / 3.0 * disp * 26.0 * n;
         col = col + bg_at(base_uv + shift / tex) * w[k];
     }
 
+    // 把色散采样与模糊背景混合：保留边缘彩边，抹掉背景里的内容硬边。
+    col = mix(col, bg_blur(base_uv), vec3<f32>(0.35));
+
     // 玻璃本体：压一点亮度保证白字可读，亮背景压得更深。
     let light = u.params.w;
-    let body = mix(0.90, 0.74, light);
+    let body = mix(0.95, 0.80, light);
     col = mix(col * body, col, vec3<f32>(0.35));
     col = col + u.tint.rgb * u.tint.a * 0.10 * rim;
 
@@ -197,8 +217,8 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 只朝左上的 1px 级镜面高光，背光侧不给白边。
     let L = normalize(vec2<f32>(-0.45, -0.65));
     let ndl = max(dot(n, L), 0.0);
-    let glint = pow(ndl, 6.0) * pow(rim, 2.0);
-    col = col + vec3<f32>(glint * 0.85);
+    let glint = pow(ndl, 5.0) * pow(rim, 1.3);
+    col = col + vec3<f32>(glint * 1.00);
 
     // 光标追光：沿边缘把高光带过去。
     let gd = length(px - u.bounds.xy - u.misc.xy) / 90.0;
@@ -209,7 +229,12 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let vy = (px.y - u.bounds.y) / max(u.bounds.w, 1.0);
     col = col * (1.0 - 0.10 * pow(vy, 2.0) * rim);
 
-    let alpha = clamp(aa * mix(0.46, 0.72, u.extra.w) + contact, 0.0, 1.0);
+    // 岛体外面只留朝右下的接触阴影：颜色必须压暗，
+    // 否则 contact 这段 alpha 会带着浅色背景画成一圈亮描边。
+    let outside = smoothstep(0.0, 3.0, d);
+    col = mix(col, vec3<f32>(0.055, 0.065, 0.075), outside * 0.92);
+
+    let alpha = clamp(aa * mix(0.50, 0.70, u.extra.w) + contact, 0.0, 1.0);
     // egui 的 pass 使用预乘 alpha 混合。
     return vec4<f32>(col * alpha, alpha);
 }
@@ -330,25 +355,32 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
                     rgba[b + 3] = 255;
                 }
             }
-            // 岛体区域用「左右两侧干净桌面」水平插值填平，推测岛不存在的背景。
-            // 不能用上边缘：窗口顶部往往还是上一帧的玻璃，会把折射染成反馈色。
+            // 岛体区域填成「上下边界平均色」的平滑垂直渐变。
+            // 逐行左右插值会保留壁纸→窗口的水平内容边界，展开态会出现一条硬切线；
+            // 用整行平均后做垂直渐变，玻璃内的背景才是连续的。
             let (bx, by, bwid, bhei) = (
                 body[0].max(0.0) as u32, body[1].max(0.0) as u32,
                 body[2].min(bw as f32) as u32, body[3].min(bh as f32) as u32,
             );
             if bwid > 0 && bhei > 0 && bx < bw && by < bh {
-                let left = bx.saturating_sub(4).min(bw - 1);
-                let right = (bx + bwid + 4).min(bw - 1);
-                for yy in by..(by + bhei).min(bh) {
-                    let (l, r) = (((yy * bw + left) * 4) as usize, ((yy * bw + right) * 4) as usize);
-                    let (lr, lg, lb) = (rgba[l] as f32, rgba[l + 1] as f32, rgba[l + 2] as f32);
-                    let (rr, rg, rb) = (rgba[r] as f32, rgba[r + 1] as f32, rgba[r + 2] as f32);
+                let top_y = by.saturating_sub(6).min(bh - 1);
+                let bot_y = (by + bhei + 6).min(bh - 1);
+                let row_avg = |yy: u32| -> [f32; 3] {
+                    let (mut r, mut g, mut b, mut n) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
                     for xx in bx..(bx + bwid).min(bw) {
-                        let k = (xx - bx) as f32 / bwid as f32;
+                        let i = ((yy * bw + xx) * 4) as usize;
+                        r += rgba[i] as f32; g += rgba[i + 1] as f32; b += rgba[i + 2] as f32; n += 1.0;
+                    }
+                    if n > 0.0 { [r / n, g / n, b / n] } else { [242.0, 238.0, 238.0] }
+                };
+                let (top, bot) = (row_avg(top_y), row_avg(bot_y));
+                for yy in by..(by + bhei).min(bh) {
+                    let k = (yy - by) as f32 / bhei as f32;
+                    for xx in bx..(bx + bwid).min(bw) {
                         let d = ((yy * bw + xx) * 4) as usize;
-                        rgba[d] = (lr + (rr - lr) * k) as u8;
-                        rgba[d + 1] = (lg + (rg - lg) * k) as u8;
-                        rgba[d + 2] = (lb + (rb - lb) * k) as u8;
+                        rgba[d] = (top[0] + (bot[0] - top[0]) * k) as u8;
+                        rgba[d + 1] = (top[1] + (bot[1] - top[1]) * k) as u8;
+                        rgba[d + 2] = (top[2] + (bot[2] - top[2]) * k) as u8;
                         rgba[d + 3] = 255;
                     }
                 }
@@ -416,10 +448,10 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
             let mean = if n > 0 { sum / n } else { 0 };
             diag(&format!("tick={tick} cap={tw}x{th} mean_r={mean} tex={:?} clip={:?} bounds={:?}", gpu.size, f.clip, f.bounds));
         }
-        if gpu.size != (tw, th) || gpu.texture.is_none() {
+        if gpu.texture.is_none() {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("daozai-glass-backdrop"),
-                size: wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d { width: TEX_W, height: TEX_H, depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -438,10 +470,11 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                 ],
             }));
             gpu.texture = Some(texture);
-            gpu.size = (tw, th);
         }
+        gpu.size = (tw, th);
         // wgpu 要求 bytes_per_row 是 256 的倍数；不对齐会触发 validation error
         // （纹理保持未初始化 → 整块黑），所以每行补 padding 再上传。
+        if tw > TEX_W || th > TEX_H { return Vec::new(); }
         let bpr = (tw * 4 + 255) / 256 * 256;
         let mut padded = vec![0u8; bpr as usize * th as usize];
         let row = (tw * 4) as usize;
@@ -509,7 +542,7 @@ pub fn frame_for(
         bounds,
         shape: [radius * ppp, expand, (pointer.0 - capture.min.x) * ppp, (pointer.1 - capture.min.y) * ppp],
         tint: [tint[0], tint[1], tint[2], 1.0],
-        optics: [time, 1.0, 0.14, 0.0],
+        optics: [time, 1.0, 0.20, 0.0],
         clip: [-1.0, 1.0, 1.0, -1.0],
     }
 }
