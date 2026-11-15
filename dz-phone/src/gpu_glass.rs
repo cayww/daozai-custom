@@ -154,6 +154,13 @@ fn rr_sdf(p : vec2<f32>, b : vec2<f32>, r : f32) -> f32 {
     return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - r;
 }
 
+// 逐像素伪随机（0..1）。只用于抖动，不需要高质量分布。
+fn hash21(p : vec2<f32>) -> f32 {
+    var q = fract(p * vec2<f32>(0.1031, 0.1030));
+    q = q + vec2<f32>(dot(q, q.yx + vec2<f32>(33.33)));
+    return fract((q.x + q.y) * q.x);
+}
+
 // 纹理固定 1280x512，只写左上角 (tw,th)；px 是 capture 内的物理像素坐标。
 fn sample_px(px : vec2<f32>) -> vec3<f32> {
     // FLAT=2：用棋盘格当背景，折射位移、色散、越界都会直接显形。
@@ -232,14 +239,18 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // band 上限原来卡在 72 —— 实测展开态面板高 210px 时只有外侧 72px 参与折射，
     // 内侧 138px（66% 的高度）k≈0，等于 1:1 复制。这就是「小胶囊像玻璃、
     // 大面板像半透明贴纸」的根因。上限提到 130，strength 同步放宽到 78。
-    let band = clamp(u.bounds.w * 0.80, 30.0, 130.0);
+    // 展开/折叠过渡：形变过程中折射带临时加宽、色散随之增强，玻璃看起来像被
+    // 「拉」开再稳住。morph 是「展开进度的变化速度」（0..1，带衰减），
+    // 静止时恒为 0，所以折叠态和展开态完全不受影响。
+    let morph = clamp(u.extra.w, 0.0, 1.0);
+    let band = clamp(u.bounds.w * 0.80, 30.0, 130.0) * (1.0 + morph * 0.55);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
 
     // 关键修复：折射方向朝玻璃**内部**（-g）。之前朝外，边缘会把岛体外的
     // 壁纸折进来，玻璃里就出现「不属于该区域的壁纸像素块」，贴屏顶时还会
     // 越界 clamp 成一条拉伸色带。
-    let strength = clamp(u.bounds.w * 0.90, 26.0, 78.0) * max(u.misc.z, 0.2);
+    let strength = clamp(u.bounds.w * 0.90, 26.0, 78.0) * max(u.misc.z, 0.2) * (1.0 + morph * 0.30);
     // 色散：参考实现的默认值是 chroma=12（R/B 采样点相距 24px），但那是给
     // 平滑照片准备的。我们是 1:1 的**锐利桌面抓屏**，24px 分离在树枝这种硬边上
     // 就是一条彩虹故障带 —— 黑白壁纸实测顶边饱和度 0.073，而背景只有 0.003。
@@ -348,7 +359,10 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 覆盖率取 max(aa, line*0.9)：高光自带覆盖率，不能被 aa 归零，
     // 否则白边的外半部分会被 mix(edge_bg, col, 0) 整个丢弃，边缘只剩 1px 硬跳。
     let cov = clamp(max(aa, line_v * 0.90), 0.0, 1.0);
-    return vec4<f32>(mix(edge_bg, col, vec3<f32>(cov)), 1.0);
+    // 抖动：8-bit 输出在平滑渐变上必然出色带（深色壁纸尤其明显）。加 ±1 级噪声
+    // 把量化台阶打散，幅度压在 1/255 量级 —— 只让渐变更顺，看不到噪点。
+    let dth = (hash21(p) - 0.5) * (1.7 / 255.0);
+    return vec4<f32>(mix(edge_bg, col, vec3<f32>(cov)) + vec3<f32>(dth), 1.0);
 }
 "#;
 
@@ -926,7 +940,8 @@ pub fn frame_for(
     screen_px: (u32, u32),
     ppp: f32,
     radius: f32,
-    expand: f32,
+    // 形变强度 0..1（展开进度的变化速度，带衰减），驱动过渡期的光学增强。
+    morph: f32,
     tint: [f32; 3],
     time: f32,
     pointer: (f32, f32),
@@ -949,7 +964,7 @@ pub fn frame_for(
     GlassFrame {
         capture: [c.0, c.1, cw, ch],
         bounds,
-        shape: [radius * ppp, expand, (pointer.0 - capture.min.x) * ppp, (pointer.1 - capture.min.y) * ppp],
+        shape: [radius * ppp, morph, (pointer.0 - capture.min.x) * ppp, (pointer.1 - capture.min.y) * ppp],
         tint: [tint[0], tint[1], tint[2], 1.0],
         optics: [time, 1.0, 0.20, lightness],
         clip: [-1.0, 1.0, 1.0, -1.0],

@@ -820,6 +820,12 @@ pub struct App {
     pub wgpu_format:Option<eframe::egui_wgpu::wgpu::TextureFormat>,
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
+    /// 形变强度 0..1：由展开进度的**变化速度**驱动，带衰减。
+    /// 用来让玻璃光学在展开/折叠时参与过渡。不能直接用 progress ——
+    /// 实测面板高度 100ms 内就从 45 跳到 210，progress 几乎立刻到 1，
+    /// 基于 progress 包络的增强根本来不及出现。
+    glass_morph:f32,
+    last_progress:f32,
     window_origin:[f32;2],
     screen:Option<Rect>,
     /// 指针在窗口内的逻辑坐标（来自全局光标，不是 egui 的 hover_pos）。
@@ -1088,6 +1094,8 @@ impl App {
             fluid_tex:None,
             wgpu_format:None,
             liquid_k:1.0,
+            glass_morph:0.0,
+            last_progress:0.0,
             window_origin:[0.0,0.0],
             cursor_win:None,
             wechat_status:String::new(),
@@ -2063,6 +2071,13 @@ impl App {
         let luma=crate::gpu_glass::background_luma();
         let target=if luma>0.66 {1.0}else if luma<0.52 {0.0}else{self.liquid_k};
         self.liquid_k+=(target-self.liquid_k)*(dt as f32*6.0).clamp(0.0,1.0);
+        // 形变强度：用展开进度的变化率驱动，按帧衰减。
+        // 展开/折叠只有约 100ms，progress 一帧就到 1，所以不能用 progress 本身
+        // 做包络；用速度才能在形变期间持续给出「玻璃被拉动」的增强。
+        let prog=self.progress().clamp(0.0,1.0);
+        let dp=((prog-self.last_progress)/dt.max(0.001)).abs();
+        self.last_progress=prog;
+        self.glass_morph=(self.glass_morph*0.74).max((dp*0.30).min(1.0));
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
         self.window_origin=env.window_origin;
@@ -2861,7 +2876,7 @@ impl App {
         let pointer=self.cursor_win.unwrap_or_else(||rect.center());
         let frame=crate::gpu_glass::frame_for(
             rect,capture,((win.x*ppp) as u32,(win.y*ppp) as u32),ppp,radius,
-            self.progress().clamp(0.0,1.0),
+            self.glass_morph,
             crate::gpu_glass::NEUTRAL_TINT,self.t as f32,
             (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]),self.liquid_k);
         painter.add(eframe::egui_wgpu::Callback::new_paint_callback(
