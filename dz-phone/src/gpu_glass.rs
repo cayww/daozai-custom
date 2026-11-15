@@ -80,6 +80,21 @@ static GPU: Mutex<Option<GlassGpu>> = Mutex::new(None);
 static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static GRAB_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 抓到的桌面平均亮度（0..1）的 f32 位模式，供 App 决定深/浅材质。
+static BG_LUMA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f59_999a); // 0.85，未抓屏前默认浅色
+/// DWM 捕获排除是否已经尝试过 / 成功设置了几个窗口。
+static EXCLUSION_TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static EXCLUSION_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static EXCLUDED_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// 桌面平均亮度。非 Windows / 未抓屏时给一个偏浅的默认值。
+pub fn background_luma() -> f32 {
+    let forced = std::env::var("DAOZAI_LIQUID_FORCE_LUMA").ok()
+        .and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 1.0));
+    if let Some(v) = forced { return v; }
+    f32::from_bits(BG_LUMA.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 
 /// GPU 通道已经成功跑起来：此时兜底底色可以几乎透明，让折射层自己说话。
 pub fn gpu_ready() -> bool {
@@ -174,8 +189,10 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 玻璃外面只留一圈 7px 定向接触阴影（朝右下，光源在左上）。
     let outward = max(d, 0.0);
     let shadow_dir = dot(normalize(local + vec2<f32>(1e-4)), vec2<f32>(0.58, 0.81));
+    // u.params.w 是 App 平滑后的材质系数：1 = 浅色材质（深字），0 = 深色材质（白字）。
+    let mat = clamp(u.params.w, 0.0, 1.0);
     let contact = (1.0 - smoothstep(0.0, 7.0, outward)) * max(shadow_dir, 0.0)
-                  * select(0.05, 0.09, u.params.w > 0.5) * step(0.0, d);
+                  * mix(0.09, 0.05, mat) * step(0.0, d);
     let aa = 1.0 - smoothstep(-0.7, 0.7, d);
 
     // SDF 梯度就是曲面法线。
@@ -203,14 +220,16 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
         col = col + bg_at(base_uv + shift / tex) * w[k];
     }
 
-    // 浅色液态玻璃 = 磨砂底图（强模糊 + 一点白雾）+ 少量清晰折射。
-    // 桌面颜色/明暗仍然透出来，但文字与窗口边界被抹掉，深色字才不会和背景字打架。
-    let frost = mix(bg_blur(base_uv), vec3<f32>(0.96, 0.96, 0.975), vec3<f32>(0.34));
+    // 磨砂底图（强模糊 + 白雾/暗雾）+ 少量清晰折射，桌面颜色与明暗始终透出来，
+    // 但背景文字与窗口边界被抹掉，不会和岛上的字打架。按 mat 在浅/深材质间平滑过渡。
+    let soft = bg_blur(base_uv);
+    let frost_light = mix(soft, vec3<f32>(0.96, 0.96, 0.975), vec3<f32>(0.34));
+    let frost_dark = mix(soft * 0.42, vec3<f32>(0.055, 0.062, 0.072), vec3<f32>(0.55));
+    let frost = mix(frost_dark, frost_light, vec3<f32>(mat));
     col = mix(col, frost, vec3<f32>(0.78));
 
-    // 玻璃本体：压一点亮度保证白字可读，亮背景压得更深。
-    let light = u.params.w;
-    let body = mix(1.0, 0.94, light);
+    // 玻璃本体：深色材质再压一点亮度，白字更稳。
+    let body = mix(0.94, 1.0, mat);
     col = mix(col * body, col, vec3<f32>(0.35));
     col = col + u.tint.rgb * u.tint.a * 0.10 * rim;
 
@@ -326,15 +345,91 @@ fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
     }
 }
 
-/// 首帧岛仔还没画出来时抓的「干净桌面底片」。
-/// 之后每帧只把岛体以外的像素写回底片，岛体内部一直用这张底片：
-/// 折射能采到真实桌面细节，又不会把上一帧的自己（文字、控件）抓进来产生鬼影。
+/// DWM 捕获排除：把自己从「所有屏幕捕获」里摘掉。
+///
+/// WGC / DWM 缩略图 / GDI BitBlt 抓的都是 DWM 合成后的画面，默认会把岛仔自己
+/// 也抓进去。WDA_EXCLUDEFROMCAPTURE 让窗口照常显示在屏幕上，但在捕获路径里
+/// 完全消失 —— 这样每帧抓到的就是干净的、实时的桌面，不再需要静态底片。
+/// 副作用：第三方截图/录屏工具也会看不到岛仔，可用 DAOZAI_LIQUID_NO_EXCLUDE=1 关闭。
+#[cfg(windows)]
+fn enable_capture_exclusion() {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    if std::env::var("DAOZAI_LIQUID_NO_EXCLUDE").is_ok() {
+        if !EXCLUSION_TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            diag("exclude: 被 DAOZAI_LIQUID_NO_EXCLUDE 关闭，回退静态底片");
+        }
+        return;
+    }
+    // 实机证明：SetWindowRgn / 窗口样式变更会把 display affinity 重置，
+    // 只设一次的话后面 WGC 帧又会抓到岛仔自己（dump 第 2 帧干净、第 7 帧有残影）。
+    // 每帧重新声明一次，EnumWindows 几十个窗口的开销可以忽略。
+    unsafe extern "system" fn visit(hwnd: HWND, _: LPARAM) -> BOOL {
+        use windows::Win32::System::Threading::GetCurrentProcessId;
+        let mut pid = 0u32;
+        windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == GetCurrentProcessId()
+            && windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(hwnd).as_bool()
+            && windows::Win32::UI::WindowsAndMessaging::SetWindowDisplayAffinity(
+                hwnd, windows::Win32::UI::WindowsAndMessaging::WDA_EXCLUDEFROMCAPTURE).is_ok()
+        {
+            EXCLUDED_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        BOOL(1)
+    }
+    let tick = EXCLUSION_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _ = EXCLUDED_N.swap(0, std::sync::atomic::Ordering::Relaxed);
+    unsafe { let _ = EnumWindows(Some(visit), LPARAM(0)); }
+    if tick == 0 || tick % 600 == 0 {
+        diag(&format!("exclude: 刷新 #{} 命中 {} 个窗口", tick,
+                      EXCLUDED_N.load(std::sync::atomic::Ordering::Relaxed)));
+    }
+}
+
+/// 诊断：把某一帧抓到的原始屏幕写成 PPM，直接看 WDA 排除到底给了什么。
+/// 只有设置 DAOZAI_LIQUID_DUMP=1 时启用，最多写 8 帧。
+#[cfg(windows)]
+static DUMP_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[cfg(windows)]
+fn dump_capture(buf: &[u8], w: u32, h: u32, tag: &str) {
+    if std::env::var("DAOZAI_LIQUID_DUMP").is_err() { return; }
+    let n = DUMP_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n >= 8 { return; }
+    let dir = crate::model::config_dir().join("diagnostics");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join(format!("liquid-cap-{}-{}.ppm", n, tag));
+    let mut out = Vec::with_capacity((w * h * 3) as usize + 32);
+    out.extend_from_slice(format!("P6\n{} {}\n255\n", w, h).as_bytes());
+    for i in (0..buf.len()).step_by(4) {
+        out.push(buf[i]); out.push(buf[i + 1]); out.push(buf[i + 2]);
+    }
+    let _ = std::fs::write(path, out);
+}
+
+/// 统计抓屏里「岛体排除区以外」的平均亮度，作为深/浅材质的依据。
+/// 每隔 16 像素采样一次，跳过岛体区域（那里可能是我们自己的玻璃）。
+#[cfg(windows)]
+fn sample_luma(buf: &[u8], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32 {
+    let (mut sum, mut n) = (0.0f32, 0.0f32);
+    for y in (0..h as i32).step_by(16) {
+        for x in (0..w as i32).step_by(16) {
+            if x >= x0 && x < x1 && y >= y0 && y < y1 { continue; }
+            let i = ((y as u32 * w + x as u32) * 4) as usize;
+            sum += (0.299 * buf[i] as f32 + 0.587 * buf[i + 1] as f32 + 0.114 * buf[i + 2] as f32) / 255.0;
+            n += 1.0;
+        }
+    }
+    if n > 0.0 { (sum / n).clamp(0.0, 1.0) } else { 0.85 }
+}
+
+/// 排除未生效时的兜底：首帧抓的「干净桌面底片」。
+/// 每帧只把岛体以外的像素写回底片，岛体内部一直用这张底片，避免自我鬼影。
 #[cfg(windows)]
 const PLATE_W: u32 = 1024;
 #[cfg(windows)]
 const PLATE_H: u32 = 512;
-/// 底片锚点比首帧抓屏矩形左移 256px：展开时抓屏矩形会向左变宽，
-/// 锚点固定才不会在动画里重建底片（重建时岛仔已可见，会被抹成灰渐变）。
+/// 锚点比首帧抓屏矩形左移 256px：展开时抓屏矩形会向左变宽。
 #[cfg(windows)]
 const PLATE_ANCHOR: i32 = 256;
 
@@ -363,7 +458,6 @@ fn row_mean(buf: &[u8], w: u32, h: u32, x0: i32, x1: i32, y: i32) -> [f32; 3] {
     if n > 0.0 { [r / n, g / n, bl / n] } else { [238.0, 238.0, 238.0] }
 }
 
-/// 只在「首帧就已经能看到岛仔」时兜底：把岛体区域抹成上下边缘平均色的渐变。
 #[cfg(windows)]
 fn fill_gradient(buf: &mut [u8], w: u32, x0: i32, y0: i32, x1: i32, y1: i32, top: [f32; 3], bot: [f32; 3]) {
     if x1 <= x0 || y1 <= y0 { return; }
@@ -420,19 +514,55 @@ fn grab_raw(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
     }
 }
 
-/// 抓当前岛体外扩矩形，但与「干净底片」合成：岛体内部用底片（真实桌面），
-/// 岛体外部用本帧抓屏并顺手写回底片，让底片跟着桌面变化更新。
+/// 某个矩形里「暗像素」的比例，用来识别 WGC 帧里的黑色岛形 / 岛上的深色文字。
 #[cfg(windows)]
-fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u32, u32)> {
-    if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
-    let (raw, bw, bh) = grab_raw(x, y, w, h)?;
+fn dark_ratio(buf: &[u8], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32 {
+    let (mut dark, mut n) = (0.0f32, 0.0f32);
+    for y in (y0.max(0)..y1.min(h as i32)).step_by(3) {
+        for x in (x0.max(0)..x1.min(w as i32)).step_by(3) {
+            let i = ((y as u32 * w + x as u32) * 4) as usize;
+            let l = (buf[i] as f32 + buf[i + 1] as f32 + buf[i + 2] as f32) / 3.0;
+            if l < 120.0 { dark += 1.0; }
+            n += 1.0;
+        }
+    }
+    if n > 0.0 { dark / n } else { 0.0 }
+}
+
+/// 岛体以外（capture 外围环带）的暗像素比例，作为「干净桌面」的参照。
+#[cfg(windows)]
+fn dark_ratio_outside(buf: &[u8], w: u32, h: u32,
+                      ex0: i32, ey0: i32, ex1: i32, ey1: i32) -> f32 {
+    let (mut dark, mut n) = (0.0f32, 0.0f32);
+    for y in (0..h as i32).step_by(3) {
+        for x in (0..w as i32).step_by(3) {
+            if x >= ex0 && x < ex1 && y >= ey0 && y < ey1 { continue; }
+            let i = ((y as u32 * w + x as u32) * 4) as usize;
+            let l = (buf[i] as f32 + buf[i + 1] as f32 + buf[i + 2] as f32) / 3.0;
+            if l < 120.0 { dark += 1.0; }
+            n += 1.0;
+        }
+    }
+    if n > 0.0 { dark / n } else { 0.0 }
+}
+
+/// 滚动干净底片：干净帧把整块（含岛体）写进底片，污染帧只更新岛体以外。
+/// 岛体内部因此最多滞后到最近一次干净帧，而不再是启动时的一张静态快照。
+#[cfg(windows)]
+fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
+                      body: [f32; 4], clean_frame: bool) -> Option<Vec<u8>> {
+    let (cx0, cy0, cx1, cy1) = (
+        (body[0] - 10.0).max(0.0) as i32,
+        (body[1] - 10.0).max(0.0) as i32,
+        ((body[0] + body[2] + 10.0).min(bw as f32)) as i32,
+        ((body[1] + body[3] + 10.0).min(bh as f32)) as i32,
+    );
     let mut guard = PLATE.lock().unwrap_or_else(|e| e.into_inner());
-    // 只有抓屏矩形跑出底片范围才重建；展开动画里 x 左移 ~100px 属于正常范围。
     let need_new = match guard.as_ref() {
         None => true,
         Some(p) => {
             let (ox, oy) = (x - p.x, y - p.y);
-            ox < 0 || oy < 0 || ox + w > p.w as i32 || oy + h > p.h as i32
+            ox < 0 || oy < 0 || ox + bw as i32 > p.w as i32 || oy + bh as i32 > p.h as i32
         }
     };
     if need_new {
@@ -441,7 +571,7 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
         let (mut data, pw, ph, fpx, fpy) = if let Some((d, pw, ph)) = big {
             (d, pw, ph, ax, y)
         } else {
-            (raw.clone(), bw, bh, x, y)
+            (raw.to_vec(), bw, bh, x, y)
         };
         let (sx, sy) = (x - fpx, y - fpy);
         let (bx0, by0, bx1, by1) = (
@@ -450,35 +580,15 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
             ((body[0] + sx as f32 + body[2] + 10.0).min(pw as f32)) as i32,
             ((body[1] + sy as f32 + body[3] + 10.0).min(ph as f32)) as i32,
         );
+        // 骨架里岛体区域可能是 WDA 的黑色遮罩，先抹成上下桌面色的渐变。
         let top = row_mean(&data, pw, ph, bx0, bx1, by0 - 6);
         let bot = row_mean(&data, pw, ph, bx0, bx1, by1 + 6);
-        // 首帧通常岛仔还没画出来；万一已经画出来了，中心会明显比左侧桌面暗，
-        // 这时把岛体区域抹成渐变，避免底片里存进自己的深色玻璃。
-        let cx = ((bx0 + bx1) / 2).clamp(0, pw as i32 - 1) as u32;
-        let cy = ((by0 + by1) / 2).clamp(0, ph as i32 - 1) as u32;
-        let ci = ((cy * pw + cx) * 4) as usize;
-        let li = ((cy * pw + bx0.clamp(0, pw as i32 - 1) as u32) * 4) as usize;
-        let bright = |i: usize| (data[i] as i32 + data[i + 1] as i32 + data[i + 2] as i32) / 3;
-        let (cb, lb) = (bright(ci), bright(li));
-        let feedback = lb - cb > 40;
-        if feedback { fill_gradient(&mut data, pw, bx0, by0, bx1, by1, top, bot); }
-        diag(&format!("plate: new {}x{} at ({},{}) feedback={} center={} desktop={}",
-                      pw, ph, fpx, fpy, feedback, cb, lb));
+        fill_gradient(&mut data, pw, bx0, by0, bx1, by1, top, bot);
+        diag(&format!("plate: new {}x{} at ({},{})", pw, ph, fpx, fpy));
         *guard = Some(CleanPlate { x: fpx, y: fpy, w: pw, h: ph, data });
     }
     let p = guard.as_mut().unwrap();
     let (ox, oy) = (x - p.x, y - p.y);
-    // 排除区（capture 坐标）：岛体 + 10px，连窗口阴影/描边一起排掉。
-    let (cx0, cy0, cx1, cy1) = (
-        (body[0] - 10.0).max(0.0) as i32,
-        (body[1] - 10.0).max(0.0) as i32,
-        ((body[0] + body[2] + 10.0).min(bw as f32)) as i32,
-        ((body[1] + body[3] + 10.0).min(bh as f32)) as i32,
-    );
-    if GRAB_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
-        diag(&format!("plate: cap={}x{} off=({},{}) body=({},{},{},{})",
-                      bw, bh, ox, oy, cx0, cy0, cx1, cy1));
-    }
     let mut out = vec![0u8; (bw * bh * 4) as usize];
     for yy in 0..bh as i32 {
         for xx in 0..bw as i32 {
@@ -486,18 +596,55 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
             let (qx, qy) = (ox + xx, oy + yy);
             let in_plate = qx >= 0 && qy >= 0 && qx < p.w as i32 && qy < p.h as i32;
             let excluded = xx >= cx0 && xx < cx1 && yy >= cy0 && yy < cy1;
-            if excluded && in_plate {
-                let s = ((qy as u32 * p.w + qx as u32) * 4) as usize;
-                out[d..d + 4].copy_from_slice(&p.data[s..s + 4]);
-            } else {
+            let use_raw = clean_frame || !excluded || !in_plate;
+            if use_raw {
                 out[d..d + 4].copy_from_slice(&raw[d..d + 4]);
                 if in_plate {
                     let s = ((qy as u32 * p.w + qx as u32) * 4) as usize;
                     p.data[s..s + 4].copy_from_slice(&raw[d..d + 4]);
                 }
+            } else {
+                let s = ((qy as u32 * p.w + qx as u32) * 4) as usize;
+                out[d..d + 4].copy_from_slice(&p.data[s..s + 4]);
             }
         }
     }
+    Some(out)
+}
+
+/// 抓当前岛体外扩矩形。WGC 帧干净时整块刷新滚动底片，污染时只更新外围；
+/// WGC 不可用则回退 GDI，同样走滚动底片（岛体内部保持最近一次干净画面）。
+#[cfg(windows)]
+fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u32, u32)> {
+    if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
+    enable_capture_exclusion();
+    let (raw, bw, bh, from_wgc) = match crate::wgc::grab(x, y, w, h) {
+        Some((p, tw, th)) => (p, tw, th, true),
+        None => { let (p, tw, th) = grab_raw(x, y, w, h)?; (p, tw, th, false) },
+    };
+    let (cx0, cy0, cx1, cy1) = (
+        (body[0] - 10.0).max(0.0) as i32,
+        (body[1] - 10.0).max(0.0) as i32,
+        ((body[0] + body[2] + 10.0).min(bw as f32)) as i32,
+        ((body[1] + body[3] + 10.0).min(bh as f32)) as i32,
+    );
+    BG_LUMA.store(sample_luma(&raw, bw, bh, cx0, cy0, cx1, cy1).to_bits(),
+                  std::sync::atomic::Ordering::Relaxed);
+    dump_capture(&raw, bw, bh, if from_wgc { "wgc" } else { "gdi" });
+    let inner = dark_ratio(&raw, bw, bh, cx0, cy0, cx1, cy1);
+    let outer = dark_ratio_outside(&raw, bw, bh, cx0, cy0, cx1, cy1);
+    let whole = dark_ratio(&raw, bw, bh, 0, 0, bw as i32, bh as i32);
+    // DX12 合成层与 WDA 排除有异步竞态：部分 WGC 帧仍是黑色岛形或残留文字。
+    // 展开态岛体会占满 capture，所以必须和「岛体外围环带」比，不能和整体比。
+    let contaminated = (inner > 0.35 && outer < 0.35) || inner - outer > 0.02;
+    let clean_frame = from_wgc && !contaminated;
+    if GRAB_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
+        diag(&format!("capture: src={} clean={} inner={:.2} outer={:.2} cap={}x{}",
+                      if from_wgc { "wgc" } else { "gdi" }, clean_frame, inner, outer, bw, bh));
+    }
+    // 整块纯黑（WDA 刚生效的瞬态）直接跳过，复用上一帧纹理，避免闪黑。
+    if whole > 0.95 { return None; }
+    let out = compose_with_plate(&raw, bw, bh, x, y, body, clean_frame)?;
     Some((out, bw, bh))
 }
 
@@ -639,6 +786,7 @@ pub fn frame_for(
     time: f32,
     pointer: (f32, f32),
     origin: (f32, f32),
+    lightness: f32,
 ) -> GlassFrame {
     // 抓屏用屏幕绝对物理坐标，clip-space / bounds 用窗口内坐标。
     let c = ((capture.min.x + origin.0) * ppp, (capture.min.y + origin.1) * ppp);
@@ -658,7 +806,7 @@ pub fn frame_for(
         bounds,
         shape: [radius * ppp, expand, (pointer.0 - capture.min.x) * ppp, (pointer.1 - capture.min.y) * ppp],
         tint: [tint[0], tint[1], tint[2], 1.0],
-        optics: [time, 1.0, 0.20, 0.0],
+        optics: [time, 1.0, 0.20, lightness],
         clip: [-1.0, 1.0, 1.0, -1.0],
     }
 }
@@ -672,7 +820,7 @@ mod tests {
         use eframe::egui::{Pos2, Rect};
         let body = Rect::from_min_size(Pos2::new(100.0, 20.0), eframe::egui::vec2(200.0, 30.0));
         let capture = Rect::from_min_size(Pos2::new(60.0, 0.0), eframe::egui::vec2(280.0, 90.0));
-        let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0));
+        let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0);
         assert_eq!(f.bounds, [40.0, 20.0, 200.0, 30.0]);
         assert_eq!(f.clip, [-1.0, 1.0, 1.0, -1.0], "viewport 已由 egui 设为 callback 矩形");
         assert_eq!(uniforms(&f, (280, 90)).params[0], 1.52);

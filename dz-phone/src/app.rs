@@ -818,6 +818,8 @@ pub struct App {
     fluid_tex:Option<egui::TextureHandle>,
     /// wgpu 目标格式；只有兼容渲染（Direct3D 12）后端才有，液态玻璃皮肤据此决定走不走 GPU。
     pub wgpu_format:Option<eframe::egui_wgpu::wgpu::TextureFormat>,
+    /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
+    liquid_k:f32,
     window_origin:[f32;2],
     screen:Option<Rect>,
     pub(crate) settings_focus_requested:bool,
@@ -1081,6 +1083,7 @@ impl App {
             task_dialog:None,
             fluid_tex:None,
             wgpu_format:None,
+            liquid_k:1.0,
             window_origin:[0.0,0.0],
             wechat_status:String::new(),
             phone_counts:Default::default(),
@@ -2044,6 +2047,11 @@ impl App {
         self.current_hour=env.hour();
         self.system_idle=env.idle_seconds;
         self.dt = dt;
+        // 液态玻璃：背景亮度决定深/浅材质。0.52/0.66 之间是滞回区，
+        // 避免在阈值附近来回闪；平滑系数让 shader 与文字颜色同步过渡。
+        let luma=crate::gpu_glass::background_luma();
+        let target=if luma>0.66 {1.0}else if luma<0.52 {0.0}else{self.liquid_k};
+        self.liquid_k+=(target-self.liquid_k)*(dt as f32*6.0).clamp(0.0,1.0);
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
         self.window_origin=env.window_origin;
@@ -2715,7 +2723,7 @@ impl App {
 
     /// 当前皮肤的换色调色板（经典为 None）。
     pub(crate) fn skin_palette(&self)->Option<crate::skin_paint::Palette> {
-        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Liquid=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::Classic|model::Skin::Fluid=>None}
+        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Liquid=>Some(if self.liquid_k>0.5 {crate::skin_paint::GLASS_LIGHT}else{crate::skin_paint::GLASS_DARK}),model::Skin::Classic|model::Skin::Fluid=>None}
     }
 
     /// 设置页预览用的岛体底色：没有真实模糊，毛玻璃按较实的玻璃表现。
@@ -2736,7 +2744,7 @@ impl App {
             model::Skin::Cream=>{let [r,g,b]=crate::skin_paint::CREAM.paper;Color32::from_rgb(r,g,b)}
             model::Skin::Classic=>Color32::BLACK,
             model::Skin::Fluid=>self.fluid.compose(0.5,0.5,1.0,1.0,0.0),
-            model::Skin::Liquid=>Color32::from_rgba_unmultiplied(248,248,250,215),
+            model::Skin::Liquid=>if self.liquid_k>0.5 {Color32::from_rgba_unmultiplied(248,248,250,215)}else{Color32::from_rgba_unmultiplied(24,27,33,215)},
         }
     }
 
@@ -2820,14 +2828,15 @@ impl App {
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
     fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,radius:f32){
+        let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
         let Some(format)=self.wgpu_format else {
-            painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(248,248,250,225));
-            painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_rgba_unmultiplied(120,120,128,110)),egui::StrokeKind::Inside);
+            painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,225));
+            painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
             return;
         };
         // GPU 未就绪时铺一层可见的兜底底色；就绪后几乎透明，别把折射压黑。
         let backup=if crate::gpu_glass::gpu_ready(){20}else{170};
-        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(248,248,250,backup));
+        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,backup));
         let ctx=painter.ctx();
         let ppp=ctx.pixels_per_point();
         let win=ctx.screen_rect().size();
@@ -2840,7 +2849,7 @@ impl App {
             rect,capture,((win.x*ppp) as u32,(win.y*ppp) as u32),ppp,radius,
             self.progress().clamp(0.0,1.0),
             crate::gpu_glass::NEUTRAL_TINT,self.t as f32,
-            (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]));
+            (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]),self.liquid_k);
         painter.add(eframe::egui_wgpu::Callback::new_paint_callback(
             capture,crate::gpu_glass::GlassCallback{frame,format}));
     }

@@ -64,6 +64,7 @@ pub mod shape;
 mod fluid;
 #[cfg(windows)]
 pub mod gpu_glass;
+pub mod wgc;
 pub mod smtc;
 pub mod music_volume;
 pub mod theme;
