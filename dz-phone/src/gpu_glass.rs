@@ -189,7 +189,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 形状整体内缩 1.2px：SetWindowRgn 的裁剪是每像素硬边、没有抗锯齿，
     // 玻璃边缘正好压在区域边界上时，半透明像素会被切掉 → 阶梯锯齿。
     // 内缩后抗锯齿完整落在窗口区域内，区域只裁到已经完全透明的部分。
-    let inset = 1.2;
+    // inset 必须大于「白边半宽(1.6) + aa 半宽(0.8)」，否则白边外半部分被区域裁掉，
+    // 边缘会变成 1px 硬跳变（实测 y:43 → 181，跨 138）—— 这就是看到的锯齿。
+    let inset = 2.6;
     let half_size = max(u.bounds.zw * 0.5 - vec2<f32>(inset), vec2<f32>(2.0));
     let local = p - u.bounds.xy - u.bounds.zw * 0.5;
     let radius = max(min(u.extra.x - inset, min(half_size.x, half_size.y)), 0.0);
@@ -199,7 +201,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 岛体外：SetWindowRgn 的窗口区域比岛体大一圈（展开时左右各约 38px），
     // 而兼容渲染的窗口底是不透明黑。这里必须把**背后的桌面**画回去，
     // 否则这圈余量会变成明显的黑边/黑色背景 —— 之前涂近黑就是这么来的。
-    if (d > 1.0) {
+    if (d > inset - 0.25) {
         let bg = sample_px(p);
         // 紧贴边缘留一点极淡的接触阴影，玻璃才不像凭空浮着。
         let sh = (1.0 - smoothstep(0.0, 7.0, d - 1.0)) * mix(0.06, 0.02, mat);
@@ -207,7 +209,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
         return vec4<f32>(col, 1.0);
     }
 
-    let aa = 1.0 - smoothstep(-0.8, 0.8, d);
+    // 1.2px 的抗锯齿足够平滑；再宽会在实时模式下露出滞后 1~2 帧的桌面色，
+    // 边缘反而显得毛躁。
+    let aa = 1.0 - smoothstep(-1.2, 1.2, d);
 
     // 对齐诊断：DAOZAI_LIQUID_FLAT=1 时玻璃内原样输出抓到的背景。
     // 如果它与岛体外的壁纸无缝衔接，说明抓屏坐标与屏幕一致；错位就说明坐标有偏。
@@ -249,8 +253,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     col = mix(col, col * 0.40 + vec3<f32>(0.03, 0.035, 0.045), vec3<f32>((1.0 - mat) * 0.85));
 
     // 1~2px 细白边：液态玻璃要细，粗描边会显脏。
-    let line = 1.0 - smoothstep(0.0, 2.0, abs(d));
-    col = mix(col, vec3<f32>(1.0), line * 0.62);
+    let line = 1.0 - smoothstep(0.0, 1.6, abs(d));
+    // 白边别太亮：高对比壁纸上 0.62 的纯白细线会显得生硬，像锯齿。
+    col = mix(col, vec3<f32>(0.96, 0.97, 1.0), line * 0.40);
 
     // 边缘光只给朝光源的一侧，背光侧很弱。
     let rim = 1.0 - smoothstep(0.0, 7.0, -d);
@@ -263,7 +268,10 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 输出预乘 col*alpha 在 aa→0 时会变成纯黑，岛体轮廓外就是一圈黑线
     // （圆角处最明显）。这里直接 mix 桌面色，边缘永远不会有黑。
     let edge_bg = sample_px(p);
-    let cov = clamp(aa, 0.0, 1.0);
+    // 覆盖率取 max(aa, line)：白边自带覆盖率，不能被 aa 归零。
+    // 否则 d>0.8 处 aa=0，白边的外半部分会被 mix(edge_bg, col, 0) 整个丢弃，
+    // 边缘就只剩 1px 硬跳（实测 y:10 壁纸 → y:11 亮 213，跨 141）—— 那就是锯齿。
+    let cov = clamp(max(aa, line), 0.0, 1.0);
     return vec4<f32>(mix(edge_bg, col, vec3<f32>(cov)), 1.0);
 }
 "#;
