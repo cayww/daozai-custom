@@ -2735,7 +2735,7 @@ impl App {
                         if settings_section(ui,"notice.banner","系统通知横幅",&format!("已关闭 {} 个",crate::system::banner_overridden_count()),false){
                             settings_card(ui,|ui|{
                                 ui.small("关闭后这些应用不再在右下角弹窗，但通知仍会进通知中心，岛仔照常显示。");
-                                ui.small("改的是 Windows 未公开的设置项，只影响当前用户；关闭和恢复都能一键还原。若没有立刻生效，重新登录一次 Windows。");
+                                ui.small("只影响当前用户，若没有立刻生效，重新登录一次 Windows。");
                                 ui.separator();
                                 let closed=crate::system::banner_overridden_count();
                                 ui.label(egui::RichText::new(format!("已关闭 {closed} 个应用的横幅")).size(12.5).strong());
