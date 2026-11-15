@@ -80,6 +80,13 @@ static GPU: Mutex<Option<GlassGpu>> = Mutex::new(None);
 static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static GRAB_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// 上一次成功抓到的矩形尺寸 (w<<32 | h)。
+/// WGC 报「这一帧没有新画面」时，如果当前需要的矩形尺寸和它不一致，就**不能**
+/// 复用旧纹理：视口已经被 egui 设成新的 capture 矩形，而 uniform 里的 tex 和
+/// bounds 还是旧的，于是整块玻璃会按旧几何被画进更大的视口里 ——
+/// 表现就是展开动画中「一个缩小/错位的岛仔被套在大轮廓里面」。
+/// 只有尺寸一致时复用纹理才是安全的。
+static LAST_CAP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// 抓到的桌面平均亮度（0..1）的 f32 位模式，供 App 决定深/浅材质。
 static BG_LUMA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f59_999a); // 0.85，未抓屏前默认浅色
 /// DWM 捕获排除是否已经尝试过 / 成功设置了几个窗口。
@@ -239,20 +246,23 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // band 上限原来卡在 72 —— 实测展开态面板高 210px 时只有外侧 72px 参与折射，
     // 内侧 138px（66% 的高度）k≈0，等于 1:1 复制。这就是「小胶囊像玻璃、
     // 大面板像半透明贴纸」的根因。上限提到 130，strength 同步放宽到 78。
-    // 展开/折叠过渡：形变过程中折射带临时加宽、色散随之增强，玻璃看起来像被
+    // 展开/折叠过渡：形变过程中折射带略微加宽、色散随之增强，玻璃看起来像被
     // 「拉」开再稳住。morph 是「展开进度的变化速度」（0..1，带衰减），
     // 静止时恒为 0，所以折叠态和展开态完全不受影响。
-    // morph 平时由形变速度驱动；params.y > 0.5 时钉成常数，只用于验证。
+    // 注意系数不能大：band 决定折射**影响多深**，对 210px 高的展开面板来说
+    // ×1.55 会让折射带从 130 涨到 200，几乎覆盖整块面板 —— 背景被整体吸走，
+    // 表现为「过渡中面板内部突然变白、脑袋往下滑然后被盖住」。
+    // 所以 band 只给一点点（0.08），主要加在 strength（边缘弯得更狠但不扩散）。
     let ms = max(u.params.z, 0.0);
     let morph = select(clamp(u.extra.w, 0.0, 1.0) * ms, ms, u.params.y > 0.5);
-    let band = clamp(u.bounds.w * 0.80, 30.0, 130.0) * (1.0 + morph * 0.55);
+    let band = clamp(u.bounds.w * 0.80, 30.0, 130.0) * (1.0 + morph * 0.08);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
 
     // 关键修复：折射方向朝玻璃**内部**（-g）。之前朝外，边缘会把岛体外的
     // 壁纸折进来，玻璃里就出现「不属于该区域的壁纸像素块」，贴屏顶时还会
     // 越界 clamp 成一条拉伸色带。
-    let strength = clamp(u.bounds.w * 0.90, 26.0, 78.0) * max(u.misc.z, 0.2) * (1.0 + morph * 0.30);
+    let strength = clamp(u.bounds.w * 0.90, 26.0, 78.0) * max(u.misc.z, 0.2) * (1.0 + morph * 0.15);
     // 色散：参考实现的默认值是 chroma=12（R/B 采样点相距 24px），但那是给
     // 平滑照片准备的。我们是 1:1 的**锐利桌面抓屏**，24px 分离在树枝这种硬边上
     // 就是一条彩虹故障带 —— 黑白壁纸实测顶边饱和度 0.073，而背景只有 0.003。
@@ -821,15 +831,23 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
     } else if warm_n == 24 {
         disable_capture_exclusion();
     }
+    let want = ((w as u64) << 32) | (h as u64);
     let (raw, bw, bh, from_wgc) = match crate::wgc::grab(x, y, w, h) {
         crate::wgc::Grab::Frame(p, tw, th) => (p, tw, th, true),
-        // WGC 只是这一帧还没有新画面：复用上一帧纹理，别退回 GDI 造成闪烁。
-        crate::wgc::Grab::NoFrame => return None,
+        // WGC 这一帧还没有新画面。尺寸没变 → 复用上一帧纹理是安全的（省一次 GDI）；
+        // 尺寸变了（展开/折叠动画）→ 必须重新抓，否则旧 uniform 会把玻璃按旧几何
+        // 画进新视口，出现「缩小的岛仔套在大轮廓里」的错位。
+        crate::wgc::Grab::NoFrame => {
+            if LAST_CAP.load(std::sync::atomic::Ordering::Relaxed) == want { return None; }
+            let (p, tw, th) = grab_raw(x, y, w, h)?;
+            (p, tw, th, false)
+        }
         crate::wgc::Grab::Unavailable => {
             let (p, tw, th) = grab_raw(x, y, w, h)?;
             (p, tw, th, false)
         }
     };
+    LAST_CAP.store(want, std::sync::atomic::Ordering::Relaxed);
     let (cx0, cy0, cx1, cy1) = (
         (body[0] - 10.0).max(0.0) as i32,
         (body[1] - 10.0).max(0.0) as i32,
