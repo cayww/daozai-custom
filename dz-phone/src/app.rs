@@ -108,6 +108,46 @@ fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
     (ms as f64 / 1000.0).min(1.0)
 }
 
+// ---------- 控件玻璃 ----------
+/// 岛内会上 GPU 玻璃的小控件。**顺序就是 uniform 槽位顺序**
+/// （`gpu_glass::MAX_CTL` = 10，这里 9 个）。
+///
+/// 以前只有歌词卡一块走 GPU，其余小控件用 egui 画的矢量玻璃片 —— 那种做法
+/// 只有「像玻璃」的配色，没有真折射。现在全部走真折射，矢量玻璃片只在
+/// 没有 wgpu 设备（没开兼容渲染）时兜底。
+/// 控件玻璃的槽位数（= `Ctl::ALL` 的长度 = `gpu_glass::MAX_CTL` 以内）。
+pub(crate) const CTL_N: usize = 9;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Ctl {
+    Gear,
+    Lyric,
+    Prev,
+    Play,
+    Next,
+    Volume,
+    IslandLyrics,
+    NavL,
+    NavR,
+}
+
+impl Ctl {
+    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR];
+    pub(crate) fn idx(self) -> usize { self as usize }
+    /// 放大镜倍数（参考包 uS.z：指示器 1.12、开关珠 1.25）。圆片给得多一点，
+    /// 胶囊给得少 —— 长条上放大会露出「被拉宽」的假象。
+    fn mag(self) -> f32 {
+        match self { Ctl::IslandLyrics => 1.06, _ => 1.12 }
+    }
+}
+
+/// 控件弹簧的档位（照参考包参数表）：
+/// 按压 / 指示器位置 300·0.5（会冲过头再晃回来），值类 1000·1.0（临界阻尼）。
+const CTL_PRESS: (f32, f32) = (300.0, 0.5);
+const CTL_APPEAR: (f32, f32) = (320.0, 0.55);
+/// 按压时圆片胀到多大（参考包标签指示器 ×1.3 是给 58px 高的整格，圆片小得多）。
+const CTL_PRESS_SCALE: f32 = 0.14;
+
 pub struct Options {
     /// 是否联网查歌词（录制/测试时关掉）。
     pub fetch_lyrics: bool,
@@ -803,6 +843,14 @@ pub struct App {
     pub(crate) music_artwork: Option<(std::sync::Arc<egui::ColorImage>,egui::TextureHandle)>,
 
     forced_open_until:f64,
+    /// 控件弹簧：入场（跟着 `reveal` 张开，带过冲）与按压（果冻回弹）。
+    /// 参考包的公式 a = -k(x-target) - 2ζ√k·v，和岛体自己的 w/h 同一套实现。
+    pub(crate) ctl_appear:[anim::Spring; CTL_N],
+    pub(crate) ctl_press:[anim::Spring; CTL_N],
+    /// 本帧哪些控件真的交给了 GPU（pages.rs / 共用 chrome 据此跳过矢量玻璃片）。
+    ctl_gpu:[bool; CTL_N],
+    /// 主键是否按着（控件弹簧在页面绘制之前就要知道，读不到 egui 的 response）。
+    ctl_down:bool,
     pub settings_open:bool,
     settings_window:std::sync::Arc<std::sync::Mutex<crate::settings_window::State>>,
     pub displays:Vec<crate::display_layout::Display>,
@@ -1073,6 +1121,10 @@ impl App {
             media: NowPlaying::default(),
             music_artwork: None,
             forced_open_until:0.0,
+            ctl_appear:std::array::from_fn(|_|anim::Spring::new(0.0,CTL_APPEAR.0,CTL_APPEAR.1)),
+            ctl_press:std::array::from_fn(|_|anim::Spring::new(0.0,CTL_PRESS.0,CTL_PRESS.1)),
+            ctl_gpu:[false; CTL_N],
+            ctl_down:false,
             settings_open:false,
             settings_window:std::sync::Arc::new(std::sync::Mutex::new(crate::settings_window::State::load())),
             displays:Vec::new(),
@@ -2045,6 +2097,8 @@ impl App {
             Some(t0) => (env.t - t0).clamp(0.0, 0.1) as f32,
             None => 0.0,
         };
+        // 控件弹簧要先于页面绘制更新，读不到 egui 的 response，只能问指针状态。
+        self.ctl_down = ctx.input(|i| i.pointer.primary_down());
         let elapsed = self.last_t.map(|at| (env.t - at).max(0.0) as f32).unwrap_or(0.0);
         self.last_t = Some(env.t);
         self.t = env.t;
@@ -2375,13 +2429,15 @@ impl App {
         // 内容坐标系的原点（页内局部点 → 屏幕）要在画岛体之前算出来：
         // 液态玻璃的「控件玻璃」是跟岛体同一个 GPU pass 画的，需要屏幕坐标。
         let origin = self.content_origin(win);
+        // 内容只随形体「揭开」：不缩放，按面板裁剪，到 55% 才开始淡入。
+        // 提到 paint_body 之前算：控件玻璃的入场弹簧要拿本帧的 reveal 当目标，
+        // 晚一帧会让第一下弹跳「迟半拍」。
+        let reveal = if self.open { smoothstep(0.50, 0.97, p) } else { smoothstep(0.55, 0.92, p) };
+        self.reveal = reveal;
+        self.update_ctl_springs(origin, env);
         self.paint_body(&painter, body, flare, flare_h, radius, feather, origin);
         if lifted > 0.01 {self.paint_lift_halo(&painter, body, flare, flare_h, radius, lifted.min(1.0));}
         let content_from=crate::skin_paint::shape_count(&ctx,layer);
-
-        // 内容只随形体「揭开」：不缩放，按面板裁剪，到 55% 才开始淡入
-        let reveal = if self.open { smoothstep(0.50, 0.97, p) } else { smoothstep(0.55, 0.92, p) };
-        self.reveal = reveal;
         let clip = panel.intersect(win);
         let base = Card::new(ui, origin, clip);
         self.cursor_local = env.cursor.map(|p| base.to_local(p));
@@ -2864,29 +2920,103 @@ impl App {
         }
     }
 
-    /// 岛内需要「真折射」的大控件：页内局部矩形 + 圆角，**按绘制顺序**给
+    /// 控件能不能走 GPU 玻璃：完全展开、内容揭开、没有页切换过渡、没有二级页/编辑弹窗。
+    ///
+    /// 过渡期间内容整体平移 ±18px，控件矩形对不上；形变过程中面板几何每帧都在变，
+    /// 透镜会跟着被拉伸，看起来像「卡片被扯开」。
+    fn ctl_glass_ready(&self)->bool{
+        if self.settings.skin!=model::Skin::Liquid {return false;}
+        if !self.open || self.progress()<0.985 || self.reveal<0.6 {return false;}
+        if self.subpage.is_some() || self.calendar.draft.is_some() || self.task_dialog.is_some() {return false;}
+        !(self.page_from!=self.page && self.page_e()<0.55)
+    }
+
+    /// 控件在面板局部坐标里的几何：(矩形, 圆角)。不显示的控件返回 `None`。
+    ///
+    /// 坐标必须和 pages.rs / `nav()` / `panel_body()` 里画的那一份**逐像素一致**，
+    /// 否则玻璃会错开自己的图标。
+    pub(crate) fn ctl_geom(&self,ctl:Ctl)->Option<(Rect,f32)>{
+        let music=self.page==0 && !self.video_page() && self.subpage.is_none();
+        let has=!self.media.title.is_empty();
+        let disc=|x:f32,y:f32,r:f32|(Rect::from_center_size(Pos2::new(x,y),Vec2::splat(r*2.0)),r);
+        let arrow_y=if self.page==6||self.page==8 {88.0} else {68.0};
+        Some(match ctl {
+            Ctl::Gear=>disc(394.0,18.0,13.0),
+            Ctl::Lyric=>{if !music||!has {return None;} disc(74.0,118.0,13.5)}
+            Ctl::Prev=>{if !music||!has {return None;} disc(162.0,118.0,13.5)}
+            Ctl::Play=>{if !music||!has {return None;} disc(210.5,118.0,13.5)}
+            Ctl::Next=>{if !music||!has {return None;} disc(258.0,118.0,13.5)}
+            Ctl::Volume=>{if !music||!has {return None;} disc(367.0,118.0,13.5)}
+            Ctl::IslandLyrics=>{
+                if !music||!has||self.side() {return None;}
+                (Rect::from_min_size(Pos2::new(279.0,108.0),Vec2::new(68.0,20.0)),10.0)
+            }
+            Ctl::NavL=>{if !self.nav_shown() {return None;} disc(21.0,arrow_y,12.0)}
+            Ctl::NavR=>{if !self.nav_shown() {return None;} disc(398.0,arrow_y,12.0)}
+        })
+    }
+
+    /// 翻页箭头只在可见页 ≥ 2 时画（见 `nav()`）。
+    fn nav_shown(&self)->bool{
+        self.settings.page_order.iter().zip(self.settings.visible_pages.iter()).filter(|(_,on)|**on).count()>=2
+    }
+
+    /// 控件弹簧：入场跟着 `reveal` 走（带过冲，就是「弹出来」），按压给 300/0.5 的果冻回弹。
+    /// 顺带算好本帧哪些控件真的交给了 GPU —— 画图标的那一边要据此跳过矢量玻璃片。
+    fn update_ctl_springs(&mut self,origin:Pos2,env:&Env){
+        let dt=self.dt.clamp(0.0,0.05);
+        let ready=self.ctl_glass_ready();
+        for ctl in Ctl::ALL {
+            let i=ctl.idx();
+            let Some((rect,_))=self.ctl_geom(ctl) else {
+                self.ctl_appear[i].snap(0.0);self.ctl_press[i].snap(0.0);self.ctl_gpu[i]=false;continue;
+            };
+            let down=self.pointer_down_on(rect.translate(origin.to_vec2()),env);
+            self.ctl_press[i].target=if down {1.0}else{0.0};
+            self.ctl_press[i].step(dt);
+            self.ctl_appear[i].target=self.reveal;
+            self.ctl_appear[i].step(dt);
+            self.ctl_gpu[i]=ready;
+        }
+    }
+
+    /// 指针是不是正按在这块矩形上。用真实指针位置算，而不是 egui 的 response ——
+    /// GPU pass 在页面绘制**之前**跑，那时候 response 还不存在。
+    fn pointer_down_on(&self,rect:Rect,env:&Env)->bool{
+        self.ctl_down && env.cursor.is_some_and(|p|rect.contains(p))
+    }
+
+    /// 控件的绘制缩放：入场（0.86 → 1，会冲过头一点）+ 按压（×1.14 的果冻）。
+    pub(crate) fn ctl_scale(&self,ctl:Ctl)->f32{
+        let i=ctl.idx();
+        let appear=0.82+0.18*self.ctl_appear[i].pos.clamp(0.0,1.15);
+        appear*(1.0+CTL_PRESS_SCALE*self.ctl_press[i].pos.clamp(0.0,1.3))
+    }
+
+    /// 这个控件本帧是不是已经由 GPU 画了玻璃（画图标的一边据此跳过矢量玻璃片）。
+    pub(crate) fn ctl_on_gpu(&self,ctl:Ctl)->bool{self.ctl_gpu[ctl.idx()]}
+
+    /// 岛内控件玻璃：页内局部矩形 + 圆角 + 放大/折射倍数，**按绘制顺序**给
     /// （靠后的压在前面的上面，`pick_ctl` 命中即覆盖）。
     ///
-    /// 只给大到能看见折射的块。30~40 点的按钮走 egui 的半透明玻璃片
-    /// （`paint::glass_chip` / `glass_disc`）：这种尺寸上跑一遍 GPU 透镜看不出区别，
-    /// 只会白烧 15 次纹理采样。
-    fn glass_controls(&self,origin:Pos2)->Vec<(Rect,f32)>{
-        if self.settings.skin!=model::Skin::Liquid {return Vec::new();}
-        // 只在完全展开、内容已经揭开时生效：形变过程中面板几何每帧都在变，
-        // 控件玻璃会跟着一起被拉伸，看起来像「卡片被扯开」。
-        if !self.open || self.page!=0 || self.video_page() || self.progress()<0.985 || self.reveal<0.6 {
-            return Vec::new();
-        }
-        let at=|r:Rect|Rect::from_min_size(origin+r.min.to_vec2(),r.size());
+    /// 小控件也走真折射（参考包 uR/uS 那套）：30~40 点的圆片同样是一块透镜，
+    /// 只是折射位移要按短边收（见 `Ctl::refract`），否则整片采到几十像素外的壁纸。
+    pub(crate) fn glass_controls(&self,origin:Pos2)->Vec<crate::gpu_glass::Ctl>{
+        if !self.ctl_glass_ready() {return Vec::new();}
         let mut out=Vec::new();
-        // 歌词区：整块玻璃卡。它是面板里最大的一块「装内容的表面」，
-        // 放在岛体玻璃上就是典型的玻璃叠玻璃。
-        if self.show_lyrics && !self.media.title.is_empty() {
-            out.push((at(Rect::from_min_size(Pos2::new(238.0,26.0),Vec2::new(144.0,78.0))),14.0));
+        for ctl in Ctl::ALL {
+            if !self.ctl_gpu[ctl.idx()] {continue;}
+            let Some((rect,radius))=self.ctl_geom(ctl) else {continue;};
+            let s=self.ctl_scale(ctl);
+            let short=rect.width().min(rect.height());
+            out.push(crate::gpu_glass::Ctl {
+                rect:Rect::from_center_size(rect.center(),rect.size()*s).translate(origin.to_vec2()),
+                radius:radius*s,
+                mag:ctl.mag(),
+                // 短边相对原歌词卡（78px）缩放：27px 圆片 → 0.39，20px 胶囊 → 0.30。
+                refract:(short/70.0).clamp(0.30,1.0),
+            });
         }
-        // 音量浮层**不**走 GPU 玻璃：它盖住的是歌词，而歌词是 egui 在 GPU pass
-        // 之后画的 —— 着色器再磨砂也挡不住后画的文字（实测字直接浮在浮层上）。
-        // 它改用 egui 的实心玻璃片（见 pages::draw_music_volume）。
         out
     }
 
@@ -3510,13 +3640,15 @@ impl App {
     // ---------------------------------------------------------------
     fn panel_body(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
         let settings=c.hit(380.0,4.0,28.0,28.0,"page-settings").on_hover_text(format!("打开{}设置窗口",PAGE_NAMES[self.page]));
-        let (hover,press)=c.hover_t(&settings);
+        let (hover,_press)=c.hover_t(&settings);
+        // 齿轮：玻璃（上了 GPU 就由着色器画）+ 图标一起走弹簧缩放。
+        let (gear_s, gear_gpu)=(self.ctl_scale(Ctl::Gear), self.ctl_on_gpu(Ctl::Gear));
         if self.glassy() {
-            paint::glass_disc(&c.scaled(394.0,18.0,1.0-press*0.06),394.0,18.0,13.0,0.12+hover*0.72);
+            if !gear_gpu {paint::glass_disc(&c.scaled(394.0,18.0,gear_s),394.0,18.0,13.0,0.12+hover*0.72);}
         } else {
             c.circle(394.0,18.0,13.0,Color32::from_white_alpha((hover*24.0) as u8));
         }
-        paint::gear(&c.scaled(394.0,18.0,0.8*(1.0-press*0.08)),394.0,18.0,paint::mix(theme::GRAY,theme::WHITE,hover));
+        paint::gear(&c.scaled(394.0,18.0,0.8*gear_s),394.0,18.0,paint::mix(theme::GRAY,theme::WHITE,hover));
         if settings.clicked(){self.settings_tab=PAGE_SETTINGS_TABS[self.page];self.open_settings();}
         if self.subpage==Some(self.page) {
             c.text(15.0,25.0,"‹",19.0,W::Bold,theme::WHITE,H::Left);
@@ -3583,10 +3715,15 @@ impl App {
         let arrow_y=if self.page==6||self.page==8{88.0}else{68.0};
         let l = c.hit(8.0, arrow_y-13.0, 26.0, 26.0, "nav-l");
         let r = c.hit(385.0, arrow_y-13.0, 26.0, 26.0, "nav-r");
-        let (lh, lp) = c.hover_t(&l);
-        let (rh, rp) = c.hover_t(&r);
-        paint::chevron(c, 21.0, arrow_y, -1.0, lh, lp, self.glassy());
-        paint::chevron(c, 398.0, arrow_y, 1.0, rh, rp, self.glassy());
+        let (lh, _lp) = c.hover_t(&l);
+        let (rh, _rp) = c.hover_t(&r);
+        // 缩放与「玻璃是否已经由 GPU 画」都交给控件弹簧/控件表，按下的小回弹
+        // 现在由弹簧给（参考包 k=300、ζ=0.5），不再手写 1-0.08*press。
+        let glass=self.glassy();
+        let (sl, gl)=(self.ctl_scale(Ctl::NavL), self.ctl_on_gpu(Ctl::NavL));
+        let (sr, gr)=(self.ctl_scale(Ctl::NavR), self.ctl_on_gpu(Ctl::NavR));
+        paint::chevron(c, 21.0, arrow_y, -1.0, lh, sl, glass, gl);
+        paint::chevron(c, 398.0, arrow_y, 1.0, rh, sr, glass, gr);
         if l.clicked() { self.navigate_page(false); }
         if r.clicked() { self.navigate_page(true); }
         // 页码豆：宽度由弹簧驱动，整行实时居中；当前页是白色长条

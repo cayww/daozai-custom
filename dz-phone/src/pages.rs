@@ -2,7 +2,7 @@
 //! 坐标全部是面板局部逻辑点（419×140），文字 y 是基线。
 
 use crate::anim::{self, lerp, smoothstep, Spring};
-use crate::app::{App, Cmd, Env, Phase};
+use crate::app::{App, Cmd, Ctl, Env, Phase};
 use crate::mail;
 use crate::paint::{self, capsule, mix, Card, H};
 use crate::smtc::Transport;
@@ -144,18 +144,30 @@ impl App {
 
         let y=118.0;
         let ic=if has {theme::WHITE}else{Color32::from_rgb(88,88,92)};
-        let btn=|x:f32,w:f32,id:&str| {
+        // 先一次性把弹簧缩放与「是否已由 GPU 画」取出来：闭包里再调 self 会把
+        // &self 借到整个函数尾部，后面 self.say() / self.show_lyrics 就改不动了。
+        let mut ctl_s=[1.0f32; crate::app::CTL_N];
+        let mut ctl_gpu=[false; crate::app::CTL_N];
+        for ctl in Ctl::ALL {ctl_s[ctl.idx()]=self.ctl_scale(ctl);ctl_gpu[ctl.idx()]=self.ctl_on_gpu(ctl);}
+        let btn=|x:f32,w:f32,id:&str,ctl:Ctl| {
             let response=c.hit(x-w/2.0,y-12.0,w,24.0,id);
-            let (hover,pressed)=c.hover_t(&response);
-            if has && glassy {
-                // 玻璃圆片：静止时只有一圈极淡的边，悬停才亮起来。
-                paint::glass_disc(&c.scaled(x,y,1.0-0.1*pressed),x,y,13.5,0.16+hover*0.74);
-            } else if has && hover>0.01 {c.faded(hover).circle(x,y,12.5,Color32::from_white_alpha(20));}
-            (response,c.scaled(x,y,1.0-0.1*pressed))
+            let (hover,_pressed)=c.hover_t(&response);
+            // 缩放交给弹簧（入场张开 + 按压回弹），按下不再自己算一个小系数。
+            let s=ctl_s[ctl.idx()];
+            let gpu=ctl_gpu[ctl.idx()];
+            if has && glassy && !gpu {
+                // 没有 wgpu 设备（没开兼容渲染）时的兜底：矢量玻璃片。
+                paint::glass_disc(&c.scaled(x,y,s),x,y,13.5,0.16+hover*0.74);
+            } else if has && hover>0.01 {
+                // GPU 玻璃自己不跟悬停变亮，补一层很淡的白，保住「这个能点」的反馈。
+                let (r,a)=if gpu {(13.5,14.0)} else {(12.5,20.0)};
+                c.faded(hover).circle(x,y,r,Color32::from_white_alpha(a as u8));
+            }
+            (response,c.scaled(x,y,s))
         };
         // 视频页不画「词」和音乐应用音量：网页媒体没有歌词，也没有对应的应用内音量通道。
         let lyrics=if video {
-            let (button,card)=btn(74.0,26.0,"m-open-tab");
+            let (button,card)=btn(74.0,26.0,"m-open-tab",Ctl::Lyric);
             card.text(74.0,y+4.0,"打开",11.0,W::Semibold,ic,H::Center);
             if c.live && has && button.on_hover_text("跳到播放中的浏览器窗口").clicked(){
                 if crate::system::focus_browser_tab(&np.title){self.say("已切到播放中的浏览器窗口");}
@@ -163,18 +175,18 @@ impl App {
             }
             None
         }else{
-            let (button,card)=btn(74.0,26.0,"m-lyr");
+            let (button,card)=btn(74.0,26.0,"m-lyr",Ctl::Lyric);
             card.text(74.0,y+5.0,"词",14.0,W::Semibold,if !has {ic}else if self.show_lyrics {theme::WHITE}else{theme::GRAY},H::Center);
             Some(button)
         };
-        let (previous,previous_card)=btn(162.0,30.0,"m-prev");
+        let (previous,previous_card)=btn(162.0,30.0,"m-prev",Ctl::Prev);
         paint::skip(&previous_card,162.0,y,-1.0,ic);
-        let (play,play_card)=btn(210.5,30.0,"m-play");
+        let (play,play_card)=btn(210.5,30.0,"m-play",Ctl::Play);
         paint::play_pause(&play_card,211.0,y,15.0,playing_t,ic);
-        let (next,next_card)=btn(258.0,30.0,"m-next");
+        let (next,next_card)=btn(258.0,30.0,"m-next",Ctl::Next);
         paint::skip(&next_card,258.0,y,1.0,ic);
         let volume=if video {None}else{
-            let (button,card)=btn(367.0,26.0,"m-volume");
+            let (button,card)=btn(367.0,26.0,"m-volume",Ctl::Volume);
             let (value,muted)=self.music_volume_ui.unwrap_or((0,false));
             paint::speaker(&card,367.0,y,muted,if self.music_volume_ui.is_some(){ic}else{theme::GRAY});
             let hint=if self.music_volume_ui.is_some(){format!("音乐应用音量 {value}%{} · 点击展开 · 滚轮调节",if muted{"（已静音）"}else{""})}else{"暂无可调节的音乐音频会话".into()};
@@ -209,12 +221,22 @@ impl App {
         // 岛上歌词是横向的，只在顶部停靠时提供，视频页没有歌词可显示。
         if has && !video && !self.side() {
             let on=self.settings.island_lyrics;
+            let is_s=self.ctl_scale(Ctl::IslandLyrics);
+            let is_gpu=self.ctl_on_gpu(Ctl::IslandLyrics);
             let (button,button_card)=if glassy {
                 // 玻璃胶囊：开着的时候整片「点亮」，关着时只是极淡的一圈边。
+                // 上了 GPU 真折射之后这里只画文字，玻璃由着色器出。
                 let button=c.hit(279.0,108.0,68.0,20.0,"m-island-lyrics");
                 let (hover,_)=c.hover_t(&button);
-                paint::glass_chip(c,279.0,108.0,68.0,20.0,10.0,if on {0.62+hover*0.3}else{0.10+hover*0.5});
-                (button,c.clone())
+                let card=c.scaled(313.0,118.0,is_s);
+                if is_gpu {
+                    // 玻璃由着色器出；「开着」的状态以前靠矢量玻璃片的填充深浅表达，
+                    // 那层现在归 GPU 了，这里补一层很淡的白把开关状态留住。
+                    if on {card.fill(279.0,108.0,68.0,20.0,10.0,Color32::from_white_alpha((24.0+hover*24.0) as u8));}
+                } else {
+                    paint::glass_chip(c,279.0,108.0,68.0,20.0,10.0,if on {0.62+hover*0.3}else{0.10+hover*0.5});
+                }
+                (button,card)
             } else {
                 capsule(c,279.0,108.0,68.0,20.0,"m-island-lyrics",if on {Color32::from_gray(39)}else{Color32::from_gray(22)},Color32::from_gray(47))
             };
@@ -313,8 +335,9 @@ impl App {
 
     fn draw_music_lyrics(&mut self,c:&Card) {
         let col=c.clipped(243.0,28.0,136.0,74.0);
-        // 液态玻璃下歌词区是一整块玻璃卡（GPU 画的），左侧那条竖线就成了重复的第二道边。
-        if !self.glassy() {c.seg((233.0,32.0),(233.0,98.0),1.0,Color32::from_gray(35));}
+        // 歌词区不再铺玻璃卡（用户要求去掉那一整块），左侧竖线重新成为唯一的边界，
+        // 所以液态玻璃下也要画了 —— 以前它和玻璃卡的左边缘会形成两道边。
+        c.seg((233.0,32.0),(233.0,98.0),1.0,Color32::from_gray(35));
         if let Some(lyrics)=&self.ly.lyrics {
             let current=if lyrics.synced {lyrics.index_at(self.lyric_position())}else{Some(0)};
             let target=current.unwrap_or(0);

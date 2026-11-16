@@ -36,12 +36,28 @@ pub struct GlassFrame {
     pub optics: [f32; 4],
     /// 抓取矩形的 clip-space 坐标 x0,y0,x1,y1。
     pub clip: [f32; 4],
-    /// 岛内控件玻璃：每块的 x,y,w,h（capture 内物理像素）。最多 4 块。
-    pub controls: [[f32; 4]; 4],
-    /// 每块控件的 (圆角半径 px, 是否启用, _, _)。
-    pub control_params: [[f32; 4]; 4],
+    /// 岛内控件玻璃：每块的 x,y,w,h（capture 内物理像素）。最多 10 块。
+    pub controls: [[f32; 4]; 10],
+    /// 每块控件的 (圆角半径 px, 是否启用, 放大倍数, 折射倍数)。
+    pub control_params: [[f32; 4]; 10],
     /// 外观四件套：(内部模糊, 折射带宽, 白边宽度 —— 都是设备像素, 白边不透明度)。
     pub look: [f32; 4],
+}
+
+/// 一次 pass 最多画几块控件玻璃（= uniform 里 crect/cprm 的数组长度）。
+pub const MAX_CTL: usize = 10;
+
+/// 一块控件玻璃。
+///
+/// `mag` 是放大镜倍数（1 = 不放大，参考包的 uS.z）；
+/// `refract` 是这块控件的折射倍数，由调用方按**短边**缩放 —— 27px 的圆片照
+/// 78px 卡片的位移去弯，整个圆片采到的都是几十像素外的壁纸，看着像挖了个洞。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ctl {
+    pub rect: eframe::egui::Rect,
+    pub radius: f32,
+    pub mag: f32,
+    pub refract: f32,
 }
 
 /// 每帧挂到 egui painter 上的回调。
@@ -59,8 +75,8 @@ struct Uniforms {
     tint: [f32; 4],
     quad: [f32; 4],
     misc: [f32; 4],     // pointer_x, pointer_y, refraction, _
-    crect: [[f32; 4]; 4],
-    cprm: [[f32; 4]; 4],
+    crect: [[f32; 4]; 10],
+    cprm: [[f32; 4]; 10],
     look: [f32; 4],     // blur, band, edge_w, edge_opacity
 }
 
@@ -140,9 +156,9 @@ struct U {
     quad   : vec4<f32>,
     misc   : vec4<f32>,
     // 岛内控件玻璃：crect = (x, y, w, h)（capture 内物理像素），
-    // cprm = (圆角半径, 是否启用, 保留, 保留)。
-    crect  : array<vec4<f32>, 4>,
-    cprm   : array<vec4<f32>, 4>,
+    // cprm = (圆角半径, 是否启用, 放大倍数, 折射倍数)。
+    crect  : array<vec4<f32>, 10>,
+    cprm   : array<vec4<f32>, 10>,
     // 外观四件套：(内部模糊 px, 折射带宽 px, 白边宽度 px, 白边不透明度)。
     look   : vec4<f32>,
 }
@@ -222,7 +238,7 @@ fn tap5(px : vec2<f32>, ca : vec2<f32>, blur : f32) -> vec3<f32> {
 //   · 折射带按**短边**缩放（岛体按高度，控件的高度往往很小，不能照搬）
 //   · 材质照抄岛体，只多 1% 提亮 —— 层次感交给边缘
 //   · 白边更细更亮（岛体 3px，控件 1.4px）
-fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d : f32, mat : f32, Ld : vec2<f32>, edge_bg : vec3<f32>) -> vec4<f32> {
+fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d : f32, mat : f32, Ld : vec2<f32>, edge_bg : vec3<f32>, mag : f32, refr : f32) -> vec4<f32> {
     let e = 1.0;
     let gx = rr_sdf(local + vec2<f32>(e, 0.0), hs, radius) - rr_sdf(local - vec2<f32>(e, 0.0), hs, radius);
     let gy = rr_sdf(local + vec2<f32>(0.0, e), hs, radius) - rr_sdf(local - vec2<f32>(0.0, e), hs, radius);
@@ -231,16 +247,21 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let short = max(min(hs.x, hs.y), 1.0);
     // 控件自带带宽（按短边缩放）：色散带的深浅不能跟岛体那 130px 走，
     // 否则一块 78px 高的卡片整块都在折射带里。外观页的「折射带宽」只管岛体。
-    let band = clamp(short * 1.30, 12.0, 72.0);
+    let band = clamp(short * 1.30, 10.0, 72.0);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
     // 和岛体共用同一对设置项（折射 / 色散），但控件小得多 —— 同样的像素位移在
-    // 它上面占比更大，所以打 0.55 折，读起来才和岛体是同一块材料的延伸。
-    let strength = max(u.misc.z, 0.0) * 0.55;
+    // 它上面占比更大，所以先打 0.55 折，再乘每块控件自己的 `refr`
+    // （27px 的圆片不能按 78px 卡片的位移弯，否则整片采到的都是几十像素外的壁纸）。
+    let strength = max(u.misc.z, 0.0) * 0.55 * max(refr, 0.05);
     let cxn = clamp((abs(local.x) - (hs.x - radius)) / max(radius, 1.0), 0.0, 1.0);
     let cyn = clamp((abs(local.y) - (hs.y - radius)) / max(radius, 1.0), 0.0, 1.0);
-    let chroma = max(u.params.x, 0.0) * 0.55 * mix(0.60, 1.0, cxn * cyn);
-    let bp = p - g * k * strength;
+    let chroma = max(u.params.x, 0.0) * 0.55 * max(refr, 0.05) * mix(0.60, 1.0, cxn * cyn);
+    // 放大镜（参考包 uS.z）：采样点朝控件中心压缩，背景在玻璃里被放大一点点。
+    // 参考包给标签指示器 1.12、开关珠 1.25；我们用 1.10 左右，小圆片才有「透镜感」。
+    let m = max(mag, 1.0);
+    let q = p - local * (1.0 - 1.0 / m);
+    let bp = q - g * k * strength;
 
     var col = tap5(bp, -g * k * chroma, u.look.x * 0.80);
     // 材质必须和岛体**完全一致**，否则控件会明显比面板亮一档 —— 实测漏掉下面
@@ -281,14 +302,14 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     return vec4<f32>(col, clamp(max(aa, line_v * edge_a), 0.0, 1.0));
 }
 
-// 选中的控件玻璃：SDF 距离、半尺寸、圆角、下标（4 = 没命中）。
-struct CtlSel { d : f32, hs : vec2<f32>, r : f32, idx : u32 }
+// 选中的控件玻璃：SDF 距离、半尺寸、圆角、下标（>=10 = 没命中）、放大与折射倍数。
+struct CtlSel { d : f32, hs : vec2<f32>, r : f32, idx : u32, mag : f32, refr : f32 }
 
 // 命中测试：**后一个覆盖前一个**（音量浮层必须压在歌词卡上面），
 // 所以是「命中就覆盖」，不是取 SDF 最小值。
 fn pick_ctl(p : vec2<f32>) -> CtlSel {
-    var out = CtlSel(0.0, vec2<f32>(1.0), 0.0, 4u);
-    for (var ci = 0u; ci < 4u; ci = ci + 1u) {
+    var out = CtlSel(0.0, vec2<f32>(1.0), 0.0, 10u, 1.0, 1.0);
+    for (var ci = 0u; ci < 10u; ci = ci + 1u) {
         if (u.cprm[ci].y < 0.5) { continue; }
         let cr = u.crect[ci];
         // 控件不需要岛体那个 3px 内缩（那是为了 SetWindowRgn 的硬裁剪），
@@ -296,7 +317,7 @@ fn pick_ctl(p : vec2<f32>) -> CtlSel {
         let hs = max(cr.zw * 0.5 - vec2<f32>(0.5), vec2<f32>(1.0));
         let rr = max(min(u.cprm[ci].x - 0.5, min(hs.x, hs.y)), 0.0);
         let dd = rr_sdf(p - cr.xy - cr.zw * 0.5, hs, rr);
-        if (dd < 0.0) { out = CtlSel(dd, hs, rr, ci); }
+        if (dd < 0.0) { out = CtlSel(dd, hs, rr, ci, u.cprm[ci].z, u.cprm[ci].w); }
     }
     return out;
 }
@@ -356,9 +377,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     if (u.misc.w > 0.5) {
         var flat_col = sample_px(p);
         let cs = pick_ctl(p);
-        if (cs.idx < 4u) {
+        if (cs.idx < 10u) {
             let cr = u.crect[cs.idx];
-            let ce = ctrl_glass(p, p - cr.xy - cr.zw * 0.5, cs.hs, cs.r, cs.d, mat, Ld, edge_bg);
+            let ce = ctrl_glass(p, p - cr.xy - cr.zw * 0.5, cs.hs, cs.r, cs.d, mat, Ld, edge_bg, cs.mag, cs.refr);
             flat_col = mix(flat_col, ce.rgb, ce.a);
         }
         return vec4<f32>(flat_col, 1.0);
@@ -518,9 +539,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 一次抓屏、一次 pass 画多块玻璃：所有控件与岛体共用同一张背景纹理，各自再跑
     // 一遍小尺寸透镜。这样控件边缘也有真实折射与白边，而不是贴一层半透明色块。
     let cs = pick_ctl(p);
-    if (cs.idx < 4u) {
+    if (cs.idx < 10u) {
         let cr = u.crect[cs.idx];
-        let ce = ctrl_glass(p, p - cr.xy - cr.zw * 0.5, cs.hs, cs.r, cs.d, mat, Ld, edge_bg);
+        let ce = ctrl_glass(p, p - cr.xy - cr.zw * 0.5, cs.hs, cs.r, cs.d, mat, Ld, edge_bg, cs.mag, cs.refr);
         col = mix(col, ce.rgb, ce.a);
     }
 
@@ -1262,9 +1283,9 @@ pub fn frame_for(
     pointer: (f32, f32),
     origin: (f32, f32),
     lightness: f32,
-    // 岛内控件玻璃（屏幕坐标的逻辑点矩形 + 圆角），**按绘制顺序**给：
+    // 岛内控件玻璃（屏幕坐标的逻辑点矩形 + 圆角 + 放大/折射倍数），**按绘制顺序**给：
     // 靠后的压在前面的上面。
-    controls: &[(eframe::egui::Rect, f32)],
+    controls: &[Ctl],
 ) -> GlassFrame {
     // 抓屏用屏幕绝对物理坐标，clip-space / bounds 用窗口内坐标。
     let c = ((capture.min.x + origin.0) * ppp, (capture.min.y + origin.1) * ppp);
@@ -1279,19 +1300,20 @@ pub fn frame_for(
     // 控件矩形换算到「capture 内物理像素」，着色器里直接用。
     // 只接受完整落在抓屏矩形内的控件：越界时着色器会 clamp 到边缘像素，
     // 表现为一条被拉长的色带。
-    let mut crect = [[0.0f32; 4]; 4];
-    let mut cprm = [[0.0f32; 4]; 4];
+    let mut crect = [[0.0f32; 4]; MAX_CTL];
+    let mut cprm = [[0.0f32; 4]; MAX_CTL];
     let mut slot = 0usize;
-    for (r, radius) in controls.iter() {
-        if slot == 4 { break; }
-        if r.width() < 6.0 || r.height() < 6.0 || !capture.contains_rect(*r) { continue; }
+    for ctl in controls.iter() {
+        if slot == MAX_CTL { break; }
+        let r = ctl.rect;
+        if r.width() < 6.0 || r.height() < 6.0 || !capture.contains_rect(r) { continue; }
         crect[slot] = [
             (r.min.x - capture.min.x) * ppp,
             (r.min.y - capture.min.y) * ppp,
             r.width() * ppp,
             r.height() * ppp,
         ];
-        cprm[slot] = [radius * ppp, 1.0, 0.0, 0.0];
+        cprm[slot] = [ctl.radius * ppp, 1.0, ctl.mag.max(1.0), ctl.refract.max(0.05)];
         slot += 1;
     }
     // egui-wgpu 在调用回调前已把 render pass 的 viewport 设成 callback.rect，
@@ -1347,17 +1369,19 @@ mod tests {
         let lyric = Rect::from_min_size(Pos2::new(80.0, 25.0), eframe::egui::vec2(50.0, 20.0));
         // 越界的控件必须被丢掉，否则着色器会 clamp 到边缘像素拉出色带。
         let outside = Rect::from_min_size(Pos2::new(50.0, 25.0), eframe::egui::vec2(50.0, 20.0));
+        let ctl = |rect, radius| Ctl { rect, radius, mag: 1.10, refract: 0.35 };
         let f = frame_for(body, capture, (1920, 1080), 2.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0,
-                          &[(outside, 6.0), (lyric, 6.0)]);
+                          &[ctl(outside, 6.0), ctl(lyric, 6.0)]);
         assert_eq!(f.controls[0], [40.0, 50.0, 100.0, 40.0], "控件按 2x 换算到 capture 内物理像素");
-        assert_eq!(f.control_params[0], [12.0, 1.0, 0.0, 0.0]);
+        assert_eq!(f.control_params[0], [12.0, 1.0, 1.10, 0.35], "圆角/启用/放大/折射一起进 uniform");
         assert_eq!(f.control_params[1][1], 0.0, "越界的控件不参与绘制");
     }
 
     #[test]
     fn uniforms_are_packed_without_padding() {
-        // 9 个 vec4（bounds/params/extra/tint/quad/misc/crect[4]/cprm[4]/look）全是
-        // 16 字节对齐，240 = 15×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
-        assert_eq!(std::mem::size_of::<Uniforms>(), 240);
+        // 7 个 vec4（bounds/params/extra/tint/quad/misc/look）+ crect[10] + cprm[10]
+        // 全是 16 字节对齐，432 = 27×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
+        assert_eq!(std::mem::size_of::<Uniforms>(), 432);
+        assert_eq!(std::mem::size_of::<Uniforms>(), 7 * 16 + MAX_CTL * 32);
     }
 }

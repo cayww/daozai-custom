@@ -466,12 +466,13 @@ pub fn close(c:&Card,cx:f32,cy:f32,r:f32,color:Color32) {
     c.seg((cx-r,cy+r),(cx+r,cy-r),1.2,color);
 }
 
-pub fn chevron(c: &Card, x: f32, y: f32, dir: f32, hover: f32, press: f32, glass: bool) {
-    let k = 1.0 - 0.08 * press;
-    let c = c.scaled(x, y, k);
+/// 翻页箭头。`scale` 由控件弹簧给（入场张开 + 按压回弹），`gpu` 表示这块玻璃
+/// 已经由 GPU 着色器画了 —— 那样这里只画箭头本体，不再叠一片矢量玻璃。
+pub fn chevron(c: &Card, x: f32, y: f32, dir: f32, hover: f32, scale: f32, glass: bool, gpu: bool) {
+    let c = c.scaled(x, y, scale);
     if glass {
         // 液态玻璃：整颗换成玻璃片，箭头保持白色（浅色皮肤由换色改成墨色）。
-        glass_disc(&c, x, y, 12.0, 0.18 + hover * 0.82);
+        if !gpu { glass_disc(&c, x, y, 12.0, 0.18 + hover * 0.82); }
     } else {
         c.circle(x, y, 9.0, mix(theme::ARROW_BG, Color32::from_rgb(78, 78, 82), hover));
     }

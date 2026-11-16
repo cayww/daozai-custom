@@ -8661,3 +8661,50 @@ fn liquid_tuning_keeps_island_expanded_while_settings_page_is_open(){
     for _ in 0..40 {h.frame(vec![]);}
     assert!(!h.app.open,"只有液态玻璃需要边调边看");
 }
+
+#[test]
+fn control_glass_covers_small_buttons_and_drops_the_lyric_card(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.skin=crate::model::Skin::Liquid;
+    h.media=crate::smtc::NowPlaying{source:"QQ音乐".into(),title:"歌".into(),artist:"人".into(),
+        playing:true,duration:200.0,position:20.0,
+        playback_type:crate::smtc::MediaKind::Music,..Default::default()};
+    h.app.show_page(0);
+    h.hover(H::local(200.0,40.0),1.2);
+    for _ in 0..40 {h.frame(vec![]);}
+    assert!(h.app.progress()>0.98,"面板要完全展开");
+    let ctls=h.app.glass_controls(Pos2::ZERO);
+    assert_eq!(ctls.len(),9,"齿轮/词/上一首/播放/下一首/音量/岛上歌词/左右箭头都该上 GPU");
+    assert!(!ctls.iter().any(|c|(c.rect.width()-144.0).abs()<2.0),"歌词那块玻璃卡已经去掉");
+    for c in &ctls {
+        assert!(c.mag>1.0,"小控件要有放大镜");
+        assert!(c.refract<1.0,"小控件的折射位移必须按短边收");
+        assert!(c.rect.width()<=80.0 && c.rect.height()<=80.0,"上 GPU 的只该是小控件");
+    }
+}
+
+#[test]
+fn control_scale_follows_spring_for_appear_and_press(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    let ctl=crate::app::Ctl::Play;
+    let i=ctl.idx();
+    h.app.ctl_appear[i].snap(0.0);h.app.ctl_press[i].snap(0.0);
+    assert!((h.app.ctl_scale(ctl)-0.82).abs()<0.005,"入场从 0.82 开始张开");
+    h.app.ctl_appear[i].snap(1.0);
+    assert!((h.app.ctl_scale(ctl)-1.0).abs()<0.005,"展开到位后回到原尺寸");
+    h.app.ctl_press[i].snap(1.0);
+    assert!(h.app.ctl_scale(ctl)>1.1,"按下要胀起来");
+}
+
+#[test]
+fn control_press_spring_overshoots_before_settling(){
+    // 参考包参数表：按钮按压 k=300、ζ=0.5 —— 必须冲过头再晃回来。
+    let mut s=crate::anim::Spring::new(0.0,300.0,0.5);
+    s.target=1.0;
+    let mut peak=0.0f32;
+    for _ in 0..60 {s.step(1.0/60.0);peak=peak.max(s.pos);}
+    assert!(peak>1.05,"k=300 ζ=0.5 必须有过冲，峰值实测 {peak}");
+    assert!((s.pos-1.0).abs()<0.02,"最后要停在目标值");
+}
