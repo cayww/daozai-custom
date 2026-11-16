@@ -252,7 +252,9 @@ impl Layered {
         if self.last.is_none() { return; }
         unsafe {
             let _ = hide_owner(owner);
-            let owner_visible = IsWindowVisible(owner).as_bool();
+            // 全屏隐藏只清空主窗口区域，仍需同步隐藏独立的显示层。
+            let owner_visible = IsWindowVisible(owner).as_bool()
+                && GetWindowRgnBox(owner, &mut RECT::default()) != NULLREGION;
             let display_visible = IsWindowVisible(self.display).as_bool();
             if !owner_visible {
                 if display_visible { let _ = ShowWindow(self.display, SW_HIDE); }
@@ -422,6 +424,17 @@ mod tests {
             let mut d = RECT::default();
             GetWindowRect(layered.display(), &mut d).unwrap();
             assert_eq!((d.left, d.top), (-9000, -9000), "窗口移动后显示窗口跟随");
+            // 全屏隐藏保留主窗口的事件循环，仅清空它的窗口区域。
+            assert_ne!(SetWindowRgn(owner, CreateRectRgn(0, 0, 0, 0), true), 0);
+            assert!(IsWindowVisible(owner).as_bool());
+            layered.sync(owner, false);
+            assert!(!IsWindowVisible(layered.display()).as_bool(), "进入全屏后显示层仍然可见");
+            px[4] = 32;
+            assert!(layered.present(owner, [4, 2], &px).unwrap());
+            assert!(!IsWindowVisible(layered.display()).as_bool(), "迟到的读回帧重新显示了岛仔");
+            assert_ne!(SetWindowRgn(owner, CreateRectRgn(0, 0, 4, 1), true), 0);
+            layered.sync(owner, false);
+            assert!(IsWindowVisible(layered.display()).as_bool(), "恢复为细线时也应立即显示");
             let _ = ShowWindow(owner, SW_HIDE);
             layered.sync(owner, false);
             assert!(!IsWindowVisible(layered.display()).as_bool(), "岛仔窗口隐藏时显示窗口一起隐藏");
