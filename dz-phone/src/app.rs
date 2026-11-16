@@ -2087,6 +2087,7 @@ impl App {
         // 形变强度倍数来自设置项，每帧同步给着色器（成本就是一次原子写）。
         crate::gpu_glass::set_morph_scale(self.settings.liquid_morph);
         crate::gpu_glass::set_liquid_optics(self.settings.liquid_refract_px,self.settings.liquid_chroma_px);
+        crate::gpu_glass::set_liquid_look(self.settings.liquid_blur_px,self.settings.liquid_band_px,self.settings.liquid_edge_w_px,self.settings.liquid_edge_op);
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
         self.window_origin=env.window_origin;

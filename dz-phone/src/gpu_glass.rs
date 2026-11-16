@@ -40,6 +40,8 @@ pub struct GlassFrame {
     pub controls: [[f32; 4]; 4],
     /// 每块控件的 (圆角半径 px, 是否启用, _, _)。
     pub control_params: [[f32; 4]; 4],
+    /// 外观四件套：(内部模糊, 折射带宽, 白边宽度 —— 都是设备像素, 白边不透明度)。
+    pub look: [f32; 4],
 }
 
 /// 每帧挂到 egui painter 上的回调。
@@ -59,6 +61,7 @@ struct Uniforms {
     misc: [f32; 4],     // pointer_x, pointer_y, refraction, _
     crect: [[f32; 4]; 4],
     cprm: [[f32; 4]; 4],
+    look: [f32; 4],     // blur, band, edge_w, edge_opacity
 }
 
 impl Uniforms {
@@ -140,6 +143,8 @@ struct U {
     // cprm = (圆角半径, 是否启用, 保留, 保留)。
     crect  : array<vec4<f32>, 4>,
     cprm   : array<vec4<f32>, 4>,
+    // 外观四件套：(内部模糊 px, 折射带宽 px, 白边宽度 px, 白边不透明度)。
+    look   : vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var bg : texture_2d<f32>;
@@ -224,6 +229,8 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let g = normalize(vec2<f32>(gx, gy) + vec2<f32>(1e-6));
 
     let short = max(min(hs.x, hs.y), 1.0);
+    // 控件自带带宽（按短边缩放）：色散带的深浅不能跟岛体那 130px 走，
+    // 否则一块 78px 高的卡片整块都在折射带里。外观页的「折射带宽」只管岛体。
     let band = clamp(short * 1.30, 12.0, 72.0);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
@@ -235,7 +242,7 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let chroma = max(u.params.x, 0.0) * 0.55 * mix(0.60, 1.0, cxn * cyn);
     let bp = p - g * k * strength;
 
-    var col = tap5(bp, -g * k * chroma, 1.2);
+    var col = tap5(bp, -g * k * chroma, u.look.x * 0.80);
     // 材质必须和岛体**完全一致**，否则控件会明显比面板亮一档 —— 实测漏掉下面
     // 这两步时，浅色壁纸下卡片内部 240、面板 197，看起来是一块白纸而不是玻璃。
     // （亮暗反相补偿 + 逐像素 scrim，都照抄 fs 里的岛体版本。）
@@ -261,14 +268,17 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let bleed = exp(-t_in / clamp(short * 0.45, 5.0, 22.0)) * (1.0 - bevel * 0.5);
     let lobe = pow(max(dot(g, Ld), 0.0), 1.5);
     col = col + vec3<f32>(0.62, 0.86, 0.96) * bleed * (lobe * 0.15 + 0.055);
-    // 白边：1.4px、峰值在内侧 0.4px。
-    let lq = (d + 0.40) / 0.62;
+    // 白边：峰值在内侧，宽度取「白边宽度」设置项（σ = 宽度×0.42，1.5px → 0.63，
+    // 和参考包的 1.5px 线性边在观感上等价，但带抗锯齿）。
+    let sigma_c = max(u.look.z, 0.5) * 0.42;
+    let lq = (d + sigma_c * 0.65) / sigma_c;
     let line = exp(-lq * lq);
     let dirw = mix(0.55, 1.0, pow(max(dot(g, Ld), 0.0), 1.3));
     let line_v = line * dirw;
-    col = mix(col, vec3<f32>(1.0), clamp(line_v * 0.90, 0.0, 1.0));
+    let edge_a = clamp(u.look.w, 0.0, 1.0);
+    col = mix(col, vec3<f32>(1.0), clamp(line_v * edge_a, 0.0, 1.0));
     let aa = 1.0 - smoothstep(-1.0, 1.0, d);
-    return vec4<f32>(col, clamp(max(aa, line_v * 0.90), 0.0, 1.0));
+    return vec4<f32>(col, clamp(max(aa, line_v * edge_a), 0.0, 1.0));
 }
 
 // 选中的控件玻璃：SDF 距离、半尺寸、圆角、下标（4 = 没命中）。
@@ -373,7 +383,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 所以 band 只给一点点（0.08），主要加在 strength（边缘弯得更狠但不扩散）。
     let ms = max(u.params.z, 0.0);
     let morph = select(clamp(u.extra.w, 0.0, 1.0) * ms, ms, u.params.y > 0.5);
-    let band = clamp(u.bounds.w * 0.80, 30.0, 130.0) * (1.0 + morph * 0.08);
+    // 折射带宽：设置项直接给（设备像素）。原来 `clamp(bounds.w*0.80, 30, 130)` 在
+    // 展开面板上饱和到 130 —— 87 CSS px @1.5x 屏，所以默认值就是那个观感。
+    let band = max(u.look.y, 1.0) * (1.0 + morph * 0.08);
     let t = clamp(-d / band, 0.0, 1.0);
     let k = pow(1.0 - pow(t, 0.30), 2.0);
 
@@ -397,7 +409,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let ca = -g * k * chroma;
     let bp = p + refr;
 
-    var col = tap5(bp, ca, 1.5);
+    var col = tap5(bp, ca, max(u.look.x, 0.0));
     // 玻璃比空气「多一层」，但这点提亮必须极轻。以前这里是四层白色叠加：
     // +0.004 冷色、10% 白雾、顶部冷光、外加一圈白边，浅色壁纸下整体被推成
     // 一片发白的雾 —— 玻璃感就是这么没的（实测岛内亮度只比壁纸高 8，却全糊了）。
@@ -480,9 +492,12 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 上下各 10px 就吃掉 44% 的高度，观感自然从「玻璃」变成「磨砂塑料」。
     // 现在峰值落在边缘内侧 0.7px、σ≈1.15（有效宽约 3px）；整条线都在形状
     // 内部，所以不影响外缘覆盖率，外缘依旧交给 aa，不会退回 1px 硬跳。
-    let lq = (d + 0.45) / 0.82;
+    // 白边宽度 / 亮度都来自设置项（参考包 edgeWidth / edgeOpacity）：1.5px →
+    // σ0.82，与旧写死值一致；0.9 不透明度 → 0.62(暗背景)~0.92(亮背景) 也一致。
+    let sigma = max(u.look.z, 0.3) * 0.365;
+    let lq = (d + sigma * 0.55) / sigma;
     let line = exp(-lq * lq);
-    let gq = (d + 1.0) / 3.2;
+    let gq = (d + 1.0) / max(3.2 * u.look.z / 1.5, 0.8);
     let glow = exp(-gq * gq) * 0.04;
     // 高光**沿边缘方向调制**：迎光侧最亮，背光侧只留一条淡淡的边。
     // 这一步才是「液态感」的关键 —— 把 line 均匀铺满整圈，看起来只是一圈描边；
@@ -494,7 +509,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 高光权重也要跟背景走：暗背景下 0.62 就够亮（184 vs 背景 60，很抢眼），
     // 但亮背景下材质被压到 231、背景 250，权重不够高光反而比背景还暗，
     // 会看成一条「暗边」。亮背景拉到 0.92 并用纯白，才顶得到 253 附近。
-    let line_w = mix(0.62, 0.92, smoothstep(0.60, 0.92, lum_m));
+    // 设置项 edgeOpacity 乘在这条曲线上（0.9 = 旧默认，0 = 整条白边关掉）。
+    let edge_a = clamp(u.look.w, 0.0, 1.0);
+    let line_w = edge_a * mix(0.69, 1.02, smoothstep(0.60, 0.92, lum_m));
     col = mix(col, vec3<f32>(1.0), clamp(line_v * line_w + glow, 0.0, 1.0));
 
     // ---------- 岛内控件玻璃 ----------
@@ -512,7 +529,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // （圆角处最明显）。这里直接 mix 桌面色，边缘永远不会有黑。
     // 覆盖率取 max(aa, line*0.9)：高光自带覆盖率，不能被 aa 归零，
     // 否则白边的外半部分会被 mix(edge_bg, col, 0) 整个丢弃，边缘只剩 1px 硬跳。
-    let cov = clamp(max(aa, line_v * 0.90), 0.0, 1.0);
+    let cov = clamp(max(aa, line_v * edge_a), 0.0, 1.0);
     // 抖动：8-bit 输出在平滑渐变上必然出色带（深色壁纸尤其明显）。加 ±1 级噪声
     // 把量化台阶打散，幅度压在 1/255 量级 —— 只让渐变更顺，看不到噪点。
     let dth = (hash21(p) - 0.5) * (1.7 / 255.0);
@@ -644,6 +661,29 @@ fn chroma_scale() -> f32 {
     f32::from_bits(OPTICS[1].load(std::sync::atomic::Ordering::Relaxed))
 }
 
+/// 外观四件套（参考包 demo 右侧面板剩下的四个滑块）：
+/// 内部模糊 px、折射带宽 px、白边宽度 px、白边不透明度。
+/// 前三个单位是 CSS px，进 uniform 前乘 ppp；不透明度无量纲。
+static LOOK: [std::sync::atomic::AtomicU32; 4] = [
+    std::sync::atomic::AtomicU32::new(0x3FC0_0000), // blur   = 1.5
+    std::sync::atomic::AtomicU32::new(0x42AE_0000), // band   = 87.0（≈ 旧代码写死的 130 设备 px）
+    std::sync::atomic::AtomicU32::new(0x3FC0_0000), // edge_w = 1.5
+    std::sync::atomic::AtomicU32::new(0x3F66_6666), // edge_op= 0.90
+];
+
+pub fn set_liquid_look(blur_px: f32, band_px: f32, edge_px: f32, edge_op: f32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    LOOK[0].store(blur_px.clamp(0.0, 4.0).to_bits(), Relaxed);
+    LOOK[1].store(band_px.clamp(10.0, 140.0).to_bits(), Relaxed);
+    LOOK[2].store(edge_px.clamp(0.0, 4.0).to_bits(), Relaxed);
+    LOOK[3].store(edge_op.clamp(0.0, 1.0).to_bits(), Relaxed);
+}
+
+fn look() -> [f32; 4] {
+    use std::sync::atomic::Ordering::Relaxed;
+    [0, 1, 2, 3].map(|i| f32::from_bits(LOOK[i].load(Relaxed)))
+}
+
 /// DAOZAI_LIQUID_MORPH_FORCE=1：把形变强度钉成常数，用于确定性验证
 /// （动画只有约 100ms，抓帧时序对不齐，不钉住就没法做 A/B）。
 fn morph_force() -> f32 {
@@ -665,6 +705,7 @@ fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
         misc: [f.shape[2], f.shape[3], f.optics[1], flat_flag()],
         crect: f.controls,
         cprm: f.control_params,
+        look: f.look,
     }
 }
 
@@ -1264,6 +1305,11 @@ pub fn frame_for(
         // optics = (time, 折射 CSS px, 色散 CSS px, 亮/暗)。着色器全程按设备像素算，
         // 所以这里乘 ppp —— 和参考包 `uniform4f(uP, strength*DPR, chroma*DPR, ...)` 一致。
         optics: [time, strength_scale() * ppp, chroma_scale() * ppp, lightness],
+        // 外观四件套：前三个同样 CSS px → 设备像素，最后一个是不透明度。
+        look: {
+            let l = look();
+            [l[0] * ppp, l[1] * ppp, l[2] * ppp, l[3]]
+        },
         clip: [-1.0, 1.0, 1.0, -1.0],
         controls: crect,
         control_params: cprm,

@@ -200,6 +200,16 @@ pub struct Settings {
     /// 红蓝实际分离是它的两倍。参考包同单位、默认 12；我们默认低一档，因为
     /// 抓屏是 1:1 的锐利画面，12 在文字与封面边缘会先出彩边。
     pub liquid_chroma_px: f32,
+    /// 液态玻璃：内部模糊（CSS px，默认 1.5，参考包叫 blur，默认 1.2）。
+    /// 边缘折射带里的五点十字采样的步长，调大整个折射带更「磨」。
+    pub liquid_blur_px: f32,
+    /// 液态玻璃：折射带宽（CSS px，默认 87 ≈ 旧写死的 130 设备 px；参考包叫 band，默认 60）。
+    /// 折射从边缘往里延伸多深，小 = 只有边缘一圈在弯。
+    pub liquid_band_px: f32,
+    /// 液态玻璃：白边宽度（CSS px，默认 1.5，参考包叫 edgeWidth）。
+    pub liquid_edge_w_px: f32,
+    /// 液态玻璃：白边亮度（0~1，默认 0.90，参考包叫 edgeOpacity，默认 0.85）。
+    pub liquid_edge_op: f32,
     pub island_size: u32,
     pub island_offset: i32,
     /// 停靠边缘；左右停靠时 `island_offset` 表示上下位置。
@@ -364,7 +374,7 @@ impl OpenAnim {
 
 impl Default for Settings {
     fn default() -> Self {
-                Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_battery: true, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+                Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_battery: true, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
     }
 }
 
@@ -431,6 +441,10 @@ impl Settings {
                 "liquid_morph" => s.liquid_morph = v.parse::<f32>().unwrap_or(1.0).clamp(0.0, 3.0),
                 "liquid_refract_px" => s.liquid_refract_px = v.parse::<f32>().unwrap_or(48.0).clamp(0.0, 120.0),
                 "liquid_chroma_px" => s.liquid_chroma_px = v.parse::<f32>().unwrap_or(8.0).clamp(0.0, 30.0),
+                "liquid_blur_px" => s.liquid_blur_px = v.parse::<f32>().unwrap_or(1.5).clamp(0.0, 4.0),
+                "liquid_band_px" => s.liquid_band_px = v.parse::<f32>().unwrap_or(87.0).clamp(10.0, 140.0),
+                "liquid_edge_w_px" => s.liquid_edge_w_px = v.parse::<f32>().unwrap_or(1.5).clamp(0.0, 4.0),
+                "liquid_edge_op" => s.liquid_edge_op = v.parse::<f32>().unwrap_or(0.90).clamp(0.0, 1.0),
                 "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
                 "island_offset" => s.island_offset = v.parse::<i32>().unwrap_or(0).clamp(-ISLAND_OFFSET_MAX, ISLAND_OFFSET_MAX),
                 "pet" => s.pet = v == "1" || v.eq_ignore_ascii_case("true"),
@@ -527,6 +541,10 @@ impl Settings {
                 ("liquid_morph".into(),format!("{:.2}",self.liquid_morph)),
                 ("liquid_refract_px".into(),format!("{:.1}",self.liquid_refract_px)),
                 ("liquid_chroma_px".into(),format!("{:.1}",self.liquid_chroma_px)),
+                ("liquid_blur_px".into(),format!("{:.1}",self.liquid_blur_px)),
+                ("liquid_band_px".into(),format!("{:.1}",self.liquid_band_px)),
+                ("liquid_edge_w_px".into(),format!("{:.1}",self.liquid_edge_w_px)),
+                ("liquid_edge_op".into(),format!("{:.2}",self.liquid_edge_op)),
                 ("island_size".into(),island_size_value(self.island_size).to_string()),
                 ("island_offset".into(),self.island_offset.clamp(-ISLAND_OFFSET_MAX,ISLAND_OFFSET_MAX).to_string()),
                 ("settings_theme".into(),self.settings_theme.key().into()),
