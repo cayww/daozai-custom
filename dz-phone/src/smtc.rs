@@ -280,7 +280,8 @@ fn choose_media(system:Option<NowPlaying>,native:Option<NowPlaying>)->Option<Now
     if let (Some(system),Some(native))=(&system,&native){
         if system.source.eq_ignore_ascii_case("cloudmusic.exe") && native.source.eq_ignore_ascii_case("cloudmusic.exe"){
             // SMTC 与网易云日志的歌手分隔符、合唱署名写法不同；按规范化后的歌名与歌手集合判断，避免同一首歌丢失 song_id。
-            let same=crate::lyrics::same_song(&system.title,&system.artist,&native.title,&native.artist);
+            // 系统会话常只报主艺人（如「雄之助」对「雄之助、WaMi」），署名一方包含另一方也算同一首（#202）。
+            let same=crate::lyrics::song_relation(&system.title,&system.artist,&native.title,&native.artist).is_some();
             let newer=match (native.event_time_ms,system.event_time_ms){(Some(n),Some(s))=>Some(n>s),_=>None};
             let use_native=newer.unwrap_or(same && system.playing==native.playing);
             let mut media=if use_native{native.clone()}else{system.clone()};
@@ -1140,6 +1141,17 @@ mod tests {
         unblock.join().unwrap();
         std::thread::sleep(Duration::from_millis(30));
         assert!(cache.poll("new".into(),||None).is_none(),"旧歌曲的迟到封面不能覆盖新歌曲");
+    }
+
+    #[test]
+    fn netease_song_id_survives_a_lead_artist_only_system_session(){
+        // #202：系统会话只报主艺人，网易云日志有完整署名和歌曲 ID；选系统会话时也要带上 ID，才能按 ID 取词。
+        let system=NowPlaying{source:"cloudmusic.exe".into(),title:"Loop".into(),artist:"雄之助".into(),playing:true,event_time_ms:Some(2),..Default::default()};
+        let native=NowPlaying{source:"cloudmusic.exe".into(),title:"Loop".into(),artist:"雄之助、WaMi".into(),playing:true,song_id:Some(1822506511),duration:185.0,event_time_ms:Some(1),..Default::default()};
+        let media=choose_media(Some(system.clone()),Some(native.clone())).unwrap();
+        assert_eq!((media.song_id,media.duration),(Some(1822506511),185.0));
+        let other=NowPlaying{artist:"RHYM".into(),..native};
+        assert_eq!(choose_media(Some(system),Some(other)).unwrap().song_id,None,"不同歌手的同名歌不能借用 ID");
     }
 
     #[test]
