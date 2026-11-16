@@ -2337,8 +2337,8 @@ impl App {
                             });
                             settings_hint(ui,"按实际像素渲染，放大不发虚");
                             if self.settings.skin==model::Skin::Liquid {
-                                settings_hint(ui,"调下面这些参数时岛仔会保持展开，边拖边看效果；切到别的设置页就自动收起");
                                 ui.separator();
+                                settings_hint(ui,"调下面的参数时岛仔会保持展开；切到其他设置页自动收起");
                                 let before=self.settings.liquid_prefer_dgpu;
                                 setting_row(ui,"优先独立显卡","优先使用独显渲染玻璃，切换后重启岛仔生效",&mut self.settings.liquid_prefer_dgpu);
                                 if before!=self.settings.liquid_prefer_dgpu {self.settings.save();}
