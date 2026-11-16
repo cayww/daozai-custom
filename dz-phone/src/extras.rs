@@ -2340,7 +2340,7 @@ impl App {
                                 settings_hint(ui,"调下面这些参数时岛仔会保持展开，边拖边看效果；切到别的设置页就自动收起");
                                 ui.separator();
                                 let before=self.settings.liquid_prefer_dgpu;
-                                setting_row(ui,"优先独立显卡","双显卡机器上优先用独显渲染玻璃：核显没有独立显存、纹理要走系统内存，实测同一构建包核显 548MB / 独显 274MB；关掉则交给系统默认策略（可能选核显，省电但更占内存）。切换后重启岛仔生效",&mut self.settings.liquid_prefer_dgpu);
+                                setting_row(ui,"优先独立显卡","优先使用独显渲染玻璃，切换后重启岛仔生效",&mut self.settings.liquid_prefer_dgpu);
                                 if before!=self.settings.liquid_prefer_dgpu {self.settings.save();}
                                 settings_hint(ui,"修改后需重启岛仔生效");
                                 ui.separator();
