@@ -9,6 +9,7 @@ const BACKUP_DOWNLOAD: &str = "https://pan.quark.cn/s/0a39b4e1f332";
 const STARTUP_DELAY: Duration = Duration::from_secs(10);
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(3600);
+const MANUAL_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug)]
 struct Release { version: String, notes: String, page: String, package: Option<Package> }
@@ -27,6 +28,7 @@ pub(crate) struct State {
     focus_requested: bool,
     logo: Option<egui::TextureHandle>,
     next_check: Option<Instant>,
+    manual_check_after: Option<Instant>,
     automatic_check: bool,
     notified_version: Option<String>,
     history_path: Option<PathBuf>,
@@ -64,8 +66,12 @@ impl State {
         now >= *self.next_check.get_or_insert(now + STARTUP_DELAY) && self.rx.is_none() && !self.dialog_open
     }
 
+    fn manual_wait(&self) -> Duration {
+        self.manual_check_after.map(|t| t.saturating_duration_since(Instant::now())).unwrap_or_default()
+    }
+
     fn begin_check(&mut self, ctx: &egui::Context, automatic: bool, load: impl FnOnce() -> Result<Option<Release>, String> + Send + 'static) -> bool {
-        if self.rx.is_some() { return false; }
+        if self.rx.is_some() || (!automatic && !self.manual_wait().is_zero()) { return false; }
         let (tx, rx) = mpsc::channel(); self.rx = Some(rx); self.automatic_check = automatic;
         self.next_check = Some(Instant::now() + CHECK_INTERVAL);
         self.message.clear(); self.result = None; self.dialog_open = false; self.focus_requested = false;
@@ -88,6 +94,7 @@ impl State {
             match event {
                 Event::Checked(result) => {
                     let automatic = std::mem::take(&mut self.automatic_check);
+                    self.manual_check_after = Some(Instant::now() + MANUAL_INTERVAL);
                     let delay = if result.is_err() { RETRY_INTERVAL } else { CHECK_INTERVAL };
                     self.next_check = Some(Instant::now() + delay);
                     self.dialog_open = matches!(&result, Ok(Some(release)) if !automatic || self.notified_version.as_deref() != Some(release.version.as_str()));
@@ -129,7 +136,8 @@ impl State {
             ui.label(egui::RichText::new("更新检查已关闭 · 自定义构建保护").size(11.5).color(ui.visuals().weak_text_color()));
             return;
         }
-        if ui.add_enabled(self.rx.is_none(), egui::Button::new("检查更新")).clicked() {
+        let wait = self.manual_wait();
+        if ui.add_enabled(self.rx.is_none() && wait.is_zero(), egui::Button::new("检查更新")).clicked() {
             self.begin_check(ui.ctx(), false, check);
         }
         match &self.result {
@@ -142,6 +150,11 @@ impl State {
             Some(Err(message)) => { ui.label(message); ui.hyperlink_to("打开发布页", RELEASES); }
             None if self.rx.is_some() => { ui.label("正在检查…"); }
             _ => {}
+        }
+        if self.rx.is_none() && !wait.is_zero() {
+            let seconds = wait.as_secs_f64().ceil() as u64;
+            ui.weak(format!("显示上次结果，本机 {seconds} 秒后可重新检查。"));
+            ui.ctx().request_repaint_after(Duration::from_secs(1).min(wait));
         }
         ui.add_space(5.0);
     }
@@ -354,14 +367,25 @@ fn http_agent() -> Result<ureq::Agent, String> {
     update_agent(proxy.as_deref(), Duration::from_secs(15))
 }
 
+fn check_error(error: ureq::Error) -> String {
+    const LIMITED: &str = "更新服务暂时限流，请稍后再试。";
+    match error {
+        ureq::Error::Status(429, _) => LIMITED,
+        ureq::Error::Status(403, response) => {
+            let limited = response.header("X-RateLimit-Remaining") == Some("0") || response.has("Retry-After")
+                || serde_json::from_reader::<_, serde_json::Value>(response.into_reader().take(8192))
+                    .is_ok_and(|body| body["message"].as_str().is_some_and(|s| s.to_ascii_lowercase().contains("rate limit")));
+            if limited { LIMITED } else { "更新服务拒绝访问（403），可打开发布页查看版本。" }
+        }
+        ureq::Error::Status(404, _) => "暂未找到正式版本，请查看发布页",
+        _ => "无法连接更新服务，请检查网络或代理后重试",
+    }.to_owned()
+}
+
 fn check() -> Result<Option<Release>, String> {
     let response = http_agent()?
         .get(API).set("User-Agent", concat!("Daozai/", env!("CARGO_PKG_VERSION")))
-        .set("Accept", "application/vnd.github+json").call().map_err(|error| match error {
-            ureq::Error::Status(403 | 429, _) => "检查过于频繁，请稍后重试".to_owned(),
-            ureq::Error::Status(404, _) => "暂未找到正式版本，请查看发布页".to_owned(),
-            _ => "无法连接更新服务，请检查网络或代理后重试".to_owned(),
-        })?;
+        .set("Accept", "application/vnd.github+json").call().map_err(check_error)?;
     let value: serde_json::Value = serde_json::from_reader(response.into_reader())
         .map_err(|_| "更新信息格式异常，请稍后重试".to_owned())?;
     release_info(&value, env!("CARGO_PKG_VERSION"))
@@ -536,6 +560,42 @@ mod tests {
             state.dismiss();
         }
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn recent_check_keeps_its_result_on_manual_retry() {
+        let ctx = egui::Context::default();
+        for result in [Ok(None), Err("更新服务拒绝访问".into())] {
+            let mut state = State::default();
+            let (tx, rx) = mpsc::channel();
+            state.rx = Some(rx);
+            tx.send(Event::Checked(result)).unwrap();
+            state.poll(&ctx);
+            assert!(!state.begin_check(&ctx, false, || Ok(None)));
+            assert!(state.result.is_some() && state.rx.is_none());
+            let page = ctx.run(Default::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| state.ui(ui, true));
+            });
+            assert!(page.shapes.iter().any(|shape| matches!(&shape.shape,
+                egui::Shape::Text(t) if t.galley.text().contains("秒后可重新检查"))));
+            state.manual_check_after = Some(Instant::now());
+            assert!(state.begin_check(&ctx, false, || Ok(None)));
+        }
+    }
+
+    #[test]
+    fn update_service_distinguishes_rate_limits_from_access_denied() {
+        for (code, headers, body, limited) in [
+            (429, "", "", true),
+            (403, "X-RateLimit-Remaining: 0\r\n", "", true),
+            (403, "Retry-After: 60\r\n", "", true),
+            (403, "", r#"{"message":"You have exceeded a secondary rate limit."}"#, true),
+            (403, "X-RateLimit-Remaining: 59\r\n", r#"{"message":"Forbidden"}"#, false),
+        ] {
+            let response = format!("HTTP/1.1 {code} Error\r\n{headers}\r\n{body}").parse().unwrap();
+            let message = check_error(ureq::Error::Status(code, response));
+            assert!(message.contains(if limited { "暂时限流" } else { "拒绝访问" }), "{message}");
+        }
     }
 
     #[test]
