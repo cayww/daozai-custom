@@ -8,7 +8,7 @@
 
 #define MyAppName "岛仔 液态玻璃测试版"
 #define MyAppVersion "0.6.64"
-#define MyAppBuild "liquid-test-15"
+#define MyAppBuild "liquid-test-16"
 ; 独立数据目录：不和正式版的 %APPDATA%\Daozai 抢设置
 #define MyDataDir "Daozai-LiquidTest"
 
@@ -44,22 +44,16 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 Source: "..\..\dz-phone\target\release\daozai.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\dz-phone\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "launch-live.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "launch-freeze.cmd"; DestDir: "{app}"; Flags: ignoreversion
-Source: "测试说明.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
 [Icons]
 Name: "{group}\岛仔 液态玻璃（实时）"; Filename: "{app}\launch-live.cmd"; IconFilename: "{app}\daozai.ico"
 Name: "{group}\岛仔 液态玻璃（可截图）"; Filename: "{app}\launch-freeze.cmd"; IconFilename: "{app}\daozai.ico"
-Name: "{group}\测试说明"; Filename: "{app}\测试说明.txt"
 Name: "{autodesktop}\岛仔 液态玻璃"; Filename: "{app}\launch-live.cmd"; IconFilename: "{app}\daozai.ico"; Tasks: desktopicon
 
 [UninstallDelete]
 Type: files; Name: "{app}\CUSTOM_BUILD.txt"
-
-[Run]
-Filename: "{app}\测试说明.txt"; Description: "先看测试说明（截图注意事项在里面）"; Flags: shellexec nowait postinstall skipifsilent
 
 [Code]
 // 首次安装时铺一份「液态玻璃」默认设置。
