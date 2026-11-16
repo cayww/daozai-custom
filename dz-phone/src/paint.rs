@@ -409,10 +409,24 @@ mod gradient_tests {
 /// 一小片玻璃（胶囊、圆角按钮的底）。
 ///
 /// `level`：0 = 静止，1 = 悬停/按下。只影响填充与白边的强度。
+/// 玻璃控件的「材质」标记：从这里开始画的图形自带配色，换肤时不跟着换。
+///
+/// GPU 玻璃的描边在着色器里恒为白线，所以矢量回退版也必须保持白边 ——
+/// 否则翻页过渡（控件走不了 GPU 的那半秒）会从黑边跳回白边。
+fn chrome_mark(c: &Card) -> usize {
+    crate::skin_paint::shape_count(c.ui.ctx(), c.painter.layer_id())
+}
+
+fn chrome_since(c: &Card, from: usize) {
+    crate::skin_paint::tone_since(c.ui.ctx(), c.painter.layer_id(), from,
+                                  crate::skin_paint::keep_glass_chrome);
+}
+
 pub fn glass_chip(c: &Card, x: f32, y: f32, w: f32, h: f32, r: f32, level: f32) {
     if w < 2.0 || h < 2.0 {
         return;
     }
+    let from = chrome_mark(c);
     let lv = level.clamp(0.0, 1.0);
     let r = r.min(w.min(h) * 0.5);
     // 主体：极淡的白。静止时几乎只有一圈边，悬停才「亮起来」。
@@ -428,6 +442,7 @@ pub fn glass_chip(c: &Card, x: f32, y: f32, w: f32, h: f32, r: f32, level: f32) 
     // 白边 1.5px：液态玻璃要细、要亮，粗了就成描边贴纸。
     c.stroke(x + 0.75, y + 0.75, w - 1.5, h - 1.5, (r - 0.75).max(0.0), 1.5,
              Color32::from_white_alpha((120.0 + 60.0 * lv) as u8));
+    chrome_since(c, from);
 }
 
 /// 圆形玻璃片：播放控制、齿轮、翻页箭头。
@@ -435,11 +450,13 @@ pub fn glass_disc(c: &Card, cx: f32, cy: f32, r: f32, level: f32) {
     if r < 2.0 {
         return;
     }
+    let from = chrome_mark(c);
     let lv = level.clamp(0.0, 1.0);
     c.circle(cx, cy, r, Color32::from_white_alpha((10.0 + 28.0 * lv) as u8));
     // 上半圈内高光（光源在上方，和 GPU 那边的 line/rim 同一个约定）。
     c.arc(cx, cy, r - 0.8, PI * 1.12, PI * 1.88, 1.1, Color32::from_white_alpha((26.0 + 30.0 * lv) as u8));
     c.ring(cx, cy, (r - 0.75).max(0.5), 1.5, Color32::from_white_alpha((110.0 + 60.0 * lv) as u8));
+    chrome_since(c, from);
 }
 
 /// 玻璃凹槽：进度条底槽用（竖向滑槽也能用）。
@@ -450,6 +467,7 @@ pub fn glass_groove(c: &Card, x: f32, y: f32, w: f32, h: f32) {
     if w < 2.0 || h < 1.5 {
         return;
     }
+    let from = chrome_mark(c);
     let r = h * 0.5;
     c.fill(x, y, w, h, r, Color32::from_black_alpha(46));
     if h >= 6.0 {
@@ -460,6 +478,7 @@ pub fn glass_groove(c: &Card, x: f32, y: f32, w: f32, h: f32) {
     // 下缘反光：只有 1px，多一道就脏
     let inset = (r * 0.9).min(w * 0.4);
     c.fill(x + inset, y + h - 1.0, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_white_alpha(26));
+    chrome_since(c, from);
 }
 
 

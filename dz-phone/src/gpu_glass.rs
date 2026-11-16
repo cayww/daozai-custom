@@ -44,6 +44,8 @@ pub struct GlassFrame {
     pub look: [f32; 4],
     /// 刘海形状：(flare px, flare_h px, 是否刘海, _)。非刘海时第 3 项为 0。
     pub notch: [f32; 4],
+    /// 逻辑点 → 物理像素的比例。主题采样区域要按它换算成固定的设备像素尺寸。
+    pub pixels_per_point: f32,
 }
 
 /// 一次 pass 最多画几块控件玻璃（= uniform 里 crect/cprm 的数组长度）。
@@ -877,21 +879,31 @@ fn disable_capture_exclusion() {
     diag("exclude: 冻结模式预热完成，已取消排除（截图可见）");
 }
 
-/// 统计抓屏里「岛体排除区以外」的平均亮度，作为深/浅材质的依据。
-/// 每隔 16 像素采样一次，跳过岛体区域（那里可能是我们自己的玻璃）。
+/// 主题采样框的尺寸（CSS 像素）。宽度取「展开面板宽 + 两侧各留一圈」，
+/// 高度只取岛体上部的一条带 —— 够代表玻璃背后的明暗，又不至于被页面高度带跑。
 #[cfg(windows)]
-fn sample_luma(buf: &[u8], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -> f32 {
-    let (mut sum, mut n) = (0.0f32, 0.0f32);
-    for y in (0..h as i32).step_by(16) {
-        for x in (0..w as i32).step_by(16) {
-            if x >= x0 && x < x1 && y >= y0 && y < y1 { continue; }
-            let i = ((y as u32 * w + x as u32) * 4) as usize;
-            // 用平均亮度：纹理是 BGRA，R/B 对调对平均值无影响。
-            sum += (buf[i] as f32 + buf[i + 1] as f32 + buf[i + 2] as f32) / 3.0 / 255.0;
-            n += 1.0;
-        }
-    }
-    if n > 0.0 { (sum / n).clamp(0.0, 1.0) } else { 0.85 }
+const THEME_W_CSS: f32 = 520.0;
+#[cfg(windows)]
+const THEME_H_CSS: f32 = 120.0;
+
+/// 主题判定（深/浅材质）的采样框：以**岛体上缘中心**为锚点、固定尺寸。
+///
+/// 以前这里用的是「抓屏矩形减去岛体」那一圈像素。问题是那一圈的形状完全跟着
+/// 岛体尺寸走，而各页的展开高度不同（音乐 140 / 视频 176 / 日历 216 / 天气 232），
+/// 一翻页圈里就换了一批壁纸 → 明暗被重新判定 → 背景明明没动，控件和白边却
+/// 黑白跳一次。改成固定尺寸、上缘锚定后，同一块屏幕位置永远是同一个采样框：
+/// 翻页、换页、展开高度变化都不会再动它，只有岛体自己挪位置（拖动/换屏）才跟着走。
+#[cfg(windows)]
+fn theme_rect(body: [f32; 4], bw: i32, bh: i32, ppp: f32) -> (i32, i32, i32, i32) {
+    let ppp = ppp.max(0.1);
+    let (bw, bh) = (bw.max(1), bh.max(1));
+    let sw = ((THEME_W_CSS * ppp).round() as i32).clamp(8, bw);
+    let sh = ((THEME_H_CSS * ppp).round() as i32).clamp(8, bh);
+    let cx = (body[0] + body[2] * 0.5).round() as i32;
+    let x0 = (cx - sw / 2).clamp(0, bw - sw);
+    // 上缘锚定：岛体顶端（含刘海肩上那几像素）就是锚点，往下取固定高度。
+    let y0 = ((body[1] - 6.0 * ppp).round() as i32).clamp(0, bh - sh);
+    (x0, y0, x0 + sw, y0 + sh)
 }
 
 /// 排除未生效时的兜底：首帧抓的「干净桌面底片」。
@@ -1172,7 +1184,7 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
 /// 抓当前岛体外扩矩形。WGC 帧干净时整块刷新滚动底片，污染时只更新外围；
 /// WGC 不可用则回退 GDI，同样走滚动底片（岛体内部保持最近一次干净画面）。
 #[cfg(windows)]
-fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u32, u32)> {
+fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4], ppp: f32) -> Option<(Vec<u8>, u32, u32)> {
     if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
     // 显示器拓扑刚变过（切「扩展/复制/仅主屏」）：桌面还在播重建动画，这一秒内
     // 抓到的都是收拢/黑边的中间态。先检测（顺带处理稳定期内的再次切换），
@@ -1211,8 +1223,6 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
         ((body[0] + body[2] + 10.0).min(bw as f32)) as i32,
         ((body[1] + body[3] + 10.0).min(bh as f32)) as i32,
     );
-    BG_LUMA.store(sample_luma(&raw, bw, bh, cx0, cy0, cx1, cy1).to_bits(),
-                  std::sync::atomic::Ordering::Relaxed);
     dump_capture(&raw, bw, bh, if from_wgc { "wgc" } else { "gdi" });
     let inner = mean_luma(&raw, bw, bh, cx0, cy0, cx1, cy1);
     let outer = mean_luma_outside(&raw, bw, bh, cx0, cy0, cx1, cy1);
@@ -1226,6 +1236,20 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
         }
         return None;
     }
+    // 主题明暗：用**固定尺寸**的采样框（见 `theme_rect`），只认 WGC 抓到的干净帧。
+    // 放在污染判定之后：黑岛形帧、GDI 兜底帧（岛仔自己会被抓进去）都不许污染主题，
+    // 冻结截图模式下取消过捕获排除，同样跳过 —— 宁可沿用上一次的值。
+    if from_wgc && !frozen {
+        let (tx0, ty0, tx1, ty1) = theme_rect(body, bw as i32, bh as i32, ppp);
+        let luma = (mean_luma(&raw, bw, bh, tx0, ty0, tx1, ty1) / 255.0).clamp(0.0, 1.0);
+        // 明显变化才落盘：换壁纸、岛仔换位置会看到这条，翻页/换页不该看到。
+        let prev = f32::from_bits(BG_LUMA.load(std::sync::atomic::Ordering::Relaxed));
+        if (luma - prev).abs() > 0.06 {
+            diag(&format!("theme: luma={:.2}→{:.2} 框=[{},{} {}x{}] 岛体高={:.0}",
+                          prev, luma, tx0, ty0, tx1 - tx0, ty1 - ty0, body[3]));
+        }
+        BG_LUMA.store(luma.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    }
     if GRAB_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
         diag(&format!("capture: src={} inner={:.0} outer={:.0} cap={}x{}",
                       if from_wgc { "wgc" } else { "gdi" }, inner, outer, bw, bh));
@@ -1238,7 +1262,7 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
 }
 
 #[cfg(not(windows))]
-fn capture(_x: i32, _y: i32, w: i32, h: i32, _body: [f32; 4]) -> Option<(Vec<u8>, u32, u32)> {
+fn capture(_x: i32, _y: i32, w: i32, h: i32, _body: [f32; 4], _ppp: f32) -> Option<(Vec<u8>, u32, u32)> {
     // 非 Windows 只给一张渐变，保证模块能编译；真机效果以 Windows 为准。
     let (w, h) = (w.max(1) as u32, h.max(1) as u32);
     let mut rgba = vec![0u8; (w * h * 4) as usize];
@@ -1299,7 +1323,7 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         // 每帧都抓：节流会让「纹理内容」与「当前 bounds」错一帧，
         // 展开动画里几何被拉伸，表现为抖动/错位。
         {
-            let Some((rgba, tw, th)) = capture(f.capture[0] as i32, f.capture[1] as i32, cw, ch, f.bounds) else {
+            let Some((rgba, tw, th)) = capture(f.capture[0] as i32, f.capture[1] as i32, cw, ch, f.bounds, f.pixels_per_point) else {
                 if tick == 0 { diag("capture: GDI 抓屏失败"); }
                 return Vec::new();
             };
@@ -1449,12 +1473,34 @@ pub fn frame_for(
             Some((flare, flare_h)) => [flare * ppp, flare_h * ppp, 1.0, 0.0],
             None => [0.0, 0.0, 0.0, 0.0],
         },
+        pixels_per_point: ppp,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    /// 主题采样框只跟「岛体上缘中心」走：翻页（页面高度不同）不能挪动它，
+    /// 否则背景没变、深/浅材质却被重新判定，控件白边会黑白跳一次。
+    #[test]
+    fn theme_rect_is_immune_to_page_height() {
+        let ppp = 1.75;
+        // 同一块屏、同一个岛体中心，音乐页 140 高 vs 天气页 232 高。
+        let music = [112.0, 10.5, 733.0, 245.0];
+        let weather = [112.0, 10.5, 733.0, 406.0];
+        let a = theme_rect(music, 957, 339, ppp);
+        let b = theme_rect(weather, 957, 500, ppp);
+        assert_eq!(a, b, "换页只改高度，采样框必须一模一样：{a:?} vs {b:?}");
+        // 收起态抓屏矮很多，框会被裁到抓屏内，但仍然贴着岛体上缘。
+        let c = theme_rect([112.0, 10.5, 362.0, 52.5], 586, 147, ppp);
+        assert!(c.1 >= 0 && c.3 <= 147, "收到抓屏内：{c:?}");
+        assert_eq!(c.1, 0, "上缘锚定，靠近屏幕顶时从 0 开始");
+        // 岛体整体右移，框跟着走。
+        let moved = theme_rect([312.0, 10.5, 733.0, 245.0], 1157, 339, ppp);
+        assert!(moved.0 > a.0, "拖动岛仔时采样框跟着平移：{a:?} → {moved:?}");
+    }
 
     #[test]
     fn frame_maps_rects_to_pixels_and_clip_space() {

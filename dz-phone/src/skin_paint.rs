@@ -25,19 +25,26 @@ pub struct Palette {
     pub darken: f32,
     /// 深色块（卡片、按钮底）映射时的亮度系数：越小越接近纸色，毛玻璃浅色用它做白色磨砂按钮。
     pub chip: f32,
+    /// 玻璃控件（圆盘 / 胶囊 / 凹槽）自带白边配色，不参与换色。
+    ///
+    /// 液态皮肤的浅材质必须打开：GPU 玻璃的描边在着色器里**恒为白线**
+    /// （`mix(col, vec3(1.0), line)`），而矢量回退版原本会把白边换成墨色 ——
+    /// 于是每次翻页（控件走不了 GPU 的那半秒）就「黑边 → 白边」跳一次，
+    /// 看着像主题被重新判定了一遍。打开后两者一致，只用亮度换字色。
+    pub glass_chrome: bool,
 }
 
 /// 奶油（参考 Oyen）：暖白底、深棕字、橙色强调。
-pub const CREAM: Palette = Palette { paper: [255, 243, 228], ink: [46, 32, 22], accent: Some([240, 138, 36]), dark_alpha: 1.0, lift: 1.0, darken: 0.78, chip: 1.0 };
+pub const CREAM: Palette = Palette { paper: [255, 243, 228], ink: [46, 32, 22], accent: Some([240, 138, 36]), dark_alpha: 1.0, lift: 1.0, darken: 0.78, chip: 1.0, glass_chrome: false };
 /// 毛玻璃·浅：白色磨砂、近黑字、系统蓝。
-pub const GLASS_LIGHT: Palette = Palette { paper: [255, 255, 255], ink: [22, 22, 26], accent: Some([10, 112, 230]), dark_alpha: 0.8, lift: 1.0, darken: 0.78, chip: 0.6 };
+pub const GLASS_LIGHT: Palette = Palette { paper: [255, 255, 255], ink: [22, 22, 26], accent: Some([10, 112, 230]), dark_alpha: 0.8, lift: 1.0, darken: 0.78, chip: 0.6, glass_chrome: false };
 /// 液态玻璃·浅背景专用：和 GLASS_LIGHT 同为白底近黑字，但把 lift 从 1.0 降到 0.45，
 /// 让辅助灰字也压到深灰（178→约55，见 map_color 的中性色映射），而主白字仍映射为
 /// 近黑 ink(22)。这样浅壁纸上「主文字 + 辅助灰字」都够深、看得清，同时保留层级差。
 /// 仅液态皮肤按 liquid_k 自动切换时使用；手动浅色玻璃皮肤仍用 GLASS_LIGHT。
-pub const GLASS_LIGHT_READABLE: Palette = Palette { paper: [255, 255, 255], ink: [22, 22, 26], accent: Some([10, 112, 230]), dark_alpha: 0.8, lift: 0.45, darken: 0.78, chip: 0.6 };
+pub const GLASS_LIGHT_READABLE: Palette = Palette { paper: [255, 255, 255], ink: [22, 22, 26], accent: Some([10, 112, 230]), dark_alpha: 0.8, lift: 0.45, darken: 0.78, chip: 0.6, glass_chrome: true };
 /// 毛玻璃·深：保持黑底白字，只把灰色文字提亮、卡片底调透，适配更通透的深色玻璃。
-pub const GLASS_DARK: Palette = Palette { paper: [0, 0, 0], ink: [255, 255, 255], accent: None, dark_alpha: 0.5, lift: 0.6, darken: 1.0, chip: 1.0 };
+pub const GLASS_DARK: Palette = Palette { paper: [0, 0, 0], ink: [255, 255, 255], accent: None, dark_alpha: 0.5, lift: 0.6, darken: 1.0, chip: 1.0, glass_chrome: false };
 
 /// 单色图标纹理（白色图形 + 透明度，如 AI 厂商标识）：和文字一样参与换色。
 /// 其余纹理（专辑封面、应用图标、文件预览）保持原样。
@@ -233,6 +240,14 @@ fn light_neutral(shape: &Shape) -> bool {
 /// 换色函数：输入按深色主题画的颜色，输出该皮肤下的颜色。
 pub type Tone = fn(Color32, &Palette) -> Color32;
 
+/// 玻璃控件（圆盘 / 胶囊 / 凹槽）专用的换色函数：调色板声明 `glass_chrome` 时原样保留。
+///
+/// 玻璃的白边、柔光、压暗是「材质」而不是「配色」，和 GPU 着色器画出来的那套
+/// 必须一致（着色器里白边永远是白线）。只有字色、图标色才跟着深/浅材质走。
+pub fn keep_glass_chrome(c: Color32, p: &Palette) -> Color32 {
+    if p.glass_chrome { c } else { map_color(c, p) }
+}
+
 /// 本帧登记过自带配色的图形区段：(图层, 起, 止, 换色函数)，附带登记时的帧号，跨帧自动作废。
 #[derive(Clone, Default)]
 struct Toned { pass: u64, spans: Vec<(egui::LayerId, usize, usize, Tone)> }
@@ -355,6 +370,25 @@ mod tests {
         assert!(gray[0] > 165, "灰色文字提亮：{gray:?}");
         assert_eq!(map_color(Color32::from_rgb(62, 172, 248), &GLASS_DARK), Color32::from_rgb(62, 172, 248), "强调色不变");
         assert!(map_color(Color32::from_rgb(22, 22, 24), &GLASS_DARK).a() < 160, "卡片底带通透感");
+    }
+
+    /// 玻璃控件的白边是「材质」，不跟换色走 —— GPU 玻璃恒白边，矢量回退版必须一致。
+    #[test]
+    fn glass_chrome_keeps_its_white_edge_in_light_material() {
+        let edge = Color32::from_white_alpha(150);
+        // 液态皮肤浅材质：白边原样保留（不能变成墨色，否则翻页时会「黑边跳白边」）。
+        assert!(GLASS_LIGHT_READABLE.glass_chrome);
+        let kept = keep_glass_chrome(edge, &GLASS_LIGHT_READABLE);
+        assert_eq!(kept, edge, "白边不参与换色");
+        // 凹槽的压暗同理：还是那块深色玻璃，不翻成纸色。
+        let groove = Color32::from_black_alpha(46);
+        assert_eq!(keep_glass_chrome(groove, &GLASS_LIGHT_READABLE), groove);
+        // 字色、图标色不受影响：仍然由调色板映射成墨色。
+        let ink = map_color(Color32::WHITE, &GLASS_LIGHT_READABLE);
+        assert!(ink.r() < 40, "文字仍跟着材质走：{ink:?}");
+        // 其它皮肤（奶油 / 手浅玻璃）保持原来的整片换色行为。
+        assert_eq!(keep_glass_chrome(edge, &CREAM), map_color(edge, &CREAM));
+        assert_ne!(keep_glass_chrome(edge, &GLASS_LIGHT), edge, "手浅玻璃仍然整体换色");
     }
 
     #[test]
