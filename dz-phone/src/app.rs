@@ -2142,17 +2142,7 @@ impl App {
             // 用上一帧周期反推净工作时间，从 16.7ms 里扣掉它，才能真的跑满 60。
             let period_ms = (dt * 1000.0).max(0.0);
             let work_ms = (period_ms - 16.0).clamp(0.0, 12.0);
-            // 自适应帧率：60fps 只是为了「背景实时刷新」。静止壁纸（WGC 连续无新帧）
-            // 且界面无动画、指针不在岛上时，玻璃内容本来就不变 —— 降到 30fps，
-            // CPU 近似减半，视觉无差别。指针一进入（悬停动效）或背景一变（视频壁纸）
-            // 立刻回 60fps；交互本身走输入事件驱动，不受这个预约影响。
-            let animating = self.glass_morph > 0.01
-                || (self.progress().clamp(0.0, 1.0) - self.last_progress).abs() > 0.001
-                || self.ctl_down
-                || env.cursor.is_some_and(|p| win.contains(p));
-            let bg_moving = crate::gpu_glass::take_new_frame();
-            let target_ms = if animating || bg_moving { 16.7 } else { 33.3 };
-            let wait_ms = (target_ms - work_ms).clamp(1.0, 33.3);
+            let wait_ms = (16.7 - work_ms).clamp(1.0, 17.0);
             ui.ctx().request_repaint_after(std::time::Duration::from_secs_f32(wait_ms as f32 / 1000.0));
         }
         // 液态玻璃：背景亮度决定深/浅材质。0.52/0.66 之间是滞回区，

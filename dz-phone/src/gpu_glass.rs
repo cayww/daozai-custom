@@ -125,16 +125,6 @@ static EXCLUSION_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 /// 冻结诊断模式的预热帧数：前 24 帧保持排除以收集干净壁纸，之后取消排除、冻结。
 static FREEZE_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static EXCLUDED_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-/// 最近一次抓屏是否拿到了**新的** DWM 帧（而不是 WGC 的 NoFrame 复用）。
-/// App 用它做自适应帧率：背景一直在变（视频壁纸/视频播放）才需要 60fps；
-/// 静止壁纸 + 界面无动画时降到 30fps，CPU 近似减半，视觉无差别。
-static NEW_FRAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-
-/// 读并清除「最近是否拿到新帧」。每帧调用一次。
-pub fn take_new_frame() -> bool {
-    NEW_FRAME.swap(false, std::sync::atomic::Ordering::Relaxed)
-}
-
 /// 桌面平均亮度。非 Windows / 未抓屏时给一个偏浅的默认值。
 pub fn background_luma() -> f32 {
     let forced = std::env::var("DAOZAI_LIQUID_FORCE_LUMA").ok()
@@ -1143,10 +1133,7 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
     }
     let want = ((w as u64) << 32) | (h as u64);
     let (raw, bw, bh, from_wgc) = match crate::wgc::grab(x, y, w, h) {
-        crate::wgc::Grab::Frame(p, tw, th) => {
-            NEW_FRAME.store(true, std::sync::atomic::Ordering::Relaxed);
-            (p, tw, th, true)
-        }
+        crate::wgc::Grab::Frame(p, tw, th) => (p, tw, th, true),
         // WGC 这一帧还没有新画面：复用上一帧纹理。
         // **绝对不能退回 GDI**：GDI BitBlt 读的是桌面 DC，WDA_EXCLUDEFROMCAPTURE
         // 在那里不生效（只会把窗口变黑、或异步失效后抓到窗口自己），
