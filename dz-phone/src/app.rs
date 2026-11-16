@@ -885,6 +885,9 @@ pub struct App {
     pub wgpu_format:Option<eframe::egui_wgpu::wgpu::TextureFormat>,
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
+    /// 液态玻璃的重绘档位：0=不管（交给原有节拍）、1=60fps（有动画/悬停/拖动）、
+    /// 2=30fps（静止，玻璃内容不变）。由 `frame()` 每帧写入，`out.repaint_after` 消费。
+    glass_tick:u8,
     /// 形变强度 0..1：由展开进度的**变化速度**驱动，带衰减。
     /// 用来让玻璃光学在展开/折叠时参与过渡。不能直接用 progress ——
     /// 实测面板高度 100ms 内就从 45 跳到 210，progress 几乎立刻到 1，
@@ -1165,6 +1168,7 @@ impl App {
             fluid_tex:None,
             wgpu_format:None,
             liquid_k:1.0,
+            glass_tick:0,
             glass_morph:0.0,
             last_progress:0.0,
             window_origin:[0.0,0.0],
@@ -2135,15 +2139,25 @@ impl App {
         self.dt = dt;
         // 液态玻璃的背景来自实时抓屏：动态壁纸/视频一直在动，但 Windows 下 vsync 关闭、
         // 重绘完全由输入事件驱动。鼠标不动时 egui 不重绘 → prepare 不调用 → 抓屏停止，
-        // 玻璃背景就「冻住」了，看起来正好像卡顿。这里主动按 60fps 预约重绘。
+        // 玻璃背景就「冻住」了，看起来正好像卡顿。所以需要持续喂重绘。
+        //
+        // **不在主循环里调 request_repaint_after**：那个 API 在 Windows 的 UI 循环内
+        // 会自我触发连续重绘（emilk/egui#3109），Duration 被忽略、帧率锁死 60fps。
+        // 这里只把期望节拍写给控制线程（见 `set_repaint_ms` 与 main.rs 的 repaint 线程）：
+        // 有动画/背景在变 → 16ms(60fps)；纯静止 → 33ms(30fps)。
         if self.settings.skin == model::Skin::Liquid && self.wgpu_format.is_some() {
-            // 预约 16ms 后重绘 —— 但 16ms 是「从现在算」，而当前帧后面还有活要干
-            // （绘制、抓屏、present）。实测帧周期 = 16 + 净工作 ≈ 20.8ms，只有 48fps。
-            // 用上一帧周期反推净工作时间，从 16.7ms 里扣掉它，才能真的跑满 60。
-            let period_ms = (dt * 1000.0).max(0.0);
-            let work_ms = (period_ms - 16.0).clamp(0.0, 12.0);
-            let wait_ms = (16.7 - work_ms).clamp(1.0, 17.0);
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f32(wait_ms as f32 / 1000.0));
+            // 需要持续喂重绘（背景实时抓屏），但**不能在这里每帧调
+            // request_repaint_after**：egui 的 delay 从「现在」算，而请求要到帧末才被
+            // 处理，处理时已扣掉一帧时间 → 实际等待 = 设定值 − 帧周期，形成正反馈，
+            // 设 30ms 实测仍是 58fps（trace 里 delay 恒 13.6ms = 30.3 − 16.7）。
+            // 做法：只把「快/慢」记进 self.glass_tick，由 out.repaint_after 统一调度
+            // （main.rs 的 schedule_repaint 会补回 predicted_dt，不会自激）。
+            self.glass_tick = if self.glass_morph > 0.01
+                || self.ctl_down
+                || env.cursor.is_some_and(|p| win.contains(p))
+            { 1 } else { 2 };
+        } else {
+            self.glass_tick = 0;
         }
         // 液态玻璃：背景亮度决定深/浅材质。0.52/0.66 之间是滞回区，
         // 避免在阈值附近来回闪；平滑系数让 shader 与文字颜色同步过渡。
@@ -2636,7 +2650,13 @@ impl App {
         let lyric_scrolling=self.island_lyric_scroll.is_some();
         let animating=transitioning || ambient || lyric_scrolling || pet_visible && self.pet.state!=PetState::Sleeping;
         // 交互形变保持 60 帧，媒体/歌词滚动 30 帧；小表情 20 帧，睡眠 10 帧，静态界面每秒核对提醒。
-        let repaint_after=std::time::Duration::from_secs_f64(if transitioning{1.0/60.0}else if ambient||lyric_scrolling{1.0/30.0}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0});
+        // 液态玻璃有自己的档位：1=60fps（动画/悬停/拖动，玻璃要跟手）、2=30fps（静止）。
+        // 它必须有别于其它皮肤的「静止 1 秒」——玻璃背景靠持续抓屏刷新，停 1 秒会冻住。
+        let repaint_after=std::time::Duration::from_secs_f64(match self.glass_tick {
+            1 => 1.0/60.0,
+            2 => 1.0/30.0,
+            _ => if transitioning{1.0/60.0}else if ambient||lyric_scrolling{1.0/30.0}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0},
+        });
         cmds.append(&mut self.pending);
         FrameOut {
             region: rel(floating_toast.into_iter().chain(self.shelf_menu_rect.map(|r|r.union(r + ctx.style().visuals.popup_shadow.margin()).expand(1.0 / ctx.pixels_per_point()))).fold(region,Rect::union).intersect(ui.max_rect())),
