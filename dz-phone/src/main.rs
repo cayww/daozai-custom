@@ -982,6 +982,58 @@ fn run() -> eframe::Result<()> {
         .with_taskbar(false)
         .with_always_on_top()
         .with_visible(false);
-    let opts = eframe::NativeOptions { viewport, vsync: !cfg!(windows), ..Default::default() };
+    let mut opts = eframe::NativeOptions { viewport, vsync: !cfg!(windows), ..Default::default() };
+    // 液态玻璃可选「优先独立显卡」。显卡是启动期决定的（wgpu 适配器只选一次），
+    // 所以在建窗前独立读一次设置；非液态皮肤、或用户关掉这项时完全不动 wgpu 的默认策略。
+    //
+    // 为什么要这项：egui-wgpu 的默认偏好虽是 HighPerformance，但混合显卡机器上仍可能
+    // 落到核显。核显没有独立显存，玻璃的纹理/帧缓冲会从系统内存分配 —— 实测同一构建包
+    // 核显 548MB、独显 274MB（工作集）。用 is_surface_supported 过滤，保证选中的卡
+    // 一定能呈现到本窗口，不会黑屏；另把虚拟/远程显示适配器垫底。
+    let boot = daozai::model::Settings::load();
+    if boot.skin == daozai::model::Skin::Liquid && boot.liquid_prefer_dgpu {
+        opts.wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(
+            eframe::egui_wgpu::WgpuSetupCreateNew {
+                native_adapter_selector: Some(std::sync::Arc::new(
+                    |adapters: &[eframe::wgpu::Adapter],
+                     surface: Option<&eframe::wgpu::Surface<'_>>|
+                     -> Result<eframe::wgpu::Adapter, String> {
+                        let score = |a: &eframe::wgpu::Adapter| -> i32 {
+                            let info = a.get_info();
+                            let name = info.name.to_lowercase();
+                            // 虚拟/远程/软件渲染一律垫底：它们比核显更慢、更占内存。
+                            if name.contains("virtual")
+                                || name.contains("display adapter")
+                                || name.contains("basic render")
+                                || name.contains("remote")
+                            {
+                                return -100;
+                            }
+                            match info.device_type {
+                                eframe::wgpu::DeviceType::DiscreteGpu => 100,
+                                eframe::wgpu::DeviceType::IntegratedGpu => 50,
+                                eframe::wgpu::DeviceType::VirtualGpu => 10,
+                                eframe::wgpu::DeviceType::Cpu => 0,
+                                _ => 20,
+                            }
+                        };
+                        let mut best: Option<&eframe::wgpu::Adapter> = None;
+                        for a in adapters {
+                            if let Some(s) = surface {
+                                if !a.is_surface_supported(s) {
+                                    continue;
+                                }
+                            }
+                            if best.map_or(true, |b| score(a) > score(b)) {
+                                best = Some(a);
+                            }
+                        }
+                        best.cloned().ok_or_else(|| "没有可用的 GPU 适配器".to_string())
+                    },
+                )),
+                ..Default::default()
+            },
+        );
+    }
     graphics::run(opts,|opts|eframe::run_native("岛仔", opts, Box::new(|cc| Ok(Box::new(Shell::new(cc))))))
 }
