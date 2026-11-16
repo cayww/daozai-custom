@@ -109,14 +109,15 @@ fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
 }
 
 // ---------- 控件玻璃 ----------
-/// 岛内会上 GPU 玻璃的小控件。**顺序就是 uniform 槽位顺序**
-/// （`gpu_glass::MAX_CTL` = 10，这里 9 个）。
+/// 岛内会上 GPU 玻璃的小控件。**顺序就是 uniform 槽位顺序**。
+/// `CTL_N` 是枚举总数（各页互斥，同时可见的 ≤ `gpu_glass::MAX_CTL`=13：
+/// 音乐页 10、编辑器页 9、日历/额度页 4），`frame_for` 按槽位截断。
 ///
 /// 以前只有歌词卡一块走 GPU，其余小控件用 egui 画的矢量玻璃片 —— 那种做法
 /// 只有「像玻璃」的配色，没有真折射。现在全部走真折射，矢量玻璃片只在
 /// 没有 wgpu 设备（没开兼容渲染）时兜底。
-/// 控件玻璃的槽位数（= `Ctl::ALL` 的长度 = `gpu_glass::MAX_CTL` 以内）。
-pub(crate) const CTL_N: usize = 12;
+/// 控件玻璃的槽位数（= `Ctl::ALL` 的长度；**同时可见数** ≤ `gpu_glass::MAX_CTL`）。
+pub(crate) const CTL_N: usize = 23;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ctl {
@@ -132,11 +133,27 @@ pub(crate) enum Ctl {
     Seek,
     Focus,
     Rest,
+    /// 额度页「添加账号」（无账号时的引导按钮，quota_ui）。
+    QuotaAdd,
+    /// 日历页「＋ 新增」（calendar_ui）。
+    CalAdd,
+    /// 日程编辑器：全天开关 / 提醒分段（固定 5 槽，全天时只用前 2）/ 删除 / 取消 / 保存。
+    CalAllDay,
+    CalRem0,
+    CalRem1,
+    CalRem2,
+    CalRem3,
+    CalRem4,
+    CalDelete,
+    CalCancel,
+    CalSave,
 }
 
 impl Ctl {
-    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest];
+    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave];
     pub(crate) fn idx(self) -> usize { self as usize }
+    /// 日程编辑器提醒分段的槽位下标（CalRem0..4）。
+    pub(crate) fn rem_index(self) -> usize { self as usize - Ctl::CalRem0 as usize }
     /// 放大镜倍数（指示器类 1.12、小开关珠 1.25 这个量级）。圆片给得多一点，
     /// 胶囊给得少 —— 长条上放大会露出「被拉宽」的假象。
     fn mag(self) -> f32 {
@@ -2998,8 +3015,11 @@ impl App {
         }
     }
 
-    /// 控件能不能走 GPU 玻璃：完全展开、内容揭开、没有二级页/编辑弹窗。
+    /// 控件能不能走 GPU 玻璃：完全展开、内容揭开、没有二级页/任务弹窗。
     ///
+    /// 日程编辑器**放行**：整页表单的按钮（全天/提醒分段/删除/取消/保存）都注册了
+    /// 控件几何，透镜跟图标逐像素对齐；编辑器替换了 panel_body，chrome 控件在
+    /// `ctl_geom` 里一并消失。二级页与任务弹窗仍回矢量（那里的控件没注册几何）。
     /// 翻页过渡**也放行**：新页控件随 `slide.pos` 平移，透镜在 `glass_controls`
     /// 里同步平移就能对上；面板高度变化与展开/折叠共用 morph 折射增强。
     /// 之前过渡期回退矢量版，浅材质下白边要靠 `glass_chrome` 保，而且没有折射，
@@ -3010,7 +3030,7 @@ impl App {
         // 拓扑变化后的稳定期内纹理是旧屏内容，控件一并回退矢量版本。
         if crate::wgc::settling() {return false;}
         if !self.open || self.reveal<0.6 {return false;}
-        if self.subpage.is_some() || self.calendar.draft.is_some() || self.task_dialog.is_some() {return false;}
+        if self.subpage.is_some() || self.task_dialog.is_some() {return false;}
         self.progress()>=0.985 || self.t<self.flip_glass_until
     }
 
@@ -3056,8 +3076,11 @@ impl App {
         let has=!self.media.title.is_empty();
         let disc=|x:f32,y:f32,r:f32|(Rect::from_center_size(Pos2::new(x,y),Vec2::splat(r*2.0)),r);
         let arrow_y=if self.page==6||self.page==8 {88.0} else {68.0};
+        // 日程编辑器/任务弹窗整页替换 panel_body，齿轮与翻页箭头都不画 ——
+        // 几何也要跟着消失，否则 GPU 会画出一颗没有图标的空透镜。
+        let chrome_gone=self.calendar.draft.is_some() || self.task_dialog.is_some();
         Some(match ctl {
-            Ctl::Gear=>disc(394.0,18.0,13.0),
+            Ctl::Gear=>{if chrome_gone {return None;} disc(394.0,18.0,13.0)}
             Ctl::Lyric=>{if !media||!has {return None;} disc(74.0,118.0,13.5)}
             Ctl::Prev=>{if !media||!has {return None;} disc(162.0,118.0,13.5)}
             Ctl::Play=>{if !media||!has {return None;} disc(210.5,118.0,13.5)}
@@ -3067,8 +3090,8 @@ impl App {
                 if !music||!has||self.side() {return None;}
                 (Rect::from_min_size(Pos2::new(279.0,108.0),Vec2::new(68.0,20.0)),10.0)
             }
-            Ctl::NavL=>{if !self.nav_shown() {return None;} disc(21.0,arrow_y,12.0)}
-            Ctl::NavR=>{if !self.nav_shown() {return None;} disc(398.0,arrow_y,12.0)}
+            Ctl::NavL=>{if !self.nav_shown() || chrome_gone {return None;} disc(21.0,arrow_y,12.0)}
+            Ctl::NavR=>{if !self.nav_shown() || chrome_gone {return None;} disc(398.0,arrow_y,12.0)}
             // 进度条圆钮：位置随播放进度移动，和 pages.rs 共用 seek_geom() 保证对齐。
             // 形状按 LiquidGlass-Pack-v2 的滑块圆钮标准：未拖是横向小胶囊（50×36 的
             // 比例 → 本坐标 28×20）、不着重放大（mag=1，就是一块浅玻璃）；拖动时整体
@@ -3090,6 +3113,43 @@ impl App {
             Ctl::Rest=>{
                 if self.page!=1 || self.subpage.is_some() {return None;}
                 focus_tab_geom(false)
+            }
+            // 额度页「添加账号」：只在无账号的引导态出现（quota_ui 同一条件）。
+            Ctl::QuotaAdd=>{
+                if self.page!=6 || self.subpage.is_some() || self.quota.config.selected_index().is_some() {return None;}
+                (Rect::from_min_size(Pos2::new(43.0,92.0),Vec2::new(94.0,24.0)),12.0)
+            }
+            // 日历页「＋ 新增」：编辑器打开时整页被表单替换，按钮随之消失。
+            Ctl::CalAdd=>{
+                if self.page!=CALENDAR_PAGE || self.calendar.draft.is_some() {return None;}
+                (Rect::from_min_size(Pos2::new(101.0,9.0),Vec2::new(46.0,18.0)),9.0)
+            }
+            // 日程编辑器（calendar_editor.rs 同一套坐标）。编辑器替换了 panel_body，
+            // 齿轮/箭头本就不画，所以这里没有 chrome 控件，槽位很宽裕。
+            Ctl::CalAllDay=>{
+                if self.calendar.draft.is_none() {return None;}
+                (Rect::from_min_size(Pos2::new(294.0,72.0),Vec2::new(76.0,21.0)),10.5)
+            }
+            Ctl::CalRem0|Ctl::CalRem1|Ctl::CalRem2|Ctl::CalRem3|Ctl::CalRem4=>{
+                let Some(d)=self.calendar.draft.as_ref() else {return None;};
+                let i=ctl.rem_index();
+                // 分段数量与宽度随「全天」变：全天 2 个 126 宽，否则 5 个 54 宽。
+                let (count,width)=if d.all_day {(2usize,126.0)}else{(5usize,54.0)};
+                if i>=count {return None;}
+                let x=86.0+i as f32*(width+3.0);
+                (Rect::from_min_size(Pos2::new(x,136.0),Vec2::new(width,21.0)),10.5)
+            }
+            Ctl::CalDelete=>{
+                if self.calendar.draft.as_ref().is_none_or(|d|d.uid.is_none()) {return None;}
+                (Rect::from_min_size(Pos2::new(43.0,188.0),Vec2::new(82.0,22.0)),11.0)
+            }
+            Ctl::CalCancel=>{
+                if self.calendar.draft.is_none() {return None;}
+                (Rect::from_min_size(Pos2::new(224.0,188.0),Vec2::new(64.0,22.0)),11.0)
+            }
+            Ctl::CalSave=>{
+                if self.calendar.draft.is_none() {return None;}
+                (Rect::from_min_size(Pos2::new(298.0,188.0),Vec2::new(72.0,22.0)),11.0)
             }
         })
     }
@@ -3168,7 +3228,9 @@ impl App {
     /// （body()/nav() 直接画，不参与滑移），保持原位。
     pub(crate) fn glass_controls(&self,origin:Pos2)->Vec<crate::gpu_glass::Ctl>{
         if !self.ctl_glass_ready() {return Vec::new();}
-        let tx=self.page_slide_tx();
+        // 日程编辑器整页替换 panel_body（不走 in_tx 的内容滑移），透镜保持原位；
+        // 只在真正的翻页过渡里跟随 slide.pos。
+        let tx=if self.calendar.draft.is_none() {self.page_slide_tx()}else{0.0};
         let mut out=Vec::new();
         for ctl in Ctl::ALL {
             if !self.ctl_gpu[ctl.idx()] {continue;}

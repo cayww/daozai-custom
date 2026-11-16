@@ -1,5 +1,5 @@
 //! 同心额度环、账号选择及账号设置。
-use crate::{app::{App,Cmd},extras::{setting_row,settings_card,settings_control_row},paint::{Card,H},quota::{self,Accent,Account,Amount,Config,Provider,Snapshot},theme::{self,W}};
+use crate::{app::{App,Cmd,Ctl},extras::{setting_row,settings_card,settings_control_row},paint::{Card,H},quota::{self,Accent,Account,Amount,Config,Provider,Snapshot},theme::{self,W}};
 use eframe::egui::{self,Color32};
 use std::collections::{HashMap,HashSet};
 use chrono::Datelike;
@@ -410,7 +410,18 @@ impl App {
         let Some(selected)=self.quota.config.selected_index() else{
             c.text(43.0,61.0,"还没有添加 AI 账号",13.0,W::Bold,theme::WHITE,H::Left);
             c.text(43.0,80.0,"连接 AI 账号，查看剩余额度",10.5,W::Regular,theme::GRAY,H::Left);
-            let(r,b)=crate::paint::capsule(c,43.0,92.0,94.0,24.0,"add-quota-account",theme::BTN,theme::BTN_HOVER);b.text(90.0,108.0,"添加账号",10.0,W::Semibold,theme::WHITE,H::Center);if r.clicked(){self.settings_tab=11;self.open_settings();}return;
+            // GPU 玻璃分支：透镜由着色器画（真折射），这里只留命中区、悬停反馈和文字；
+            // 没上 GPU 时退回实心胶囊（非液态皮肤本来就没有折射层）。
+            let (r,b)=if self.glassy() && self.ctl_on_gpu(Ctl::QuotaAdd) {
+                let r=c.hit(43.0,92.0,94.0,24.0,"add-quota-account");
+                let (hover,_)=c.hover_t(&r);
+                let b=c.scaled(90.0,104.0,self.ctl_scale(Ctl::QuotaAdd));
+                if hover>0.01 {b.fill(43.0,92.0,94.0,24.0,12.0,Color32::from_white_alpha((12.0+hover*16.0) as u8));}
+                (r,b)
+            }else{
+                crate::paint::capsule(c,43.0,92.0,94.0,24.0,"add-quota-account",theme::BTN,theme::BTN_HOVER)
+            };
+            b.text(90.0,108.0,"添加账号",10.0,W::Semibold,theme::WHITE,H::Center);if r.clicked(){self.settings_tab=11;self.open_settings();}return;
         };
         let indices=self.quota.config.ordered_indices(false);
         let pos=indices.iter().position(|i|*i==selected).unwrap_or(0);let start=pos/3*3;let mut picked=None;
