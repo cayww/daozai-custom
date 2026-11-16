@@ -857,6 +857,13 @@ pub struct App {
     /// 公式 a = -k(x-target) - 2ζ√k·v，和岛体自己的 w/h 同一套实现。
     pub(crate) ctl_appear:[anim::Spring; CTL_N],
     pub(crate) ctl_press:[anim::Spring; CTL_N],
+    /// 进度条圆钮拖动中的实时目标位置（秒）。pages.rs 拖动中每帧写入、松手清空。
+    /// GPU 圆钮的几何（`seek_geom`）必须用它 —— `music_seek_ui` 只在松手时写入，
+    /// 拖动中圆钮会停在播放器旧位置，表现为「进度条动了圆钮延迟才到」。
+    pub(crate) music_seek_drag:Option<f64>,
+    /// 圆钮拖动放大弹簧（资料包 LiquidGlass-Pack-v2：拖动时尺寸 ×(1+0.9·sp)、
+    /// mag 1→1.9；press 档 k=1000 ζ=1 临界阻尼，干脆不过冲）。
+    seek_drag:anim::Spring,
     /// 本帧哪些控件真的交给了 GPU（pages.rs / 共用 chrome 据此跳过矢量玻璃片）。
     ctl_gpu:[bool; CTL_N],
     /// 主键是否按着（控件弹簧在页面绘制之前就要知道，读不到 egui 的 response）。
@@ -1133,6 +1140,8 @@ impl App {
             forced_open_until:0.0,
             ctl_appear:std::array::from_fn(|_|anim::Spring::new(0.0,CTL_APPEAR.0,CTL_APPEAR.1)),
             ctl_press:std::array::from_fn(|_|anim::Spring::new(0.0,CTL_PRESS.0,CTL_PRESS.1)),
+            music_seek_drag:None,
+            seek_drag:anim::Spring::new(0.0,1000.0,1.0),
             ctl_gpu:[false; CTL_N],
             ctl_down:false,
             settings_open:false,
@@ -2133,7 +2142,17 @@ impl App {
             // 用上一帧周期反推净工作时间，从 16.7ms 里扣掉它，才能真的跑满 60。
             let period_ms = (dt * 1000.0).max(0.0);
             let work_ms = (period_ms - 16.0).clamp(0.0, 12.0);
-            let wait_ms = (16.7 - work_ms).clamp(1.0, 17.0);
+            // 自适应帧率：60fps 只是为了「背景实时刷新」。静止壁纸（WGC 连续无新帧）
+            // 且界面无动画、指针不在岛上时，玻璃内容本来就不变 —— 降到 30fps，
+            // CPU 近似减半，视觉无差别。指针一进入（悬停动效）或背景一变（视频壁纸）
+            // 立刻回 60fps；交互本身走输入事件驱动，不受这个预约影响。
+            let animating = self.glass_morph > 0.01
+                || (self.progress().clamp(0.0, 1.0) - self.last_progress).abs() > 0.001
+                || self.ctl_down
+                || env.cursor.is_some_and(|p| win.contains(p));
+            let bg_moving = crate::gpu_glass::take_new_frame();
+            let target_ms = if animating || bg_moving { 16.7 } else { 33.3 };
+            let wait_ms = (target_ms - work_ms).clamp(1.0, 33.3);
             ui.ctx().request_repaint_after(std::time::Duration::from_secs_f32(wait_ms as f32 / 1000.0));
         }
         // 液态玻璃：背景亮度决定深/浅材质。0.52/0.66 之间是滞回区，
@@ -2826,12 +2845,23 @@ impl App {
         Some(Rect::from_min_size(Pos2::new(x,badge.bottom()+6.0),Vec2::new(width,height)))
     }
 
+    /// 测试专用：直接设定材质明暗系数，验证两套主题的选择逻辑。
+    #[cfg(test)]
+    pub(crate) fn set_liquid_k_for_test(&mut self, v: f32) { self.liquid_k = v; }
+
     /// 当前皮肤的换色调色板（经典为 None）。
     pub(crate) fn skin_palette(&self)->Option<crate::skin_paint::Palette> {
-        // 液态皮肤：文字与控件描边恒为白色（GLASS_DARK 的 ink=白），不再随背景明暗
-        // 在浅/深调色板间翻转 —— 那种翻转会让描边频繁黑白跳变。玻璃材质本身的深浅
-        // 仍由 liquid_k 驱动 shader，不受这里影响。
-        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Liquid=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Classic|model::Skin::Fluid=>None}
+        // 液态皮肤：文字/描边 ink 随背景明暗切换 —— 深背景白字（GLASS_DARK），
+        // 浅背景深墨字（GLASS_LIGHT），让任何壁纸上都看得清。切换阈值走 liquid_k
+        // 自带的滞回（0.52/0.66）+ 指数平滑，不会逐帧黑白跳变；玻璃材质深浅仍由
+        // liquid_k 驱动 shader。原型 C：先用二选一，实机验证跳变是否可接受。
+        match self.settings.skin {
+            model::Skin::Cream=>Some(crate::skin_paint::CREAM),
+            model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),
+            model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),
+            model::Skin::Liquid=>Some(if self.liquid_k>0.5 {crate::skin_paint::GLASS_LIGHT_READABLE}else{crate::skin_paint::GLASS_DARK}),
+            model::Skin::Classic|model::Skin::Fluid=>None,
+        }
     }
 
     /// 设置页预览用的岛体底色：没有真实模糊，毛玻璃按较实的玻璃表现。
@@ -2866,7 +2896,7 @@ impl App {
     fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32,origin:Pos2){
         let skin=self.settings.skin;
         if skin==model::Skin::Liquid {
-            self.paint_gpu_glass(painter,rect,radius,origin);
+            self.paint_gpu_glass(painter,rect,flare,flare_h,radius,origin);
             return;
         }
         if skin==model::Skin::Fluid {
@@ -2955,7 +2985,8 @@ impl App {
     pub(crate) fn seek_geom(&self)->(f32,f32,f32){
         let (bx,bw,by)=self.seek_bar_geom();
         let np=&self.media;
-        let pending=self.music_seek_ui.as_ref().filter(|(_,t)|*t==np.title).map(|(t,_)|*t);
+        // 拖动中的实时值优先 —— 否则拖动时填充条跟手跑、GPU 圆钮停在旧位置。
+        let pending=self.music_seek_drag.or_else(||self.music_seek_ui.as_ref().filter(|(_,t)|*t==np.title).map(|(t,_)|*t));
         let restart=self.music_restart_at.filter(|at|self.t<at+1.5).map(|at|(self.t-at).max(0.0));
         let position=pending.unwrap_or_else(||match restart {
             Some(fresh) if np.position>fresh+1.0 => fresh,
@@ -2970,16 +3001,20 @@ impl App {
     /// 坐标必须和 pages.rs / `nav()` / `panel_body()` 里画的那一份**逐像素一致**，
     /// 否则玻璃会错开自己的图标。
     pub(crate) fn ctl_geom(&self,ctl:Ctl)->Option<(Rect,f32)>{
-        let music=self.page==0 && !self.video_page() && self.subpage.is_none();
+        // 音乐页与浏览器视频页共用 page_media 的同一套控件几何（视频页的"词"换成"打开"、
+        // 有进度条/切歌/播放，但没有音量与岛上歌词），所以控件玻璃都要上 GPU ——
+        // 以前这里写死 `!video_page()`，导致视频进度条只剩矢量白点、没有液态折射。
+        let media=self.page==0 && self.subpage.is_none();
+        let music=media && !self.video_page();
         let has=!self.media.title.is_empty();
         let disc=|x:f32,y:f32,r:f32|(Rect::from_center_size(Pos2::new(x,y),Vec2::splat(r*2.0)),r);
         let arrow_y=if self.page==6||self.page==8 {88.0} else {68.0};
         Some(match ctl {
             Ctl::Gear=>disc(394.0,18.0,13.0),
-            Ctl::Lyric=>{if !music||!has {return None;} disc(74.0,118.0,13.5)}
-            Ctl::Prev=>{if !music||!has {return None;} disc(162.0,118.0,13.5)}
-            Ctl::Play=>{if !music||!has {return None;} disc(210.5,118.0,13.5)}
-            Ctl::Next=>{if !music||!has {return None;} disc(258.0,118.0,13.5)}
+            Ctl::Lyric=>{if !media||!has {return None;} disc(74.0,118.0,13.5)}
+            Ctl::Prev=>{if !media||!has {return None;} disc(162.0,118.0,13.5)}
+            Ctl::Play=>{if !media||!has {return None;} disc(210.5,118.0,13.5)}
+            Ctl::Next=>{if !media||!has {return None;} disc(258.0,118.0,13.5)}
             Ctl::Volume=>{if !music||!has {return None;} disc(367.0,118.0,13.5)}
             Ctl::IslandLyrics=>{
                 if !music||!has||self.side() {return None;}
@@ -2988,10 +3023,16 @@ impl App {
             Ctl::NavL=>{if !self.nav_shown() {return None;} disc(21.0,arrow_y,12.0)}
             Ctl::NavR=>{if !self.nav_shown() {return None;} disc(398.0,arrow_y,12.0)}
             // 进度条圆钮：位置随播放进度移动，和 pages.rs 共用 seek_geom() 保证对齐。
+            // 形状按 LiquidGlass-Pack-v2 的滑块圆钮标准：未拖是横向小胶囊（50×36 的
+            // 比例 → 本坐标 28×20）、不着重放大（mag=1，就是一块浅玻璃）；拖动时整体
+            // ×(1+0.9·sp)≈1.9 变成放大镜（mag 同步 1→1.9），压在进度条上自然透出
+            // 「左半已播色、右半未播色」的折射，不用额外的着色通道。
             Ctl::Seek=>{
-                if !music||!has {return None;}
-                let (x,y,r)=self.seek_geom();
-                disc(x,y,r)
+                if !media||!has {return None;}
+                let (x,y,_r)=self.seek_geom();
+                let sp=self.seek_drag.pos.clamp(0.0,1.0);
+                let k=1.0+0.9*sp;
+                (Rect::from_center_size(Pos2::new(x,y),Vec2::new(28.0*k,20.0*k)),10.0*k)
             }
             // 专注页「专注 / 休息」分段按钮：中心点的 x 由调用时传入的布局决定，
             // 这里给出固定锚点（和 pages.rs page_focus 的分段按钮一致）。
@@ -3034,6 +3075,16 @@ impl App {
             self.ctl_press[i].step(dt);
             self.ctl_appear[i].target=self.reveal;
             self.ctl_appear[i].step(dt);
+            // 圆钮的拖动放大弹簧：按在进度条上就进入放大镜态（尺寸与 mag 同步 ×1.9）。
+            // 圆钮的拖动放大弹簧：target 直接用 pages.rs 写入的 egui 真实拖动状态
+            // （music_seek_drag 有值 ⇔ 正在拖进度条）。不用自算的 pointer_down_on：
+            // 它的热区只有 14 逻辑点高，鼠标略偏出（实测 y 差 2.7）就判成未按下，
+            // 而 egui 的 drag 捕获指针后持续跟手 —— 实测拖动中自算 down=false，
+            // 放大镜出不来。press 档 k=1000 ζ=1（资料包），干脆不过冲。
+            if ctl==Ctl::Seek {
+                self.seek_drag.target=if self.music_seek_drag.is_some() {1.0}else{0.0};
+                self.seek_drag.step(dt);
+            }
             self.ctl_gpu[i]=ready;
         }
     }
@@ -3045,9 +3096,12 @@ impl App {
     }
 
     /// 控件的绘制缩放：入场（0.86 → 1，会冲过头一点）+ 按压（×1.14 的果冻）。
+    /// 圆钮例外：它的拖动放大（×1.9）已经由 `ctl_geom` 的胶囊尺寸承担，
+    /// 这里不能再叠按压放大，否则拖动时 ×1.14×1.9≈2.2 过头。
     pub(crate) fn ctl_scale(&self,ctl:Ctl)->f32{
         let i=ctl.idx();
         let appear=0.82+0.18*self.ctl_appear[i].pos.clamp(0.0,1.15);
+        if ctl==Ctl::Seek {return appear;}
         appear*(1.0+CTL_PRESS_SCALE*self.ctl_press[i].pos.clamp(0.0,1.3))
     }
 
@@ -3067,10 +3121,13 @@ impl App {
             let Some((rect,radius))=self.ctl_geom(ctl) else {continue;};
             let s=self.ctl_scale(ctl);
             let short=rect.width().min(rect.height());
+            // 圆钮的放大镜倍数跟拖动弹簧走：未拖 mag=1（浅玻璃胶囊）、拖动 1.9
+            //（资料包标准），与胶囊尺寸的 ×(1+0.9·sp) 同步。
+            let mag=if ctl==Ctl::Seek {1.0+0.9*self.seek_drag.pos.clamp(0.0,1.0)}else{ctl.mag()};
             out.push(crate::gpu_glass::Ctl {
                 rect:Rect::from_center_size(rect.center(),rect.size()*s).translate(origin.to_vec2()),
                 radius:radius*s,
-                mag:ctl.mag(),
+                mag,
                 // 短边相对原歌词卡（78px）缩放：27px 圆片 → 0.39，20px 胶囊 → 0.30。
                 refract:(short/70.0).clamp(0.30,1.0),
             });
@@ -3092,7 +3149,7 @@ impl App {
 
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
-    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,radius:f32,origin:Pos2){
+    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,origin:Pos2){
         let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
         let Some(format)=self.wgpu_format else {
             painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,225));
@@ -3117,7 +3174,9 @@ impl App {
             self.glass_morph,
             crate::gpu_glass::NEUTRAL_TINT,self.t as f32,
             (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]),self.liquid_k,
-            &self.glass_controls(origin));
+            &self.glass_controls(origin),
+            // 刘海形状：把肩部参数传给着色器；胶囊/圆角矩形传 None。
+            if self.settings.island_shape==model::IslandShape::Notch {Some((flare,flare_h))}else{None});
         painter.add(eframe::egui_wgpu::Callback::new_paint_callback(
             capture,crate::gpu_glass::GlassCallback{frame,format}));
     }
@@ -3706,7 +3765,7 @@ impl App {
         } else {
             c.circle(394.0,18.0,13.0,Color32::from_white_alpha((hover*24.0) as u8));
         }
-        paint::gear(&c.scaled(394.0,18.0,0.8*gear_s),394.0,18.0,paint::mix(theme::GRAY,theme::WHITE,hover));
+        paint::gear(&c.scaled(394.0,18.0,0.8*gear_s),394.0,18.0,theme::WHITE);
         if settings.clicked(){self.settings_tab=PAGE_SETTINGS_TABS[self.page];self.open_settings();}
         if self.subpage==Some(self.page) {
             c.text(15.0,25.0,"‹",19.0,W::Bold,theme::WHITE,H::Left);

@@ -8678,7 +8678,10 @@ fn control_glass_covers_small_buttons_and_drops_the_lyric_card(){
     assert_eq!(ctls.len(),10,"齿轮/词/上一首/播放/下一首/音量/岛上歌词/左右箭头/进度圆钮 都该上 GPU");
     assert!(!ctls.iter().any(|c|(c.rect.width()-144.0).abs()<2.0),"歌词那块玻璃卡已经去掉");
     for c in &ctls {
-        assert!(c.mag>1.0,"小控件要有放大镜");
+        // 圆钮未拖时 mag=1.0 是 LiquidGlass-Pack-v2 的标准（未拖是浅玻璃胶囊、
+        // 不放大；拖动时弹簧把尺寸和 mag 同步推到 ×1.9）。其余控件保持放大镜。
+        let seek_idle=(c.rect.width()-28.0).abs()<1.5 && (c.rect.height()-20.0).abs()<1.5;
+        assert!(c.mag>1.0 || seek_idle,"小控件要有放大镜（未拖圆钮除外）");
         assert!(c.refract<1.0,"小控件的折射位移必须按短边收");
         assert!(c.rect.width()<=80.0 && c.rect.height()<=80.0,"上 GPU 的只该是小控件");
     }
@@ -8729,17 +8732,17 @@ fn control_glass_covers_focus_and_rest_segments(){
 }
 
 #[test]
-fn liquid_ink_stays_white_in_both_materials(){
-    // 需求：去掉描边「黑/白」随背景明暗的切换，固定白色。
-    // 材质深浅仍由 shader 按 liquid_k 决定（`paint_gpu_glass` 的兜底底色照旧跟着变），
-    // 但矢量描边/文字的调色板恒为 GLASS_DARK —— 这里锁的就是「不再返回 GLASS_LIGHT」。
+fn liquid_ink_follows_material_for_legibility(){
+    // 需求：液态皮肤文字/描边 ink 随背景明暗切换，保证任何壁纸上都看得清。
+    // 深背景（liquid_k 低）用白字 GLASS_DARK，浅背景（liquid_k 高）用深墨字 GLASS_LIGHT。
+    // 切换阈值走 liquid_k 自带的滞回 + 平滑，不逐帧跳变。
     let mut h=H::new();
     h.app.settings.skin=crate::model::Skin::Liquid;
+    h.app.set_liquid_k_for_test(0.0);  // 深背景
     let p=h.app.skin_palette().expect("液态皮肤必须有调色板");
-    assert_eq!(p.ink,[255,255,255],"描边/文字恒白，不随背景明暗翻转");
-    assert_eq!(p.paper,[0,0,0],"底色仍按深色玻璃映射");
-    // 换回浅色玻璃皮肤时 ink 会变墨色 —— 说明上面那条断言确实在区分两个调色板。
-    h.app.settings.skin=crate::model::Skin::GlassLight;
-    let q=h.app.skin_palette().expect("毛玻璃皮肤必须有调色板");
-    assert_ne!(q.ink,[255,255,255],"浅色玻璃皮肤的 ink 仍是墨色");
+    assert_eq!(p.ink,[255,255,255],"深背景用白字");
+    h.app.set_liquid_k_for_test(1.0);  // 浅背景
+    let q=h.app.skin_palette().expect("液态皮肤必须有调色板");
+    assert_eq!(q.ink,[22,22,26],"浅背景用深墨字");
+    assert_ne!(p.ink,q.ink,"两种材质必须给出不同的 ink");
 }

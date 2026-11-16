@@ -109,6 +109,10 @@ impl App {
             _ => np.position,
         });
         let frac=if np.duration>0.0 {(position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
+        // GPU 圆钮跟手：拖动中的实时目标写进 music_seek_drag（松手帧也带着值，
+        // 同时 music_seek_ui 会接管；下一帧按下结束这里归 None，位置无缝交给
+        // music_seek_ui 顶着，直到播放器回报新位置）。
+        self.music_seek_drag=seek_position;
         let (time_y,time_size,right)=if with_lyrics {(100.0,10.0,220.0)}else{(97.0,15.0,375.0)};
         c.text(44.0,time_y,&mmss(position),time_size,W::Regular,tc,H::Left);
         let remaining=if has && np.duration<=0.0{"--:--".into()}else{format!("-{}",mmss((np.duration-position).max(0.0)))};
@@ -191,15 +195,16 @@ impl App {
             Some(button)
         };
         let (previous,previous_card)=btn(162.0,30.0,"m-prev",Ctl::Prev);
-        paint::skip(&previous_card,162.0,y,-1.0,ic);
+        // 玻璃圆盘外圈已有描边，内部图标缩小一档（播放 15→12.5、切歌 12→10）避免拥挤。
+        paint::skip(&previous_card,162.0,y,-1.0,10.0,ic);
         let (play,play_card)=btn(210.5,30.0,"m-play",Ctl::Play);
-        paint::play_pause(&play_card,211.0,y,15.0,playing_t,ic);
+        paint::play_pause(&play_card,211.0,y,12.5,playing_t,ic);
         let (next,next_card)=btn(258.0,30.0,"m-next",Ctl::Next);
-        paint::skip(&next_card,258.0,y,1.0,ic);
+        paint::skip(&next_card,258.0,y,1.0,10.0,ic);
         let volume=if video {None}else{
             let (button,card)=btn(367.0,26.0,"m-volume",Ctl::Volume);
             let (value,muted)=self.music_volume_ui.unwrap_or((0,false));
-            paint::speaker(&card,367.0,y,muted,if self.music_volume_ui.is_some(){ic}else{theme::GRAY});
+            paint::speaker(&card,367.0,y,muted,0.8,if self.music_volume_ui.is_some(){ic}else{theme::GRAY});
             let hint=if self.music_volume_ui.is_some(){format!("音乐应用音量 {value}%{} · 点击展开 · 滚轮调节",if muted{"（已静音）"}else{""})}else{"暂无可调节的音乐音频会话".into()};
             Some((button.on_hover_text(hint),value))
         };

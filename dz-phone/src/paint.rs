@@ -581,10 +581,18 @@ pub fn play_pause(c: &Card, cx: f32, cy: f32, size: f32, t: f32, color: Color32)
     c.poly(&right, color);
 }
 
-pub fn skip(c: &Card, cx: f32, cy: f32, dir: f32, color: Color32) {
-    for k in [-1.0f32, 1.0] {
-        let x = cx + k * 4.3;
-        c.poly(&[(x - dir * 4.6, cy - 6.0), (x + dir * 4.6, cy), (x - dir * 4.6, cy + 6.0)], color);
+/// 上一首/下一首的双三角。`size` = 图标总高（旧版硬编码 12.0）；玻璃圆盘外圈
+/// 已有描边，内部图标整体调小一档避免拥挤，总宽按 size 等比（旧总宽 18.2）。
+/// 上一首/下一首的双三角。`size` = 图标总高（旧版硬编码 12.0）；玻璃圆盘外圈
+/// 已有描边，内部图标整体调小一档避免拥挤，总宽按 size 等比（size=12 时总宽 18.2）。
+pub fn skip(c: &Card, cx: f32, cy: f32, dir: f32, size: f32, color: Color32) {
+    let k = size / 12.0;
+    let half_gap = 4.3 * k;   // 两个三角的中心间距一半
+    let half_w = 4.6 * k;     // 单个三角半宽
+    let half_h = 6.0 * k;     // 单个三角半高
+    for s in [-1.0f32, 1.0] {
+        let x = cx + s * half_gap;
+        c.poly(&[(x - dir * half_w, cy - half_h), (x + dir * half_w, cy), (x - dir * half_w, cy + half_h)], color);
     }
 }
 
@@ -596,15 +604,18 @@ pub fn playback_bars(c:&Card,cx:f32,cy:f32,time:f64,playing:bool,color:Color32) 
     }
 }
 
-pub fn speaker(c:&Card,cx:f32,cy:f32,muted:bool,color:Color32) {
-    c.fill(cx-7.0,cy-2.8,4.0,5.6,0.8,color);
-    c.poly(&[(cx-4.0,cy-2.8),(cx+0.5,cy-6.0),(cx+0.5,cy+6.0),(cx-4.0,cy+2.8)],color);
+/// `scale` = 相对旧版（喇叭体宽约 20）的缩放；玻璃圆盘外圈已有描边，内部图标
+/// 缩小一档避免拥挤。
+pub fn speaker(c:&Card,cx:f32,cy:f32,muted:bool,scale:f32,color:Color32) {
+    let s=scale;
+    c.fill(cx-7.0*s,cy-2.8*s,4.0*s,5.6*s,0.8*s,color);
+    c.poly(&[(cx-4.0*s,cy-2.8*s),(cx+0.5*s,cy-6.0*s),(cx+0.5*s,cy+6.0*s),(cx-4.0*s,cy+2.8*s)],color);
     if muted {
-        c.seg((cx+4.0,cy-2.7),(cx+9.0,cy+2.7),1.4,color);
-        c.seg((cx+4.0,cy+2.7),(cx+9.0,cy-2.7),1.4,color);
+        c.seg((cx+4.0*s,cy-2.7*s),(cx+9.0*s,cy+2.7*s),1.4*s,color);
+        c.seg((cx+4.0*s,cy+2.7*s),(cx+9.0*s,cy-2.7*s),1.4*s,color);
     } else {
-        c.arc(cx-0.8,cy,5.4,-0.7,0.7,1.4,color);
-        c.arc(cx-0.8,cy,8.5,-0.7,0.7,1.4,alpha(color,0.6));
+        c.arc(cx-0.8*s,cy,5.4*s,-0.7,0.7,1.4*s,color);
+        c.arc(cx-0.8*s,cy,8.5*s,-0.7,0.7,1.4*s,alpha(color,0.6));
     }
 }
 

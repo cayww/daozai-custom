@@ -42,6 +42,8 @@ pub struct GlassFrame {
     pub control_params: [[f32; 4]; MAX_CTL],
     /// 外观四件套：(内部模糊, 折射带宽, 白边宽度 —— 都是设备像素, 白边不透明度)。
     pub look: [f32; 4],
+    /// 刘海形状：(flare px, flare_h px, 是否刘海, _)。非刘海时第 3 项为 0。
+    pub notch: [f32; 4],
 }
 
 /// 一次 pass 最多画几块控件玻璃（= uniform 里 crect/cprm 的数组长度）。
@@ -78,6 +80,9 @@ struct Uniforms {
     crect: [[f32; 4]; MAX_CTL],
     cprm: [[f32; 4]; MAX_CTL],
     look: [f32; 4],     // blur, band, edge_w, edge_opacity
+    // 刘海形状：x=flare（顶部外扩宽度，px）、y=flare_h（外扩高度，px）、
+    // z=是否刘海（>0.5 生效）、w=保留。非刘海形状时 z=0，走普通圆角矩形。
+    notch: [f32; 4],
 }
 
 impl Uniforms {
@@ -120,6 +125,15 @@ static EXCLUSION_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 /// 冻结诊断模式的预热帧数：前 24 帧保持排除以收集干净壁纸，之后取消排除、冻结。
 static FREEZE_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static EXCLUDED_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// 最近一次抓屏是否拿到了**新的** DWM 帧（而不是 WGC 的 NoFrame 复用）。
+/// App 用它做自适应帧率：背景一直在变（视频壁纸/视频播放）才需要 60fps；
+/// 静止壁纸 + 界面无动画时降到 30fps，CPU 近似减半，视觉无差别。
+static NEW_FRAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// 读并清除「最近是否拿到新帧」。每帧调用一次。
+pub fn take_new_frame() -> bool {
+    NEW_FRAME.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
 
 /// 桌面平均亮度。非 Windows / 未抓屏时给一个偏浅的默认值。
 pub fn background_luma() -> f32 {
@@ -161,6 +175,8 @@ struct U {
     cprm   : array<vec4<f32>, 13>,
     // 外观四件套：(内部模糊 px, 折射带宽 px, 白边宽度 px, 白边不透明度)。
     look   : vec4<f32>,
+    // 刘海形状：(flare px, flare_h px, 是否刘海, _)。
+    notch  : vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var bg : texture_2d<f32>;
@@ -190,6 +206,24 @@ fn vs(@builtin(vertex_index) i : u32) -> VOut {
 fn rr_sdf(p : vec2<f32>, b : vec2<f32>, r : f32) -> f32 {
     let q = abs(p) - b + vec2<f32>(r);
     return min(max(q.x, q.y), 0.0) + length(max(q, vec2<f32>(0.0))) - r;
+}
+
+// 刘海轮廓 SDF：与 shape::sections 的几何一致 —— 顶部 flare_h 高度内，半宽按
+// flare*(1-t)^2.4 向外柔和外扩（两侧"肩部"），下方是普通圆角矩形（只有底部两角
+// 圆角，顶部是直角，因为肩部已经从顶边外扩出去了）。
+fn notch_sdf(p : vec2<f32>, b : vec2<f32>, r : f32, flare : f32, fh : f32) -> f32 {
+    // t: 0 在顶边、1 在 flare 带底部。
+    let t = clamp((p.y + b.y) / max(fh, 1.0), 0.0, 1.0);
+    let wing = flare * pow(1.0 - t, 2.4);
+    let hx = b.x + wing;
+    // 底部圆角带（只有下半部分需要圆角）。
+    if (p.y > b.y - r) {
+        let qx = max(abs(p.x) - (b.x - r), 0.0);
+        let qy = abs(p.y) - (b.y - r);
+        return length(vec2<f32>(qx, max(qy, 0.0))) - r;
+    }
+    // 其余部分：水平半宽 hx(y)（含肩部），垂直边界 ±b.y。
+    return max(abs(p.x) - hx, abs(p.y) - b.y);
 }
 
 // 逐像素伪随机（0..1）。只用于抖动，不需要高质量分布。
@@ -337,7 +371,10 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let half_size = max(u.bounds.zw * 0.5 - vec2<f32>(inset), vec2<f32>(2.0));
     let local = p - u.bounds.xy - u.bounds.zw * 0.5;
     let radius = max(min(u.extra.x - inset, min(half_size.x, half_size.y)), 0.0);
-    let d = rr_sdf(local, half_size, radius);
+    // 刘海形状用 notch_sdf（顶部两侧肩部外扩），其余形状仍是圆角矩形。
+    let d = select(rr_sdf(local, half_size, radius),
+                   notch_sdf(local, half_size, radius, u.notch.x, u.notch.y),
+                   u.notch.z > 0.5);
     let mat = clamp(u.params.w, 0.0, 1.0);
 
     // 岛体外：SetWindowRgn 的窗口区域比岛体大一圈（展开时左右各约 38px），
@@ -728,6 +765,7 @@ fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
         crect: f.controls,
         cprm: f.control_params,
         look: f.look,
+        notch: f.notch,
     }
 }
 
@@ -868,11 +906,19 @@ fn sample_luma(buf: &[u8], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32) -
 
 /// 排除未生效时的兜底：首帧抓的「干净桌面底片」。
 /// 每帧只把岛体以外的像素写回底片，岛体内部一直用这张底片，避免自我鬼影。
+///
+/// 宽度必须容得下「左移锚点 + 展开态抓屏宽 + 拖动余量」，否则 need_new
+/// （ox+bw > PLATE_W）会每帧触发。冻结模式第 24 帧取消了 WDA 排除，此时
+/// 重建底片走 GDI grab_raw 会把岛仔自己（专辑封面/歌词）抓进去 → 玻璃出现
+/// "玻璃显示玻璃"的彩条重影。实测：岛居中物理 x≈1280，展开抓屏宽 957px，
+/// 抓屏矩形 [802,1758]，拖动 ±100 逻辑点（±125 物理）。取 1280 + 锚点左移 256：
+/// 底片 [546,1826] 覆盖展开和拖动范围，且整体仍在 2560 屏内（GDI 抓屏要求
+/// 矩形完全在屏内，越界会 BitBlt 失败 —— 所以不能贪心取 2048）。
 #[cfg(windows)]
-const PLATE_W: u32 = 1024;
+const PLATE_W: u32 = 1280;
 #[cfg(windows)]
 const PLATE_H: u32 = 512;
-/// 锚点比首帧抓屏矩形左移 256px：展开时抓屏矩形会向左变宽。
+/// 底片起点比抓屏矩形左移 256px：容纳展开时抓屏矩形向左变宽 + 向左拖动。
 #[cfg(windows)]
 const PLATE_ANCHOR: i32 = 256;
 
@@ -1058,7 +1104,11 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
             let (qx, qy) = (ox + xx, oy + yy);
             let in_plate = qx >= 0 && qy >= 0 && qx < p.w as i32 && qy < p.h as i32;
             let excluded = xx >= cx0 && xx < cx1 && yy >= cy0 && yy < cy1;
-            let use_raw = if frozen { !in_plate } else { clean_frame || !excluded || !in_plate };
+            // 冻结态：底片锁定为启动时的干净壁纸，绝不能用 raw。冻结第 24 帧已取消
+            // WDA 排除，raw 每帧都抓到岛仔自己（专辑封面/文字），拖动时抓屏矩形超出
+            // 底片的那一带若用 raw 填充，就会把自身像素画进玻璃 → 残留重影。
+            // 超界像素改为 clamp 到底片最近边缘（壁纸的自然延续），肉眼无缝。
+            let use_raw = if frozen { false } else { clean_frame || !excluded || !in_plate };
             if use_raw {
                 out[d..d + 4].copy_from_slice(&raw[d..d + 4]);
                 if in_plate {
@@ -1066,7 +1116,8 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
                     p.data[s..s + 4].copy_from_slice(&raw[d..d + 4]);
                 }
             } else {
-                let s = ((qy as u32 * p.w + qx as u32) * 4) as usize;
+                let (cqx, cqy) = (qx.clamp(0, p.w as i32 - 1), qy.clamp(0, p.h as i32 - 1));
+                let s = ((cqy as u32 * p.w + cqx as u32) * 4) as usize;
                 out[d..d + 4].copy_from_slice(&p.data[s..s + 4]);
             }
         }
@@ -1092,7 +1143,10 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u
     }
     let want = ((w as u64) << 32) | (h as u64);
     let (raw, bw, bh, from_wgc) = match crate::wgc::grab(x, y, w, h) {
-        crate::wgc::Grab::Frame(p, tw, th) => (p, tw, th, true),
+        crate::wgc::Grab::Frame(p, tw, th) => {
+            NEW_FRAME.store(true, std::sync::atomic::Ordering::Relaxed);
+            (p, tw, th, true)
+        }
         // WGC 这一帧还没有新画面：复用上一帧纹理。
         // **绝对不能退回 GDI**：GDI BitBlt 读的是桌面 DC，WDA_EXCLUDEFROMCAPTURE
         // 在那里不生效（只会把窗口变黑、或异步失效后抓到窗口自己），
@@ -1293,6 +1347,8 @@ pub fn frame_for(
     // 岛内控件玻璃（屏幕坐标的逻辑点矩形 + 圆角 + 放大/折射倍数），**按绘制顺序**给：
     // 靠后的压在前面的上面。
     controls: &[Ctl],
+    // 刘海形状的肩部参数 (flare, flare_h)，逻辑点；`None` = 普通圆角矩形（胶囊）。
+    notch: Option<(f32, f32)>,
 ) -> GlassFrame {
     // 抓屏用屏幕绝对物理坐标，clip-space / bounds 用窗口内坐标。
     let c = ((capture.min.x + origin.0) * ppp, (capture.min.y + origin.1) * ppp);
@@ -1342,6 +1398,11 @@ pub fn frame_for(
         clip: [-1.0, 1.0, 1.0, -1.0],
         controls: crect,
         control_params: cprm,
+        // 刘海：flare/flare_h 同样 CSS px → 设备像素；非刘海时标志位 0。
+        notch: match notch {
+            Some((flare, flare_h)) => [flare * ppp, flare_h * ppp, 1.0, 0.0],
+            None => [0.0, 0.0, 0.0, 0.0],
+        },
     }
 }
 
@@ -1354,7 +1415,7 @@ mod tests {
         use eframe::egui::{Pos2, Rect};
         let body = Rect::from_min_size(Pos2::new(100.0, 20.0), eframe::egui::vec2(200.0, 30.0));
         let capture = Rect::from_min_size(Pos2::new(60.0, 0.0), eframe::egui::vec2(280.0, 90.0));
-        let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0, &[]);
+        let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0, &[], None);
         assert_eq!(f.bounds, [40.0, 20.0, 200.0, 30.0]);
         assert_eq!(f.clip, [-1.0, 1.0, 1.0, -1.0], "viewport 已由 egui 设为 callback 矩形");
         // 折射 / 色散走原子量 → optics → uniform 的两个不同槽位：
@@ -1362,7 +1423,7 @@ mod tests {
         // 设置项单位是 CSS px，进 uniform 前要乘 ppp（着色器全程设备像素）。
         set_liquid_optics(60.0, 15.0);
         let u = uniforms(&frame_for(body, capture, (1920, 1080), 2.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0,
-                                   (150.0, 30.0), (0.0, 0.0), 1.0, &[]), (280, 90));
+                                   (150.0, 30.0), (0.0, 0.0), 1.0, &[], None), (280, 90));
         assert_eq!(u.params[0], 30.0, "色散进 params.x，并按 ppp 换算到设备像素");
         assert_eq!(u.misc[2], 120.0, "折射进 misc.z，并按 ppp 换算到设备像素");
         set_liquid_optics(48.0, 8.0);
@@ -1378,7 +1439,7 @@ mod tests {
         let outside = Rect::from_min_size(Pos2::new(50.0, 25.0), eframe::egui::vec2(50.0, 20.0));
         let ctl = |rect, radius| Ctl { rect, radius, mag: 1.10, refract: 0.35 };
         let f = frame_for(body, capture, (1920, 1080), 2.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0,
-                          &[ctl(outside, 6.0), ctl(lyric, 6.0)]);
+                          &[ctl(outside, 6.0), ctl(lyric, 6.0)], None);
         assert_eq!(f.controls[0], [40.0, 50.0, 100.0, 40.0], "控件按 2x 换算到 capture 内物理像素");
         assert_eq!(f.control_params[0], [12.0, 1.0, 1.10, 0.35], "圆角/启用/放大/折射一起进 uniform");
         assert_eq!(f.control_params[1][1], 0.0, "越界的控件不参与绘制");
@@ -1386,9 +1447,9 @@ mod tests {
 
     #[test]
     fn uniforms_are_packed_without_padding() {
-        // 7 个 vec4（bounds/params/extra/tint/quad/misc/look）+ crect[13] + cprm[13]
-        // 全是 16 字节对齐，528 = 33×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
-        assert_eq!(std::mem::size_of::<Uniforms>(), 528);
-        assert_eq!(std::mem::size_of::<Uniforms>(), 7 * 16 + MAX_CTL * 32);
+        // 8 个 vec4（bounds/params/extra/tint/quad/misc/look/notch）+ crect[13] + cprm[13]
+        // 全是 16 字节对齐，544 = 34×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
+        assert_eq!(std::mem::size_of::<Uniforms>(), 544);
+        assert_eq!(std::mem::size_of::<Uniforms>(), 8 * 16 + MAX_CTL * 32);
     }
 }

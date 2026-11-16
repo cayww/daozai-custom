@@ -31,6 +31,11 @@ pub struct Palette {
 pub const CREAM: Palette = Palette { paper: [255, 243, 228], ink: [46, 32, 22], accent: Some([240, 138, 36]), dark_alpha: 1.0, lift: 1.0, darken: 0.78, chip: 1.0 };
 /// 毛玻璃·浅：白色磨砂、近黑字、系统蓝。
 pub const GLASS_LIGHT: Palette = Palette { paper: [255, 255, 255], ink: [22, 22, 26], accent: Some([10, 112, 230]), dark_alpha: 0.8, lift: 1.0, darken: 0.78, chip: 0.6 };
+/// 液态玻璃·浅背景专用：和 GLASS_LIGHT 同为白底近黑字，但把 lift 从 1.0 降到 0.45，
+/// 让辅助灰字也压到深灰（178→约55，见 map_color 的中性色映射），而主白字仍映射为
+/// 近黑 ink(22)。这样浅壁纸上「主文字 + 辅助灰字」都够深、看得清，同时保留层级差。
+/// 仅液态皮肤按 liquid_k 自动切换时使用；手动浅色玻璃皮肤仍用 GLASS_LIGHT。
+pub const GLASS_LIGHT_READABLE: Palette = Palette { paper: [255, 255, 255], ink: [22, 22, 26], accent: Some([10, 112, 230]), dark_alpha: 0.8, lift: 0.45, darken: 0.78, chip: 0.6 };
 /// 毛玻璃·深：保持黑底白字，只把灰色文字提亮、卡片底调透，适配更通透的深色玻璃。
 pub const GLASS_DARK: Palette = Palette { paper: [0, 0, 0], ink: [255, 255, 255], accent: None, dark_alpha: 0.5, lift: 0.6, darken: 1.0, chip: 1.0 };
 
@@ -350,6 +355,21 @@ mod tests {
         assert!(gray[0] > 165, "灰色文字提亮：{gray:?}");
         assert_eq!(map_color(Color32::from_rgb(62, 172, 248), &GLASS_DARK), Color32::from_rgb(62, 172, 248), "强调色不变");
         assert!(map_color(Color32::from_rgb(22, 22, 24), &GLASS_DARK).a() < 160, "卡片底带通透感");
+    }
+
+    #[test]
+    fn liquid_light_palette_keeps_aux_gray_readable() {
+        // 液态皮肤浅背景专用调色板：辅助灰字必须比普通 GLASS_LIGHT 更深，
+        // 否则中灰(约92)压在浅玻璃上发虚看不清；主白字仍映射为近黑 ink。
+        let aux = Color32::from_rgb(178, 178, 186);
+        let plain = map_color(aux, &GLASS_LIGHT).r();
+        let readable = map_color(aux, &GLASS_LIGHT_READABLE).r();
+        assert!(readable + 20 < plain, "浅背景灰字要明显加深：{plain} -> {readable}");
+        assert!(readable < 80, "灰字要够深才可读：{readable}");
+        // 主白字仍映射到近黑，保持主次层级清楚。
+        let ink = map_color(Color32::WHITE, &GLASS_LIGHT_READABLE).r();
+        assert!(ink < 40, "主文字仍是近黑墨字：{ink}");
+        assert!(readable > ink, "辅助灰字比主文字浅，保留层级：{readable} > {ink}");
     }
 
     #[test]
