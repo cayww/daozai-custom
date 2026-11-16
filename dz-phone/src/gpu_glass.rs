@@ -263,7 +263,9 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let q = p - local * (1.0 - 1.0 / m);
     let bp = q - g * k * strength;
 
-    var col = tap5(bp, -g * k * chroma, u.look.x * 0.80);
+    // 边缘颗粒修复：折射带最深处会把壁纸上的小亮斑（气泡、星点）拉进边里，
+    // 看起来像边缘发毛。采样步长随折射深度加大，把拉进来的特征糊开。
+    var col = tap5(bp, -g * k * chroma, u.look.x * 0.80 + k * 1.2);
     // 材质必须和岛体**完全一致**，否则控件会明显比面板亮一档 —— 实测漏掉下面
     // 这两步时，浅色壁纸下卡片内部 240、面板 197，看起来是一块白纸而不是玻璃。
     // （亮暗反相补偿 + 逐像素 scrim，都照抄 fs 里的岛体版本。）
@@ -430,7 +432,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let ca = -g * k * chroma;
     let bp = p + refr;
 
-    var col = tap5(bp, ca, max(u.look.x, 0.0));
+    var col = tap5(bp, ca, max(u.look.x, 0.0) + k * 1.6);
     // 玻璃比空气「多一层」，但这点提亮必须极轻。以前这里是四层白色叠加：
     // +0.004 冷色、10% 白雾、顶部冷光、外加一圈白边，浅色壁纸下整体被推成
     // 一片发白的雾 —— 玻璃感就是这么没的（实测岛内亮度只比壁纸高 8，却全糊了）。

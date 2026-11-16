@@ -459,6 +459,27 @@ pub fn capsule<'a>(
     (r, inner)
 }
 
+/// 液态玻璃皮肤下的胶囊按钮：hit / 悬停 / 按压缩放与 [`capsule`] 完全一致，
+/// 填充换成玻璃层。`level` 是静止亮度（0=只剩一圈边），悬停时按 `hover_boost` 提亮。
+/// 选中态由调用方自己表达（更高 level 或文字色）。
+pub fn glass_capsule<'a>(
+    c: &Card<'a>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    id: &str,
+    level: f32,
+    hover_boost: f32,
+) -> (Response, Card<'a>) {
+    let r = c.hit(x, y, w, h, id);
+    let (ht, pt) = c.hover_t(&r);
+    let k = 1.0 - 0.05 * pt;
+    let inner = c.scaled(x + w / 2.0, y + h / 2.0, k);
+    glass_chip(&inner, x, y, w, h, h / 2.0, (level + ht * hover_boost).clamp(0.0, 1.0));
+    (r, inner)
+}
+
 // ======================= 图标 =======================
 
 pub fn close(c:&Card,cx:f32,cy:f32,r:f32,color:Color32) {

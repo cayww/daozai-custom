@@ -375,6 +375,7 @@ impl App {
 
     // ================= 专注（番茄钟） =================
     pub(crate) fn page_focus(&mut self, c: &Card, _env: &Env) {
+        let glassy=self.glassy();
         if c.hit(90.0,8.0,42.0,21.0,"focus-settings").on_hover_text("专注设置").clicked(){self.open_settings_category(2);}
         c.text(111.0,23.0,"设置",10.5,W::Regular,theme::GRAY,H::Center);
         let (rx, ry, rr) = (79.0, 74.0, 32.0);
@@ -417,7 +418,11 @@ impl App {
         let r = c.hit(317.0, 38.0, 24.0, 24.0, "f-reset");
         let (h, p) = c.hover_t(&r);
         let rc = c.scaled(329.0, 50.0, 1.0 - 0.1 * p);
-        rc.circle(329.0, 50.0, 11.0, mix(Color32::from_rgb(28, 28, 30), Color32::from_rgb(50, 50, 54), h));
+        if glassy {
+                paint::glass_disc(&rc, 329.0, 50.0, 11.0, 0.14 + h * 0.40);
+            } else {
+                rc.circle(329.0, 50.0, 11.0, mix(Color32::from_rgb(28, 28, 30), Color32::from_rgb(50, 50, 54), h));
+            }
         paint::reset(&rc, 329.0, 50.0, -self.reset_spin.pos, Color32::from_gray(230));
         if r.clicked() {
             self.pomo.remaining = self.phase_secs(self.pomo.phase);
@@ -428,8 +433,13 @@ impl App {
         for (phase,label,x,width,id) in [(Phase::Focus,"专注",148.0,88.0,"f-focus"),(Phase::Rest,"休息",292.0,88.0,"f-rest")] {
             let selected=self.pomo.phase==phase;
             let accent=if phase==Phase::Focus{theme::RED_TOP}else{theme::SOFT_GREEN};
-            let background=if selected{mix(theme::BTN,accent,0.22)}else{theme::BTN};
-            let (response,button)=capsule(c,x,94.0,width,25.0,id,background,if selected{mix(theme::BTN_HOVER,accent,0.25)}else{theme::BTN_HOVER});
+            let (response,button)=if glassy {
+                // 玻璃分段：选中=整片点亮，未选中=只剩一圈边；文字色保持原逻辑。
+                paint::glass_capsule(c,x,94.0,width,25.0,id,if selected {0.55}else{0.10},if selected {0.20}else{0.45})
+            } else {
+                let background=if selected{mix(theme::BTN,accent,0.22)}else{theme::BTN};
+                capsule(c,x,94.0,width,25.0,id,background,if selected{mix(theme::BTN_HOVER,accent,0.25)}else{theme::BTN_HOVER})
+            };
             button.text(x+width/2.0,110.0,label,size::BODY,W::Semibold,if selected{mix(accent,theme::WHITE,0.5)}else{theme::WHITE},H::Center);
             if response.clicked(){self.set_phase(phase);}
         }
@@ -465,6 +475,7 @@ impl App {
     /// 大数字、右上开关、状态行、进度条、主按钮 + 设置、右侧进度环都在同一位置，
     /// 只换内容和主色（蓝 / 绿）。设置按钮、分隔线和开关本体不随切换闪动。
     pub(crate) fn page_water(&mut self, c: &Card, env: &Env) {
+        let glassy=self.glassy();
         let sv = self.sit_view_t.pos.clamp(0.0, 1.0);
         self.health_tabs(c, 15.0, sv);
 
@@ -498,7 +509,11 @@ impl App {
             }
         }
 
-        let (s, sc) = capsule(c, 111.0, 98.0, 66.0, 25.0, "w-set", theme::BTN, theme::BTN_HOVER);
+        let (s, sc) = if glassy {
+            paint::glass_capsule(c, 111.0, 98.0, 66.0, 25.0, "w-set", 0.14, 0.42)
+        } else {
+            capsule(c, 111.0, 98.0, 66.0, 25.0, "w-set", theme::BTN, theme::BTN_HOVER)
+        };
         paint::sliders(&sc, 126.0, 110.5, theme::WHITE);
         sc.text(149.0, 114.0, "设置", size::BODY, W::Regular, theme::WHITE, H::Center);
         if s.clicked() { self.open_settings_category(1); }
@@ -726,11 +741,12 @@ impl App {
     /// 标题旁的「文件 | 剪贴板」分栏，返回分栏右边缘。
     /// 页面标题处的「置物架 | 剪贴板」分栏，返回分栏右边缘。
     fn shelf_tabs(&mut self, c: &Card, x: f32) -> f32 {
+        let glassy=self.glassy();
         let labels = ["置物架", "剪贴板"];
         let font = 12.0;
         let widths: Vec<f32> = labels.iter().map(|l| c.text_w(l, font, W::Bold) + 14.0).collect();
         let total = widths.iter().sum::<f32>() + 4.0;
-        c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN);
+        if glassy { paint::glass_chip(c, x, 9.5, total, 21.0, 10.5, 0.12); } else { c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN); }
         let mut left = x + 2.0;
         for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
             let selected = self.shelf_tab == i;
@@ -754,6 +770,7 @@ impl App {
     }
 
     pub(crate) fn page_shelf(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+        let glassy=self.glassy();
         let n = self.shelf.items.len();
         let drag = self.drag_a;
         // 拖文件进来时回到「文件」分栏。
@@ -777,7 +794,11 @@ impl App {
             let hover = if confirming { Color32::from_rgb(150, 34, 44) } else { theme::BTN_HOVER };
             // 放在右下角：顶栏中间是日期时间，宽度随 12 小时制等设置变化。
             let (x, y) = (377.0 - lw, 109.0);
-            let (r, bc) = capsule(&c.faded(1.0 - drag), x, y, lw, 17.0, "shelf-clear", base, hover);
+            let (r, bc) = if glassy && !confirming {
+                paint::glass_capsule(&c.faded(1.0 - drag), x, y, lw, 17.0, "shelf-clear", 0.14, 0.42)
+            } else {
+                capsule(&c.faded(1.0 - drag), x, y, lw, 17.0, "shelf-clear", base, hover)
+            };
             let r = if confirming { r.on_hover_text("再点一次清空置物架（文件本身不动）") } else { r.on_hover_text("清空置物架") };
             bc.text(x + lw / 2.0, y + 12.0, label, size::SMALL, W::Regular, theme::WHITE, H::Center);
             if r.clicked() {
@@ -944,11 +965,16 @@ impl App {
     }
 
     fn page_clipboard(&mut self, c: &Card, _env: &Env, _cmds: &mut Vec<Cmd>) {
+        let glassy=self.glassy();
         if !self.settings.clipboard_history {
             c.dashed(42.0, 32.0, 335.0, 91.0, 12.0, 1.2, Color32::from_gray(70), 0.0);
             c.text(209.5, 66.0, "剪贴板记录已关闭", 12.0, W::Semibold, theme::WHITE, H::Center);
             c.text(209.5, 82.0, "开启后，最近复制的文字会出现在这里", size::TINY, W::Regular, theme::GRAY, H::Center);
-            let (r, bc) = capsule(c, 179.5, 92.0, 60.0, 20.0, "clip-enable", theme::BTN, theme::BTN_HOVER);
+            let (r, bc) = if glassy {
+                paint::glass_capsule(c, 179.5, 92.0, 60.0, 20.0, "clip-enable", 0.16, 0.42)
+            } else {
+                capsule(c, 179.5, 92.0, 60.0, 20.0, "clip-enable", theme::BTN, theme::BTN_HOVER)
+            };
             bc.centered_text(209.5, 102.0, "开启", size::SMALL, W::Semibold, theme::WHITE, H::Center);
             if r.clicked() { self.settings.clipboard_history = true; self.clipboard.set_enabled(true); self.settings.save(); }
             return;
@@ -979,7 +1005,11 @@ impl App {
             let base = if confirming { Color32::from_rgb(120, 28, 36) } else { theme::BTN };
             let hover = if confirming { Color32::from_rgb(150, 34, 44) } else { theme::BTN_HOVER };
             let x = 351.0 - lw;
-            let (r, bc) = capsule(c, x, 11.5, lw, 17.0, "clip-clear", base, hover);
+            let (r, bc) = if glassy && !confirming {
+                paint::glass_capsule(c, x, 11.5, lw, 17.0, "clip-clear", 0.14, 0.42)
+            } else {
+                capsule(c, x, 11.5, lw, 17.0, "clip-clear", base, hover)
+            };
             bc.text(x + lw / 2.0, 23.5, label, size::SMALL, W::Regular, theme::WHITE, H::Center);
             let r = r.on_hover_text(if confirming { "再点一次清空未固定的记录" } else { "清空未固定的记录" });
             if r.clicked() {
@@ -1008,7 +1038,7 @@ impl App {
             return;
         }
 
-        c.fill(42.0, 31.0, 335.0, 93.0, 12.0, theme::CARD);
+        if glassy { paint::glass_chip(c, 42.0, 31.0, 335.0, 93.0, 12.0, 0.05); } else { c.fill(42.0, 31.0, 335.0, 93.0, 12.0, theme::CARD); }
         // 超过一屏时右侧细滚动条，滚轮查看。
         if n > rows {
             let (top, track) = (38.0, 79.0);
@@ -1109,6 +1139,7 @@ impl App {
 
     // ================= 待办 =================
     pub(crate) fn page_todo(&mut self, c: &Card, env: &Env, _cmds: &mut Vec<Cmd>) {
+        let glassy=self.glassy();
         // 今天未完成优先，已完成沉底；不在今天的重复待办变暗显示、不能勾选。
         let (done, total) = self.todos.progress(&env.today);
         let order = self.todos.display_order(&env.today);
@@ -1119,16 +1150,24 @@ impl App {
         hc.text(42.0 + w, 61.0, &format!("/{total}"), size::HERO, W::Bold, theme::WHITE, H::Left);
         c.text(42.0, 78.0, "已完成", size::SMALL, W::Regular, theme::GRAY, H::Left);
 
-        let (add, ac) = capsule(c, 41.0, 96.0, 74.0, 26.0, "t-add", theme::BTN, theme::BTN_HOVER);
+        let (add, ac) = if glassy {
+            paint::glass_capsule(c, 41.0, 96.0, 74.0, 26.0, "t-add", 0.16, 0.42)
+        } else {
+            capsule(c, 41.0, 96.0, 74.0, 26.0, "t-add", theme::BTN, theme::BTN_HOVER)
+        };
         paint::plus(&ac, 56.0, 109.0, 6.2, theme::WHITE, Color32::BLACK);
         ac.text(67.0, 112.5, "加一个", size::BODY, W::Regular, theme::WHITE, H::Left);
         let can_edit = !self.todos.items.is_empty() && !self.adding && self.editing.is_none();
         let ec = if can_edit { c.clone() } else { c.faded(0.45) };
-        let (edit, edc) = capsule(&ec, 121.0, 96.0, 68.0, 26.0, "t-edit", theme::BTN, if can_edit { theme::BTN_HOVER } else { theme::BTN });
+        let (edit, edc) = if glassy {
+            paint::glass_capsule(&ec, 121.0, 96.0, 68.0, 26.0, "t-edit", if can_edit {0.16}else{0.05}, 0.42)
+        } else {
+            capsule(&ec, 121.0, 96.0, 68.0, 26.0, "t-edit", theme::BTN, if can_edit { theme::BTN_HOVER } else { theme::BTN })
+        };
         if self.todo_choosing{paint::close(&edc,135.0,109.0,3.5,theme::WHITE);}else{paint::pencil(&edc,135.0,109.0,11.0,theme::WHITE);}
         edc.text(145.0, 112.5, if self.todo_choosing{"取消"}else{"改一下"}, size::BODY, W::Regular, theme::WHITE, H::Left);
 
-        c.fill(196.0, 31.0, 181.0, 93.0, 12.0, theme::CARD);
+        if glassy { paint::glass_chip(c, 196.0, 31.0, 181.0, 93.0, 12.0, 0.05); } else { c.fill(196.0, 31.0, 181.0, 93.0, 12.0, theme::CARD); }
         let editing = self.adding || self.editing.is_some();
         if count == 0 && !editing {
             paint::checklist(c, 286.5, 64.0, 32.0, Color32::from_gray(150), Color32::from_rgb(52, 54, 58));
@@ -1266,11 +1305,16 @@ impl App {
         Rect::from_min_max(Pos2::new(left,54.0),Pos2::new(380.0,122.0))
     }
     pub(crate) fn page_mail(&mut self, c: &Card, _env: &Env, cmds: &mut Vec<Cmd>) {
+        let glassy=self.glassy();
         if self.mail.accounts.is_empty() {
             c.text(42.0, 60.0, "还没有邮箱", 13.0, W::Bold, theme::WHITE, H::Left);
             let hint = c.fit("在设置 → 邮箱里添加；授权码只存进系统凭据管理器", 10.5, W::Regular, 344.0);
             c.text(42.0, 77.0, &hint, 10.5, W::Regular, theme::GRAY, H::Left);
-            let (go, gc) = capsule(c, 42.0, 88.0, 84.0, 26.0, "mail-setup", theme::BTN, theme::BTN_HOVER);
+            let (go, gc) = if glassy {
+                paint::glass_capsule(c, 42.0, 88.0, 84.0, 26.0, "mail-setup", 0.16, 0.42)
+            } else {
+                capsule(c, 42.0, 88.0, 84.0, 26.0, "mail-setup", theme::BTN, theme::BTN_HOVER)
+            };
             gc.text(58.0, 105.0, "去添加", size::BODY, W::Regular, theme::WHITE, H::Left);
             if go.clicked() {
                 self.open_mail_settings();
@@ -1295,7 +1339,7 @@ impl App {
         }
         let code=self.visible_mail_code().cloned();
         if let Some(raw)=&code {
-            c.fill(36.0,36.0,140.0,86.0,11.0,theme::CARD);
+            if glassy { paint::glass_chip(c, 36.0,36.0,140.0,86.0,11.0, 0.05); } else { c.fill(36.0,36.0,140.0,86.0,11.0,theme::CARD); }
             let hidden=self.mail_code_hidden(raw);
             let item=self.display_mail(raw);
             let value=item.code.as_deref().unwrap_or("••••••");
@@ -1322,7 +1366,7 @@ impl App {
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
             };
-            c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD);
+            if glassy { paint::glass_chip(c, 182.0,33.0,100.0,19.0,6.0, 0.10); } else { c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD); }
             c.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
             if c.hit(182.0,33.0,100.0,19.0,"mail-account-filter").on_hover_text("选择要看的邮箱账号").clicked(){
                 self.mail.manage.account_menu=!self.mail.manage.account_menu;
@@ -1334,7 +1378,9 @@ impl App {
                 (list_x,52.0,format!("全部 {all_count}"),!self.mail.manage.unread_only,"mail-all"),
                 (list_x+56.0,52.0,format!("未读 {unread}"),self.mail.manage.unread_only,"mail-unread"),
             ]{
-                if selected{c.fill(x,33.0,width,19.0,6.0,theme::BTN);}
+                if selected {
+                    if glassy { paint::glass_chip(c,x,33.0,width,19.0,6.0,0.30); } else { c.fill(x,33.0,width,19.0,6.0,theme::BTN); }
+                }
                 c.text(x+width/2.0,47.0,&label,10.0,W::Semibold,if selected{theme::WHITE}else{theme::GRAY},H::Center);
                 if c.hit(x,33.0,width,19.0,id).on_hover_text("当前加载的最近邮件").clicked(){self.mail.manage.unread_only=id=="mail-unread";}
             }
@@ -1343,7 +1389,7 @@ impl App {
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
             };
-            c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD);
+            if glassy { paint::glass_chip(c, 182.0,33.0,100.0,19.0,6.0, 0.10); } else { c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD); }
             c.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
             if c.hit(182.0,33.0,100.0,19.0,"mail-account-filter").on_hover_text(format!("选择要看的邮箱账号\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){
                 self.mail.manage.account_menu=!self.mail.manage.account_menu;
@@ -1448,10 +1494,11 @@ impl App {
 
     /// 岛内邮件详情可滚动，也可以进入独立窗口阅读全文。
     pub(crate) fn mail_detail(&mut self, c: &Card, raw: &mail::Item, cmds: &mut Vec<Cmd>) {
+        let glassy=self.glassy();
         let hidden=self.mail_code_hidden(raw);
         let display=self.display_mail(raw);let item=&display;
         let body=self.mail_body_lines(item);
-        c.fill(36.0, 36.0, 347.0, 188.0, 11.0, theme::CARD);
+        if glassy { paint::glass_chip(c, 36.0, 36.0, 347.0, 188.0, 11.0, 0.05); } else { c.fill(36.0, 36.0, 347.0, 188.0, 11.0, theme::CARD); }
         let back = c.hit(330.0, 42.0, 44.0, 14.0, ("mail-back", item.uid));
         let bh = c.hover_t(&back).0;
         c.text(374.0, 50.0, "返回", 10.5, W::Regular, if bh > 0.5 { theme::WHITE } else { theme::GRAY }, H::Right);
