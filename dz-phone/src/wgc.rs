@@ -70,6 +70,12 @@ static TOPO_SIG: AtomicU64 = AtomicU64::new(0);
 static SETTLE_UNTIL: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 /// 拓扑查询降频计数器：EnumDisplayMonitors 不便宜，约每 100ms 查一次足够。
 static TOPO_TICK: AtomicU64 = AtomicU64::new(0);
+/// 「这台机器切换显示模式后，实际需要多久桌面才稳定」——跑几次就学会了。
+/// 每次底片干净建成时回写，下次切换直接从这里起步，不用固定值。
+static LEARNED_SETTLE_MS: AtomicU64 = AtomicU64::new(0);
+/// 本次切换的时刻，用于计算实际稳定耗时。
+static TOPO_CHANGED_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
 /// 拓扑已变化、等待抓着 WGC 锁的那一方把旧会话 drop 掉。用原子标志而不是在
 /// `poll_topology` 里直接拿 WGC 锁 —— 调用它的 `grab` 可能正持着那把锁，会死锁。
 static NEED_RESET: AtomicBool = AtomicBool::new(false);
@@ -185,8 +191,10 @@ pub fn poll_topology() -> bool {
         FAILED.store(false, Ordering::Relaxed);
         TRIED.store(false, Ordering::Relaxed);
         let settle = settle_ms();
+        let now = std::time::Instant::now();
+        *TOPO_CHANGED_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(now);
         *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(std::time::Instant::now() + std::time::Duration::from_millis(settle));
+            Some(now + std::time::Duration::from_millis(settle));
         log(&format!("desktop: 显示器拓扑变化，等待 {}ms 稳定后重抓底片", settle));
     }
     changed
@@ -211,14 +219,61 @@ fn monitor_rects_desc() -> String {
         .join(" ")
 }
 
-/// 拓扑变化后的稳定期时长（毫秒）。默认 2000；可用 `DAOZAI_SETTLE_MS` 覆盖，
+/// 拓扑变化后的稳定期时长（毫秒）。默认 500；可用 `DAOZAI_SETTLE_MS` 覆盖，
 /// 方便在实机上不重新编译就试不同时长。
 fn settle_ms() -> u64 {
-    std::env::var("DAOZAI_SETTLE_MS")
+    // 优先级：环境变量（调试用）> 本机学到的值 > 首次默认 500（快机器友好）。
+    // 学到的值 = 上次切换的实际稳定耗时 ×0.85，所以慢机器会自己收敛到更大的窗口，
+    // 快机器稳定在 400ms 左右——不需要为不同电脑手调。
+    if let Some(v) = std::env::var("DAOZAI_SETTLE_MS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(2000)
-        .clamp(0, 30_000)
+    {
+        return v.clamp(0, 30_000);
+    }
+    let learned = {
+        let mem = LEARNED_SETTLE_MS.load(Ordering::Relaxed);
+        if mem > 0 { mem } else { load_learned_settle() }
+    };
+    if learned > 0 { learned.clamp(400, 6000) } else { 500 }
+}
+
+/// 学到的稳定时长落盘位置（放 diagnostics，不污染用户的 settings）。
+fn learned_settle_path() -> std::path::PathBuf {
+    crate::model::config_dir().join("diagnostics").join("settle-learned.txt")
+}
+
+fn load_learned_settle() -> u64 {
+    std::fs::read_to_string(learned_settle_path())
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+fn save_learned_settle(ms: u64) {
+    let path = learned_settle_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, ms.to_string());
+}
+
+/// 底片干净建成时回调：记录「从拓扑变化到拿到干净底片」的实际耗时，下次用它起步。
+/// 乘 0.85 留余量，避免卡在临界值上反复丢帧。
+pub fn note_plate_ready() {
+    // 只认「拓扑变化后的第一张干净底片」：5s 刷新窗口里还会反复重建，
+    // 若每次都算，耗时越累越大、学习值越学越慢（第 10 次会学到 5 秒）。
+    let start = {
+        let mut guard = TOPO_CHANGED_AT.lock().unwrap_or_else(|e| e.into_inner());
+        guard.take()
+    };
+    let Some(start) = start else { return };
+    let used = start.elapsed().as_millis() as u64;
+    if used == 0 { return; }
+    let next = ((used as f64 * 0.85) as u64).clamp(400, 6000);
+    LEARNED_SETTLE_MS.store(next, Ordering::Relaxed);
+    save_learned_settle(next);
+    log(&format!("desktop: 本次稳定耗时 {}ms，下次起步 {}ms（已落盘，重启后仍生效）", used, next));
 }
 
 /// 桌面拓扑刚变过、还在等 DWM 稳定：这段时间内**既不抓屏也不重建底片**。

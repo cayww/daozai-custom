@@ -1123,6 +1123,10 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
                       pw, ph, fpx, fpy, frozen, inner));
         *guard = Some(CleanPlate { x: fpx, y: fpy, w: pw, h: ph, data, epoch });
         *PLATE_BUILT_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+        // 干净底片建成 → 告诉 wgc 这台机器实际需要多久稳定，供下次切换起步。
+        if !polluted && !blank {
+            crate::wgc::note_plate_ready();
+        }
     }
     let p = guard.as_mut().unwrap();
     let (ox, oy) = (x - p.x, y - p.y);
