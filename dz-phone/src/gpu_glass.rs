@@ -915,6 +915,17 @@ const PLATE_ANCHOR: i32 = 256;
 #[cfg(windows)]
 /// 底片可疑时的重试计数（连续丢弃次数）。
 static PLATE_RETRY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// 底片刷新窗口与上次重建时刻。桌面源换代（切显示模式 / 换屏）后，动态壁纸软件
+/// 往往比系统动画晚 1~2s 才画好；底片一旦存下就不会自己更新，于是残留一小段旧画面。
+/// 这里在换代后 5s 内每 500ms 强制重建一次底片，壁纸一画好就会被替换掉。
+static PLATE_REFRESH_UNTIL: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+static PLATE_BUILT_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+static PLATE_EPOCH_SEEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 桌面源换代后需要连续重建底片的窗口（毫秒）。
+const PLATE_REFRESH_MS: u64 = 5000;
+/// 刷新窗口内两次重建的最小间隔（毫秒）。
+const PLATE_REFRESH_STEP_MS: u64 = 500;
 
 struct CleanPlate {
     x: i32,
@@ -1038,7 +1049,22 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
     );
     let mut guard = PLATE.lock().unwrap_or_else(|e| e.into_inner());
     let epoch = crate::wgc::epoch();
-    let need_new = match guard.as_ref() {
+    // 桌面源换代（切显示模式/换屏）：开启底片刷新窗口，让晚到的动态壁纸能顶上去。
+    if PLATE_EPOCH_SEEN.swap(epoch, std::sync::atomic::Ordering::Relaxed) != epoch {
+        *PLATE_REFRESH_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(PLATE_REFRESH_MS));
+        PLATE_RETRY.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+    let now = std::time::Instant::now();
+    let refreshing = PLATE_REFRESH_UNTIL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|until| now < until)
+        && PLATE_BUILT_AT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .map_or(true, |t| now.duration_since(t).as_millis() as u64 >= PLATE_REFRESH_STEP_MS);
+    let need_new = refreshing || match guard.as_ref() {
         None => true,
         Some(p) => {
             if p.epoch != epoch { true } else {
@@ -1078,11 +1104,10 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
         // 这时 ring 也是 0，相对阈值判断不出来（实测 inner=0 / ring=0）。
         let blank = !frozen && inner < 8.0;
         let polluted = !frozen && (blank || (ring > 100.0 && inner < ring * 0.62));
-        // 宁可晚几帧也不要存一张脏底片：判定可疑时先丢掉这次抓取重试。窗口给到
-        // 180 帧（≈3s）—— 除了 Windows 自己的桌面过渡动画，**动态壁纸软件**在切完
-        // 显示模式后还要重新渲染，实测它比系统动画晚 1~2s 才画好；只等 0.7s 会在
-        // 壁纸还没出来时就把底片定死，表现为「之后残留一两秒的旧画面」。全部失败才兜底。
-        if polluted && PLATE_RETRY.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 180 {
+        // 宁可晚几帧也不要存一张脏底片：判定可疑时先丢掉这次抓取重试（60 帧 ≈1s）。
+        // 注意**不要**靠加大这个窗口来等动态壁纸画好 —— 那只会让纯色期更长。壁纸比
+        // 系统动画晚 1~2s 是常态，交给下面的「底片定期刷新」处理。
+        if polluted && PLATE_RETRY.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 60 {
             diag(&format!("plate: 底片可疑 inner={:.0} ring={:.0}，丢弃重试", inner, ring));
             return None;
         }
@@ -1097,6 +1122,7 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
         diag(&format!("plate: new {}x{} at ({},{}) frozen={} inner={:.0}",
                       pw, ph, fpx, fpy, frozen, inner));
         *guard = Some(CleanPlate { x: fpx, y: fpy, w: pw, h: ph, data, epoch });
+        *PLATE_BUILT_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     }
     let p = guard.as_mut().unwrap();
     let (ox, oy) = (x - p.x, y - p.y);
