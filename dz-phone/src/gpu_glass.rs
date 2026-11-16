@@ -896,13 +896,14 @@ const THEME_H_CSS: f32 = 120.0;
 #[cfg(windows)]
 fn theme_rect(body: [f32; 4], bw: i32, bh: i32, ppp: f32) -> (i32, i32, i32, i32) {
     let ppp = ppp.max(0.1);
+    // 夹在抓屏尺寸内：抓屏只有几十像素时（展开动画第一帧）也不能越过缓冲边界。
     let (bw, bh) = (bw.max(1), bh.max(1));
-    let sw = ((THEME_W_CSS * ppp).round() as i32).clamp(8, bw);
-    let sh = ((THEME_H_CSS * ppp).round() as i32).clamp(8, bh);
+    let sw = ((THEME_W_CSS * ppp).round() as i32).min(bw).max(1);
+    let sh = ((THEME_H_CSS * ppp).round() as i32).min(bh).max(1);
     let cx = (body[0] + body[2] * 0.5).round() as i32;
-    let x0 = (cx - sw / 2).clamp(0, bw - sw);
+    let x0 = (cx - sw / 2).clamp(0, (bw - sw).max(0));
     // 上缘锚定：岛体顶端（含刘海肩上那几像素）就是锚点，往下取固定高度。
-    let y0 = ((body[1] - 6.0 * ppp).round() as i32).clamp(0, bh - sh);
+    let y0 = ((body[1] - 6.0 * ppp).round() as i32).clamp(0, (bh - sh).max(0));
     (x0, y0, x0 + sw, y0 + sh)
 }
 
@@ -1500,6 +1501,11 @@ mod tests {
         // 岛体整体右移，框跟着走。
         let moved = theme_rect([312.0, 10.5, 733.0, 245.0], 1157, 339, ppp);
         assert!(moved.0 > a.0, "拖动岛仔时采样框跟着平移：{a:?} → {moved:?}");
+        // 退化尺寸（展开动画第一帧抓屏只有几像素）不能越界、更不能 panic。
+        for (w, h) in [(1, 1), (3, 2), (4, 9), (9, 4)] {
+            let r = theme_rect([2.0, 1.0, 1.0, 1.0], w, h, ppp);
+            assert!(r.0 >= 0 && r.1 >= 0 && r.2 <= w && r.3 <= h, "{w}x{h} → {r:?}");
+        }
     }
 
     #[test]

@@ -14,11 +14,11 @@
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
 | 液态玻璃源码 | `main` = `37e965d`（…→`b39e3a8`→`8d93c76`→`37e965d`） |
 | **工作树** | **干净**（2026-11-17 01:10 最后一次提交 `37e965d`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-34-theme-hold`，exe sha256 前 16 = `c62211df6c280f34`。本轮（01:00–01:05）修**主题判定被翻页打断**：采样框改固定尺寸、玻璃控件白边不参与换色。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-34-theme-hold`，exe sha256 前 16 = `e016e1fa38554d99`（含采样框越界加固）。本轮（01:00–01:05）修**主题判定被翻页打断**：采样框改固定尺寸、玻璃控件白边不参与换色。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
-| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-34 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-34.exe`（= `daozai-liquid-setup.exe`），9,579,244 B，sha256 前16 `0436adfa5d9a105c`，内含 exe `c62211df6c280f34`。-33 已移到 `_archive\` |
+| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-34 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-34.exe`（= `daozai-liquid-setup.exe`），9,581,107 B，sha256 前16 `111c9d3901241ad3`，内含 exe `e016e1fa38554d99`。-33 已移到 `_archive\` |
 
 **一句话**：日常用的正式版停在 custom-129；`main` 已吃进液态玻璃（50 个 commit，HEAD=`bf116c2`），
 但液态玻璃**没进补丁链**，只在预览目录里跑。上一轮把「视觉细节、帧率、内存」三件收尾了
