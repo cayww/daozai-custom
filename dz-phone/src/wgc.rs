@@ -211,13 +211,13 @@ fn monitor_rects_desc() -> String {
         .join(" ")
 }
 
-/// 拓扑变化后的稳定期时长（毫秒）。默认 2000；可用 `DAOZAI_SETTLE_MS` 覆盖，
+/// 拓扑变化后的稳定期时长（毫秒）。默认 2500；可用 `DAOZAI_SETTLE_MS` 覆盖，
 /// 方便在实机上不重新编译就试不同时长。
 fn settle_ms() -> u64 {
     std::env::var("DAOZAI_SETTLE_MS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(2000)
+        .unwrap_or(2500)
         .clamp(0, 30_000)
 }
 

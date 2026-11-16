@@ -1078,9 +1078,11 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
         // 这时 ring 也是 0，相对阈值判断不出来（实测 inner=0 / ring=0）。
         let blank = !frozen && inner < 8.0;
         let polluted = !frozen && (blank || (ring > 100.0 && inner < ring * 0.62));
-        // 宁可晚几帧也不要存一张脏底片：判定可疑时先丢掉这次抓取重试（最多 40 帧
-        // ≈0.7s），让切换显示模式的过渡动画播完再抓真壁纸。全部失败才填渐变兜底。
-        if polluted && PLATE_RETRY.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+        // 宁可晚几帧也不要存一张脏底片：判定可疑时先丢掉这次抓取重试。窗口给到
+        // 180 帧（≈3s）—— 除了 Windows 自己的桌面过渡动画，**动态壁纸软件**在切完
+        // 显示模式后还要重新渲染，实测它比系统动画晚 1~2s 才画好；只等 0.7s 会在
+        // 壁纸还没出来时就把底片定死，表现为「之后残留一两秒的旧画面」。全部失败才兜底。
+        if polluted && PLATE_RETRY.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 180 {
             diag(&format!("plate: 底片可疑 inner={:.0} ring={:.0}，丢弃重试", inner, ring));
             return None;
         }
