@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 01:05
+> **最后更新**：2026-11-17 01:50
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -12,13 +12,13 @@
 | 项目 | 当前值 |
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
-| 液态玻璃源码 | `main` = `37e965d`（…→`b39e3a8`→`8d93c76`→`37e965d`） |
-| **工作树** | **干净**（2026-11-17 01:10 最后一次提交 `37e965d`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-34-theme-hold`，exe sha256 前 16 = `e016e1fa38554d99`（含采样框越界加固）。本轮（01:00–01:05）修**主题判定被翻页打断**：采样框改固定尺寸、玻璃控件白边不参与换色。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
+| 液态玻璃源码 | `main` = 本轮提交（…→`37e965d`→`67182be`→本轮过渡玻璃） |
+| **工作树** | **干净**（2026-11-17 01:50 最后一次提交，本轮：翻页过渡期控件也走 GPU 玻璃） |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-35-transition-glass`，exe sha256 前 16 = `68b119a6871d3965`。本轮（01:15–01:50）**翻页过渡期控件也走 GPU 玻璃**：透镜随 slide.pos 平移、旧页矢量淡出。上一轮（01:00–01:10）修主题判定被翻页打断（采样框固定尺寸、白边不参与换色）。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
-| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-34 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-34.exe`（= `daozai-liquid-setup.exe`），9,581,107 B，sha256 前16 `111c9d3901241ad3`，内含 exe `e016e1fa38554d99`。-33 已移到 `_archive\` |
+| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-35 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-35.exe`（= `daozai-liquid-setup.exe`），9,581,048 B，sha256 前16 `faa45512144a49be`，内含 exe `68b119a6871d3965`。-34/-32 已移到 `_archive\` |
 
 **一句话**：日常用的正式版停在 custom-129；`main` 已吃进液态玻璃（50 个 commit，HEAD=`bf116c2`），
 但液态玻璃**没进补丁链**，只在预览目录里跑。上一轮把「视觉细节、帧率、内存」三件收尾了
@@ -249,6 +249,7 @@ App::frame
 | ㉑ | **自适应学习值只认第一张干净底片** | 5s 刷新窗口里底片会反复重建，若每次都记「稳定耗时」并学习，耗时越累越大，学习值会被滚到 5 秒上限（越学越慢）。必须 `topo_changed_at.take()` 只取一次 |
 | ㉒ | **主题采样框不能跟着岛体尺寸走** | 原来用「抓屏矩形减岛体」那圈像素判深浅。各页展开高度不同（音乐 140 / 视频 176 / 日历 216 / 天气 232），一翻页圈里就换了一批壁纸 → 深浅材质被重新判定。实测日志：收起 inner=147/outer=149（亮度 0.58）稳定不动，但翻页时圈的下沿往下挪 70~90px 就够跨过 0.52 阈值。改成 `theme_rect()`：以**岛体上缘中心**为锚点、固定 520×120 CSS px，翻页/换页/展开高度变化都不动它。顺带把「收起→展开再判一次」也消掉了 |
 | ㉓ | **玻璃控件的白边是材质，不能进皮肤换色** | 矢量回退版 `glass_chip/disc/groove` 的白边画的是「白」，浅材质调色板把白映射成墨色 → 翻页过渡（`ctl_glass_ready` 关掉的那半秒）控件变成**黑边**，稳定后 GPU 玻璃又是白边 → 每次翻页黑白跳一次。用户会以为「主题色又被重新判定了一遍」。正解是 `Palette::glass_chrome`（只液态浅材质开）+ `tone_since(keep_glass_chrome)`：玻璃材质原样保留，只有字色/图标色跟深浅走。**别用「给控件更浅的压暗」这类改法**（见坑 ⑨） |
+| ㉔ | **GPU 透镜没有透明度通道，不能跟淡出** | 翻页过渡想让控件也走 GPU 玻璃时，旧页（快速淡出的那层）绝不能直接给透镜——`gpu_glass::Ctl` 没有 alpha，透镜会以全强度留在原地不跟 `old_a` 淡出，变成一颗不消失的空玻璃。正解：旧页渲染期置 `old_page_render`，`ctl_on_gpu` 对它恒 false → 旧页控件回矢量玻璃（白边由坑 ㉓ 的 `glass_chrome` 保住）随卡片一起淡出；新页透镜在 `glass_controls` 里随 `page_slide_tx()`（= `slide.pos`，条件与 body 的 in_tx 严格一致）平移。齿轮/翻页箭头是全局 chrome 不参与滑移，别跟着平移 |
 
 ### 6.5 控件玻璃现状（`bf116c2`）
 
@@ -345,8 +346,19 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
   从原来的深灰（max 亮度 ≈135）变成白线（255），和稳定态一致。
 - 全量测试 **1189 passed / 0 failed / 119 ignored**（`--test-threads=1`）。
 
-**已知残留（不是这次的目标）**：过渡期控件仍是矢量版（没有折射），只是白边一致了；
-真正让过渡期也上玻璃需要把 `slide.pos` 传进控件几何，另开一轮。
+→ 已在 7.0c 完成。
+
+### 7.0c 本轮已完成（2026-11-17 01:15–01:50，翻页过渡也走 GPU 玻璃）
+
+| 问题 | 根因 | 修法 |
+|---|---|---|
+| 过渡期控件质感差一档（矢量片没有折射/压暗，翻一次页「玻璃→贴纸→玻璃」） | `ctl_glass_ready` 在 `page_e()<0.55` 时放行矢量；且翻页引发面板高度弹簧收敛，`progress()<0.985` 也会挡 | `ctl_glass_ready` 放行翻页（`flip_glass_until=t+1.2` 盖住滑入+收敛期）；新页控件透镜在 `glass_controls` 里随 `page_slide_tx()` 平移对齐；旧页见坑 ㉔（矢量淡出） |
+
+**验证**：
+- 全量 1189 passed / 0 failed / 119 ignored。
+- 棋盘格诊断（`DAOZAI_LIQUID_FLAT=2` + 冻结截图）：翻页中段帧里专注/休息分段按钮已带透镜边界（内部棋盘格被折射位移），透镜位置跟随内容滑移。
+- 音乐播放页（用户实测在播）：翻回音乐页的过渡帧里媒体圆片带玻璃滑入、进度条圆钮是折射透镜（无矢量实心白点）；翻离时旧页控件随淡出保持白边玻璃。全程无黑边。
+- 安装包 liquid-test-35-transition-glass（exe `68b119a6871d3965` / setup `faa45512144a49be`）。
 
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
@@ -446,6 +458,8 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `b39e3a8` | 改为「底片 5s 定期刷新」+ 重试收回 1s = liquid-test-32 |
 | `8d93c76` | 稳定期自适应学习（×0.85，落盘 `settle-learned.txt`）= liquid-test-33；**当前 HEAD** |
 | `37e965d` | **主题判定不再被翻页打断**：`theme_rect` 固定尺寸采样框 + `Palette::glass_chrome`（玻璃白边不进换色）= liquid-test-34；1189 passed；**当前 HEAD** |
+| `67182be` | theme_rect 越界加固（展开首帧抓屏极小时防 clamp panic）+ 退化尺寸单测 = liquid-test-34 重打包（exe `e016e1fa38554d99`） |
+| 本轮提交 | **翻页过渡期控件也走 GPU 玻璃**：`ctl_glass_ready` 放行翻页、透镜随 `page_slide_tx()` 平移、旧页矢量淡出（坑 ㉔）= liquid-test-35；1189 passed；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、

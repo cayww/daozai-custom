@@ -771,6 +771,13 @@ pub struct App {
     page_dir: f32,
     page_t0: f64,
     slide: Spring,
+    /// 正在渲染翻页过渡里快速淡出的旧页（见 body 的 in_tx 分支）。
+    /// 旧页控件一律走矢量玻璃：GPU 透镜没有透明度通道，跟不了 old_a 淡出。
+    old_page_render: bool,
+    /// 最近一次翻页后 GPU 控件玻璃的放行截止时刻。翻页会让面板高度弹簧重新收敛，
+    /// progress 短暂跌破 0.985 —— 这个窗口比 0.55s 的滑入动画长一点，盖住收敛期，
+    /// 避免翻页刚结束又掉回矢量版闪一次边。
+    flip_glass_until: f64,
     dots: [Spring; 9],
     wheel_delta: f32,
     wheel_at: f64,
@@ -1083,6 +1090,8 @@ impl App {
             page_from: initial_page,
             page_dir: 1.0,
             page_t0: -10.0,
+            old_page_render: false,
+            flip_glass_until: -10.0,
             slide: Spring::new(0.0, 260.0, 0.92),
             dots: std::array::from_fn(|i| Spring::new(if i == initial_page { 16.0 } else { 4.0 }, 380.0, 0.86)),
             wheel_delta: 0.0,
@@ -1874,6 +1883,9 @@ impl App {
         if page==CALENDAR_PAGE {self.request_calendar_month(false);}
         self.page_dir = dir;
         self.page_t0 = self.t;
+        // GPU 控件玻璃在翻页期间保持放行（见 ctl_glass_ready），1.2s 盖住
+        // 滑入动画（0.55s）+ 面板高度弹簧收敛。
+        self.flip_glass_until = self.t + 1.2;
         self.slide.pos = dir * PAGE_SLIDE + if self.page_e() < 0.4 { self.slide.pos * 0.3 } else { 0.0 };
         self.slide.target = 0.0;
         self.dots_target();
@@ -2986,17 +2998,27 @@ impl App {
         }
     }
 
-    /// 控件能不能走 GPU 玻璃：完全展开、内容揭开、没有页切换过渡、没有二级页/编辑弹窗。
+    /// 控件能不能走 GPU 玻璃：完全展开、内容揭开、没有二级页/编辑弹窗。
     ///
-    /// 过渡期间内容整体平移 ±18px，控件矩形对不上；形变过程中面板几何每帧都在变，
-    /// 透镜会跟着被拉伸，看起来像「卡片被扯开」。
+    /// 翻页过渡**也放行**：新页控件随 `slide.pos` 平移，透镜在 `glass_controls`
+    /// 里同步平移就能对上；面板高度变化与展开/折叠共用 morph 折射增强。
+    /// 之前过渡期回退矢量版，浅材质下白边要靠 `glass_chrome` 保，而且没有折射，
+    /// 质感差一档 —— 翻一次页「玻璃变贴纸再变回玻璃」，观感跳。
+    /// `flip_glass_until` 盖住翻页引发的高度弹簧收敛期，避免动画刚结束就掉回矢量版。
     fn ctl_glass_ready(&self)->bool{
         if self.settings.skin!=model::Skin::Liquid {return false;}
         // 拓扑变化后的稳定期内纹理是旧屏内容，控件一并回退矢量版本。
         if crate::wgc::settling() {return false;}
-        if !self.open || self.progress()<0.985 || self.reveal<0.6 {return false;}
+        if !self.open || self.reveal<0.6 {return false;}
         if self.subpage.is_some() || self.calendar.draft.is_some() || self.task_dialog.is_some() {return false;}
-        !(self.page_from!=self.page && self.page_e()<0.55)
+        self.progress()>=0.985 || self.t<self.flip_glass_until
+    }
+
+    /// 翻页过渡中新页内容的水平位移。与 body() 里 `nc.shifted(self.slide.pos,..)`
+    /// 的条件严格一致（in_tx：`page_from!=page && page_e()<0.55`），GPU 控件玻璃
+    /// 用它平移透镜，跟页内容逐像素对齐；过渡结束后内容与透镜同时归位。
+    pub(crate) fn page_slide_tx(&self)->f32{
+        if self.page_from!=self.page && self.page_e()<0.55 {self.slide.pos}else{0.0}
     }
 
     /// 进度条底槽的 (x, 宽, y)（面板局部坐标），和 pages.rs `page_media` 同一套公式。
@@ -3131,15 +3153,22 @@ impl App {
     }
 
     /// 这个控件本帧是不是已经由 GPU 画了玻璃（画图标的一边据此跳过矢量玻璃片）。
-    pub(crate) fn ctl_on_gpu(&self,ctl:Ctl)->bool{self.ctl_gpu[ctl.idx()]}
+    /// 翻页过渡里快速淡出的旧页除外：透镜没有透明度通道跟不了 old_a，
+    /// 旧页控件一律回矢量玻璃（`glass_chrome` 保证白边不黑），随卡片一起淡出。
+    pub(crate) fn ctl_on_gpu(&self,ctl:Ctl)->bool{!self.old_page_render && self.ctl_gpu[ctl.idx()]}
 
     /// 岛内控件玻璃：页内局部矩形 + 圆角 + 放大/折射倍数，**按绘制顺序**给
     /// （靠后的压在前面的上面，`pick_ctl` 命中即覆盖）。
     ///
     /// 小控件也走真折射（每块控件一个矩形 + 自己的参数）：30~40 点的圆片同样是一块透镜，
     /// 只是折射位移要按短边收（见 `Ctl::refract`），否则整片采到几十像素外的壁纸。
+    ///
+    /// 翻页过渡：页内容控件（媒体圆片、进度条圆钮、专注/休息分段）随新页内容
+    /// 平移 `page_slide_tx()`，透镜跟图标逐像素对齐。齿轮和翻页箭头是全局 chrome
+    /// （body()/nav() 直接画，不参与滑移），保持原位。
     pub(crate) fn glass_controls(&self,origin:Pos2)->Vec<crate::gpu_glass::Ctl>{
         if !self.ctl_glass_ready() {return Vec::new();}
+        let tx=self.page_slide_tx();
         let mut out=Vec::new();
         for ctl in Ctl::ALL {
             if !self.ctl_gpu[ctl.idx()] {continue;}
@@ -3149,6 +3178,9 @@ impl App {
             // 圆钮的放大镜倍数跟拖动弹簧走：未拖 mag=1（浅玻璃胶囊）、拖动 1.9
             //（资料包标准），与胶囊尺寸的 ×(1+0.9·sp) 同步。
             let mag=if ctl==Ctl::Seek {1.0+0.9*self.seek_drag.pos.clamp(0.0,1.0)}else{ctl.mag()};
+            let rect=if tx!=0.0 && !matches!(ctl,Ctl::Gear|Ctl::NavL|Ctl::NavR) {
+                rect.translate(egui::vec2(tx,0.0))
+            }else{rect};
             out.push(crate::gpu_glass::Ctl {
                 rect:Rect::from_center_size(rect.center(),rect.size()*s).translate(origin.to_vec2()),
                 radius:radius*s,
@@ -3814,7 +3846,12 @@ impl App {
             if old_a > 0.0 {
                 let oc = c.faded(old_a).ghost();
                 self.page_title(self.page_from, &oc);
+                // 旧页控件走矢量玻璃（ctl_on_gpu 对 old_page_render 返回 false），
+                // 矢量片没有折射但白边恒定（glass_chrome），随 old_a 一起淡出；
+                // GPU 透镜没有透明度通道，留着只会变成一颗不跟随淡出的空玻璃。
+                self.old_page_render=true;
                 self.render_page(self.page_from, &oc.shifted(old_dx, 0.0), env, &mut Vec::new());
+                self.old_page_render=false;
             }
             let nc = c.faded(new_a);
             self.page_title(self.page, &nc);
