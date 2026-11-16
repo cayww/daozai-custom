@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-16 23:10
+> **最后更新**：2026-11-17 00:25
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -12,13 +12,13 @@
 | 项目 | 当前值 |
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
-| 液态玻璃源码 | `main` = `f0cc409`（`5f5b428`→`c3e9b9b`→`cf76bbb`→`3ddcb30`→`bf116c2`→`2c199f1`→`f0cc409`） |
-| **工作树** | **干净**（2026-11-16 23:08 最后一次提交 `f0cc409`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-29-topology`，exe sha256 前 16 = `6bf6152cc5338048`。本轮（19:00–23:10）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 LiquidGlass-Pack-v2、图标缩小、**自适应帧率真正生效（静止 30fps）**、**液态玻璃可选优先独显（548MB→257MB）**、**显示器拓扑切换不再花屏**（待实机确认） |
+| 液态玻璃源码 | `main` = `8d93c76`（`5f5b428`→`c3e9b9b`→`cf76bbb`→`3ddcb30`→`bf116c2`→`2c199f1`→`f0cc409`→`2cbbd4a`→`a1a2669`→`1ee5795`→`b39e3a8`→`8d93c76`） |
+| **工作树** | **干净**（2026-11-17 00:19 最后一次提交 `8d93c76`） |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-33-adaptive-settle`，exe sha256 前 16 = `e0f0045be7a5f765`。本轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 LiquidGlass-Pack-v2、图标缩小、**自适应帧率（静止 30fps）**、**可选优先独显（548→257MB）**、**显示器拓扑切换不再花屏（含自适应稳定期）** |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1186 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
-| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`，资产 9,574,981 B，prerelease=true）；**本地新包 liquid-test-29 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-29.exe`（= `daozai-liquid-setup.exe`），9,577,832 B，sha256 前16 `7ae5f3eaa4710e89`，内含 exe `6bf6152cc5338048`。-28 备份 `_archive\` |
+| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-33 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-33.exe`（= `daozai-liquid-setup.exe`），9,579,411 B，sha256 前16 `e0a36c10cfd5ad2d`，内含 exe `e0f0045be7a5f765`。-32 备份 `_archive\` |
 
 **一句话**：日常用的正式版停在 custom-129；`main` 已吃进液态玻璃（50 个 commit，HEAD=`bf116c2`），
 但液态玻璃**没进补丁链**，只在预览目录里跑。本轮把「视觉细节、帧率、内存」三件收尾了：
@@ -242,6 +242,10 @@ App::frame
 | ⑮ | **内存 5 倍差是跑错显卡** | 诊断日志 `渲染器：AMD Radeon / device_type=IntegratedGpu`。egui-wgpu 默认虽是 `HighPerformance`，混合显卡机器仍会落核显；核显无独立显存、纹理与帧缓冲全走系统内存 → 548MB（独显 257MB）。启动 3s 即 548MB 且不增长，**不是泄漏**。修法是 `native_adapter_selector` 显式挑 DiscreteGpu，并用 `is_surface_supported` 过滤防黑屏 |
 | ⑯ | **拓扑检测不能只写在抓屏路径里** | 「仅主屏 → 扩展」时用户多半先**收起岛仔再切**，而收起态不抓屏 → 检测整段错过（日志证据：切换后只剩 `perf:`，没有 `capture:`）。必须由 `App::frame` 每帧调 `poll_topology`。另外只比「矩形中心属于哪块屏」也挡不住这类切换（主屏 rect 没变），要算**全桌面 rect 签名** |
 | ⑰ | **稳定期要回退纯色，不能沿用旧纹理** | 拓扑变化后 `capture` 返回 `None`，如果上层继续画上一帧纹理，看到的就是旧拓扑画面 → 花屏且**不会自愈**。`paint_body` 与 `ctl_glass_ready` 都要在 `settling()` 期间回退纯色/矢量。切换时桌面有 1s 左右「向内收拢→发黑→复原」动画，窗口取 2s |
+| ⑱ | **检测到变化必须「就地登记」** | `poll_topology` 被 `App::frame` 调用时检测到变化、打了 sig 日志，但**返回值被丢弃**；真正设置稳定期的代码在 `grab` 里，而那一帧 `grab` 又被 100ms 降频跳过 → **稳定期从未生效过**（`f0cc409` 的修复因此完全没起作用）。必须让 `poll_topology` 自己完成登记（原子标志 `NEED_RESET` + `EPOCH++` + 设窗口），`grab` 只负责消费标志去 drop 旧会话。**不能**在它内部直接拿 `WGC` 锁（调用它的 `grab` 可能正持锁 → 死锁） |
+| ⑲ | **脏底片要丢弃重试，不能急着存** | 切换瞬间抓到底片 `inner=0`（全黑）或亮度只有周围 62% 以下，就是过渡态。旧保护要求 `inner<45`，黑帧的 `ring` 也是 0 时相对阈值算不出来 → 黑底片存下，玻璃**永久发黑**。判定可疑时先 `return None` 丢弃（60 帧 ≈1s 窗口），让过渡播完再抓 |
+| ⑳ | **动态壁纸比系统动画晚 1~2s** | 只在小屏开动态壁纸、另一屏是 Windows 静态壁纸时，壁纸引擎切完显示模式要重新渲染，比系统过渡动画晚 1~2s 才画好。**不要用加长等待解决**（`1ee5795` 把重试拉到 3s，结果最坏纯色 5.5s 且仍不保证）——正确做法是**底片定期刷新**：换代后 5s 内每 500ms 强制重建，壁纸一画好就被顶上（`b39e3a8`） |
+| ㉑ | **自适应学习值只认第一张干净底片** | 5s 刷新窗口里底片会反复重建，若每次都记「稳定耗时」并学习，耗时越累越大，学习值会被滚到 5 秒上限（越学越慢）。必须 `topo_changed_at.take()` 只取一次 |
 
 ### 6.5 控件玻璃现状（`bf116c2`）
 
@@ -274,6 +278,18 @@ App::frame
 `out.repaint_after` 消费；液态玻璃**不能**用其它皮肤的「静止 1 秒」（背景要持续抓屏，停了会冻住）。
 实测收起静止 30.4fps / CPU 13.2%，悬停 58.1fps。
 
+**桌面拓扑切换（-30~-33 四轮才收住）**：链路是
+`App::frame` 每帧 → `wgc::poll_topology()`（~100ms 降频，EnumDisplayMonitors 收全部 rect 排序后 FNV）
+→ 变化则内部登记 `NEED_RESET` + `EPOCH++` + 清 `BOUND_MONITOR` + 设稳定窗口
+→ `grab` 消费 `NEED_RESET` drop 旧会话
+→ `settling()` 期间 `capture` 不出帧、`paint_body` 回退纯色、`ctl_glass_ready` 返回 false
+→ 稳定后 `compose_with_plate` 建底片，可疑（全黑/低于周围 62%）就丢弃重试（60 帧）
+→ `EPOCH` 变化触发**底片刷新窗口**：5s 内每 500ms 重建（对付晚到的动态壁纸）
+→ 第一张干净底片建成时学习「实际稳定耗时 ×0.85」，落盘 `diagnostics/settle-learned.txt`，下次起步直接用它。
+
+**稳定期参数**：`DAOZAI_SETTLE_MS`（环境变量，最高优先级）> 学习值 > 500ms 首次默认；范围 400~6000ms。
+手动改默认值意义不大——每台机器的「过渡动画 + 壁纸重绘」耗时不同，交给自学习更准。
+
 **显卡选择**：`Settings::liquid_prefer_dgpu`（默认开，仅液态玻璃生效）。启动期在 `main.rs` 建窗前独立
 `Settings::load()`，满足条件才设 `wgpu_setup`；非液态皮肤或关掉时**完全不碰 wgpu 默认策略**。
 UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档。
@@ -297,7 +313,10 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | **内存** | 定位到跑核显，新增 `liquid_prefer_dgpu`（默认开，仅液态玻璃）→ **548MB→257MB** | `3ddcb30` |
 | 文案 | 独显设置项文案由用户简化为「优先使用独显渲染玻璃，切换后重启岛仔生效」 | `bf116c2` |
 | 交接文档 | 纳入仓库 `docs/HANDOFF.md` + README 挂入口；桌面/_archive 三处同步 | `2c199f1` |
-| **显示器拓扑** | 切「扩展/复制/仅主屏」后玻璃花屏：全桌面 rect 签名检测（每帧调）+ 2s 稳定期回退纯色 | `f0cc409` |
+| **显示器拓扑（1/4）** | 全桌面 rect 签名检测 + 每帧调 + 稳定期回退纯色 —— 方向对但**未生效**（见坑 ⑱） | `f0cc409` |
+| **显示器拓扑（2/4）** | 真正修好：重置登记就地完成 + 全黑底片保护，`inner=0` 不再被当底片 | `a1a2669` |
+| 显示器拓扑（3/4） | 试过「加长重试窗口到 3s」——**方向错误已作废**，最坏纯色 5.5s | `1ee5795` |
+| **显示器拓扑（4/4）** | 改为「底片定期刷新」+ 稳定期自适应学习（落盘），残留 ≤0.5s | `b39e3a8` / `8d93c76` |
 
 **验证**：1186 passed / 0 failed / 119 ignored；fps 探针实测（不是只看 CPU 均值——CPU 的 ±2 点方差会骗人）；
 独显开关三态实测（开=257MB/NVIDIA、关=544MB/AMD、无键=默认开）。
@@ -393,7 +412,12 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `3ddcb30` | **液态玻璃可选优先独显**：核显 548MB→独显 257MB；`native_adapter_selector` 挑 DiscreteGpu + `is_surface_supported` 过滤（= liquid-test-28） |
 | `bf116c2` | 独显设置项文案简化（用户手改） |
 | `2c199f1` | 交接文档纳入仓库（`docs/HANDOFF.md`）+ README 入口 |
-| `f0cc409` | **显示器拓扑切换不再花屏**：`desktop_signature` 全桌面签名 + `poll_topology` 每帧检测 + 2s 稳定期纯色回退；**当前 HEAD**（= liquid-test-29） |
+| `f0cc409` | 显示器拓扑：全桌面签名 + 每帧检测 + 稳定期纯色回退（**未真正生效**）= liquid-test-29 |
+| `2cbbd4a` | 交接文档补拓扑（`f0cc409` 那版） |
+| `a1a2669` | **拓扑花屏的真正修复**：重置登记丢失（坑 ⑱）+ 全黑底片保护 = liquid-test-30 |
+| `1ee5795` | 试「加长重试到 3s」= liquid-test-31（**方向错误，已被取代**） |
+| `b39e3a8` | 改为「底片 5s 定期刷新」+ 重试收回 1s = liquid-test-32 |
+| `8d93c76` | 稳定期自适应学习（×0.85，落盘 `settle-learned.txt`）= liquid-test-33；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
@@ -479,6 +503,7 @@ python <skill>/scripts/ui_probe.py click --x 1293 --y 72
 | `DAOZAI_LIQUID_DUMP=1` | 前 8 帧写 PPM |
 | `DAOZAI_LIQUID_MORPH_FORCE=1` | 把 morph 钉成常数，做确定性 A/B |
 | `DAOZAI_LIQUID_CAPTURE_EVERY=<1~4>` | 抓屏节流，默认 1；设 2 省 34% CPU |
+| `DAOZAI_SETTLE_MS=<毫秒>` | 覆盖切换显示模式后的稳定期（优先级最高，0~30000）。不设则用自学习值（首次 500） |
 
 液态玻璃设置项（`settings.txt`，界面在「外观 → 大小」下方，仅液态皮肤显示）：
 
@@ -494,6 +519,8 @@ python <skill>/scripts/ui_probe.py click --x 1293 --y 72
 | **优先独立显卡** | `liquid_prefer_dgpu` | 0/1 | 1（开） |
 
 > `liquid_prefer_dgpu` 是**启动期**生效（wgpu 适配器只选一次），改后必须重启岛仔。
+>
+> 稳定期学习值存在 `data\diagnostics\settle-learned.txt`（纯数字，毫秒）。删掉它即回到 500ms 重新学。
 > 关掉 = 回到 eframe/wgpu 默认策略（混合显卡机器可能落核显，省电但更占内存）。
 
 日志关键字（`data\diagnostics\liquid-glass.log`）：
