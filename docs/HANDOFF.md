@@ -12,8 +12,8 @@
 | 项目 | 当前值 |
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
-| 液态玻璃源码 | `main` = 本轮提交（…→`37e965d`→`67182be`→本轮过渡玻璃） |
-| **工作树** | **干净**（2026-11-17 01:50 最后一次提交，本轮：翻页过渡期控件也走 GPU 玻璃） |
+| 液态玻璃源码 | `main` = `ec122ce`（…→`37e965d`→`67182be`→`ec122ce` 过渡玻璃） |
+| **工作树** | **干净**（2026-11-17 01:50 最后一次提交 `ec122ce`） |
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-35-transition-glass`，exe sha256 前 16 = `68b119a6871d3965`。本轮（01:15–01:50）**翻页过渡期控件也走 GPU 玻璃**：透镜随 slide.pos 平移、旧页矢量淡出。上一轮（01:00–01:10）修主题判定被翻页打断（采样框固定尺寸、白边不参与换色）。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
@@ -459,7 +459,7 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `8d93c76` | 稳定期自适应学习（×0.85，落盘 `settle-learned.txt`）= liquid-test-33；**当前 HEAD** |
 | `37e965d` | **主题判定不再被翻页打断**：`theme_rect` 固定尺寸采样框 + `Palette::glass_chrome`（玻璃白边不进换色）= liquid-test-34；1189 passed；**当前 HEAD** |
 | `67182be` | theme_rect 越界加固（展开首帧抓屏极小时防 clamp panic）+ 退化尺寸单测 = liquid-test-34 重打包（exe `e016e1fa38554d99`） |
-| 本轮提交 | **翻页过渡期控件也走 GPU 玻璃**：`ctl_glass_ready` 放行翻页、透镜随 `page_slide_tx()` 平移、旧页矢量淡出（坑 ㉔）= liquid-test-35；1189 passed；**当前 HEAD** |
+| `ec122ce` | **翻页过渡期控件也走 GPU 玻璃**：`ctl_glass_ready` 放行翻页、透镜随 `page_slide_tx()` 平移、旧页矢量淡出（坑 ㉔）= liquid-test-35；1189 passed；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
