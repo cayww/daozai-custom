@@ -24,9 +24,10 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::{IDXGIDevice};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, HDC, HMONITOR, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
-use windows::Win32::Foundation::POINT;
+use windows::Win32::Foundation::{BOOL, LPARAM, POINT, RECT};
 use windows::Win32::System::WinRT::Direct3D11::{
     CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
 };
@@ -59,6 +60,16 @@ static EPOCH: AtomicU64 = AtomicU64::new(0);
 /// 当前 WGC 会话绑定的显示器身份：左上角原点 + 分辨率。切屏时与实时查询值比对，
 /// 不一致就重建会话。用 i32 的 (mon_x,mon_y,sw,sh) 作为显示器身份（多屏下原点唯一）。
 static BOUND_MONITOR: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
+/// **整个桌面拓扑**的签名（所有显示器的 rect 集合）。只比较「抓屏矩形属于哪块屏」
+/// 挡不住「仅主屏显示 → 扩展」这种切换：主屏 rect 没变，但 DWM 已经重建了合成器，
+/// 旧会话出的是重建期的坏帧，玻璃会花掉（表现为岛内缩进一块壁纸 + 四周发黑）。
+/// 所以每几帧算一次全桌面签名，变了就一律重置。
+static TOPO_SIG: AtomicU64 = AtomicU64::new(0);
+/// 拓扑变化后的稳定期：这段时间内既不抓屏也不重建底片。切显示模式时桌面有
+/// 1 秒左右的「向内收拢、四周变黑、再复原」动画，抓到中间态会污染底片。
+static SETTLE_UNTIL: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+/// 拓扑查询降频计数器：EnumDisplayMonitors 不便宜，约每 100ms 查一次足够。
+static TOPO_TICK: AtomicU64 = AtomicU64::new(0);
 
 fn log(msg: &str) {
     use std::io::Write;
@@ -92,8 +103,87 @@ fn monitor_for_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(HMONITOR, (i32, i
     }
 }
 
-fn staging(device: &ID3D11Device, w: u32, h: u32) -> windows::core::Result<ID3D11Texture2D> {
-    let desc = D3D11_TEXTURE2D_DESC {
+/// 收集各显示器 rect 的回调（EnumDisplayMonitors 要求 C 调用约定）。
+unsafe extern "system" fn collect_monitor(
+    monitor: HMONITOR,
+    _hdc: HDC,
+    _rect: *mut RECT,
+    data: LPARAM,
+) -> BOOL {
+    let out = &mut *(data.0 as *mut Vec<(i32, i32, i32, i32)>);
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if GetMonitorInfoW(monitor, &mut info).as_bool() {
+        let (l, t, r, b) = (
+            info.rcMonitor.left,
+            info.rcMonitor.top,
+            info.rcMonitor.right,
+            info.rcMonitor.bottom,
+        );
+        out.push((l, t, r - l, b - t));
+    }
+    // 继续枚举（TRUE = 1）。
+    BOOL(1)
+}
+
+/// 整个桌面的拓扑签名：所有显示器 rect 排序后做 FNV。显示器增减、位置或分辨率
+/// 变化都会改变签名；单块屏内部的窗口变化不会。
+fn desktop_signature() -> u64 {
+    let mut rects: Vec<(i32, i32, i32, i32)> = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(collect_monitor),
+            LPARAM(&mut rects as *mut _ as isize),
+        );
+    }
+    if rects.is_empty() {
+        return 0;
+    }
+    rects.sort_unstable();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (l, t, w, hh) in rects {
+        for v in [l, t, w, hh] {
+            h ^= v as u32 as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// 检测桌面拓扑是否刚变过（每约 100ms 实查一次，其余帧返回 false）。
+///
+/// 公开给 gpu_glass 的抓屏入口调用：`capture` 会在 settling() 期间直接返回 None，
+/// 若不在这里先检测，稳定期内的再次切换就永远发现不了（窗口无法续期）。
+pub fn poll_topology() -> bool {
+    if TOPO_TICK.fetch_add(1, Ordering::Relaxed) % 6 != 0 {
+        return false;
+    }
+    let sig = desktop_signature();
+    if sig == 0 {
+        return false;
+    }
+    let previous = TOPO_SIG.swap(sig, Ordering::Relaxed);
+    // 第一次调用（previous == 0）只记录基线，不算变化。
+    previous != 0 && previous != sig
+}
+
+/// 桌面拓扑刚变过、还在等 DWM 稳定：这段时间内**既不抓屏也不重建底片**。
+///
+/// 必须由 `App::frame` 每帧调用 `poll_topology`，不能只靠抓屏路径 —— 用户切显示
+/// 模式时岛仔通常是**收起态**（不抓屏），只在开玻璃时检测会整段错过，展开后用的
+/// 还是旧拓扑的底片，直接花屏。
+pub fn settling() -> bool {
+    SETTLE_UNTIL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|t| std::time::Instant::now() < t)
+}
+
+fn staging(device: &ID3D11Device, w: u32, h: u32) -> windows::core::Result<ID3D11Texture2D> {    let desc = D3D11_TEXTURE2D_DESC {
         Width: w,
         Height: h,
         MipLevels: 1,
@@ -174,7 +264,25 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
     // 隔壁屏内容、重则直接 Unavailable 回退 GDI + 旧屏底片 —— 表现就是玻璃横向拉伸、
     // 半块拱形残留。这里每帧按矩形中心实时查显示器，身份变了就销毁旧会话重建。
     let current = monitor_for_rect(x, y, w, h);
+    // 先查整桌面拓扑：切显示模式（仅主屏 → 扩展 / 复制 / 主屏互换）时主屏 rect
+    // 可能不变，只看「矩形属于哪块屏」会漏掉。拓扑一变，旧会话与旧底片全部作废。
+    let topology_changed = poll_topology();
     let mut guard = WGC.lock().unwrap_or_else(|e| e.into_inner());
+    if topology_changed {
+        *guard = None;
+        EPOCH.fetch_add(1, Ordering::Relaxed);
+        *BOUND_MONITOR.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        FAILED.store(false, Ordering::Relaxed);
+        TRIED.store(false, Ordering::Relaxed);
+        *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(2000));
+        log("desktop: 显示器拓扑变化，重置会话与底片，等待 2000ms 稳定");
+    }
+    // 稳定期内不出帧：切显示模式时桌面有「向内收拢、四周变黑、再复原」的动画，
+    // 抓到中间态会写进底片，之后玻璃一直是花的（就是用户看到的那种）。
+    if settling() {
+        return Grab::NoFrame;
+    }
     if let Some((monitor, ident)) = current {
         let bound = *BOUND_MONITOR.lock().unwrap_or_else(|e| e.into_inner());
         let changed = guard.as_ref()

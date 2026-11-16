@@ -1120,6 +1120,11 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
 #[cfg(windows)]
 fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4]) -> Option<(Vec<u8>, u32, u32)> {
     if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
+    // 显示器拓扑刚变过（切「扩展/复制/仅主屏」）：桌面还在播重建动画，这一秒内
+    // 抓到的都是收拢/黑边的中间态。先检测（顺带处理稳定期内的再次切换），
+    // 再决定是否暂停出帧，让玻璃保持上一帧，别污染底片。
+    crate::wgc::poll_topology();
+    if crate::wgc::settling() { return None; }
     // 截图诊断模式：不排除自身（截图能看到岛仔），背景冻结成启动时的纯壁纸，
     // 这样既能截到玻璃，又能看到真实的折射/色散细节。
     let frozen_env = std::env::var("DAOZAI_LIQUID_FREEZE_BG").is_ok();

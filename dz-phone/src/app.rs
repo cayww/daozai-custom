@@ -2152,6 +2152,10 @@ impl App {
             // 设 30ms 实测仍是 58fps（trace 里 delay 恒 13.6ms = 30.3 − 16.7）。
             // 做法：只把「快/慢」记进 self.glass_tick，由 out.repaint_after 统一调度
             // （main.rs 的 schedule_repaint 会补回 predicted_dt，不会自激）。
+            // 桌面拓扑检测放在这里（而不是只放在抓屏路径）：切显示模式时岛仔多半
+            // 是收起态、根本不抓屏，只在抓屏时检测会整段错过 —— 展开后仍用旧拓扑
+            // 的底片，玻璃直接花掉。内部自带 ~100ms 降频，开销可忽略。
+            crate::wgc::poll_topology();
             self.glass_tick = if self.glass_morph > 0.01
                 || self.ctl_down
                 || env.cursor.is_some_and(|p| win.contains(p))
@@ -2906,6 +2910,15 @@ impl App {
     fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32,origin:Pos2){
         let skin=self.settings.skin;
         if skin==model::Skin::Liquid {
+            // 显示器拓扑刚变过（切扩展/复制/仅主屏）后的稳定期：桌面还在播重建动画，
+            // 抓屏会拿到「向内收拢 + 四周发黑」的中间态，旧纹理也是旧拓扑的画面。
+            // 这一小段（2s）临时回退成纯色玻璃，比继续用旧画面花掉要好。
+            if crate::wgc::settling() {
+                let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
+                painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,225));
+                painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
+                return;
+            }
             self.paint_gpu_glass(painter,rect,flare,flare_h,radius,origin);
             return;
         }
@@ -2979,6 +2992,8 @@ impl App {
     /// 透镜会跟着被拉伸，看起来像「卡片被扯开」。
     fn ctl_glass_ready(&self)->bool{
         if self.settings.skin!=model::Skin::Liquid {return false;}
+        // 拓扑变化后的稳定期内纹理是旧屏内容，控件一并回退矢量版本。
+        if crate::wgc::settling() {return false;}
         if !self.open || self.progress()<0.985 || self.reveal<0.6 {return false;}
         if self.subpage.is_some() || self.calendar.draft.is_some() || self.task_dialog.is_some() {return false;}
         !(self.page_from!=self.page && self.page_e()<0.55)
