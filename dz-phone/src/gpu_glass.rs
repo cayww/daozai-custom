@@ -913,6 +913,9 @@ const PLATE_H: u32 = 512;
 const PLATE_ANCHOR: i32 = 256;
 
 #[cfg(windows)]
+/// 底片可疑时的重试计数（连续丢弃次数）。
+static PLATE_RETRY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 struct CleanPlate {
     x: i32,
     y: i32,
@@ -1067,8 +1070,27 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
         let bot = row_mean(&data, pw, ph, bx0, bx1, by1 + 6);
         let inner = mean_luma(&data, pw, ph, bx0, by0, bx1, by1);
         let ring = (top[0] + top[1] + top[2] + bot[0] + bot[1] + bot[2]) / 6.0;
-        if inner < 45.0 && ring - inner > 80.0 {
+        // 底片里的岛体区域明显比周围暗 = 抓到的是切显示模式/启动瞬间的过渡态（黑边、
+        // 收拢动画、或还没画完的桌面）。这种帧一旦当底片存下来，玻璃会一直显示这块暗区，
+        // 表现就是「花屏且不自愈」。旧阈值要求 inner<45 太严：实测过渡态 inner=72
+        // （正常壁纸约 190），刚好漏过去。改成相对阈值：低于周围 62% 就认为不可信。
+        // 全黑底片（inner≈0）单独兜住：切换显示模式的瞬间整块抓屏都是黑的，
+        // 这时 ring 也是 0，相对阈值判断不出来（实测 inner=0 / ring=0）。
+        let blank = !frozen && inner < 8.0;
+        let polluted = !frozen && (blank || (ring > 100.0 && inner < ring * 0.62));
+        // 宁可晚几帧也不要存一张脏底片：判定可疑时先丢掉这次抓取重试（最多 40 帧
+        // ≈0.7s），让切换显示模式的过渡动画播完再抓真壁纸。全部失败才填渐变兜底。
+        if polluted && PLATE_RETRY.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            diag(&format!("plate: 底片可疑 inner={:.0} ring={:.0}，丢弃重试", inner, ring));
+            return None;
+        }
+        PLATE_RETRY.store(0, std::sync::atomic::Ordering::Relaxed);
+        if polluted || (inner < 45.0 && ring - inner > 80.0) {
             fill_gradient(&mut data, pw, bx0, by0, bx1, by1, top, bot);
+            if polluted {
+                diag(&format!("plate: 底片不可信（{}）inner={:.0} ring={:.0}，已填渐变兜底",
+                              if blank {"全黑"} else {"过渡态"}, inner, ring));
+            }
         }
         diag(&format!("plate: new {}x{} at ({},{}) frozen={} inner={:.0}",
                       pw, ph, fpx, fpy, frozen, inner));

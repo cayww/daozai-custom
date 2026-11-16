@@ -70,6 +70,9 @@ static TOPO_SIG: AtomicU64 = AtomicU64::new(0);
 static SETTLE_UNTIL: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 /// 拓扑查询降频计数器：EnumDisplayMonitors 不便宜，约每 100ms 查一次足够。
 static TOPO_TICK: AtomicU64 = AtomicU64::new(0);
+/// 拓扑已变化、等待抓着 WGC 锁的那一方把旧会话 drop 掉。用原子标志而不是在
+/// `poll_topology` 里直接拿 WGC 锁 —— 调用它的 `grab` 可能正持着那把锁，会死锁。
+static NEED_RESET: AtomicBool = AtomicBool::new(false);
 
 fn log(msg: &str) {
     use std::io::Write;
@@ -167,8 +170,55 @@ pub fn poll_topology() -> bool {
         return false;
     }
     let previous = TOPO_SIG.swap(sig, Ordering::Relaxed);
-    // 第一次调用（previous == 0）只记录基线，不算变化。
-    previous != 0 && previous != sig
+    let changed = previous != 0 && previous != sig;
+    // 首次建立基线、以及每次变化都打一行，便于实机确认检测是否真的在工作。
+    if previous == 0 || changed {
+        log(&format!("desktop: sig={:016x} rects={}", sig, monitor_rects_desc()));
+    }
+    if changed {
+        // **必须在这里就把重置登记下来**，不能靠返回值：调用方可能是 `App::frame`
+        // （它只关心节拍、不处理返回值），真正 drop 会话的 `grab` 那一帧又可能被
+        // 降频跳过，结果稳定期从未设置 —— 切换瞬间的全黑帧就被存成底片，玻璃永久发黑。
+        NEED_RESET.store(true, Ordering::Relaxed);
+        EPOCH.fetch_add(1, Ordering::Relaxed);
+        *BOUND_MONITOR.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        FAILED.store(false, Ordering::Relaxed);
+        TRIED.store(false, Ordering::Relaxed);
+        let settle = settle_ms();
+        *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(settle));
+        log(&format!("desktop: 显示器拓扑变化，等待 {}ms 稳定后重抓底片", settle));
+    }
+    changed
+}
+
+/// 当前显示器 rect 的文字描述（仅诊断日志用）。
+fn monitor_rects_desc() -> String {
+    let mut rects: Vec<(i32, i32, i32, i32)> = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            None,
+            None,
+            Some(collect_monitor),
+            LPARAM(&mut rects as *mut _ as isize),
+        );
+    }
+    rects.sort_unstable();
+    rects
+        .iter()
+        .map(|(l, t, w, h)| format!("({},{} {}x{})", l, t, w, h))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 拓扑变化后的稳定期时长（毫秒）。默认 2000；可用 `DAOZAI_SETTLE_MS` 覆盖，
+/// 方便在实机上不重新编译就试不同时长。
+fn settle_ms() -> u64 {
+    std::env::var("DAOZAI_SETTLE_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(2000)
+        .clamp(0, 30_000)
 }
 
 /// 桌面拓扑刚变过、还在等 DWM 稳定：这段时间内**既不抓屏也不重建底片**。
@@ -268,15 +318,10 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
     // 可能不变，只看「矩形属于哪块屏」会漏掉。拓扑一变，旧会话与旧底片全部作废。
     let topology_changed = poll_topology();
     let mut guard = WGC.lock().unwrap_or_else(|e| e.into_inner());
-    if topology_changed {
+    let _ = topology_changed; // 重置登记已在 poll_topology 内完成，这里只负责 drop 旧会话
+    if NEED_RESET.swap(false, Ordering::Relaxed) {
         *guard = None;
-        EPOCH.fetch_add(1, Ordering::Relaxed);
-        *BOUND_MONITOR.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        FAILED.store(false, Ordering::Relaxed);
-        TRIED.store(false, Ordering::Relaxed);
-        *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(std::time::Instant::now() + std::time::Duration::from_millis(2000));
-        log("desktop: 显示器拓扑变化，重置会话与底片，等待 2000ms 稳定");
+        log("desktop: 旧抓屏会话已销毁，等稳定期结束后重建");
     }
     // 稳定期内不出帧：切显示模式时桌面有「向内收拢、四周变黑、再复原」的动画，
     // 抓到中间态会写进底片，之后玻璃一直是花的（就是用户看到的那种）。
