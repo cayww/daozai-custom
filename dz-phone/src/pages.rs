@@ -457,7 +457,11 @@ impl App {
                 let (hover,_)=c.hover_t(&response);
                 let card=c.scaled(x+width/2.0,106.5,self.ctl_scale(ctl));
                 if selected {
+                    // white_alpha 的 premultiplied 亮度很低，浅材质通用换色会把它压成暗雾；
+                    // 登记为玻璃材质原样保留（GPU 着色器的透镜上叠的就是白雾）。
+                    let from=paint::chrome_mark(c);
                     card.fill(x,94.0,width,25.0,12.5,Color32::from_white_alpha((20.0+hover*20.0) as u8));
+                    paint::chrome_since(c,from);
                 }
                 (response,card)
             } else if glassy {
@@ -1393,9 +1397,25 @@ impl App {
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
             };
-            if glassy { paint::glass_chip(c, 182.0,33.0,100.0,19.0,6.0, 0.10); } else { c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD); }
-            c.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
-            if c.hit(182.0,33.0,100.0,19.0,"mail-account-filter").on_hover_text("选择要看的邮箱账号").clicked(){
+            let (hit_acct,b_acct)=if glassy && self.ctl_on_gpu(Ctl::MailAccount) {
+                // 透镜由着色器出（真折射），这里只留命中区、悬停反馈和文字。
+                let r=c.hit(182.0,33.0,100.0,19.0,"mail-account-filter");
+                let (hover,_)=c.hover_t(&r);
+                let b=c.scaled(232.0,42.5,self.ctl_scale(Ctl::MailAccount));
+                if hover>0.01 {
+                    let from=paint::chrome_mark(c);
+                    b.fill(182.0,33.0,100.0,19.0,9.5,Color32::from_white_alpha((12.0+hover*16.0) as u8));
+                    paint::chrome_since(c,from);
+                }
+                (r,b)
+            }else{
+                let from=paint::chrome_mark(c);
+                if glassy { paint::glass_chip(c, 182.0,33.0,100.0,19.0,6.0, 0.10); } else { c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD); }
+                paint::chrome_since(c,from);
+                (c.hit(182.0,33.0,100.0,19.0,"mail-account-filter"),c.scaled(232.0,42.5,1.0))
+            };
+            b_acct.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
+            if hit_acct.on_hover_text("选择要看的邮箱账号").clicked(){
                 self.mail.manage.account_menu=!self.mail.manage.account_menu;
             }
             c.text(375.0,47.0,"返回邮件",10.0,W::Regular,theme::BLUE,H::Right);
@@ -1405,7 +1425,11 @@ impl App {
                 (list_x,52.0,format!("全部 {all_count}"),!self.mail.manage.unread_only,"mail-all"),
                 (list_x+56.0,52.0,format!("未读 {unread}"),self.mail.manage.unread_only,"mail-unread"),
             ]{
-                if selected {
+                // Pack-v2 demo 的 tab：选中的底是**一个滑动指示器透镜**（MailTab，
+                // 随弹簧滑到当前段，滑动拉伸+按压果冻），不是每段一块静止玻璃。
+                // GPU 未接管（非液态皮肤/兜底/回收站）时保留原来的静态选中片。
+                let tab_gpu=glassy && self.ctl_on_gpu(Ctl::MailTab);
+                if selected && !tab_gpu {
                     if glassy { paint::glass_chip(c,x,33.0,width,19.0,6.0,0.30); } else { c.fill(x,33.0,width,19.0,6.0,theme::BTN); }
                 }
                 c.text(x+width/2.0,47.0,&label,10.0,W::Semibold,if selected{theme::WHITE}else{theme::GRAY},H::Center);
@@ -1416,9 +1440,25 @@ impl App {
                 Some(email)=>Self::mail_account_label(email),
                 None=>"全部账号".to_string(),
             };
-            if glassy { paint::glass_chip(c, 182.0,33.0,100.0,19.0,6.0, 0.10); } else { c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD); }
-            c.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
-            if c.hit(182.0,33.0,100.0,19.0,"mail-account-filter").on_hover_text(format!("选择要看的邮箱账号\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){
+            let (hit_acct,b_acct)=if glassy && self.ctl_on_gpu(Ctl::MailAccount) {
+                // 透镜由着色器出（真折射），这里只留命中区、悬停反馈和文字。
+                let r=c.hit(182.0,33.0,100.0,19.0,"mail-account-filter");
+                let (hover,_)=c.hover_t(&r);
+                let b=c.scaled(232.0,42.5,self.ctl_scale(Ctl::MailAccount));
+                if hover>0.01 {
+                    let from=paint::chrome_mark(c);
+                    b.fill(182.0,33.0,100.0,19.0,9.5,Color32::from_white_alpha((12.0+hover*16.0) as u8));
+                    paint::chrome_since(c,from);
+                }
+                (r,b)
+            }else{
+                let from=paint::chrome_mark(c);
+                if glassy { paint::glass_chip(c, 182.0,33.0,100.0,19.0,6.0, 0.10); } else { c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD); }
+                paint::chrome_since(c,from);
+                (c.hit(182.0,33.0,100.0,19.0,"mail-account-filter"),c.scaled(232.0,42.5,1.0))
+            };
+            b_acct.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
+            if hit_acct.on_hover_text(format!("选择要看的邮箱账号\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){
                 self.mail.manage.account_menu=!self.mail.manage.account_menu;
             }
             let data_ready=self.mail_read_all_ready();

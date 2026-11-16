@@ -107,12 +107,19 @@ impl App {
             let r=c.hit(294.0,72.0,76.0,21.0,"calendar-editor-all-day");
             let (hover,_)=c.hover_t(&r);
             let b=c.scaled(332.0,82.5,ctl_s[0]);
-            if d.all_day || hover>0.01 {b.fill(294.0,72.0,76.0,21.0,10.5,Color32::from_white_alpha((14.0+(if d.all_day {14.0}else{0.0})+hover*16.0) as u8));}
+            if d.all_day || hover>0.01 {
+                // white_alpha 的 premultiplied 亮度很低，浅材质通用换色会把它压成暗雾
+                // 埋掉文字（「提醒那一横排看不清」的同源问题）——登记为玻璃材质原样
+                // 保留；选中态的文字改用强调色，两种材质下都读得清。
+                let from=paint::chrome_mark(c);
+                b.fill(294.0,72.0,76.0,21.0,10.5,Color32::from_white_alpha((14.0+(if d.all_day {14.0}else{0.0})+hover*16.0) as u8));
+                paint::chrome_since(c,from);
+            }
             (r,b)
         }else{
             paint::capsule(c,294.0,72.0,76.0,21.0,"calendar-editor-all-day",if d.all_day{Color32::from_rgb(28,65,100)}else{theme::BTN},theme::BTN_HOVER)
         };
-        b.centered_text(332.0,82.5,if d.all_day{"✓ 全天"}else{"全天"},10.0,W::Regular,theme::WHITE,H::Center);
+        b.centered_text(332.0,82.5,if d.all_day{"✓ 全天"}else{"全天"},10.0,W::Regular,if d.all_day{accent}else{theme::WHITE},H::Center);
         if all_day.clicked(){d.all_day=!d.all_day;d.error.clear();}
         if d.all_day {c.centered_text(214.0,114.0,"包含结束当天",8.5,W::Regular,theme::GRAY,H::Left);}
         let options=if d.all_day{vec![(None,"不提醒"),(Some(0),"当天 09:00")]}else{vec![(None,"不提醒"),(Some(0),"准时"),(Some(5),"提前5分"),(Some(15),"提前15分"),(Some(30),"提前30分")]};
@@ -124,12 +131,17 @@ impl App {
                 let r=c.hit(x,136.0,width,21.0,&format!("calendar-editor-reminder-{i}"));
                 let (hover,_)=c.hover_t(&r);
                 let b=c.scaled(x+width/2.0,146.5,ctl_s[gi]);
-                if on || hover>0.01 {b.fill(x,136.0,width,21.0,10.5,Color32::from_white_alpha((14.0+(if on {14.0}else{0.0})+hover*16.0) as u8));}
+                if on || hover>0.01 {
+                    // 选中淡填充套玻璃材质保护（浅材质下否则被压成暗雾埋掉文字）。
+                    let from=paint::chrome_mark(c);
+                    b.fill(x,136.0,width,21.0,10.5,Color32::from_white_alpha((14.0+(if on {14.0}else{0.0})+hover*16.0) as u8));
+                    paint::chrome_since(c,from);
+                }
                 (r,b)
             }else{
                 paint::capsule(c,x,136.0,width,21.0,&format!("calendar-editor-reminder-{i}"),if on{Color32::from_rgb(28,65,100)}else{theme::BTN},theme::BTN_HOVER)
             };
-            b.centered_text(x+width/2.0,146.5,label,8.4,W::Regular,theme::WHITE,H::Center);
+            b.centered_text(x+width/2.0,146.5,label,8.4,W::Regular,if on{accent}else{theme::WHITE},H::Center);
             if r.clicked(){d.reminder=value;}
         }
         let message=if d.error.is_empty(){"日期 年-月-日 · 时间 时:分"}else{&d.error};

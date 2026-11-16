@@ -117,7 +117,7 @@ fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
 /// 只有「像玻璃」的配色，没有真折射。现在全部走真折射，矢量玻璃片只在
 /// 没有 wgpu 设备（没开兼容渲染）时兜底。
 /// 控件玻璃的槽位数（= `Ctl::ALL` 的长度；**同时可见数** ≤ `gpu_glass::MAX_CTL`）。
-pub(crate) const CTL_N: usize = 23;
+pub(crate) const CTL_N: usize = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ctl {
@@ -147,10 +147,15 @@ pub(crate) enum Ctl {
     CalDelete,
     CalCancel,
     CalSave,
+    /// 邮件页「全部/未读」的滑动指示器（Pack-v2 demo 的 tab：单透镜随弹簧滑动，
+    /// 滑动时横向拉伸、按压果冻）。几何含弹簧位移与形变。
+    MailTab,
+    /// 邮件页「全部账号」筛选 chip（收件箱与回收站共用同一坐标）。
+    MailAccount,
 }
 
 impl Ctl {
-    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave];
+    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount];
     pub(crate) fn idx(self) -> usize { self as usize }
     /// 日程编辑器提醒分段的槽位下标（CalRem0..4）。
     pub(crate) fn rem_index(self) -> usize { self as usize - Ctl::CalRem0 as usize }
@@ -788,6 +793,8 @@ pub struct App {
     page_dir: f32,
     page_t0: f64,
     slide: Spring,
+    /// 邮件页「全部/未读」指示器的滑动弹簧（0=全部，1=未读；Pack-v2 demo 300/0.5）。
+    mail_tab: Spring,
     /// 正在渲染翻页过渡里快速淡出的旧页（见 body 的 in_tx 分支）。
     /// 旧页控件一律走矢量玻璃：GPU 透镜没有透明度通道，跟不了 old_a 淡出。
     old_page_render: bool,
@@ -1110,6 +1117,7 @@ impl App {
             old_page_render: false,
             flip_glass_until: -10.0,
             slide: Spring::new(0.0, 260.0, 0.92),
+            mail_tab: anim::Spring::new(0.0, 300.0, 0.5),
             dots: std::array::from_fn(|i| Spring::new(if i == initial_page { 16.0 } else { 4.0 }, 380.0, 0.86)),
             wheel_delta: 0.0,
             wheel_at: -1.0,
@@ -3151,6 +3159,27 @@ impl App {
                 if self.calendar.draft.is_none() {return None;}
                 (Rect::from_min_size(Pos2::new(298.0,188.0),Vec2::new(72.0,22.0)),11.0)
             }
+            // 邮件页「全部/未读」滑动指示器（Pack-v2 demo 的 tab）：单个透镜随弹簧
+            // 在两段之间滑动，滑动时横向拉伸、纵向略压（st），按压果冻（sc）。
+            // 段中心：list_x+26 与 list_x+82 —— 透镜中心必须逐像素对齐文字。
+            Ctl::MailTab=>{
+                if self.page!=5 || self.subpage.is_some() || self.mail.open_uid.is_some()
+                    || self.mail.manage.trash_open {return None;}
+                let lb=self.mail_list_bounds();
+                let s=self.mail_tab.pos.clamp(-0.25,1.25);
+                let st=(self.mail_tab.vel.abs()*0.06).min(0.5);
+                let sc=1.0+0.3*self.ctl_press[Ctl::MailTab.idx()].pos.clamp(0.0,1.3);
+                let w=48.0*(1.0+st)*sc;
+                let h=(19.0*(1.0-st*0.35)*sc).min(19.0);
+                (Rect::from_center_size(Pos2::new(lb.left()+26.0+56.0*s,42.5),Vec2::new(w,h)),(h*0.5).min(9.5))
+            }
+            // 「全部账号」筛选 chip：收件箱与回收站同一坐标（pages.rs 两个分支共用）。
+            // 邮件详情页整页换正文，工具栏不在，几何随之消失。
+            Ctl::MailAccount=>{
+                if self.page!=5 || self.subpage.is_some() || self.mail.open_uid.is_some()
+                    || self.mail.accounts.is_empty() {return None;}
+                (Rect::from_min_size(Pos2::new(182.0,33.0),Vec2::new(100.0,19.0)),9.5)
+            }
         })
     }
 
@@ -3182,6 +3211,11 @@ impl App {
             self.ctl_press[i].step(dt);
             self.ctl_appear[i].target=self.reveal;
             self.ctl_appear[i].step(dt);
+            if ctl==Ctl::MailTab {
+                // 指示器滑到当前筛选段（0=全部，1=未读）。
+                self.mail_tab.target=if self.mail.manage.unread_only {1.0}else{0.0};
+                self.mail_tab.step(dt);
+            }
             // 圆钮的拖动放大弹簧：按在进度条上就进入放大镜态（尺寸与 mag 同步 ×1.9）。
             // 圆钮的拖动放大弹簧：target 直接用 pages.rs 写入的 egui 真实拖动状态
             // （music_seek_drag 有值 ⇔ 正在拖进度条）。不用自算的 pointer_down_on：

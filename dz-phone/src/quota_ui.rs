@@ -416,7 +416,11 @@ impl App {
                 let r=c.hit(43.0,92.0,94.0,24.0,"add-quota-account");
                 let (hover,_)=c.hover_t(&r);
                 let b=c.scaled(90.0,104.0,self.ctl_scale(Ctl::QuotaAdd));
-                if hover>0.01 {b.fill(43.0,92.0,94.0,24.0,12.0,Color32::from_white_alpha((12.0+hover*16.0) as u8));}
+                if hover>0.01 {
+                    let from=crate::paint::chrome_mark(c);
+                    b.fill(43.0,92.0,94.0,24.0,12.0,Color32::from_white_alpha((12.0+hover*16.0) as u8));
+                    crate::paint::chrome_since(c,from);
+                }
                 (r,b)
             }else{
                 crate::paint::capsule(c,43.0,92.0,94.0,24.0,"add-quota-account",theme::BTN,theme::BTN_HOVER)

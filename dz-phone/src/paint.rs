@@ -413,11 +413,13 @@ mod gradient_tests {
 ///
 /// GPU 玻璃的描边在着色器里恒为白线，所以矢量回退版也必须保持白边 ——
 /// 否则翻页过渡（控件走不了 GPU 的那半秒）会从黑边跳回白边。
-fn chrome_mark(c: &Card) -> usize {
+pub(crate) fn chrome_mark(c: &Card) -> usize {
     crate::skin_paint::shape_count(c.ui.ctx(), c.painter.layer_id())
 }
 
-fn chrome_since(c: &Card, from: usize) {
+/// 把 `from` 起画的图形登记为「玻璃材质」：浅材质下不再被映射成暗雾
+/// （white_alpha 的 premultiplied 亮度很低，通用换色会把它当成深色压成墨雾）。
+pub(crate) fn chrome_since(c: &Card, from: usize) {
     crate::skin_paint::tone_since(c.ui.ctx(), c.painter.layer_id(), from,
                                   crate::skin_paint::keep_glass_chrome);
 }

@@ -275,7 +275,11 @@ impl App {
             let add=c.hit(101.0,9.0,46.0,18.0,"calendar-add-local");
             let (hover,_)=c.hover_t(&add);
             let b=c.scaled(124.0,18.0,self.ctl_scale(Ctl::CalAdd));
-            if hover>0.01 {b.fill(101.0,9.0,46.0,18.0,9.0,Color32::from_white_alpha((12.0+hover*16.0) as u8));}
+            if hover>0.01 {
+                let from=paint::chrome_mark(c);
+                b.fill(101.0,9.0,46.0,18.0,9.0,Color32::from_white_alpha((12.0+hover*16.0) as u8));
+                paint::chrome_since(c,from);
+            }
             (add,b)
         }else{
             paint::capsule(c,101.0,9.0,46.0,18.0,"calendar-add-local",theme::BTN,theme::BTN_HOVER)
