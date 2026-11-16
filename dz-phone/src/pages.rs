@@ -116,9 +116,15 @@ impl App {
         let (bh,_)=c.hover_t(&bar);
         let bh=if has {bh}else{0.0};
         let th=lerp(3.5,5.0,bh);
-        // 底槽保持中性灰：它是「内容」而不是玻璃控件 —— 试过玻璃凹槽，浅色皮肤下
-        // 换色会把它变成比面板更亮的一层，整条进度反而看不见了。
-        c.fill(bx,by-th/2.0,bw,th,th/2.0,if has {Color32::from_gray(90)}else{theme::TRACK});
+        // 底槽：液态玻璃下是玻璃凹槽（黑 46% + 上暗下亮），不再是一条实心灰。
+        // 以前这里坚持中性灰，是因为浅色皮肤换色会把「压暗」翻成「提亮」、整条槽消失；
+        // 现在液态皮肤的调色板恒为 GLASS_DARK（描边固定白，不再随背景翻转），
+        // 凹槽在深浅两种材质下都成立。
+        if glassy && has {
+            paint::glass_groove(c,bx,by-th/2.0,bw,th);
+        } else {
+            c.fill(bx,by-th/2.0,bw,th,th/2.0,if has {Color32::from_gray(90)}else{theme::TRACK});
+        }
         if self.settings.skin==crate::model::Skin::Fluid {
             let head=bx+bw*frac;
             let hot=if bar.is_pointer_button_down_on(){1.0}else if np.playing{0.62}else{0.45};
@@ -132,7 +138,12 @@ impl App {
             }
         }else{
         if frac>0.0 {c.fill(bx,by-th/2.0,(bw*frac).max(th),th,th/2.0,theme::WHITE);}
-        if bh>0.01 {c.faded(bh).circle(bx+bw*frac,by,4.5,theme::WHITE);}
+        // 液态皮肤且 GPU 接管时，圆钮由 gpu_glass 画成真折射玻璃球（拖动时放大镜），
+        // 这里不再画矢量白点，否则会盖在玻璃球中心变成一颗实心白芯。
+        let seek_on_gpu=glassy && self.ctl_on_gpu(Ctl::Seek);
+        if !seek_on_gpu && bh>0.01 {
+            c.faded(bh).circle(bx+bw*frac,by,4.5,theme::WHITE);
+        }
         }
         if bar.clicked() || bar.drag_stopped() {
             if let Some(position)=seek_position {
@@ -433,7 +444,18 @@ impl App {
         for (phase,label,x,width,id) in [(Phase::Focus,"专注",148.0,88.0,"f-focus"),(Phase::Rest,"休息",292.0,88.0,"f-rest")] {
             let selected=self.pomo.phase==phase;
             let accent=if phase==Phase::Focus{theme::RED_TOP}else{theme::SOFT_GREEN};
-            let (response,button)=if glassy {
+            let ctl=if phase==Phase::Focus {Ctl::Focus} else {Ctl::Rest};
+            let (response,button)=if glassy && self.ctl_on_gpu(ctl) {
+                // 玻璃由 GPU 着色器出，这里只留命中区、文字和选中态。
+                // 再叠一层矢量玻璃胶囊会和 GPU 那块错开双边缘（其他控件早就这么让位了）。
+                let response=c.hit(x,94.0,width,25.0,id);
+                let (hover,_)=c.hover_t(&response);
+                let card=c.scaled(x+width/2.0,106.5,self.ctl_scale(ctl));
+                if selected {
+                    card.fill(x,94.0,width,25.0,12.5,Color32::from_white_alpha((20.0+hover*20.0) as u8));
+                }
+                (response,card)
+            } else if glassy {
                 // 玻璃分段：选中=整片点亮，未选中=只剩一圈边；文字色保持原逻辑。
                 paint::glass_capsule(c,x,94.0,width,25.0,id,if selected {0.55}else{0.10},if selected {0.20}else{0.45})
             } else {

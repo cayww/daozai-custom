@@ -24,7 +24,7 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::{IDXGIDevice};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    GetMonitorInfoW, MonitorFromPoint, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::Foundation::POINT;
 use windows::Win32::System::WinRT::Direct3D11::{
@@ -38,7 +38,7 @@ struct Wgc {
     context: ID3D11DeviceContext,
     _item: GraphicsCaptureItem,
     pool: Direct3D11CaptureFramePool,
-    _session: GraphicsCaptureSession,
+    session: GraphicsCaptureSession,
     staging: ID3D11Texture2D,
     /// 显示器左上角在屏幕坐标系里的位置（多显示器时可能非 0）。
     mon_x: i32,
@@ -53,6 +53,12 @@ static WGC: Mutex<Option<Wgc>> = Mutex::new(None);
 static FAILED: AtomicBool = AtomicBool::new(false);
 static TRIED: AtomicBool = AtomicBool::new(false);
 static FRAMES: AtomicU64 = AtomicU64::new(0);
+/// 抓屏源代次：每次因显示器变化重建会话时 +1。GPU 层的干净底片据此判断
+/// 桌面源是否已换屏，换屏后必须重抓，不能复用旧显示器的底片内容。
+static EPOCH: AtomicU64 = AtomicU64::new(0);
+/// 当前 WGC 会话绑定的显示器身份：左上角原点 + 分辨率。切屏时与实时查询值比对，
+/// 不一致就重建会话。用 i32 的 (mon_x,mon_y,sw,sh) 作为显示器身份（多屏下原点唯一）。
+static BOUND_MONITOR: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
 
 fn log(msg: &str) {
     use std::io::Write;
@@ -69,6 +75,22 @@ fn log(msg: &str) {
 
 /// WGC 是否已经成功产出过帧；供诊断显示。
 pub fn frames() -> u64 { FRAMES.load(Ordering::Relaxed) }
+
+/// 抓屏源代次；换屏重建会话后递增。GPU 底片用它判断是否失效。
+pub fn epoch() -> u64 { EPOCH.load(Ordering::Relaxed) }
+
+/// 查询矩形中心点所在显示器的句柄与身份 (mon_x, mon_y, sw, sh)。用矩形中心而非
+/// 左上角，避免岛体落在两屏交界时左上角被判给隔壁屏。
+fn monitor_for_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(HMONITOR, (i32, i32, i32, i32))> {
+    unsafe {
+        let monitor = MonitorFromPoint(
+            POINT { x: x + w / 2, y: y + h / 2 }, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(monitor, &mut mi).as_bool() { return None; }
+        let (mx, my) = (mi.rcMonitor.left, mi.rcMonitor.top);
+        Some((monitor, (mx, my, mi.rcMonitor.right - mx, mi.rcMonitor.bottom - my)))
+    }
+}
 
 fn staging(device: &ID3D11Device, w: u32, h: u32) -> windows::core::Result<ID3D11Texture2D> {
     let desc = D3D11_TEXTURE2D_DESC {
@@ -88,7 +110,8 @@ fn staging(device: &ID3D11Device, w: u32, h: u32) -> windows::core::Result<ID3D1
     out.ok_or_else(|| windows::core::Error::from(windows::core::HRESULT(0x8000_4005u32 as i32)))
 }
 
-fn init(x: i32, y: i32, w: u32, h: u32) -> windows::core::Result<Wgc> {
+fn init(_x: i32, _y: i32, w: u32, h: u32,
+        monitor: HMONITOR, ident: (i32, i32, i32, i32)) -> windows::core::Result<Wgc> {
     unsafe {
         let _ = RoInitialize(RO_INIT_MULTITHREADED);
         let mut device: Option<ID3D11Device> = None;
@@ -107,11 +130,7 @@ fn init(x: i32, y: i32, w: u32, h: u32) -> windows::core::Result<Wgc> {
         let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi)?;
         let d3d_device: IDirect3DDevice = inspectable.cast()?;
 
-        let monitor = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
-        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
-        GetMonitorInfoW(monitor, &mut mi).ok()?;
-        let (mon_x, mon_y) = (mi.rcMonitor.left, mi.rcMonitor.top);
-        let (sw, sh) = (mi.rcMonitor.right - mon_x, mi.rcMonitor.bottom - mon_y);
+        let (mon_x, mon_y, sw, sh) = ident;
 
         let interop: IGraphicsCaptureItemInterop =
             factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
@@ -131,7 +150,7 @@ fn init(x: i32, y: i32, w: u32, h: u32) -> windows::core::Result<Wgc> {
 
         let stage = staging(&device, w, h)?;
         Ok(Wgc {
-            _device: device, context, _item: item, pool, _session: session,
+            _device: device, context, _item: item, pool, session,
             staging: stage, mon_x, mon_y, sw, sh, stage_w: w, stage_h: h,
         })
     }
@@ -147,14 +166,39 @@ pub enum Grab {
 
 /// 抓屏幕物理矩形 (x,y,w,h) 的**实时 DWM 合成帧**，返回自上而下的 RGBA。
 pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
-    if FAILED.load(Ordering::Relaxed) || w <= 0 || h <= 0 || w > 2048 || h > 1024 { return Grab::Unavailable; }
+    if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return Grab::Unavailable; }
     let (bw, bh) = (w as u32, h as u32);
+    // 多显示器：岛仔被移到另一块屏（或主屏切换 / 拔线改了屏幕布局）后，抓屏矩形
+    // 所属显示器会变。WGC 会话是在第一次 grab 时按当时的 (x,y) 绑定的，mon_x/mon_y/
+    // sw/sh 永久固定；若继续用旧会话，`x - mon_x` 会算出错位甚至越界的坐标，轻则抓到
+    // 隔壁屏内容、重则直接 Unavailable 回退 GDI + 旧屏底片 —— 表现就是玻璃横向拉伸、
+    // 半块拱形残留。这里每帧按矩形中心实时查显示器，身份变了就销毁旧会话重建。
+    let current = monitor_for_rect(x, y, w, h);
     let mut guard = WGC.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((monitor, ident)) = current {
+        let bound = *BOUND_MONITOR.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = guard.as_ref()
+            .map(|s| (s.mon_x, s.mon_y, s.sw, s.sh) != ident)
+            .unwrap_or_else(|| bound.is_some_and(|b| b != ident));
+        if changed {
+            // drop 旧 Wgc：session/pool/device 的 RAII 析构会自动停止旧屏捕获并释放 COM 资源。
+            *guard = None;
+            EPOCH.fetch_add(1, Ordering::Relaxed);
+            log(&format!("wgc: 显示器变化 {:?} → {:?}，重建会话",
+                         bound.map(|b| (b.0, b.1, b.2, b.3)), ident));
+            // 换屏后给新显示器一次全新机会：清掉旧屏的失败/已尝试标志。
+            FAILED.store(false, Ordering::Relaxed);
+            TRIED.store(false, Ordering::Relaxed);
+        }
+    }
+    if FAILED.load(Ordering::Relaxed) { return Grab::Unavailable; }
     if guard.is_none() {
         if !TRIED.swap(true, Ordering::Relaxed) {
-            match init(x, y, bw, bh) {
+            let Some((monitor, ident)) = current else { return Grab::Unavailable; };
+            match init(x, y, bw, bh, monitor, ident) {
                 Ok(s) => {
                     log(&format!("wgc: init OK monitor=({},{} {}x{}) cap={}x{}", s.mon_x, s.mon_y, s.sw, s.sh, bw, bh));
+                    *BOUND_MONITOR.lock().unwrap_or_else(|e| e.into_inner()) = Some(ident);
                     *guard = Some(s);
                 }
                 Err(e) => {

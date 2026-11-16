@@ -2355,7 +2355,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_refract_px-48.0).abs()>0.05,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_refract_px=48.0;}
                                     }).response
                                 });
-                                settings_hint(ui,"边缘处背景被弯折的像素数（参考包默认 48）；调大像更厚的透镜，调小更平");
+                                settings_hint(ui,"边缘处背景被弯折的像素数（默认 48）；调大像更厚的透镜，调小更平");
                                 ui.separator();
                                 settings_control_row(ui,"色散强度",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2364,7 +2364,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_chroma_px-8.0).abs()>0.05,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_chroma_px=8.0;}
                                     }).response
                                 });
-                                settings_hint(ui,"红蓝彩边的强度，红蓝实际分离是它的两倍（参考包默认 12，这里默认 8：锐利抓屏在字边会更早出彩边）；0 = 关掉色散");
+                                settings_hint(ui,"红蓝彩边的强度，红蓝实际分离是它的两倍（默认 8；锐利抓屏在字边更容易出彩边）；0 = 关掉色散");
                                 ui.separator();
                                 settings_control_row(ui,"内部模糊",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2373,7 +2373,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_blur_px-1.5).abs()>0.05,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_blur_px=1.5;}
                                     }).response
                                 });
-                                settings_hint(ui,"折射带里五点采样的步长（参考包叫 blur，默认 1.2）；调大整个折射带更「磨」，超过 3 就成毛玻璃");
+                                settings_hint(ui,"折射带里五点采样的步长（默认 1.5）；调大整个折射带更「磨」，超过 3 就成毛玻璃");
                                 ui.separator();
                                 settings_control_row(ui,"折射带宽",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2382,7 +2382,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_band_px-87.0).abs()>0.5,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_band_px=87.0;}
                                     }).response
                                 });
-                                settings_hint(ui,"折射从边缘往里延伸多深（参考包叫 band，默认 60）；小 = 只有边缘一圈在弯，大 = 大半块面板都在弯");
+                                settings_hint(ui,"折射从边缘往里延伸多深（默认 87）；小 = 只有边缘一圈在弯，大 = 大半块面板都在弯");
                                 ui.separator();
                                 settings_control_row(ui,"白边宽度",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2391,7 +2391,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_edge_w_px-1.5).abs()>0.05,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_edge_w_px=1.5;}
                                     }).response
                                 });
-                                settings_hint(ui,"边缘那条高光的宽度（参考包叫 edgeWidth，默认 1.5）；液态玻璃要细，0 = 关掉白边");
+                                settings_hint(ui,"边缘那条高光的宽度（默认 1.5）；液态玻璃要细，0 = 关掉白边");
                                 ui.separator();
                                 settings_control_row(ui,"白边亮度",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2400,7 +2400,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_edge_op-0.90).abs()>0.005,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_edge_op=0.90;}
                                     }).response
                                 });
-                                settings_hint(ui,"边缘高光的亮度（参考包叫 edgeOpacity，默认 0.85）；会随背景明暗自动微调，这里是基准值");
+                                settings_hint(ui,"边缘高光的亮度（默认 0.90）；会随背景明暗自动微调，这里是基准值");
                             }
                             ui.separator();
                             let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();

@@ -8675,7 +8675,7 @@ fn control_glass_covers_small_buttons_and_drops_the_lyric_card(){
     for _ in 0..40 {h.frame(vec![]);}
     assert!(h.app.progress()>0.98,"面板要完全展开");
     let ctls=h.app.glass_controls(Pos2::ZERO);
-    assert_eq!(ctls.len(),9,"齿轮/词/上一首/播放/下一首/音量/岛上歌词/左右箭头都该上 GPU");
+    assert_eq!(ctls.len(),10,"齿轮/词/上一首/播放/下一首/音量/岛上歌词/左右箭头/进度圆钮 都该上 GPU");
     assert!(!ctls.iter().any(|c|(c.rect.width()-144.0).abs()<2.0),"歌词那块玻璃卡已经去掉");
     for c in &ctls {
         assert!(c.mag>1.0,"小控件要有放大镜");
@@ -8700,11 +8700,46 @@ fn control_scale_follows_spring_for_appear_and_press(){
 
 #[test]
 fn control_press_spring_overshoots_before_settling(){
-    // 参考包参数表：按钮按压 k=300、ζ=0.5 —— 必须冲过头再晃回来。
+    // 参数表：按钮按压 k=300、ζ=0.5 —— 必须冲过头再晃回来。
     let mut s=crate::anim::Spring::new(0.0,300.0,0.5);
     s.target=1.0;
     let mut peak=0.0f32;
     for _ in 0..60 {s.step(1.0/60.0);peak=peak.max(s.pos);}
     assert!(peak>1.05,"k=300 ζ=0.5 必须有过冲，峰值实测 {peak}");
     assert!((s.pos-1.0).abs()<0.02,"最后要停在目标值");
+}
+
+#[test]
+fn control_glass_covers_focus_and_rest_segments(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.skin=crate::model::Skin::Liquid;
+    h.app.show_page(1);
+    h.hover(H::local(200.0,40.0),1.2);
+    for _ in 0..40 {h.frame(vec![]);}
+    assert!(h.app.progress()>0.98,"面板要完全展开");
+    let ctls=h.app.glass_controls(Pos2::ZERO);
+    let mut xs:Vec<f32>=ctls.iter()
+        .filter(|c|(c.rect.width()-88.0).abs()<0.6&&(c.rect.height()-25.0).abs()<0.6)
+        .map(|c|c.rect.center().x).collect();
+    xs.sort_by(|a,b|a.partial_cmp(b).unwrap());
+    assert_eq!(xs.len(),2,"专注/休息 两个分段按钮都要上 GPU");
+    assert!((xs[0]-192.0).abs()<1.0&&(xs[1]-336.0).abs()<1.0,
+            "分段按钮位置必须和 page_focus 的布局一致（148+44 / 292+44），实际 {xs:?}");
+}
+
+#[test]
+fn liquid_ink_stays_white_in_both_materials(){
+    // 需求：去掉描边「黑/白」随背景明暗的切换，固定白色。
+    // 材质深浅仍由 shader 按 liquid_k 决定（`paint_gpu_glass` 的兜底底色照旧跟着变），
+    // 但矢量描边/文字的调色板恒为 GLASS_DARK —— 这里锁的就是「不再返回 GLASS_LIGHT」。
+    let mut h=H::new();
+    h.app.settings.skin=crate::model::Skin::Liquid;
+    let p=h.app.skin_palette().expect("液态皮肤必须有调色板");
+    assert_eq!(p.ink,[255,255,255],"描边/文字恒白，不随背景明暗翻转");
+    assert_eq!(p.paper,[0,0,0],"底色仍按深色玻璃映射");
+    // 换回浅色玻璃皮肤时 ink 会变墨色 —— 说明上面那条断言确实在区分两个调色板。
+    h.app.settings.skin=crate::model::Skin::GlassLight;
+    let q=h.app.skin_palette().expect("毛玻璃皮肤必须有调色板");
+    assert_ne!(q.ink,[255,255,255],"浅色玻璃皮肤的 ink 仍是墨色");
 }

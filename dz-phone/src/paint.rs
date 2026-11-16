@@ -273,6 +273,29 @@ impl<'a> Card<'a> {
         let p = ctx.animate_bool_with_time(r.id.with("p"), self.live && r.is_pointer_button_down_on(), 0.07);
         (h, p)
     }
+
+    /// 按钮按压弹簧（k=300 ζ=0.5：按下冲过头、松手晃回来）。
+    /// 弹簧状态按 `id` 存在 egui 的临时数据里，跨帧保留速度与位置；非 live
+    /// （截图/录制）时直接吸附到目标，不产生动画。返回当前位移 0..≈1.3。
+    pub fn press_spring(&self, id: egui::Id, down: bool, k: f32, zeta: f32) -> f32 {
+        let ctx = self.ui.ctx();
+        let sid = id.with("glass-press-spring");
+        // `unstable_dt` 是这一帧的真实间隔（`stable_dt` 会做平滑，弹簧会慢半拍）；
+        // 上限 50ms 防止掉帧后弹簧积分爆掉。
+        let dt = self.ui.input(|i| i.unstable_dt.min(0.05));
+        let mut s = ctx.data_mut(|d| {
+            d.get_temp::<crate::anim::Spring>(sid).unwrap_or_else(|| {
+                crate::anim::Spring::new(if down { 1.0 } else { 0.0 }, k, zeta)
+            })
+        });
+        s.tune(k, zeta);
+        s.target = if self.live && down { 1.0 } else { 0.0 };
+        if !self.live { s.snap(s.target); }
+        s.step(dt);
+        let pos = s.pos;
+        ctx.data_mut(|d| d.insert_temp(sid, s));
+        pos
+    }
 }
 
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -419,10 +442,10 @@ pub fn glass_disc(c: &Card, cx: f32, cy: f32, r: f32, level: f32) {
     c.ring(cx, cy, (r - 0.75).max(0.5), 1.5, Color32::from_white_alpha((110.0 + 60.0 * lv) as u8));
 }
 
-/// 玻璃凹槽：给**将来**的竖向滑槽留的口子 —— 试过用在进度条上，但浅色皮肤的
-/// 换色会把「压暗」变成「提亮」，整条槽反而看不见了，所以进度条仍是中性灰。
-/// 保留实现是因为它在中性色底上（深色玻璃）效果是对的，等有竖向控件再用。
-#[allow(dead_code)]
+/// 玻璃凹槽：进度条底槽用（竖向滑槽也能用）。
+/// 黑 46% 的底 + 上缘阴影 + 下缘 1px 反光，读出「凹进去」的玻璃感。
+/// 曾经用在进度条上失败过（浅色皮肤换色把压暗翻成提亮），液态皮肤改成恒 GLASS_DARK
+/// 调色板之后这个问题不存在了，所以现在正式启用。
 pub fn glass_groove(c: &Card, x: f32, y: f32, w: f32, h: f32) {
     if w < 2.0 || h < 1.5 {
         return;

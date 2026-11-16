@@ -116,7 +116,7 @@ fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
 /// 只有「像玻璃」的配色，没有真折射。现在全部走真折射，矢量玻璃片只在
 /// 没有 wgpu 设备（没开兼容渲染）时兜底。
 /// 控件玻璃的槽位数（= `Ctl::ALL` 的长度 = `gpu_glass::MAX_CTL` 以内）。
-pub(crate) const CTL_N: usize = 9;
+pub(crate) const CTL_N: usize = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ctl {
@@ -129,23 +129,33 @@ pub(crate) enum Ctl {
     IslandLyrics,
     NavL,
     NavR,
+    Seek,
+    Focus,
+    Rest,
 }
 
 impl Ctl {
-    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR];
+    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest];
     pub(crate) fn idx(self) -> usize { self as usize }
-    /// 放大镜倍数（参考包 uS.z：指示器 1.12、开关珠 1.25）。圆片给得多一点，
+    /// 放大镜倍数（指示器类 1.12、小开关珠 1.25 这个量级）。圆片给得多一点，
     /// 胶囊给得少 —— 长条上放大会露出「被拉宽」的假象。
     fn mag(self) -> f32 {
-        match self { Ctl::IslandLyrics => 1.06, _ => 1.12 }
+        match self { Ctl::IslandLyrics => 1.06, Ctl::Seek => 1.9, _ => 1.12 }
     }
 }
 
-/// 控件弹簧的档位（照参考包参数表）：
+/// 专注页「专注 / 休息」分段按钮的几何（面板局部坐标），和 pages.rs page_focus 一致。
+/// 返回 (矩形, 圆角)。
+fn focus_tab_geom(focus:bool)->(Rect,f32){
+    let x=if focus {148.0}else{292.0};
+    (Rect::from_min_size(Pos2::new(x,94.0),Vec2::new(88.0,25.0)),12.5)
+}
+
+/// 控件弹簧的档位（手感调参表）：
 /// 按压 / 指示器位置 300·0.5（会冲过头再晃回来），值类 1000·1.0（临界阻尼）。
 const CTL_PRESS: (f32, f32) = (300.0, 0.5);
 const CTL_APPEAR: (f32, f32) = (320.0, 0.55);
-/// 按压时圆片胀到多大（参考包标签指示器 ×1.3 是给 58px 高的整格，圆片小得多）。
+/// 按压时圆片胀到多大（×1.3 那档是给 58px 高的整格的，圆片小得多）。
 const CTL_PRESS_SCALE: f32 = 0.14;
 
 pub struct Options {
@@ -844,7 +854,7 @@ pub struct App {
 
     forced_open_until:f64,
     /// 控件弹簧：入场（跟着 `reveal` 张开，带过冲）与按压（果冻回弹）。
-    /// 参考包的公式 a = -k(x-target) - 2ζ√k·v，和岛体自己的 w/h 同一套实现。
+    /// 公式 a = -k(x-target) - 2ζ√k·v，和岛体自己的 w/h 同一套实现。
     pub(crate) ctl_appear:[anim::Spring; CTL_N],
     pub(crate) ctl_press:[anim::Spring; CTL_N],
     /// 本帧哪些控件真的交给了 GPU（pages.rs / 共用 chrome 据此跳过矢量玻璃片）。
@@ -2818,7 +2828,10 @@ impl App {
 
     /// 当前皮肤的换色调色板（经典为 None）。
     pub(crate) fn skin_palette(&self)->Option<crate::skin_paint::Palette> {
-        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Liquid=>Some(if self.liquid_k>0.5 {crate::skin_paint::GLASS_LIGHT}else{crate::skin_paint::GLASS_DARK}),model::Skin::Classic|model::Skin::Fluid=>None}
+        // 液态皮肤：文字与控件描边恒为白色（GLASS_DARK 的 ink=白），不再随背景明暗
+        // 在浅/深调色板间翻转 —— 那种翻转会让描边频繁黑白跳变。玻璃材质本身的深浅
+        // 仍由 liquid_k 驱动 shader，不受这里影响。
+        match self.settings.skin {model::Skin::Cream=>Some(crate::skin_paint::CREAM),model::Skin::GlassLight=>Some(crate::skin_paint::GLASS_LIGHT),model::Skin::GlassDark=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Liquid=>Some(crate::skin_paint::GLASS_DARK),model::Skin::Classic|model::Skin::Fluid=>None}
     }
 
     /// 设置页预览用的岛体底色：没有真实模糊，毛玻璃按较实的玻璃表现。
@@ -2931,6 +2944,27 @@ impl App {
         !(self.page_from!=self.page && self.page_e()<0.55)
     }
 
+    /// 进度条底槽的 (x, 宽, y)（面板局部坐标），和 pages.rs `page_media` 同一套公式。
+    pub(crate) fn seek_bar_geom(&self)->(f32,f32,f32){
+        let with_lyrics=!self.media.title.is_empty() && self.show_lyrics && !self.video_page();
+        if with_lyrics {(44.0,176.0,82.0)}else{(96.0,221.0,92.6)}
+    }
+
+    /// 进度条圆钮的圆心与半径（面板局部坐标），和 pages.rs `page_media` 同一套公式。
+    /// GPU 玻璃圆钮与矢量圆钮共用它，保证逐像素对齐。
+    pub(crate) fn seek_geom(&self)->(f32,f32,f32){
+        let (bx,bw,by)=self.seek_bar_geom();
+        let np=&self.media;
+        let pending=self.music_seek_ui.as_ref().filter(|(_,t)|*t==np.title).map(|(t,_)|*t);
+        let restart=self.music_restart_at.filter(|at|self.t<at+1.5).map(|at|(self.t-at).max(0.0));
+        let position=pending.unwrap_or_else(||match restart {
+            Some(fresh) if np.position>fresh+1.0 => fresh,
+            _ => np.position,
+        });
+        let frac=if np.duration>0.0 {(position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
+        (bx+bw*frac, by, 5.5)
+    }
+
     /// 控件在面板局部坐标里的几何：(矩形, 圆角)。不显示的控件返回 `None`。
     ///
     /// 坐标必须和 pages.rs / `nav()` / `panel_body()` 里画的那一份**逐像素一致**，
@@ -2953,6 +2987,22 @@ impl App {
             }
             Ctl::NavL=>{if !self.nav_shown() {return None;} disc(21.0,arrow_y,12.0)}
             Ctl::NavR=>{if !self.nav_shown() {return None;} disc(398.0,arrow_y,12.0)}
+            // 进度条圆钮：位置随播放进度移动，和 pages.rs 共用 seek_geom() 保证对齐。
+            Ctl::Seek=>{
+                if !music||!has {return None;}
+                let (x,y,r)=self.seek_geom();
+                disc(x,y,r)
+            }
+            // 专注页「专注 / 休息」分段按钮：中心点的 x 由调用时传入的布局决定，
+            // 这里给出固定锚点（和 pages.rs page_focus 的分段按钮一致）。
+            Ctl::Focus=>{
+                if self.page!=1 || self.subpage.is_some() {return None;}
+                focus_tab_geom(true)
+            }
+            Ctl::Rest=>{
+                if self.page!=1 || self.subpage.is_some() {return None;}
+                focus_tab_geom(false)
+            }
         })
     }
 
@@ -2971,7 +3021,15 @@ impl App {
             let Some((rect,_))=self.ctl_geom(ctl) else {
                 self.ctl_appear[i].snap(0.0);self.ctl_press[i].snap(0.0);self.ctl_gpu[i]=false;continue;
             };
-            let down=self.pointer_down_on(rect.translate(origin.to_vec2()),env);
+            // 进度条圆钮：按在整条进度条上都算按下（滑块上下 40px 内都算，否则几像素很难按中），
+            // 否则只有几像素的圆钮很难按中，拖动时放大镜效果出不来。
+            let down=if ctl==Ctl::Seek {
+                let (bx,bw,by)=self.seek_bar_geom();
+                let bar=Rect::from_min_size(Pos2::new(bx-4.0,by-7.0),Vec2::new(bw+8.0,14.0));
+                self.pointer_down_on(bar.translate(origin.to_vec2()),env)
+            }else{
+                self.pointer_down_on(rect.translate(origin.to_vec2()),env)
+            };
             self.ctl_press[i].target=if down {1.0}else{0.0};
             self.ctl_press[i].step(dt);
             self.ctl_appear[i].target=self.reveal;
@@ -2999,7 +3057,7 @@ impl App {
     /// 岛内控件玻璃：页内局部矩形 + 圆角 + 放大/折射倍数，**按绘制顺序**给
     /// （靠后的压在前面的上面，`pick_ctl` 命中即覆盖）。
     ///
-    /// 小控件也走真折射（参考包 uR/uS 那套）：30~40 点的圆片同样是一块透镜，
+    /// 小控件也走真折射（每块控件一个矩形 + 自己的参数）：30~40 点的圆片同样是一块透镜，
     /// 只是折射位移要按短边收（见 `Ctl::refract`），否则整片采到几十像素外的壁纸。
     pub(crate) fn glass_controls(&self,origin:Pos2)->Vec<crate::gpu_glass::Ctl>{
         if !self.ctl_glass_ready() {return Vec::new();}
@@ -3718,7 +3776,7 @@ impl App {
         let (lh, _lp) = c.hover_t(&l);
         let (rh, _rp) = c.hover_t(&r);
         // 缩放与「玻璃是否已经由 GPU 画」都交给控件弹簧/控件表，按下的小回弹
-        // 现在由弹簧给（参考包 k=300、ζ=0.5），不再手写 1-0.08*press。
+        // 现在由弹簧给（k=300、ζ=0.5），不再手写 1-0.08*press。
         let glass=self.glassy();
         let (sl, gl)=(self.ctl_scale(Ctl::NavL), self.ctl_on_gpu(Ctl::NavL));
         let (sr, gr)=(self.ctl_scale(Ctl::NavR), self.ctl_on_gpu(Ctl::NavR));

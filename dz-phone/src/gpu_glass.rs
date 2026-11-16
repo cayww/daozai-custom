@@ -36,20 +36,20 @@ pub struct GlassFrame {
     pub optics: [f32; 4],
     /// 抓取矩形的 clip-space 坐标 x0,y0,x1,y1。
     pub clip: [f32; 4],
-    /// 岛内控件玻璃：每块的 x,y,w,h（capture 内物理像素）。最多 10 块。
-    pub controls: [[f32; 4]; 10],
+    /// 岛内控件玻璃：每块的 x,y,w,h（capture 内物理像素）。最多 MAX_CTL 块。
+    pub controls: [[f32; 4]; MAX_CTL],
     /// 每块控件的 (圆角半径 px, 是否启用, 放大倍数, 折射倍数)。
-    pub control_params: [[f32; 4]; 10],
+    pub control_params: [[f32; 4]; MAX_CTL],
     /// 外观四件套：(内部模糊, 折射带宽, 白边宽度 —— 都是设备像素, 白边不透明度)。
     pub look: [f32; 4],
 }
 
 /// 一次 pass 最多画几块控件玻璃（= uniform 里 crect/cprm 的数组长度）。
-pub const MAX_CTL: usize = 10;
+pub const MAX_CTL: usize = 13;
 
 /// 一块控件玻璃。
 ///
-/// `mag` 是放大镜倍数（1 = 不放大，参考包的 uS.z）；
+/// `mag` 是放大镜倍数（1 = 不放大）；
 /// `refract` 是这块控件的折射倍数，由调用方按**短边**缩放 —— 27px 的圆片照
 /// 78px 卡片的位移去弯，整个圆片采到的都是几十像素外的壁纸，看着像挖了个洞。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -75,8 +75,8 @@ struct Uniforms {
     tint: [f32; 4],
     quad: [f32; 4],
     misc: [f32; 4],     // pointer_x, pointer_y, refraction, _
-    crect: [[f32; 4]; 10],
-    cprm: [[f32; 4]; 10],
+    crect: [[f32; 4]; MAX_CTL],
+    cprm: [[f32; 4]; MAX_CTL],
     look: [f32; 4],     // blur, band, edge_w, edge_opacity
 }
 
@@ -157,8 +157,8 @@ struct U {
     misc   : vec4<f32>,
     // 岛内控件玻璃：crect = (x, y, w, h)（capture 内物理像素），
     // cprm = (圆角半径, 是否启用, 放大倍数, 折射倍数)。
-    crect  : array<vec4<f32>, 10>,
-    cprm   : array<vec4<f32>, 10>,
+    crect  : array<vec4<f32>, 13>,
+    cprm   : array<vec4<f32>, 13>,
     // 外观四件套：(内部模糊 px, 折射带宽 px, 白边宽度 px, 白边不透明度)。
     look   : vec4<f32>,
 }
@@ -257,8 +257,8 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let cxn = clamp((abs(local.x) - (hs.x - radius)) / max(radius, 1.0), 0.0, 1.0);
     let cyn = clamp((abs(local.y) - (hs.y - radius)) / max(radius, 1.0), 0.0, 1.0);
     let chroma = max(u.params.x, 0.0) * 0.55 * max(refr, 0.05) * mix(0.60, 1.0, cxn * cyn);
-    // 放大镜（参考包 uS.z）：采样点朝控件中心压缩，背景在玻璃里被放大一点点。
-    // 参考包给标签指示器 1.12、开关珠 1.25；我们用 1.10 左右，小圆片才有「透镜感」。
+    // 放大镜：采样点朝控件中心压缩，背景在玻璃里被放大一点点。
+    // 指示器类给 1.12、小开关珠 1.25；我们用 1.10 左右，小圆片才有「透镜感」。
     let m = max(mag, 1.0);
     let q = p - local * (1.0 - 1.0 / m);
     let bp = q - g * k * strength;
@@ -292,7 +292,7 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     let lobe = pow(max(dot(g, Ld), 0.0), 1.5);
     col = col + vec3<f32>(0.62, 0.86, 0.96) * bleed * (lobe * 0.15 + 0.055);
     // 白边：峰值在内侧，宽度取「白边宽度」设置项（σ = 宽度×0.42，1.5px → 0.63，
-    // 和参考包的 1.5px 线性边在观感上等价，但带抗锯齿）。
+    // 和 1.5px 线性边的观感等价，但带抗锯齿）。
     let sigma_c = max(u.look.z, 0.5) * 0.42;
     let lq = (d + sigma_c * 0.65) / sigma_c;
     let line = exp(-lq * lq);
@@ -304,14 +304,14 @@ fn ctrl_glass(p : vec2<f32>, local : vec2<f32>, hs : vec2<f32>, radius : f32, d 
     return vec4<f32>(col, clamp(max(aa, line_v * edge_a), 0.0, 1.0));
 }
 
-// 选中的控件玻璃：SDF 距离、半尺寸、圆角、下标（>=10 = 没命中）、放大与折射倍数。
+// 选中的控件玻璃：SDF 距离、半尺寸、圆角、下标（>=13 = 没命中）、放大与折射倍数。
 struct CtlSel { d : f32, hs : vec2<f32>, r : f32, idx : u32, mag : f32, refr : f32 }
 
 // 命中测试：**后一个覆盖前一个**（音量浮层必须压在歌词卡上面），
 // 所以是「命中就覆盖」，不是取 SDF 最小值。
 fn pick_ctl(p : vec2<f32>) -> CtlSel {
-    var out = CtlSel(0.0, vec2<f32>(1.0), 0.0, 10u, 1.0, 1.0);
-    for (var ci = 0u; ci < 10u; ci = ci + 1u) {
+    var out = CtlSel(0.0, vec2<f32>(1.0), 0.0, 13u, 1.0, 1.0);
+    for (var ci = 0u; ci < 13u; ci = ci + 1u) {
         if (u.cprm[ci].y < 0.5) { continue; }
         let cr = u.crect[ci];
         // 控件不需要岛体那个 3px 内缩（那是为了 SetWindowRgn 的硬裁剪），
@@ -418,12 +418,12 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     //
     // 折射强度：直接取设置项（设备像素），形变期间再乘一点增益。以前是
     // `clamp(bounds.w*0.90, 26, 78)` —— 那个自适应在展开面板上饱和到 78，
-    // 和参考包的 48 CSS px（面板 1.5x 屏 = 72 设备 px）本来就是一个量级，
+    // 和 48 CSS px（面板 1.5x 屏 = 72 设备 px）本来就是一个量级，
     // 改成绝对值只是把「拧不动」变成「拧得动」。
     let strength = max(u.misc.z, 0.0) * (1.0 + morph * 0.15);
-    // 色散：参考包默认 chroma=12 CSS px（设备 px 下 R/B 相距 48px），而且**整圈边缘一视同仁**。
+    // 色散：默认 chroma=12 CSS px（设备 px 下 R/B 相距 48px），而且**整圈边缘一视同仁**。
     // 我们原来把直边收到 0.22 倍（只剩 0.57px，肉眼等于没有），现在只收到 0.60：
-    // 直边留一点彩边、圆角保持完整色散，和参考包的观感一致。
+    // 直边留一点彩边、圆角保持完整色散，观感更稳。
     let cxn = clamp((abs(local.x) - (half_size.x - radius)) / max(radius, 1.0), 0.0, 1.0);
     let cyn = clamp((abs(local.y) - (half_size.y - radius)) / max(radius, 1.0), 0.0, 1.0);
     let corner = cxn * cyn;
@@ -515,7 +515,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 上下各 10px 就吃掉 44% 的高度，观感自然从「玻璃」变成「磨砂塑料」。
     // 现在峰值落在边缘内侧 0.7px、σ≈1.15（有效宽约 3px）；整条线都在形状
     // 内部，所以不影响外缘覆盖率，外缘依旧交给 aa，不会退回 1px 硬跳。
-    // 白边宽度 / 亮度都来自设置项（参考包 edgeWidth / edgeOpacity）：1.5px →
+    // 白边宽度 / 亮度都来自设置项：1.5px →
     // σ0.82，与旧写死值一致；0.9 不透明度 → 0.62(暗背景)~0.92(亮背景) 也一致。
     let sigma = max(u.look.z, 0.3) * 0.365;
     let lq = (d + sigma * 0.55) / sigma;
@@ -659,8 +659,7 @@ fn morph_scale() -> f32 {
     f32::from_bits(MORPH_SCALE.load(std::sync::atomic::Ordering::Relaxed))
 }
 
-/// 折射 / 色散强度，由设置项每帧写入（单位 CSS px，与参考包 `LiquidGlass-Pack`
-/// 的 `strength` / `chroma` 同单位同量级：48 / 12）。
+/// 折射 / 色散强度，由设置项每帧写入（单位 CSS px，量级 48 / 12）。
 ///
 /// 这两个数原来是我按实测硬编码在着色器里的（strength 按面板高度缩放、chroma 收到
 /// 2.6px 还乘了 0.22 的角部权重），调一次要改代码重编三分钟 —— 而「色散够不够」
@@ -684,7 +683,7 @@ fn chroma_scale() -> f32 {
     f32::from_bits(OPTICS[1].load(std::sync::atomic::Ordering::Relaxed))
 }
 
-/// 外观四件套（参考包 demo 右侧面板剩下的四个滑块）：
+/// 外观四件套（外观页最下面那组滑块剩下的四项）：
 /// 内部模糊 px、折射带宽 px、白边宽度 px、白边不透明度。
 /// 前三个单位是 CSS px，进 uniform 前乘 ppp；不透明度无量纲。
 static LOOK: [std::sync::atomic::AtomicU32; 4] = [
@@ -884,6 +883,9 @@ struct CleanPlate {
     w: u32,
     h: u32,
     data: Vec<u8>,
+    /// 抓取时的抓屏源代次。换显示器后 WGC 会话重建、代次递增，底片里的旧屏桌面
+    /// 内容就失效了，必须重抓 —— 否则玻璃会透出上一块屏的画面。
+    epoch: u64,
 }
 
 #[cfg(windows)]
@@ -996,11 +998,14 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
         ((body[1] + body[3] + 10.0).min(bh as f32)) as i32,
     );
     let mut guard = PLATE.lock().unwrap_or_else(|e| e.into_inner());
+    let epoch = crate::wgc::epoch();
     let need_new = match guard.as_ref() {
         None => true,
         Some(p) => {
-            let (ox, oy) = (x - p.x, y - p.y);
-            ox < 0 || oy < 0 || ox + bw as i32 > p.w as i32 || oy + bh as i32 > p.h as i32
+            if p.epoch != epoch { true } else {
+                let (ox, oy) = (x - p.x, y - p.y);
+                ox < 0 || oy < 0 || ox + bw as i32 > p.w as i32 || oy + bh as i32 > p.h as i32
+            }
         }
     };
     if need_new {
@@ -1031,7 +1036,7 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
         }
         diag(&format!("plate: new {}x{} at ({},{}) frozen={} inner={:.0}",
                       pw, ph, fpx, fpy, frozen, inner));
-        *guard = Some(CleanPlate { x: fpx, y: fpy, w: pw, h: ph, data });
+        *guard = Some(CleanPlate { x: fpx, y: fpy, w: pw, h: ph, data, epoch });
     }
     let p = guard.as_mut().unwrap();
     let (ox, oy) = (x - p.x, y - p.y);
@@ -1327,7 +1332,7 @@ pub fn frame_for(
         shape: [radius * ppp, morph, (pointer.0 - capture.min.x) * ppp, (pointer.1 - capture.min.y) * ppp],
         tint: [tint[0], tint[1], tint[2], 1.0],
         // optics = (time, 折射 CSS px, 色散 CSS px, 亮/暗)。着色器全程按设备像素算，
-        // 所以这里乘 ppp —— 和参考包 `uniform4f(uP, strength*DPR, chroma*DPR, ...)` 一致。
+        // 所以这里乘 ppp —— 着色器全程按设备像素算。
         optics: [time, strength_scale() * ppp, chroma_scale() * ppp, lightness],
         // 外观四件套：前三个同样 CSS px → 设备像素，最后一个是不透明度。
         look: {
@@ -1381,9 +1386,9 @@ mod tests {
 
     #[test]
     fn uniforms_are_packed_without_padding() {
-        // 7 个 vec4（bounds/params/extra/tint/quad/misc/look）+ crect[10] + cprm[10]
-        // 全是 16 字节对齐，432 = 27×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
-        assert_eq!(std::mem::size_of::<Uniforms>(), 432);
+        // 7 个 vec4（bounds/params/extra/tint/quad/misc/look）+ crect[13] + cprm[13]
+        // 全是 16 字节对齐，528 = 33×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
+        assert_eq!(std::mem::size_of::<Uniforms>(), 528);
         assert_eq!(std::mem::size_of::<Uniforms>(), 7 * 16 + MAX_CTL * 32);
     }
 }
