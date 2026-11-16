@@ -2894,6 +2894,14 @@ impl App {
     /// 半透明玻璃片会露出后面的壁纸，反而更脏）。
     pub(crate) fn glassy(&self)->bool{self.settings.skin==model::Skin::Liquid}
 
+    /// 是不是正在设置页里调液态玻璃的参数（常规 → 岛体外观 里那七个滑杆）。
+    /// 这时候鼠标停在设置窗口上，岛仔的悬停状态机一个事件都收不到，
+    /// 默认会收成一颗胶囊 —— 滑杆拖了半天，折射/色散/白边的变化根本看不见。
+    /// 所以这一段时间强制保持展开（`morph` 里单独接管）。
+    pub(crate) fn liquid_tuning(&self)->bool{
+        self.settings_open && self.settings_tab==0 && self.glassy() && !self.hover_lock
+    }
+
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
     fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,radius:f32,origin:Pos2){
@@ -3102,6 +3110,23 @@ impl App {
             self.h.tune(close.0, close.1);
             self.w.target=bw;
             self.h.target=bh;
+        } else if self.liquid_tuning() {
+            // 调液态玻璃参数时始终展开（见 `liquid_tuning`）。
+            // 不走 `hover_since` 的入场缓冲 —— 那是给鼠标划过的，这里没有鼠标，
+            // 一进设置页就该直接按当前动效展开一次。
+            self.hover_since=None;
+            self.leave_since=None;
+            if !self.open {
+                self.open=true;
+                let target_h=self.expanded_height();
+                self.tune_open(PW,target_h);
+                if !instant {
+                    // 和拖入一致：给一点初速度，形变/折射增强能在 30 ms 内出现，
+                    // 正好让人看到「展开时边缘被拉了一下」。
+                    self.w.vel=self.w.vel.max(600.0);
+                    self.h.vel=self.h.vel.max(260.0);
+                }
+            }
         } else if want {
            self.leave_since = None;
             let since = *self.hover_since.get_or_insert(t);

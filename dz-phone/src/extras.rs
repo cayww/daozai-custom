@@ -2337,6 +2337,7 @@ impl App {
                             });
                             settings_hint(ui,"按实际像素渲染，放大不发虚");
                             if self.settings.skin==model::Skin::Liquid {
+                                settings_hint(ui,"调下面这些参数时岛仔会保持展开，边拖边看效果；切到别的设置页就自动收起");
                                 ui.separator();
                                 settings_control_row(ui,"形变强度",56.0,|ui|{
                                     ui.horizontal(|ui|{

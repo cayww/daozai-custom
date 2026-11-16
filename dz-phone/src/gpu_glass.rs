@@ -1356,6 +1356,8 @@ mod tests {
 
     #[test]
     fn uniforms_are_packed_without_padding() {
-        assert_eq!(std::mem::size_of::<Uniforms>(), 224);
+        // 9 个 vec4（bounds/params/extra/tint/quad/misc/crect[4]/cprm[4]/look）全是
+        // 16 字节对齐，240 = 15×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
+        assert_eq!(std::mem::size_of::<Uniforms>(), 240);
     }
 }
