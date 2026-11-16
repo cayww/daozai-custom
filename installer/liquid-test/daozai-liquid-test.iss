@@ -8,7 +8,7 @@
 
 #define MyAppName "岛仔 液态玻璃测试版"
 #define MyAppVersion "0.6.64"
-#define MyAppBuild "liquid-test-16"
+#define MyAppBuild "liquid-test-17"
 ; 独立数据目录：不和正式版的 %APPDATA%\Daozai 抢设置
 #define MyDataDir "Daozai-LiquidTest"
 
@@ -46,10 +46,12 @@ Source: "..\..\dz-phone\target\release\daozai.exe"; DestDir: "{app}"; Flags: ign
 Source: "..\..\dz-phone\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "launch-live.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "launch-freeze.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "反馈与卸载.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
 [Icons]
 Name: "{group}\岛仔 液态玻璃（实时）"; Filename: "{app}\launch-live.cmd"; IconFilename: "{app}\daozai.ico"
 Name: "{group}\岛仔 液态玻璃（可截图）"; Filename: "{app}\launch-freeze.cmd"; IconFilename: "{app}\daozai.ico"
+Name: "{group}\反馈与卸载"; Filename: "{app}\反馈与卸载.txt"
 Name: "{autodesktop}\岛仔 液态玻璃"; Filename: "{app}\launch-live.cmd"; IconFilename: "{app}\daozai.ico"; Tasks: desktopicon
 
 [UninstallDelete]
