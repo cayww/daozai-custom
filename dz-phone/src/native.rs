@@ -30,6 +30,10 @@ const WS_EX_NOREDIRECTIONBITMAP: isize = 0x0020_0000;
 static HIT: OnceLock<Mutex<Vec<(i32, i32, i32, i32)>>> = OnceLock::new();
 /// 前台窗口切到别的进程时置位，由主线程消费。
 static FG_CHANGED: AtomicBool = AtomicBool::new(false);
+// 前台事件在安装钩子的 UI 线程上派发。
+thread_local! {
+    static FG_CONTEXT: std::cell::RefCell<Option<eframe::egui::Context>> = const { std::cell::RefCell::new(None) };
+}
 
 // `WS_EX_NOREDIRECTIONBITMAP` 只能在 CreateWindowEx 时设置（运行时 SetWindowLongPtrW
 // 会回 ERROR_INVALID_PARAMETER），本项目用 GL 合成窗口，加上这一位后画面上什么都
@@ -261,12 +265,10 @@ unsafe extern "system" fn on_foreground(
     // 自己（含托盘窗口）拿到前台不算「切走」
     if pid != 0 && pid != GetCurrentProcessId() {
         FG_CHANGED.store(true, Ordering::Relaxed);
+        FG_CONTEXT.with_borrow(|context| {
+            if let Some(ctx)=context {ctx.request_repaint_of(eframe::egui::ViewportId::ROOT);}
+        });
     }
-}
-
-/// 主线程每帧调用一次：这一帧是否发生了「前台切到别的程序」。
-pub fn take_foreground_change() -> bool {
-    FG_CHANGED.swap(false, Ordering::Relaxed)
 }
 
 /// winit 会在显示/改属性时重写窗口样式，所以每帧按需兜一次底。
@@ -451,6 +453,7 @@ impl Window {
                 WINEVENT_OUTOFCONTEXT,
             )
         };
+        if !hook.is_invalid(){FG_CONTEXT.set(Some(cc.egui_ctx.clone()));}
         // 区域用哨兵值：首帧（包括启动即隐藏的空区域）也必须真正调用 SetWindowRgn，
         // 否则整块透明画布会挡住下层程序的点击。
         let backend=cc.wgpu_render_state.as_ref().map(|state|state.adapter.get_info().backend);
@@ -549,6 +552,12 @@ impl Window {
         let mut r=RECT::default();
         unsafe { GetWindowRect(self.hwnd,&mut r).ok()?; }
         Some(eframe::egui::pos2(r.left as f32/scale,r.top as f32/scale))
+    }
+
+    pub fn take_foreground_change(&mut self)->bool {
+        let changed=FG_CHANGED.swap(false,Ordering::Relaxed);
+        if changed {self.browser_state.1=PollClock::default();}
+        changed
     }
 
     pub fn browser_at_top(&mut self,settings:&crate::model::Settings)->Option<bool> {
@@ -698,6 +707,7 @@ impl Drop for Window {
             let _ = RemoveWindowSubclass(self.hwnd, Some(subclass), SUBCLASS_ID);
             if !self.hook.is_invalid() {
                 let _ = UnhookWinEvent(self.hook);
+                FG_CONTEXT.set(None);
             }
         }
     }

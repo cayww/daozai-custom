@@ -6605,7 +6605,7 @@ fn avoidance_icon_area_stays_one_row_and_scrolls() {
     fn text(out:&egui::FullOutput,label:&str)->Rect {
         out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==label=>Some(t.visual_bounding_rect()),_=>None}).unwrap()
     }
-    let footer="无需全屏或最大化；窗口移开或切换应用后恢复。";
+    let footer="切到插件浮窗时，宿主窗口仍遮住岛就会继续避让。";
     h.app.settings.avoid_apps=vec![("D:/sample/A.exe".into(),"A应用".into())];
     draw(&mut h,vec![]);let one=draw(&mut h,vec![]);let baseline=text(&one,footer).top();
     let cross=text(&one,"×").center();

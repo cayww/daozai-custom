@@ -466,22 +466,90 @@ fn window_covers_side(window:RECT,island:RECT,dock:crate::model::Dock)->bool {
 pub fn browser_at_top(island:HWND,settings:&crate::model::Settings)->Option<bool> {
     unsafe {
         let foreground=GetForegroundWindow();
-        if foreground.0.is_null(){return None;}
+        if foreground.0.is_null(){return Some(false);}
         let mut pid=0;
         GetWindowThreadProcessId(foreground,Some(&mut pid));
         // 设置、托盘和岛内输入沿用此前的避让状态，避免自身窗口引起反复切换。
-        if pid==0 || pid==GetCurrentProcessId(){return None;}
-        let mut browser_rect=RECT::default();let mut island_rect=RECT::default();
-        if GetWindowRect(foreground,&mut browser_rect).is_err() || GetWindowRect(island,&mut island_rect).is_err(){return None;}
-        if !browser_overlaps_island(browser_rect,island_rect,settings.dock){return Some(false);}
-        let Ok(process)=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,pid) else{return Some(false)};
-        let mut path=[0u16;1024];let mut length=path.len() as u32;
-        let result=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,PWSTR(path.as_mut_ptr()),&mut length);
-        let _=CloseHandle(process);
-        if result.is_err(){return Some(false);}
-        let path=String::from_utf16_lossy(&path[..length as usize]);
-        Some(avoidance_matches(&path,settings))
+        if pid==GetCurrentProcessId(){return None;}
+        if pid==0{return Some(false);}
+        thread_local! { static LAST_MAIN: std::cell::Cell<Option<(HWND,u32)>> = const { std::cell::Cell::new(None) }; }
+        LAST_MAIN.with(|last| avoidance_for_window(foreground,island,pid,settings,last))
     }
+}
+
+unsafe fn visible_avoidance_rect(hwnd:HWND)->Option<RECT> {
+    if !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool(){return None;}
+    let mut cloaked=0u32;
+    let _=windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(hwnd,windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,(&mut cloaked as *mut u32).cast(),4);
+    if cloaked!=0{return None;}
+    let mut rect=RECT::default();
+    GetWindowRect(hwnd,&mut rect).ok()?;
+    Some(rect)
+}
+
+unsafe fn process_image_path(pid:u32)->Option<String> {
+    let process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,pid).ok()?;
+    let mut path=vec![0u16;32768];let mut length=path.len() as u32;
+    let result=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,PWSTR(path.as_mut_ptr()),&mut length);
+    let _=CloseHandle(process);
+    result.ok()?;
+    Some(String::from_utf16_lossy(&path[..length as usize]))
+}
+
+// 无所有者的工具窗可能在岛仔启动时就已打开。只有同进程的主窗口唯一时才补认宿主。
+unsafe fn unique_main_window(pid:u32)->Option<HWND> {
+    use windows::Win32::Foundation::{BOOL,LPARAM};
+    struct Search { pid:u32, main:Option<HWND> }
+    unsafe extern "system" fn visit(hwnd:HWND,param:LPARAM)->BOOL {
+        let search=&mut *(param.0 as *mut Search);
+        let mut pid=0;GetWindowThreadProcessId(hwnd,Some(&mut pid));
+        if pid==search.pid && foreground_info(hwnd).app_window && visible_avoidance_rect(hwnd).is_some() {
+            if search.main.is_some(){search.main=None;return BOOL(0);}
+            search.main=Some(hwnd);
+        }
+        BOOL(1)
+    }
+    let mut search=Search{pid,main:None};
+    EnumWindows(Some(visit),LPARAM((&mut search as *mut Search) as isize)).ok()?;
+    search.main
+}
+
+unsafe fn avoidance_for_window(foreground:HWND,island:HWND,pid:u32,settings:&crate::model::Settings,last:&std::cell::Cell<Option<(HWND,u32)>>)->Option<bool> {
+    if !settings.browser_minimal || IsIconic(GetAncestor(foreground,GA_ROOTOWNER)).as_bool(){return Some(false);}
+    let Some(rect)=visible_avoidance_rect(foreground) else{return Some(false)};
+    let mut island_rect=RECT::default();GetWindowRect(island,&mut island_rect).ok()?;
+    let overlaps=|rect|browser_overlaps_island(rect,island_rect,settings.dock);
+    let owner=GetWindow(foreground,GW_OWNER).ok();
+    let info=foreground_info(foreground);
+    if owner.is_none() && info.app_window {last.set(Some((foreground,pid)));}
+    else if last.get().is_some_and(|(_,prev)|prev!=pid){last.set(None);}
+    let path=std::cell::LazyCell::new(||process_image_path(pid));
+    if overlaps(rect) && path.as_deref().is_some_and(|p|avoidance_matches(p,settings)){return Some(true);}
+    if settings.avoid_apps.is_empty(){return Some(false);}
+
+    // 所有者关系可以跨进程，嵌套对话框也沿这条链找到实际遮挡岛的名单窗口。
+    let listed=|p:&str|crate::avoidance::contains_app(&settings.avoid_apps,p);
+    let mut parent=owner;
+    while let Some(hwnd)=parent {
+        if IsIconic(hwnd).as_bool(){return Some(false);}
+        if visible_avoidance_rect(hwnd).is_some_and(overlaps) {
+            let mut owner_pid=0;GetWindowThreadProcessId(hwnd,Some(&mut owner_pid));
+            let registered=if owner_pid==pid {path.as_deref().is_some_and(listed)}
+                else {process_image_path(owner_pid).as_deref().is_some_and(listed)};
+            if registered{
+                if foreground_info(hwnd).app_window {last.set(Some((hwnd,owner_pid)));}
+                return Some(true);
+            }
+        }
+        parent=GetWindow(hwnd,GW_OWNER).ok();
+    }
+    if owner.is_some() || info.app_window || !path.as_deref().is_some_and(listed){return Some(false);}
+    // 部分插件工具窗未登记 owner。优先跟随刚才操作的同进程主窗口，每次重新检查其位置。
+    let host=match last.get() {
+        Some((hwnd,prev)) if prev==pid && foreground_info(hwnd).pid==pid=>Some(hwnd),
+        _=>unique_main_window(pid),
+    };
+    Some(host.and_then(|hwnd|visible_avoidance_rect(hwnd)).is_some_and(overlaps))
 }
 
 pub enum Incoming {
@@ -1237,12 +1305,7 @@ pub(crate) fn avoidance_windows()->std::result::Result<Vec<crate::avoidance::Can
         if len==0{return BOOL(1);}
         let mut pid=0;GetWindowThreadProcessId(hwnd,Some(&mut pid));
         if pid==GetCurrentProcessId(){return BOOL(1);}
-        let Ok(process)=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,false,pid)else{return BOOL(1)};
-        let mut path=[0u16;32768];let mut length=path.len() as u32;
-        let result=QueryFullProcessImageNameW(process,PROCESS_NAME_WIN32,PWSTR(path.as_mut_ptr()),&mut length);
-        let _=CloseHandle(process);
-        if result.is_err(){return BOOL(1);}
-        let path=String::from_utf16_lossy(&path[..length as usize]);
+        let Some(path)=process_image_path(pid) else{return BOOL(1)};
         let items=&mut *(param.0 as *mut Vec<crate::avoidance::Candidate>);
         if items.iter().any(|a|crate::avoidance::same_app(&a.path,&path)){return BOOL(1);}
         let filename=std::path::Path::new(&path).file_name().and_then(|s|s.to_str()).unwrap_or("");
@@ -1276,6 +1339,65 @@ fn executable_description(path:&str)->Option<String> {
 #[cfg(test)]
 mod avoidance_tests {
     use super::*;
+    #[test]
+    fn registered_app_keeps_avoidance_when_its_plugin_panel_takes_focus() {
+        unsafe {
+            let create=|x,y,width,height,owner,ex| CreateWindowExW(WS_EX_NOACTIVATE|ex,windows::core::w!("STATIC"),
+                windows::core::w!(""),WS_POPUP|WS_VISIBLE,x-10000,y-10000,width,height,owner,None,None,None).unwrap();
+            let island=create(0,0,960,100,None,WS_EX_TOOLWINDOW);
+            let host=create(0,0,1920,1080,None,WS_EX_APPWINDOW);
+            let panel=create(600,300,300,200,Some(&host),WS_EX_TOOLWINDOW);
+            let path=std::env::current_exe().unwrap();
+            let mut settings=crate::model::Settings::default();
+            settings.browser_minimal=true;
+            settings.avoid_apps.push((path.to_string_lossy().into_owned(),"测试宿主".into()));
+            let last=std::cell::Cell::new(None);
+            let poll=|window,settings:&crate::model::Settings| avoidance_for_window(window,island,GetCurrentProcessId(),settings,&last);
+            let results=[poll(host,&settings),poll(panel,&settings),poll(host,&settings)];
+            let detached=create(600,300,300,200,None,WS_EX_TOOLWINDOW);
+            let nested=create(700,400,100,100,Some(&panel),WS_EX_TOOLWINDOW);
+            assert_eq!(poll(detached,&settings),Some(true),"无 owner 的同进程工具窗沿用刚获得焦点的主窗口");
+            assert_eq!(poll(nested,&settings),Some(true),"嵌套插件对话框应找到宿主");
+            assert_eq!(avoidance_for_window(panel,island,0,&settings,&last),Some(true),"面板进程不可识别时仍可通过所有者识别宿主");
+            let independent=create(600,300,300,200,None,WS_EX_APPWINDOW);
+            last.set(None);
+            assert_eq!(poll(detached,&settings),Some(false),"两个可见主窗且无法确定宿主时，不借用后台窗口");
+            let small=poll(independent,&settings);
+            assert_eq!(poll(detached,&settings),Some(false),"当前主窗不遮岛时不能借用同进程另一个大窗");
+            SetWindowPos(independent,HWND_BOTTOM,-9700,-9995,96,80,SWP_NOACTIVATE).unwrap();
+            assert_eq!(poll(independent,&settings),Some(true),"小窗确实遮住岛时也要避让");
+            assert_eq!(poll(host,&settings),Some(true));
+
+            SetWindowPos(host,HWND_BOTTOM,-8000,-10000,1920,1080,SWP_NOACTIVATE).unwrap();
+            let other_screen=[poll(host,&settings),poll(panel,&settings)];
+            SetWindowPos(panel,HWND_TOP,-9700,-9995,96,80,SWP_NOACTIVATE).unwrap();
+            assert_eq!(poll(panel,&settings),Some(true),"宿主在副屏时，浮窗自身遮住岛也应避让");
+            SetWindowPos(panel,HWND_TOP,-9400,-9700,300,200,SWP_NOACTIVATE).unwrap();
+            SetWindowPos(host,HWND_BOTTOM,-10000,-10000,1920,1080,SWP_NOACTIVATE).unwrap();
+            let _=ShowWindow(host,SW_SHOWMINNOACTIVE);
+            assert!(IsIconic(host).as_bool());
+            let minimized=poll(host,&settings);
+            let minimized_owner=poll(panel,&settings);
+            let _=ShowWindow(host,SW_SHOWNOACTIVATE);
+            let _=ShowWindow(panel,SW_HIDE);
+            let hidden=poll(panel,&settings);
+            let _=ShowWindow(panel,SW_SHOWNOACTIVATE);
+            settings.browser_minimal=false;
+            let disabled=poll(panel,&settings);
+            settings.browser_minimal=true;
+            settings.avoid_apps.clear();
+            let removed=poll(panel,&settings);
+            DestroyWindow(detached).unwrap();
+            DestroyWindow(independent).unwrap();
+            DestroyWindow(host).unwrap();
+            DestroyWindow(island).unwrap();
+            assert_eq!(results,[Some(true);3],"焦点从宿主切到中央插件浮窗再切回时应持续避让");
+            assert_eq!(small,Some(false),"同进程的独立小窗只检查自己的位置");
+            assert_eq!(other_screen,[Some(false);2],"主窗口移到副屏后，浮窗也应停止避让");
+            assert_eq!([minimized,minimized_owner,hidden],[Some(false);3],"收起或隐藏的应用窗口应结束避让");
+            assert_eq!((disabled,removed),(Some(false),Some(false)));
+        }
+    }
     #[test]
     fn avoidance_respects_master_browser_switch_and_custom_app_identity() {
         let mut settings=crate::model::Settings::default();

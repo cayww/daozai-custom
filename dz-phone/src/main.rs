@@ -405,7 +405,7 @@ impl eframe::App for Shell {
         #[cfg(windows)]
         self.poll_tray();
         #[cfg(windows)]
-        let foreground_changed=daozai::native::take_foreground_change();
+        let foreground_changed=self.native.as_mut().is_some_and(|window|window.take_foreground_change());
         #[cfg(windows)]
         if foreground_changed {
             // 切到别的程序：收起，并在光标离开前不再自动展开
