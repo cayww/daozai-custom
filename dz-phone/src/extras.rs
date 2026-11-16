@@ -309,7 +309,7 @@ impl App {
         // 勿扰：只记账、不打扰。横幅、铃铛、系统通知都不出现，验证码例外（用户要的就是那串数字）。
         if self.muted() && a.status.is_none() && crate::otp::extract("",&a.body,&[]).is_none() { return; }
         if self.settings.notifications {
-            if system && a.source==AlertSource::Internal {
+            if system && a.source==AlertSource::Internal && self.settings.system_notify {
                 self.pending
                     .push(Cmd::Notify(a.title.clone(), a.body.clone()));
             }
@@ -2640,10 +2640,8 @@ impl App {
                             if pet!=self.settings.pet {self.set_pet(pet);}
                         });
                         self.avoidance.settings(ui,&mut self.settings);
-                        settings_label(ui,"声音与显示");
+                        settings_label(ui,"显示");
                         settings_card(ui,|ui|{
-                            setting_row(ui,"提醒声音","喝水、久坐、待办和专注提醒",&mut self.settings.sound);
-                            ui.separator();
                             setting_row(ui,"全屏时隐藏","全屏隐藏岛仔，健康提醒静默保留",&mut self.settings.hide_fullscreen);
                         });
                         settings_label(ui,"备份");
@@ -2811,6 +2809,16 @@ impl App {
                             ui.separator();
                             setting_row(ui,"蓝牙通知","设备连接与断开提醒；关闭后停止蓝牙监听",&mut self.settings.bluetooth_notifications);
                             ui.separator();
+                            setting_row(ui,"提醒总开关","关闭后饮水、专注、待办及聊天软件提醒都不显示",&mut self.settings.notifications);
+                            // 提醒方式：系统通知与提示音合成三选一；提示音只作用于系统通知，岛上提醒本身不发声。
+                            ui.separator();
+                            ui.add_enabled_ui(self.settings.notifications,|ui|{
+                                let mut mode:u8=if !self.settings.system_notify{0}else if self.settings.sound{2}else{1};
+                                settings_control_row_right(ui,"提醒方式",|ui|{settings_segmented(ui,&mut mode,&[(0,"仅岛上"),(1,"加系统通知"),(2,"系统通知 + 声音")],96.0);});
+                                settings_hint(ui,["只在岛上提醒，不发送 Windows 系统通知","同时在 Windows 通知中心留下记录，不响铃","同时发送 Windows 系统通知并播放提示音"][mode as usize]);
+                                self.settings.system_notify=mode>0;
+                                if mode>0 {self.settings.sound=mode==2;}
+                            });
                             setting_row(ui,"会议自动勿扰","日程期间自动勿扰，散会解除",&mut self.settings.quiet_meeting);
                         });
                         if settings_section(ui,"notice.conditions","提醒条件","低电 · 勿扰 · 关键词 · 规则",false){

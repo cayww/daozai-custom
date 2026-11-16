@@ -237,3 +237,25 @@ fn health_reminder_gallery(){
         }
     }
 }
+
+#[test]
+fn system_notify_off_keeps_island_alert_without_windows_notification(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();h.frame(vec![]);
+    h.app.settings.notifications=true;h.app.settings.system_notify=false;h.app.settings.sound=true;
+    h.cmds.clear();h.app.alert("待办到时间了","检查周报",4,true);h.frame(vec![]);
+    assert!(h.app.notice.as_ref().is_some_and(|a|a.title=="待办到时间了") || h.app.alerts.iter().any(|a|a.title=="待办到时间了"),"关闭系统通知后岛上仍要提醒");
+    assert!(!h.cmds.iter().any(|cmd|matches!(cmd,crate::app::Cmd::Notify(..))),"关闭系统通知后不能再发 Windows 通知");
+    assert!(!h.app.pending.iter().any(|cmd|matches!(cmd,crate::app::Cmd::Notify(..))),"也不能留在待发队列里");
+}
+
+#[test]
+fn system_notify_defaults_on_and_persists(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();h.frame(vec![]);
+    assert!(crate::model::Settings::default().system_notify,"默认开启，老用户升级后行为不变");
+    h.cmds.clear();h.app.alert("待办到时间了","检查周报",4,true);h.frame(vec![]);
+    assert!(h.cmds.iter().any(|cmd|matches!(cmd,crate::app::Cmd::Notify(t,_)if t=="待办到时间了")),"默认仍发送系统通知");
+    h.app.settings.system_notify=false;h.app.settings.save();
+    assert!(!crate::model::Settings::load().system_notify,"关闭后重启仍保持关闭");
+    h.app.settings.system_notify=true;h.app.settings.save();
+    assert!(crate::model::Settings::load().system_notify);
+}
