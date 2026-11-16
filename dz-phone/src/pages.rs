@@ -1342,7 +1342,7 @@ impl App {
             } else {
                 capsule(c, 42.0, 88.0, 84.0, 26.0, "mail-setup", theme::BTN, theme::BTN_HOVER)
             };
-            gc.text(58.0, 105.0, "去添加", size::BODY, W::Regular, theme::WHITE, H::Left);
+            gc.text(58.0, 105.0, "去添加", size::BODY, W::Regular, theme::WHITE, H::Center);
             if go.clicked() {
                 self.open_mail_settings();
             }
