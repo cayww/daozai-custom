@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 01:50
+> **最后更新**：2026-11-17 02:40
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -12,13 +12,13 @@
 | 项目 | 当前值 |
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
-| 液态玻璃源码 | `main` = `ec122ce`（…→`37e965d`→`67182be`→`ec122ce` 过渡玻璃） |
-| **工作树** | **干净**（2026-11-17 01:50 最后一次提交 `ec122ce`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-35-transition-glass`，exe sha256 前 16 = `68b119a6871d3965`。本轮（01:15–01:50）**翻页过渡期控件也走 GPU 玻璃**：透镜随 slide.pos 平移、旧页矢量淡出。上一轮（01:00–01:10）修主题判定被翻页打断（采样框固定尺寸、白边不参与换色）。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
+| 液态玻璃源码 | `main` = `f99ce67`（…→`ec122ce`→`f99ce67` 更多控件玻璃） |
+| **工作树** | **干净**（2026-11-17 02:40 最后一次提交 `f99ce67`） |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-36-more-glass`，exe sha256 前 16 = `9768d22695459910`。本轮（01:55–02:40）**额度页添加账号 / 日历＋新增 / 日程编辑器按钮上 GPU 玻璃**（Ctl +11 变体）。上一轮（01:15–01:50）翻页过渡期控件也走 GPU 玻璃。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
-| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-35 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-35.exe`（= `daozai-liquid-setup.exe`），9,581,048 B，sha256 前16 `faa45512144a49be`，内含 exe `68b119a6871d3965`。-34/-32 已移到 `_archive\` |
+| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-36 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-36.exe`（= `daozai-liquid-setup.exe`），9,585,840 B，sha256 前16 `6e2edcc4eb3a7b00`，内含 exe `9768d22695459910`。-35 已移到 `_archive\` |
 
 **一句话**：日常用的正式版停在 custom-129；`main` 已吃进液态玻璃（50 个 commit，HEAD=`bf116c2`），
 但液态玻璃**没进补丁链**，只在预览目录里跑。上一轮把「视觉细节、帧率、内存」三件收尾了
@@ -360,6 +360,22 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 - 音乐播放页（用户实测在播）：翻回音乐页的过渡帧里媒体圆片带玻璃滑入、进度条圆钮是折射透镜（无矢量实心白点）；翻离时旧页控件随淡出保持白边玻璃。全程无黑边。
 - 安装包 liquid-test-35-transition-glass（exe `68b119a6871d3965` / setup `faa45512144a49be`）。
 
+### 7.0d 本轮已完成（2026-11-17 01:55–02:40，`f99ce67`，liquid-test-36）
+
+用户点名：额度页「添加账号」、日历页「＋ 新增」、日程编辑器里的控件，「能液态的都要液态玻璃」。
+
+- `Ctl` 新增 11 变体（CTL_N 12→23）：`QuotaAdd / CalAdd / CalAllDay / CalRem0..4 / CalDelete / CalCancel / CalSave`。同时可见数仍 ≤ `MAX_CTL=13`（编辑器页 9、音乐页 10）——**不动着色器**。
+- 提醒分段数量/宽度随「全天」动态变（2 个 126 宽 ↔ 5 个 54 宽）：固定 5 槽，多余槽位几何返回 None。
+- 编辑器整页替换 panel_body：齿轮/翻页箭头在 `ctl_geom` 里同步消失（否则出现无图标空透镜）；
+  `ctl_glass_ready` 放行 draft，但 `glass_controls` 的翻页滑移对编辑器关闭（tx 恒 0）。
+- 绘制侧沿用专注页分段按钮模式：GPU 分支只画命中区/悬停反馈/选中态淡填充/文字，
+  保存按钮叠 `paint::alpha(accent,0.42)` 淡蓝强调；未上 GPU 时退回原实心胶囊（非液态皮肤不受影响）。
+- 验证：1189 passed；FLAT=2 棋盘格实拍（额度页/日历页/编辑器/点全天后的动态分段）全部带透镜边界。
+
+**坑**：验证脚本翻页时额度/天气页 arrow_y=88（其他页 68），固定 y 点击会漏；且双击步进会
+跳过中间页——逐页单步截图定位后再交互。编辑器打开时岛仔可能因 hover/forced_open 过期收起，
+跨脚本续测不可靠，全流程要在同一脚本里跑完。
+
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
@@ -460,6 +476,7 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `37e965d` | **主题判定不再被翻页打断**：`theme_rect` 固定尺寸采样框 + `Palette::glass_chrome`（玻璃白边不进换色）= liquid-test-34；1189 passed；**当前 HEAD** |
 | `67182be` | theme_rect 越界加固（展开首帧抓屏极小时防 clamp panic）+ 退化尺寸单测 = liquid-test-34 重打包（exe `e016e1fa38554d99`） |
 | `ec122ce` | **翻页过渡期控件也走 GPU 玻璃**：`ctl_glass_ready` 放行翻页、透镜随 `page_slide_tx()` 平移、旧页矢量淡出（坑 ㉔）= liquid-test-35；1189 passed；**当前 HEAD** |
+| `f99ce67` | **额度/日历/日程编辑器按钮上 GPU 玻璃**：Ctl +11 变体（添加账号、＋新增、全天、提醒分段×5、删除、取消、保存）= liquid-test-36；1189 passed；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
