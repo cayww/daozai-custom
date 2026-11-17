@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 10:10
+> **最后更新**：2026-11-17 11:05
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -12,13 +12,13 @@
 | 项目 | 当前值 |
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
-| 液态玻璃源码 | `main` = `8316e1e`（…→`d63e0ca`→`8316e1e` 阻尼比） |
-| **工作树** | **干净**（2026-11-17 10:10 最后一次提交 `8316e1e`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-39-zeta`，exe sha256 前 16 = `10945bfe3b3cb7ee`。本轮（09:55–10:10）**「弹簧强度」改名「弹簧刚度」+ 新增「阻尼比」设置**；展开动效/触发延迟上移到液态参数区上方。上一轮（09:25–09:50）弹簧强度设置+圆钮按压果冻。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
+| 液态玻璃源码 | `main` = `dabc21b`（…→`8316e1e`→`dabc21b` memprof+正则缓存） |
+| **工作树** | **干净**（2026-11-17 11:05 最后一次提交 `dabc21b`） |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-40-memopt`，exe sha256 前 16 = `84d22133d6b2e01d`。本轮（10:05–11:05）**内存剖析基建（memprof 特性）+ CalDAV 正则缓存化**：80s 会话实测总分配 19.5GB、退出存活 9.1MB（无泄漏）、提交大头在 wgpu/驱动预留。上一轮（09:55–10:10）弹簧刚度改名+阻尼比。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
-| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-39 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-39.exe`（= `daozai-liquid-setup.exe`），9,586,641 B，sha256 前16 `b1e8af1b2c3a8a43`，内含 exe `10945bfe3b3cb7ee`。-38 已移到 `_archive\` |
+| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-40 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-40.exe`（= `daozai-liquid-setup.exe`），9,586,285 B，sha256 前16 `4d51f09a8480e85c`，内含 exe `84d22133d6b2e01d`。-39 已移到 `_archive\` |
 
 **一句话**：日常用的正式版停在 custom-129；`main` 已吃进液态玻璃（50 个 commit，HEAD=`bf116c2`），
 但液态玻璃**没进补丁链**，只在预览目录里跑。上一轮把「视觉细节、帧率、内存」三件收尾了
@@ -428,6 +428,30 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
      '- 验证：1189 passed；设置页实拍确认顺序与两个滑杆。
 
 '
+     '### 7.0h 本轮已完成（2026-11-17 10:05–11:05，`dabc21b`，liquid-test-40）
+
+'
+     '用户要做内存优化 → 新增**内存剖析基建**：`--features memprof`（dhat）+ `--profile memprof`
+'
+     '（带行号符号表）。`DAOZAI_MEMPROF_EXIT=<秒>` 到点自动优雅退出，报告写
+'
+     '`data/diagnostics/dhat-heap.json`。**三个坑**：① Profiler 不 Drop 没报告（taskkill /F 拿不到，
+'
+     '要 ViewportCommand::Close 优雅退出）；② 必须装 `dhat::Alloc` 全局分配器（否则 tg=0 空报告）；
+'
+     '③ release 的 strip=true 让 Rust 帧符号化全失败——要用带符号的 memprof profile + pdb 放 exe 旁边。
+'
+     '**实测结论（80s 会话）**：总分配 19.5GB（egui 每帧 ~4.5MB，框架固有），退出存活堆仅 9.1MB
+'
+     '（无泄漏），提交 622MB 的大头在 wgpu/驱动预留而非 Rust 堆。
+'
+     '**已优化**：CalDAV XML 的 9 个正则从每次调用重编译收敛到 re_cache() LazyLock 缓存
+'
+     '（单次同步临时分配 ~30MB → 编译一次）。
+'
+     '- 验证：1189 passed。
+
+'
      '### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
@@ -532,6 +556,7 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `9a0efc6` | **邮件页全部/未读滑动指示器 + 全部账号透镜；修选中淡填充浅材质暗雾** = liquid-test-37；1189 passed；**当前 HEAD** |
 | `d63e0ca` | **「弹簧强度」设置项**（液态玻璃参数区 0.2–3.0）+ 圆钮按压果冻 = liquid-test-38；1189 passed；**当前 HEAD** |
 | `8316e1e` | **弹簧刚度改名 + 阻尼比设置；展开动效/触发延迟上移** = liquid-test-39；1189 passed；**当前 HEAD** |
+| `dabc21b` | **memprof 内存剖析基建 + CalDAV 正则缓存化** = liquid-test-40；1189 passed；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
