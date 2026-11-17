@@ -18,7 +18,7 @@
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
 | 测试 | 主线 1176 passed；合并分支最近 **1351 passed / 0 failed / 131 ignored**（2026-11-17 19:48，`8a5f63d` 全量串行）；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
-| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-44 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-44.exe`（= `daozai-liquid-setup.exe`），9,679,811 B，sha256 前16 `c7d479f12387f76d`，内含 exe `f910282cb317dd83`。-42 已不在桌面（包本体在 `installer\liquid-test\daozai-liquid-test-42-mailglass.exe`），-41/-40 及更早已移到 `_archive\` 或只存工程目录 |
+| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-46 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-46.exe`（= `daozai-liquid-setup.exe`），10,988,147 B，sha256 前16 `e2f799e24bd9862c`，内含 exe `3783f00131d4ab61`。-44 已移入 `_archive\`；-42 已不在桌面（包本体在 `installer\liquid-test\daozai-liquid-test-42-mailglass.exe`），-41/-40 及更早已移到 `_archive\` 或只存工程目录 |
 
 **一句话**：正式版停在 custom-129（源码锚点 tag `custom-129`）；合并分支 `merge-upstream-v0665`
 已吃进液态玻璃 + 上游 v0.6.65 + 全部定制（HEAD=`8a5f63d`），预览目录跑的就是它。
@@ -527,6 +527,7 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 - 测试：全量 `cargo test --locked --release --lib -- --test-threads=1` → **1351 passed / 0 failed / 131 ignored**。
 - 实机：冻结背景模式截图（收起、展开、展开过程四帧）确认四角黑块、大黑底、矩形白线/多余部分全部消失；实时模式已恢复运行。
 - 部署：备份 `daozai.exe.prev-outline-clip`（旧 `88cb962ae009bd8f`），新 exe `3783f00131d4ab61`，标记 `liquid-test-46-outline-clip`。
+- 打包：`liquid-test-46-outline-clip` 安装包 `daozai-liquid-setup-46.exe`（10,988,147 B，包 sha `e2f799e24bd9862c`，内含 exe `3783f00131d4ab61`）已在桌面预览目录，`daozai-liquid-setup.exe` 同步指向它；-44 包移入 `_archive\`。
 - 仍待办：§7.0n 的 `browser_minimal=1` 自动避让收成细线时的黑块是**另一个机制**，本轮未动；custom-130 安装包未重打，如果正式版也要此修复需另行重打包。
 
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
@@ -644,7 +645,7 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `daozai-patches 归档退役` | **补丁链退役**：tag `custom-129` 固化正式版锚点；`daozai-patches/` 移出工作区（历史在 git），`PATCHES.md` 移到 `docs/`，上游快照移 `_archive`；HANDOFF 红线/§2/§5 改写；重放校验验证过与 `4b0b427` 一致 |
 | `正式版重打包` | `git checkout custom-129` 构建双 bin + ISCC 重打 `daozai-setup-custom-129.exe`（内含 exe `e9265cc0dc617bbb`，包 `f2b7fbf1ffb12e5e`）；与部署版 `58432d96` 二进制不同（构建环境差异）但同源码；部署目录与预览目录均未动；已切回 main |
 | `custom-130 正式包（第 3 版，含上游合并+白线修复）` | merge-upstream-v0665 HEAD `f8b330d` 双 bin + ISCC → `installer\daozai-setup-custom-130.exe`（11,231,232 B，包 `a39e2b61d189f517`，exe `d788d2f95f5bdbc7`/bridge `df3560011ef8a9ab`）= 液态玻璃 + 上游 v0.6.65 + 全部定制 + 内存优化 + 居中辅助移除；**未部署**；已知问题：browser_minimal=1 时收起态黑块（§7.0n 规避：装完关「自动避让」）；默认装 `C:\Program Files\Daozai`；（已被 `8a5f63d` 取代） |
-| `8a5f63d` | **修 D3D12 分层窗口黑角/白线**：`opaque_surface` 时 owner 始终按岛体轮廓 `SetWindowRgn`，不退回矩形；上游分层显示窗口继续管抗锯齿 = `liquid-test-46-outline-clip`（exe `3783f00131d4ab61`）；1351 passed；收起/展开/展开过程实机无黑底；**当前 HEAD** |
+| `8a5f63d` | **修 D3D12 分层窗口黑角/白线**：`opaque_surface` 时 owner 始终按岛体轮廓 `SetWindowRgn`，不退回矩形；上游分层显示窗口继续管抗锯齿 = `liquid-test-46-outline-clip`（exe `3783f00131d4ab61`，安装包 `e2f799e24bd9862c`）；1351 passed；收起/展开/展开过程实机无黑底；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `docs/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证；补丁链退役后移到 docs）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
