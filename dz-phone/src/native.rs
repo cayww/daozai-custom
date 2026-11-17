@@ -586,10 +586,11 @@ impl Window {
         // 岛仔窗口自身也必须按轮廓裁剪：D3D12 翻转模型交换链不遵守 owner 的 1/255 alpha，
         // 矩形窗口区域会把透明画布的黑底露成四角黑块（用户实测：关掉 D3D12 立即消失）。
         let _ = capture;
-        // 分层窗口显示的是带真实透明通道的画面时，系统模糊同样能透出来（模糊底板紧贴在岛仔窗口下方，
-        // 分层显示窗口在上方）；只有轮廓裁剪或按轮廓补 alpha（内部不透明）时才关掉模糊。
-        let layered_alpha=matches!(self.layering,Layering::Active(_)) && !self.outline.active;
-        match glass.filter(|g|!g.is_empty() && !self.blur_unavailable && (!self.opaque_surface || layered_alpha) && compositor_blur_allowed()) {
+        // 兼容后端（D3D12/Vulkan/AMD）不启用独立模糊底板：合并前这条路径一直是关掉的。
+        // 上游分层窗口虽然让系统模糊能透出来，但底板按 blur_pieces 比岛体大一圈，
+        // 用户实测会在胶囊外多出一层更大的圆角矩形（不是液态玻璃的白边）；
+        // 液态玻璃自己采样壁纸，不需要这层，关掉也省一次合成器重建。
+        match glass.filter(|g|!g.is_empty() && !self.blur_unavailable && !self.opaque_surface && compositor_blur_allowed()) {
             Some(shapes) => {
                 if self.backdrop.is_none() {
                     match crate::composition::Backdrop::new() {
@@ -758,6 +759,7 @@ mod tests {
                     assert!(PtInRegion(region,200,30).as_bool(),"岛体内部仍可命中");
                 }
                 let _=DeleteObject(region);
+                assert!(!native.blur && native.backdrop.is_none(),"兼容后端不能启用独立模糊底板：它比岛体大一圈，会在胶囊外多出一层");
                 assert!(!native.present_frame([w,h],&opaque),"画面没变时不重复提交");
             }
             *hit().lock().unwrap_or_else(|e|e.into_inner())=saved;

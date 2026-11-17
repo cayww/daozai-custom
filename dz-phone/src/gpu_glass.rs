@@ -21,6 +21,11 @@ pub const NEUTRAL_TINT: [f32; 3] = [0.62, 0.66, 0.74];
 const TEX_W: u32 = 1280;
 const TEX_H: u32 = 512;
 
+/// WGSL 里 `fs` 的形状内缩（物理像素）。窗口区域/分层窗口蒙版必须用它收缩，
+/// 否则会多出一圈比玻璃本体大 3px 的外层轮廓（用户报的“多出的部分”）。
+/// 修改时同步改 WGSL 中的 `let inset = 3.0;`。
+pub const GLASS_SHADER_INSET_PX: f32 = 3.0;
+
 /// 光学参数与几何，全部按物理像素给。
 #[derive(Clone, Copy)]
 pub struct GlassFrame {
