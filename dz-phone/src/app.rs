@@ -108,6 +108,58 @@ fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
     (ms as f64 / 1000.0).min(1.0)
 }
 
+// ---------- 收起深度休眠 ----------
+
+/// 收起深度休眠的判定输入（抽成纯值便于单测）。
+pub(crate) struct PillStillInput {
+    pub liquid:bool, pub open:bool, pub cursor_far:bool, pub transitioning:bool,
+    pub ambient:bool, pub lyric_scrolling:bool,
+    pub toast:bool, pub media:bool, pub notice:bool,
+    /// 注意：这里传的是 `hud_notice.is_none()`（false = 有 HUD 提示在显示）。
+    pub hud:bool,
+}
+
+/// 收起药丸是否处于「完全静止」：液态玻璃 + 已收起 + 鼠标远离 + 无任何动画/
+/// 媒体/通知。静止持续满 2 分钟才进 1Hz 深休眠（见 frame 的档位计算）。
+/// 宠物不进门槛：深休眠期间宠物动画整体冻结（见 deep_sleep 字段），
+/// 比让「系统级不空闲就永远醒着的宠物」挡住休眠更合理。
+pub(crate) fn pill_still(i:PillStillInput)->bool {
+    i.liquid && !i.open && i.cursor_far && !i.transitioning && !i.ambient
+        && !i.lyric_scrolling && !i.toast && !i.media && !i.notice && i.hud
+}
+
+#[cfg(test)]
+mod pill_still_tests {
+    use super::{pill_still,PillStillInput};
+    fn input() -> PillStillInput {
+        PillStillInput{liquid:true,open:false,cursor_far:true,transitioning:false,
+            ambient:false,lyric_scrolling:false,
+            toast:false,media:false,notice:false,hud:true}
+    }
+    #[test]
+    fn collapsed_idle_without_media_enters_deep_sleep(){assert!(pill_still(input()));}
+    #[test]
+    fn open_or_cursor_near_blocks_deep_sleep(){
+        let mut i=input(); i.open=true; assert!(!pill_still(i));
+        let mut i=input(); i.cursor_far=false; assert!(!pill_still(i));
+    }
+    #[test]
+    fn media_or_lyrics_or_notice_blocks_deep_sleep(){
+        let mut i=input(); i.media=true; assert!(!pill_still(i),"音乐在播时按设计不休眠");
+        let mut i=input(); i.lyric_scrolling=true; assert!(!pill_still(i));
+        let mut i=input(); i.notice=true; assert!(!pill_still(i));
+        let mut i=input(); i.toast=true; assert!(!pill_still(i));
+        let mut i=input(); i.ambient=true; assert!(!pill_still(i));
+        let mut i=input(); i.transitioning=true; assert!(!pill_still(i));
+        let mut i=input(); i.hud=false; assert!(!pill_still(i));
+        // 宠物不进门槛：深休眠时宠物动画整体冻结。
+    }
+    #[test]
+    fn non_liquid_skin_never_sleeps(){
+        let mut i=input(); i.liquid=false; assert!(!pill_still(i));
+    }
+}
+
 // ---------- 控件玻璃 ----------
 /// 岛内会上 GPU 玻璃的小控件。**顺序就是 uniform 槽位顺序**。
 /// `CTL_N` 是枚举总数（各页互斥，同时可见的 ≤ `gpu_glass::MAX_CTL`=13：
@@ -917,8 +969,17 @@ pub struct App {
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
     /// 液态玻璃的重绘档位：0=不管（交给原有节拍）、1=60fps（有动画/悬停/拖动）、
-    /// 2=30fps（静止，玻璃内容不变）。由 `frame()` 每帧写入，`out.repaint_after` 消费。
+    /// 2=30fps（静止，玻璃内容不变）、3=15fps（深静止）、4=收起深度休眠（1Hz）。
+    /// 由 `frame()` 每帧写入，`out.repaint_after` 消费。
     glass_tick:u8,
+    /// 收起且完全静止的起始时刻：持续 2 分钟进入深度休眠（整条管线降到 1Hz）。
+    pill_still_since:Option<f64>,
+    /// 深休眠被挡原因的诊断日志节拍（每 10s 最多一条）。
+    pill_diag_at:f64,
+    /// 当前是否处于收起深度休眠（1Hz）；宠物动画此时整体冻结。
+    deep_sleep:bool,
+    /// 宠物动画时钟：非休眠时跟随 self.t，深休眠时冻结在入睡前姿势。
+    pet_anim_t:f64,
     /// 形变强度 0..1：由展开进度的**变化速度**驱动，带衰减。
     /// 用来让玻璃光学在展开/折叠时参与过渡。不能直接用 progress ——
     /// 实测面板高度 100ms 内就从 45 跳到 210，progress 几乎立刻到 1，
@@ -1203,6 +1264,10 @@ impl App {
             wgpu_format:None,
             liquid_k:1.0,
             glass_tick:0,
+            pill_still_since:None,
+            pill_diag_at:0.0,
+            deep_sleep:false,
+            pet_anim_t:0.0,
             glass_morph:0.0,
             last_progress:0.0,
             window_origin:[0.0,0.0],
@@ -2196,7 +2261,7 @@ impl App {
             self.glass_tick = if self.glass_morph > 0.01
                 || self.ctl_down
                 || env.cursor.is_some_and(|p| win.contains(p))
-            { 1 } else { 2 };
+            { 1 } else { 3 };
         } else {
             self.glass_tick = 0;
         }
@@ -2583,7 +2648,7 @@ impl App {
             let y=(h.min(self.base_size().1)-BAR_H).max(0.0)/2.0;
             // 吉祥物跟随皮肤换色：浅色底上变成深色版本，保持清晰。
             let fit=if self.island_lyrics_active()||self.notice.is_some(){1.0}else{((WIN_W-32.0)/self.resident.target.width).min(1.0)};
-            self.pet.draw(&base.scaled(cx-origin.x,15.0,fit).shifted(0.0,y).faded(pet_alpha),cx-origin.x+self.resident.position(bar::PET),self.t,self.skin_palette());
+            self.pet.draw(&base.scaled(cx-origin.x,15.0,fit).shifted(0.0,y).faded(pet_alpha),cx-origin.x+self.resident.position(bar::PET),self.pet_anim_t,self.skin_palette());
         }
         if reveal > 0.004 && !banner && !restoring_lyrics {
             let c = base.shifted(0.0, (1.0 - reveal) * -5.0).faded(reveal);
@@ -2693,9 +2758,46 @@ impl App {
         // 交互形变保持 60 帧，媒体/歌词滚动 30 帧；小表情 20 帧，睡眠 10 帧，静态界面每秒核对提醒。
         // 液态玻璃有自己的档位：1=60fps（动画/悬停/拖动，玻璃要跟手）、2=30fps（静止）。
         // 它必须有别于其它皮肤的「静止 1 秒」——玻璃背景靠持续抓屏刷新，停 1 秒会冻住。
+        // 静止档（3=15fps）：无任何动画/环境动效/歌词滚动时降半帧，有动静回升 30fps。
+        if self.glass_tick==3 && (animating||ambient||lyric_scrolling) {self.glass_tick=2;}
+        let cursor_far=!env.cursor.is_some_and(|p|win.expand(24.0).contains(p));
+        // 收起深度休眠：收起 + 无动画 + 鼠标不在岛上（留 24px 余量）+ 无通知/吐司
+        // + 无媒体播放，持续 2 分钟 → 整条管线降到 1Hz（抓屏/玻璃/时钟文字都够用）。
+        // 任何输入事件都会让 egui 立即重绘，悬停/点击的唤醒是即时的；媒体/通知
+        // 状态变化最多 1 秒内被发现并回升到 30/60fps。
+        let pill_still=pill_still(PillStillInput{
+            liquid:self.settings.skin==model::Skin::Liquid && self.wgpu_format.is_some(),
+            open:self.open, cursor_far, transitioning, ambient, lyric_scrolling,
+            toast:self.toast.is_some(), media:self.media.playing,
+            notice:self.notice.is_some(), hud:self.hud_notice.is_none(),
+        });
+        self.pill_still_since=match (pill_still,self.pill_still_since) {
+            (true,Some(s))=>Some(s),
+            (true,None)=>Some(self.t),
+            (false,_)=>None,
+        };
+        let deep_sleep=pill_still && self.pill_still_since.is_some_and(|s|self.t-s>=120.0);
+        self.deep_sleep=deep_sleep;
+        if !deep_sleep {self.pet_anim_t=self.t;}
+        // 深休眠没触发时把挡因写进诊断（10s 限频，只在收起态记录）——
+        // 「音乐软件关了但 SMTC 会话还在报 playing」这类残留状态一眼可见。
+        if !self.open && self.t>=self.pill_diag_at {
+            self.pill_diag_at=self.t+10.0;
+            let reasons=[("open",self.open),("cursor",!cursor_far),("transitioning",transitioning),
+                ("ambient",ambient),("lyrics",lyric_scrolling),
+                ("toast",self.toast.is_some()),("media",self.media.playing),
+                ("notice",self.notice.is_some()),("hud",self.hud_notice.is_some())];
+            let blocked=reasons.iter().filter(|(_,v)|*v).map(|(k,_)|*k).collect::<Vec<&str>>().join(",");
+            if !blocked.is_empty() {
+                crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),
+                    "pill-sleep.log",&format!("t={:.0} blocked={blocked} media_title={:?}",self.t,self.media.title));
+            }
+        }
         let repaint_after=std::time::Duration::from_secs_f64(match self.glass_tick {
             1 => 1.0/60.0,
+            2 | 3 if deep_sleep => 1.0,
             2 => 1.0/30.0,
+            3 => 1.0/15.0,
             _ => if transitioning{1.0/60.0}else if ambient||lyric_scrolling{1.0/30.0}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0},
         });
         cmds.append(&mut self.pending);
@@ -3913,7 +4015,7 @@ impl App {
         let state = self.pet_state();
         let gaze = env.cursor.map(|p| [((p.x-cx)/28.0).clamp(-3.0,3.0), ((p.y-15.0)/40.0).clamp(-1.0,1.5)])
             .unwrap_or([(self.t as f32 * 0.35).sin()*0.8, 0.0]);
-        self.pet.step(state, self.t, self.dt, gaze, visible);
+        if !self.deep_sleep {self.pet.step(state, self.t, self.dt, gaze, visible);}
     }
 
     // ---------------------------------------------------------------
