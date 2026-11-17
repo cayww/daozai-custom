@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-18 00:32
+> **最后更新**：2026-11-18 01:16
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -12,12 +12,12 @@
 | 项目 | 当前值 |
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
-| 液态玻璃源码 | 分支 `directcomp-spike` HEAD = `d0b737b`（DirectComposition 透明交换链；`merge-upstream-v0665` 仍停在 `bcf44e8`，主线 `main` 仍在 `42a57c9`） |
-| **工作树** | **干净**（2026-11-18 00:29 提交 `d0b737b`） |
+| 液态玻璃源码 | 分支 `directcomp-spike` HEAD = `4c991bb`（DirectComposition 透明交换链；`merge-upstream-v0665` 仍停在 `bcf44e8`，主线 `main` 仍在 `42a57c9`） |
+| **工作树** | **干净**（2026-11-18 01:16 提交 `4c991bb`） |
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-57-dcomp-fallback`，exe sha256 前 16 = `9fdcbdf1993b0cac`。**DirectComposition 透明交换链**替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑。实机四态验证（液态玻璃普通/棋盘、经典 D3D/OpenGL）均正常 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
-| 测试 | 主线 1176 passed；合并分支最近 **1351 passed / 0 failed / 131 ignored**（2026-11-18 00:28，`d0b737b` 全量串行）；**必须 `--test-threads=1`** |
+| 测试 | 主线 1176 passed；合并分支最近 **1351 passed / 0 failed / 131 ignored**（2026-11-18 01:14，`4c991bb` 全量串行）；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
 | GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-55 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-55.exe`（= `daozai-liquid-setup.exe`），10,983,849 B，sha256 前16 `8b4a7d8c4fa11818`，内含 exe `6eb9cdad9a585a09`。-53 已移入 `_archive\` |
 
@@ -643,6 +643,33 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
 打包 `liquid-test-57-dcomp-fallback`：exe `9fdcbdf1993b0cac`，包 `82dc760c02e3f5cf`，10,984,291 B。桌面预览目录 `daozai-liquid-setup-57.exe`（= `daozai-liquid-setup.exe`）。
 注意：桌面上 `-55` 与旧的 `daozai-liquid-setup.exe` 已不在了（用户侧清过），发布脚本的归档分支因此跳过。
 
+### 7.0u 收起后工作集回落慢（2026-11-18 00:56–01:16，提交 `4c991bb`）——**当前 HEAD / liquid-test-58**
+
+用户反馈「从展开态到收起态，内存跳回得很慢」。实测确认：收起后 90 秒仍停在 230MB（基线 198MB），根本没回落。两个原因叠在一起：
+
+1. **唯一回收路径挂在深休眠上**：`trim_working_set()` 只在 `deep_sleep` 成立时跑，而深休眠要求 `pill_still` 持续 **120 秒**；
+2. **`pill_still` 要求 `media.playing == false`**：只要在放歌（用户常态），深休眠永远进不去 → **整台机器永远不会回收**。诊断日志 `pill-sleep.log` 里 `blocked=ambient,media` 连续几十条就是证据。
+
+改法（`app.rs`）：
+
+- 新增 `WORKSET_IDLE = 20.0`：收起 + 鼠标离开 + 无过渡动画/歌词滚动/吐司/通知，满 20 秒就 `trim_working_set()`，之后每 5 分钟补一次；
+- **不再用 `ambient`/`media` 挡**：放歌、番茄钟属于常驻状态，挡掉等于永不回收；
+- 深休眠（冻宠物 + 1Hz）保持原 120 秒门槛，两者解耦——用户能感知的是深休眠，感知不到的是工作集回收。
+
+实测（收起态采样，独显 + 液态玻璃）：
+
+| 时刻 | 改动前 WS | 改动后 WS |
+|---|---|---|
+| 收起基线 | 198 MB | 195 MB |
+| 展开态 | 226 MB | 221 MB |
+| 收起后 5–20s | 228–230 MB | 224 MB |
+| 收起后 22s | 230 MB | **22.4 MB** |
+| 收起后 90s | 231 MB | **31 MB** |
+
+私有提交不变（~267MB，其中展开态多吃的 ~31MB 是 D3D12 堆水位，属正常不回收部分）。
+
+打包 `liquid-test-58-fast-trim`：exe `8f61cb368954e198`，包 `162afa59339ab71c`，10,982,551 B；桌面 `daozai-liquid-setup-58.exe`（= `daozai-liquid-setup.exe`）。全量串行 **1351 passed**。
+
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
@@ -762,6 +789,7 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
 | `29a3112` | **修 D3D12 外层圆角矩形（方向不完整）**：兼容后端关掉独立模糊底板 + GPU 3px 内缩对齐 = `liquid-test-49-backup-inset`；1351 passed |
 | `bcf44e8` | **真因修复：停用上游分层读回窗口**，D3D12 恢复合并前 owner 轮廓裁剪直出；岛内棋盘对照 -44 一致（圆角、无外层矩形）= `liquid-test-52-no-layered`（exe `bc04b8d12c581da4`，包 `b6d6c9db8b54c31b`）；1351 passed |
 | `6475d44` | DirectComposition 透明交换链 spike：DComp visual surface + `PreMultiplied` = `liquid-test-53-dcomp`（实机发现 OpenGL 整窗不可见、D3D 圆角锯齿） |
+| `4c991bb` | **收起后 20 秒回收工作集**（`WORKSET_IDLE`，不再被放歌挡掉、不等 120 秒深休眠）：WS 224MB→22MB，稳定 30MB = `liquid-test-58-fast-trim`（exe `8f61cb368954e198`，包 `162afa59339ab71c`）；1351 passed；**当前 HEAD** |
 | `d0b737b` | **修设置页崩溃 + 关 D3D 岛体消失**：逐 surface 决定 alpha 模式（设置窗口是独立 surface）；DComp visual 按 HWND 复用；建窗前 DComp 预检 + 建 surface 失败就地回退；启动与重启进程都清掉 `DAOZAI_DCOMP`（继承会让 OpenGL 窗口没有 GDI 表面）= `liquid-test-57-dcomp-fallback`（exe `9fdcbdf1993b0cac`，包 `82dc760c02e3f5cf`）；1351 passed；**当前 HEAD** |
 | `9c91ebb` | **DComp 全链跑通**：只在 DX12 关 GDI 表面（Vulkan/OpenGL 回退可绘制）、按 HWND 认领主窗口、补 `Commit`、`PreMultiplied` 映射到 DXGI、D3D11 取 `IDXGIDevice`、WGSL 真实 alpha + 透明清屏、DComp 下不再 `SetWindowRgn` = `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`）；1351 passed；**当前 HEAD**（分支 `directcomp-spike`） |
 
