@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 17:40
+> **最后更新**：2026-11-17 19:22
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -486,6 +486,25 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
   261MB/提交 293MB（上游新代码 +31MB 工作集，提交持平——描述符优化生效）；
   已恢复实时模式。设置页深滚自动化受窗口焦点限制未走完，设置项共存已由
   测试覆盖。
+
+### 7.0n 本轮（2026-11-17 17:58–19:20，用户报胶囊外圈白线/收起黑块）——**已全部回退**
+
+用户实机报胶囊形态问题。本轮尝试的修复经用户反馈**全部无效或找错位置**，
+已按用户要求 `git reset --hard 7bd6bed` 整体回退（f8b330d/9583bda 及工作区
+折腾全部丢弃）。用户补充的关键信息：
+
+- **外圈白线只在开启 Direct3D 12（wgpu 渲染器）时出现，关闭则无；胶囊形状
+  （IslandShape::Pill）与其它皮肤都有** → 指向 wgpu 渲染器的描边渲染差异或
+  液态玻璃/毛玻璃的白边（liquid_edge/glass_rim）视觉，非合并引入的绘制调用
+  （paint_center_rim/lift_halo/glass_rim/feather/pill_shadow 逐一排除或与
+  base 相同）。待用户给出未缩放原始截图+精确复现条件后定向修。
+- **收起黑块**：「自动避让」(browser_minimal) 触发收成刘海细线时与玻璃胶囊
+  双画错位 ~40px（实机复现实证：关闭该设置黑块消失；机制 base 已有，非合并
+  新增，但合并后错位加剧/暴露）。专项修复待办。
+- 教训（坑 ㉞）：合并大重构后的视觉回归，禁止在未稳定复现用户场景前动手改
+  绘制代码；本轮 4 次尝试（center_rim/歌词竖线/lift_halo/描述符堆）全部
+  无效即证据。图片是手机翻拍+缩略图，摩尔纹会把玻璃高光放大成「白线」，
+  定位必须用原始分辨率截图。
 - 上游新增亮点：QQ 音乐 22.82 适配（/seekto 单实例通道）、酷狗本机接口跳转、
   时钟秒数/天气常驻开关、启动即诊断收集、天气代理回退。
 
@@ -599,9 +618,11 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `68df96d` | **邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中** = liquid-test-42-mailglass；1193 passed |
 | `f3d493b` | **静止刷新率（1–30Hz）与收起深度休眠做成设置项** = liquid-test-43-idlefps；1193 passed |
 | `31c7a27` | **wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）** = liquid-test-44-memopt；1193 passed |
+| `reset 7bd6bed` | **用户要求回退**：丢弃 f8b330d（白线误修）/9583bda 及工作区折腾；当前 HEAD=7bd6bed（合并+内存优化干净态）；预览版已重部署 liquid-test-45-merge65（exe `88cb962ae009bd8f`），用户 settings.txt 已恢复原值（browser_minimal=1，备份 .bak-diag）；**当前 HEAD** |
+
 | `daozai-patches 归档退役` | **补丁链退役**：tag `custom-129` 固化正式版锚点；`daozai-patches/` 移出工作区（历史在 git），`PATCHES.md` 移到 `docs/`，上游快照移 `_archive`；HANDOFF 红线/§2/§5 改写；重放校验验证过与 `4b0b427` 一致 |
 | `正式版重打包` | `git checkout custom-129` 构建双 bin + ISCC 重打 `daozai-setup-custom-129.exe`（内含 exe `e9265cc0dc617bbb`，包 `f2b7fbf1ffb12e5e`）；与部署版 `58432d96` 二进制不同（构建环境差异）但同源码；部署目录与预览目录均未动；已切回 main |
-| `custom-130 正式包` | **当前 git 版打包为正式包**：main HEAD `7cfcc85` 双 bin + ISCC（MyAppBuild=custom-130）→ `installer\daozai-setup-custom-130.exe`（9,783,306 B，包 `2d79036044383e27`，exe `7f8b50fc`/bridge `d772bff6`）= 液态玻璃转正 + 今日全部改动；**未部署**（用户安装即生效；正式版数据目录 `%APPDATA%\Daozai`，装完需在设置里选液态玻璃皮肤）；**当前 HEAD** |
+| `custom-130 正式包（第 3 版，含上游合并+白线修复）` | merge-upstream-v0665 HEAD `f8b330d` 双 bin + ISCC → `installer\daozai-setup-custom-130.exe`（11,231,232 B，包 `a39e2b61d189f517`，exe `d788d2f95f5bdbc7`/bridge `df3560011ef8a9ab`）= 液态玻璃 + 上游 v0.6.65 + 全部定制 + 内存优化 + 居中辅助移除；**未部署**；已知问题：browser_minimal=1 时收起态黑块（§7.0n 规避：装完关「自动避让」）；默认装 `C:\Program Files\Daozai`；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `docs/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证；补丁链退役后移到 docs）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
