@@ -478,6 +478,14 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
   （跟随上游删引用）、is_qqmusic 补 AUMID 变体（Tencent.QQMusic.1，我方逻辑并入）、
   toast 过期回 TOAST_SECS（上游 2.4s 与我方 toast_now/淡出 6s 不一致，上游测试无依赖）。
 - **验证：1351 passed / 0 failed / 131 ignored**（净增 158 个上游测试）。
+- **graphics.rs 再吸收上游一项**：`max_non_sampler_bindings=65536`（DX12 描述符堆
+  100 万项→65536，省 ~57MB），与我方 Manual 共存；上游的 MemoryUsage 策略未采
+  （我方 A/B 实测更差）。构建部署预览版 `liquid-test-45-merge65`
+  （exe `5ebee4d9eb20c5fa`，备份 `daozai.exe.prev-merge65`），冻结模式实机验证：
+  展开媒体页渲染正常、设置窗口导航正常、收起态常驻条正常、展开态内存
+  261MB/提交 293MB（上游新代码 +31MB 工作集，提交持平——描述符优化生效）；
+  已恢复实时模式。设置页深滚自动化受窗口焦点限制未走完，设置项共存已由
+  测试覆盖。
 - 上游新增亮点：QQ 音乐 22.82 适配（/seekto 单实例通道）、酷狗本机接口跳转、
   时钟秒数/天气常驻开关、启动即诊断收集、天气代理回退。
 
