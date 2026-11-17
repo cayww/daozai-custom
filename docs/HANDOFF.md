@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 23:40
+> **最后更新**：2026-11-18 00:32
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -12,12 +12,12 @@
 | 项目 | 当前值 |
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
-| 液态玻璃源码 | 分支 `directcomp-spike` HEAD = `9c91ebb`（DirectComposition 透明交换链；`merge-upstream-v0665` 仍停在 `bcf44e8`，主线 `main` 仍在 `42a57c9`） |
-| **工作树** | **干净**（2026-11-17 23:38 提交 `9c91ebb`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-55-dcomp-hwnd`，exe sha256 前 16 = `6eb9cdad9a585a09`。**DirectComposition 透明交换链**替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑。实机四态验证（液态玻璃普通/棋盘、经典 D3D/OpenGL）均正常 |
+| 液态玻璃源码 | 分支 `directcomp-spike` HEAD = `d0b737b`（DirectComposition 透明交换链；`merge-upstream-v0665` 仍停在 `bcf44e8`，主线 `main` 仍在 `42a57c9`） |
+| **工作树** | **干净**（2026-11-18 00:29 提交 `d0b737b`） |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-57-dcomp-fallback`，exe sha256 前 16 = `9fdcbdf1993b0cac`。**DirectComposition 透明交换链**替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑。实机四态验证（液态玻璃普通/棋盘、经典 D3D/OpenGL）均正常 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
-| 测试 | 主线 1176 passed；合并分支最近 **1351 passed / 0 failed / 131 ignored**（2026-11-17 23:38，`9c91ebb` 全量串行）；**必须 `--test-threads=1`** |
+| 测试 | 主线 1176 passed；合并分支最近 **1351 passed / 0 failed / 131 ignored**（2026-11-18 00:28，`d0b737b` 全量串行）；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
 | GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-55 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-55.exe`（= `daozai-liquid-setup.exe`），10,983,849 B，sha256 前16 `8b4a7d8c4fa11818`，内含 exe `6eb9cdad9a585a09`。-53 已移入 `_archive\` |
 
@@ -620,6 +620,29 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
 
 仍未做：DComp 创建失败后的**运行期**兜底（目前靠 `Err(Wgpu)` → 重启 Vulkan 路径兜住）；`merge-upstream-v0665` 主线未同步，仍停在 52。
 
+### 7.0t 设置页崩溃 + 关 D3D 岛体消失（2026-11-18 23:45–00:32，提交 `d0b737b`）——**当前 HEAD / liquid-test-57**
+
+用户两个反馈，根因都不在“绘制层”，而在透明合成链路的边界条件：
+
+**A. 打开设置页崩溃**（`wgpu_core.rs:3432` → `Surface::configure` 致命错）
+设置页是**第二个 OS 窗口、独立 surface**。`direct_composition_active()` 是全局标志，于是设置窗口的普通 HWND 交换链也被强制 `PreMultiplied`，DXGI 直接拒绝。
+→ `SurfaceState` 增加 `dcomp` 字段，**逐 surface** 决定 alpha 模式；`wgpu-hal` 只在 `SurfaceTarget::Visual` 的能力里声明 `PreMultiplied`。
+
+**B. 关 D3D 后岛体完全不出现**
+设置里「兼容渲染（Direct3D 12）」旁边就有「立即重启」；重启走 `spawn_replacement()`，**继承父进程环境**。而 `DAOZAI_DCOMP=1` 在 D3D 运行期间一直留在进程环境里 → 新进程用 OpenGL，窗口却仍被去掉 GDI 表面，OpenGL 正是靠它显示 → 岛体不见（进程甚至会直接退出）。
+→ `graphics::run()` 启动即 `remove_var("DAOZAI_DCOMP")`；`spawn_replacement()` 额外 `env_remove`。两处双保险。
+
+**顺带补的运行期兜底**（用户要求）：
+- **建窗口前预检** `direct_composition_available()`：D3D11 → `IDXGIDevice` → `DCompositionCreateDevice2` → `CreateVisual`。探不通就**不去掉 GDI 表面**，直接走 HWND 交换链，不用整进程重开（这个样式建窗后无法补加，所以只能前置）。
+- **建 surface 失败就地回退**：`mark_dcomp_failed()` + 退回普通交换链，`DCOMP_ACTIVE` 保持 false，`native.rs` 自动回到 `SetWindowRgn` 轮廓裁剪兜住形状。
+- **DComp visual 按 HWND 复用**：一个窗口只能有一个 DComp target，surface 重建（换缩放/切屏/窗口重建）时再 `CreateTargetForHwnd` 会返回 `WINDOW_ALREADY_COMPOSED`，随后掉进兜底、圆角又变锯齿。
+- 诊断：一次性记录「透明合成：opaque/dcomp/outline_clip」与每次区域设置来源，排障先看这两行。
+
+验证：设置页可开、展开/收起正常、遗留 `DAOZAI_DCOMP=1` + OpenGL 也能出岛体；全量串行 **1351 passed / 0 failed / 131 ignored**。
+
+打包 `liquid-test-57-dcomp-fallback`：exe `9fdcbdf1993b0cac`，包 `82dc760c02e3f5cf`，10,984,291 B。桌面预览目录 `daozai-liquid-setup-57.exe`（= `daozai-liquid-setup.exe`）。
+注意：桌面上 `-55` 与旧的 `daozai-liquid-setup.exe` 已不在了（用户侧清过），发布脚本的归档分支因此跳过。
+
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
@@ -739,6 +762,7 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
 | `29a3112` | **修 D3D12 外层圆角矩形（方向不完整）**：兼容后端关掉独立模糊底板 + GPU 3px 内缩对齐 = `liquid-test-49-backup-inset`；1351 passed |
 | `bcf44e8` | **真因修复：停用上游分层读回窗口**，D3D12 恢复合并前 owner 轮廓裁剪直出；岛内棋盘对照 -44 一致（圆角、无外层矩形）= `liquid-test-52-no-layered`（exe `bc04b8d12c581da4`，包 `b6d6c9db8b54c31b`）；1351 passed |
 | `6475d44` | DirectComposition 透明交换链 spike：DComp visual surface + `PreMultiplied` = `liquid-test-53-dcomp`（实机发现 OpenGL 整窗不可见、D3D 圆角锯齿） |
+| `d0b737b` | **修设置页崩溃 + 关 D3D 岛体消失**：逐 surface 决定 alpha 模式（设置窗口是独立 surface）；DComp visual 按 HWND 复用；建窗前 DComp 预检 + 建 surface 失败就地回退；启动与重启进程都清掉 `DAOZAI_DCOMP`（继承会让 OpenGL 窗口没有 GDI 表面）= `liquid-test-57-dcomp-fallback`（exe `9fdcbdf1993b0cac`，包 `82dc760c02e3f5cf`）；1351 passed；**当前 HEAD** |
 | `9c91ebb` | **DComp 全链跑通**：只在 DX12 关 GDI 表面（Vulkan/OpenGL 回退可绘制）、按 HWND 认领主窗口、补 `Commit`、`PreMultiplied` 映射到 DXGI、D3D11 取 `IDXGIDevice`、WGSL 真实 alpha + 透明清屏、DComp 下不再 `SetWindowRgn` = `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`）；1351 passed；**当前 HEAD**（分支 `directcomp-spike`） |
 
 > custom-33 ~ 119 的逐版记录见 `docs/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证；补丁链退役后移到 docs）。
