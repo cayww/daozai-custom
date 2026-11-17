@@ -499,7 +499,10 @@ impl Window {
     pub fn opaque_surface(&self)->bool {self.opaque_surface}
 
     /// 是否需要每帧读回画面交给分层窗口（兼容后端，且分层窗口仍可用）。
-    pub fn wants_frames(&self)->bool {self.opaque_surface && !matches!(self.layering,Layering::Unavailable)}
+    /// 本项目恢复合并前行为：兼容后端直接由 owner 窗口按轮廓裁剪显示，
+    /// 不使用上游的分层读回窗口。它在 D3D12 下会把 GPU 整块矩形画面搬到上层，
+    /// 导致棋盘诊断里出现直角矩形 + 外层圆角轮廓（用户实测）。
+    pub fn wants_frames(&self)->bool { let _ = &self.layering; false }
 
     /// 交一帧读回的画面（RGBA，已预乘）。返回画面是否变化。
     /// 首帧看读回的画面有没有真正的透明像素：有就原样交给分层窗口；没有（部分 AMD 显卡的 OpenGL）
@@ -507,7 +510,11 @@ impl Window {
     pub fn present_frame(&mut self,size:[usize;2],rgba:&[u8])->bool {
         if !self.wants_frames(){return false;}
         if matches!(self.layering,Layering::Pending) {
-            let real=crate::layered::has_real_alpha(size,rgba) && outline_test()!=Some(true);
+            // D3D12/兼容后端的 WGSL 硬约束是 alpha=1，读回画面没有可信任的逐像素透明：
+            // 只看画布四角的 alpha 会被 FLAT=2/抓屏范围骗到（四角可能透明），
+            // 一旦误判 real=true 就不套轮廓蒙版，分层窗口直接显示整块矩形画面
+            // —— 棋盘诊断里就是直角矩形 + 外层圆角轮廓。只有显式诊断开关才允许走 real。
+            let real=outline_test()==Some(false) && crate::layered::has_real_alpha(size,rgba);
             // 还没收到过岛体轮廓时无从补 alpha，先保持轮廓裁剪，等下一帧。
             if !real && self.outline.polygons.is_empty() {return false;}
             match crate::layered::Layered::new() {
@@ -720,10 +727,9 @@ mod tests {
         }}}}
     }
 
-    /// 部分 AMD 显卡的 OpenGL：读回的画面没有透明通道。过去这里直接退回轮廓裁剪（圆角、肩部全是锯齿），
-    /// 现在要切到分层窗口，并按岛体轮廓补出带过渡的边缘 alpha。
+    /// 兼容后端恢复合并前行为：不使用分层读回窗口，owner 直接按轮廓裁剪显示。
     #[test]
-    fn opaque_readback_uses_outline_alpha_instead_of_jagged_clip(){
+    fn opaque_surface_stays_on_outline_clip_without_layered_window(){
         use crate::app::GlassShape;
         use eframe::egui::{pos2,Rect};
         use windows::Win32::Graphics::Gdi::{CreateRectRgn,DeleteObject,GetWindowRgn,PtInRegion};
@@ -735,32 +741,18 @@ mod tests {
                 let mut native=Window{hwnd,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable:false,opaque_surface:true,outline:ShapeAlpha::default()};
                 let island=crate::shape::outline(Rect::from_min_max(pos2(80.0,0.0),pos2(320.0,60.0)),12.0,10.0,20.0);
                 let shapes=[GlassShape::Outline(island)];
-                // 读回的画面：岛体黑色、画布也是黑色，alpha 全部 255——和 AMD OpenGL 读回的一样。
                 let opaque=[0u8,0,0,255].repeat(w*h);
-                assert!(!native.present_frame([w,h],&opaque),"还没收到轮廓时先保持轮廓裁剪");
+                native.update((0.0,0.0,w as f32,h as f32),(80.0,0.0,240.0,60.0),None,None,Some(&shapes),1.0,false,false);
+                assert!(!native.wants_frames(),"D3D12 下必须走合并前的 owner 轮廓裁剪，不能启用分层读回");
+                assert!(!native.present_frame([w,h],&opaque),"分层读回已停用");
                 assert!(matches!(native.layering,Layering::Pending));
-                native.update((0.0,0.0,w as f32,h as f32),(80.0,0.0,240.0,60.0),None,None,Some(&shapes),1.0,false,false);
-                assert!(native.wants_frames());
-                assert!(native.present_frame([w,h],&opaque),"读不到透明通道也要切到分层窗口");
-                assert!(matches!(native.layering,Layering::Active(_)) && native.outline.active);
-                let frame=&native.outline.frame;
-                let alpha=|x:usize,y:usize|frame[(y*w+x)*4+3];
-                assert_eq!(alpha(200,30),255,"岛体内部不透明");
-                assert_eq!(alpha(10,150),0,"画布空白处透明，不能留黑底");
-                let soft=(0..h).flat_map(|y|(0..w).map(move|x|(x,y))).filter(|&(x,y)|(1..255).contains(&alpha(x,y))).count();
-                assert!(soft>=80,"圆角和肩部要有抗锯齿过渡像素，实际 {soft}");
-                assert!(frame.chunks_exact(4).all(|p|p[0]<=p[3]&&p[1]<=p[3]&&p[2]<=p[3]),"必须是合法的预乘颜色");
-                // 切到分层窗口后 owner 仍按轮廓裁剪：D3D12 交换链不遵守 1/255 alpha，
-                // 退回矩形区域会把画布黑底露成四角黑块（用户实测）。柔边由上层显示窗口负责。
-                native.update((0.0,0.0,w as f32,h as f32),(80.0,0.0,240.0,60.0),None,None,Some(&shapes),1.0,false,false);
                 let region=CreateRectRgn(0,0,0,0);
                 if GetWindowRgn(hwnd,region).0!=0 {
-                    assert!(!PtInRegion(region,10,150).as_bool(),"分层显示后窗口区域仍须按轮廓裁剪");
+                    assert!(!PtInRegion(region,10,150).as_bool(),"画布黑底必须被裁掉");
                     assert!(PtInRegion(region,200,30).as_bool(),"岛体内部仍可命中");
                 }
                 let _=DeleteObject(region);
                 assert!(!native.blur && native.backdrop.is_none(),"兼容后端不能启用独立模糊底板：它比岛体大一圈，会在胶囊外多出一层");
-                assert!(!native.present_frame([w,h],&opaque),"画面没变时不重复提交");
             }
             *hit().lock().unwrap_or_else(|e|e.into_inner())=saved;
             let _=DestroyWindow(hwnd);

@@ -2445,7 +2445,7 @@ impl App {
         }
         self.clipboard.flush();
         if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
-        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
         // 视频摘要要占一整块，其余常驻组件对称让位。
         if self.video_page(){layout.widen(bar::MUSIC,VIDEO_PILL_EXTRA);}
         // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
@@ -2827,14 +2827,9 @@ impl App {
         });
         // 毛玻璃：窗口区域只取岛体与浮层的真实轮廓，系统模糊不会溢出到透明画布上。
         let glass_region=(glass_skin && self.settings.glass_blur || env.opaque_surface).then(||{
-            // 液态玻璃着色器把形状内缩 3 物理像素；D3D12 下窗口区域与分层蒙版必须同步收缩，
-            // 否则会比玻璃本体多出一圈 3px 的外层轮廓（用户报的“多出的部分”）。
-            let shader_inset=if self.settings.skin==model::Skin::Liquid && env.opaque_surface {crate::gpu_glass::GLASS_SHADER_INSET_PX/ctx.pixels_per_point()}else{0.0};
-            let glass_body=if shader_inset>0.0 {body.shrink(shader_inset)}else{body};
-            let glass_radius=(radius-shader_inset).max(0.0);
             let outline=|r:Rect,flare:f32,flare_h:f32,radius:f32| if pill {GlassShape::Round(rel(r),radius.min(r.height().min(r.width())*0.5))}
                 else if side {GlassShape::Docked{rect:rel(r),dock,flare,flare_h,radius}} else {GlassShape::Notch{rect:rel(r),flare,flare_h,radius}};
-            let mut shapes=vec![outline(glass_body,flare,flare_h,glass_radius)];
+            let mut shapes=vec![outline(body,flare,flare_h,radius)];
             if let Some(r)=outside_badge{shapes.push(GlassShape::Round(rel(r),r.width()/2.0));}
             if let Some(r)=notice_details {
                 let radius=if self.hud_notice.as_ref().is_some_and(|a|a.meeting.is_some()){14.0}else{10.0};
@@ -3577,14 +3572,10 @@ impl App {
             return;
         };
         // GPU 未就绪时铺一层可见的兜底底色；就绪后几乎透明，别把折射压黑。
-        // 关键：GPU pass 的形状相对 rect 内缩 GLASS_SHADER_INSET_PX（3 物理像素），
-        // 兜底填充也必须同步内缩，否则会在玻璃外露出一圈更大的圆角矩形（用户报的“多出的部分”）。
+        let backup=if crate::gpu_glass::gpu_ready(){20}else{170};
+        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,backup));
         let ctx=painter.ctx();
         let ppp=ctx.pixels_per_point();
-        let ready=crate::gpu_glass::gpu_ready();
-        let backup=if ready {20}else{170};
-        let inset=if ready {crate::gpu_glass::GLASS_SHADER_INSET_PX/ppp}else{0.0};
-        painter.rect_filled(rect.shrink(inset),(radius-inset).max(0.0),Color32::from_rgba_unmultiplied(r,g,b,backup));
         let win=ctx.screen_rect().size();
         // 折射要把采样 UV 推到岛体外，所以抓一块比岛体大的矩形。
         let capture=rect.expand2(egui::vec2(64.0,48.0))
@@ -3804,7 +3795,7 @@ impl App {
                 let d=(m-mid).dot(along).abs();
                 let g=(-((d-front)/18.0).powi(2)).exp()*fade;
                 if g<0.01 {continue;}
-                painter.line_segment([pair[0],pair[1]],egui::Stroke::new(6.0_f32,tint(1.0,0.30*g)));
+                painter.line_segment([pair[0],pair[1]],egui::Stroke::new(6.0,tint(1.0,0.30*g)));
                 painter.line_segment([pair[0],pair[1]],egui::Stroke::new(1.8,tint(0.45,0.95*g)));
             }
         }
