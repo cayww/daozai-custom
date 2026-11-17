@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 15:45
+> **最后更新**：2026-11-17 17:40
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -456,6 +456,30 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 - 验证：1193 passed；部署标记 `liquid-test-44-memopt`，exe `f910282cb317dd83`
   （备份 `daozai.exe.prev-memopt`）。
 
+### 7.0m 本轮已完成（2026-11-17 16:51–17:40，合并上游 v0.6.65）
+
+用户要求开合并分支合并上游当前状态、保留全部定制、冲突让用户选择。**当前在
+`merge-upstream-v0665` 分支，合并提交 `b1ce395`，未合回 main**（待用户实机验证后合）：
+
+- **历史连通（关键技巧）**：上游是「快照导入」无共同祖先（直接 merge 报 unrelated
+  histories）。实测确认 `6e3150b:dz-phone` 子树 == 上游 v0.6.64 tag 整树，用
+  **`git replace --graft 6e3150b 232165f`（=v0.6.64 提交）** 接上血缘，再
+  `git merge upstream/main -X subtree=dz-phone`：合并基=v0.6.64，157 个上游提交
+  只有 **13 文件 30 处真冲突**。replace ref 是本地的，换机器/重克隆后要重建。
+- **用户拍板三项**：媒体控制线=上游为主融合我方（QQ 音乐 22.82 适配本来自用户
+  PR #162）；graphics.rs=保留我方 MemoryHints::Manual；CHANGELOG=两边合并。
+- **其余 27 处融合**：我方独有字段/功能全保留（media_gap_until/focus 之外的字段、
+  网易云 CDP、qq_volume_command、notice 历史、模态对话框 toast 对齐、液态玻璃
+  content_origin、PhoneBattery、ui_tests 2000 视口等），上游新功能全收（时钟/
+  天气常驻项、oled_shift、lift_halo/center_rim、诊断工具、weather_source、
+  music_volume 异步 run 架构）。
+- **合并后修复**：补 smtc.rs 闭合括号、music_volume 残留旧行、player_process 重复
+  image_path、media_gap_until 字段被自动合并丢掉（重插）、focus_editing 被上游移除
+  （跟随上游删引用）、is_qqmusic 补 AUMID 变体（Tencent.QQMusic.1，我方逻辑并入）、
+  toast 过期回 TOAST_SECS（上游 2.4s 与我方 toast_now/淡出 6s 不一致，上游测试无依赖）。
+- **验证：1351 passed / 0 failed / 131 ignored**（净增 158 个上游测试）。
+- 上游新增亮点：QQ 音乐 22.82 适配（/seekto 单实例通道）、酷狗本机接口跳转、
+  时钟秒数/天气常驻开关、启动即诊断收集、天气代理回退。
 
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
