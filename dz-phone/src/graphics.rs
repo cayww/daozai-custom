@@ -30,8 +30,11 @@ fn compatible(mut options:eframe::NativeOptions,backends:eframe::wgpu::Backends)
             eframe::wgpu::DeviceDescriptor {
                 label:Some("daozai wgpu device (Manual 8-64MB)"),
                 required_features:eframe::wgpu::Features::default(),
+                // 上游 v0.6.65 的优化一并吸收：DX12 默认按绑定上限（100 万项）预建
+                // 描述符堆约 61MB，压到 65536 项只占 ~4MB，岛仔绑定数远用不到上限。
                 required_limits:eframe::wgpu::Limits{
                     max_texture_dimension_2d:8192,
+                    max_non_sampler_bindings:65_536,
                     ..base_limits
                 },
                 memory_hints:match std::env::var("DAOZAI_WGPU_MEMHINTS").as_deref().map(str::trim) {
