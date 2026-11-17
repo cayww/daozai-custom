@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 19:22
+> **最后更新**：2026-11-17 19:52
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -11,19 +11,19 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤 |
-| 液态玻璃源码 | `main` = `80d1c90`（…→`dabc21b`→`6a2bd1b`→`80d1c90` 静止降帧+深休眠） |
-| **工作树** | **干净**（2026-11-17 13:40 最后一次提交 `68df96d`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-44-memopt`，exe sha256 前 16 = `f910282cb317dd83`。本轮（14:35–15:00）**wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）**；上轮（13:55–14:25）静止刷新率（1–30Hz）与收起深度休眠做成设置项；再上轮（13:14–13:40）邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
+| 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
+| 液态玻璃源码 | `merge-upstream-v0665` HEAD = `8a5f63d`（D3D12 黑角修复；主线 `main` 仍在 `42a57c9` / custom-130 正式包线） |
+| **工作树** | **干净**（2026-11-17 19:50 提交 `8a5f63d`） |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-46-outline-clip`，exe sha256 前 16 = `3783f00131d4ab61`。本轮（19:25–19:50）**修 D3D12 分层窗口黑角/矩形白线**：owner 始终按岛体轮廓 `SetWindowRgn`，不再退回矩形；收起/展开/展开过程实机截图均无黑底与多余矩形；实时模式已恢复运行。上一轮 `liquid-test-45-merge65`（`88cb962ae009bd8f`）备份为 `daozai.exe.prev-outline-clip`。更早（14:35–15:00）wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）；再早（13:55–14:25）静止刷新率（1–30Hz）与收起深度休眠做成设置项 |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
-| 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
+| 测试 | 主线 1176 passed；合并分支最近 **1351 passed / 0 failed / 131 ignored**（2026-11-17 19:48，`8a5f63d` 全量串行）；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
 | GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-44 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-44.exe`（= `daozai-liquid-setup.exe`），9,679,811 B，sha256 前16 `c7d479f12387f76d`，内含 exe `f910282cb317dd83`。-42 已不在桌面（包本体在 `installer\liquid-test\daozai-liquid-test-42-mailglass.exe`），-41/-40 及更早已移到 `_archive\` 或只存工程目录 |
 
-**一句话**：正式版停在 custom-129（源码锚点 tag `custom-129`）；`main` 已吃进液态玻璃 +
-全部后续改动（HEAD=`31c7a27`），预览目录跑的就是它。补丁链已退役（2026-11-17），
-定制记录 = git 提交 + `docs/PATCHES.md`。最新一轮做了 D3D12 内存优化：
-wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）。
+**一句话**：正式版停在 custom-129（源码锚点 tag `custom-129`）；合并分支 `merge-upstream-v0665`
+已吃进液态玻璃 + 上游 v0.6.65 + 全部定制（HEAD=`8a5f63d`），预览目录跑的就是它。
+补丁链已退役（2026-11-17），定制记录 = git 提交 + `docs/PATCHES.md`。
+最新一轮修好 D3D12 分层窗口黑角：owner 始终按岛体轮廓裁剪，收起/展开/展开过程均无黑底。
 
 ---
 
@@ -508,6 +508,27 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 - 上游新增亮点：QQ 音乐 22.82 适配（/seekto 单实例通道）、酷狗本机接口跳转、
   时钟秒数/天气常驻开关、启动即诊断收集、天气代理回退。
 
+### 7.0o 本轮（2026-11-17 19:25–19:52，D3D12 黑角/白线真因）——**已修复并部署**
+
+§7.0n 当时因截图是缩略/翻拍图误判为绘制描边；本轮用户给出关键条件「只有开启 Direct3D 12 才出现」后，定位到**上游 v0.6.65 合并引入的分层窗口兼容路径**，不是液态玻璃 shader：
+
+- 上游新增 `layered.rs` + `native.rs::present_frame`：D3D12/Vulkan/部分 AMD 走 `UpdateLayeredWindow` 显示读回画面，owner 改成 `WS_EX_LAYERED` + `alpha=1/255`，并把 `SetWindowRgn` 退回**矩形**。
+- D3D12 翻转模型交换链**不遵守 owner 的 1/255 alpha**：矩形窗口区域把透明画布的黑底露出来 → 收起/展开态圆角外两块黑角、展开过程大黑底；岛体描边压在黑底上就显得像「矩形白线/多余部分」。关掉 D3D12 后走正常合成，问题立即消失，与用户观察一致。
+
+修复（`8a5f63d`）：
+
+| 文件 | 改动 |
+|---|---|
+| `native.rs` | `outline_clip` 去掉 `!Layering::Active(_)` 条件，`opaque_surface` 时**始终**按 `GlassShape` 轮廓 `SetWindowRgn`；上层分层显示窗口继续提供抗锯齿，硬裁只作用于 owner 的交换链 |
+| `layered.rs` | 文档补注：本项目在 D3D12/Vulkan 下保留 owner 轮廓裁剪，分层窗口只负责上层画面 |
+| `native.rs` 测试 | `opaque_readback_uses_outline_alpha_instead_of_jagged_clip` 改为断言切到分层窗口后**仍是轮廓区域**（原断言要求矩形，正是 bug） |
+
+- 构建：`cargo build --locked --release --bin daozai --bin daozai-bridge` 成功（仅既有 warnings，无 error）。
+- 测试：全量 `cargo test --locked --release --lib -- --test-threads=1` → **1351 passed / 0 failed / 131 ignored**。
+- 实机：冻结背景模式截图（收起、展开、展开过程四帧）确认四角黑块、大黑底、矩形白线/多余部分全部消失；实时模式已恢复运行。
+- 部署：备份 `daozai.exe.prev-outline-clip`（旧 `88cb962ae009bd8f`），新 exe `3783f00131d4ab61`，标记 `liquid-test-46-outline-clip`。
+- 仍待办：§7.0n 的 `browser_minimal=1` 自动避让收成细线时的黑块是**另一个机制**，本轮未动；custom-130 安装包未重打，如果正式版也要此修复需另行重打包。
+
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
@@ -622,7 +643,8 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 
 | `daozai-patches 归档退役` | **补丁链退役**：tag `custom-129` 固化正式版锚点；`daozai-patches/` 移出工作区（历史在 git），`PATCHES.md` 移到 `docs/`，上游快照移 `_archive`；HANDOFF 红线/§2/§5 改写；重放校验验证过与 `4b0b427` 一致 |
 | `正式版重打包` | `git checkout custom-129` 构建双 bin + ISCC 重打 `daozai-setup-custom-129.exe`（内含 exe `e9265cc0dc617bbb`，包 `f2b7fbf1ffb12e5e`）；与部署版 `58432d96` 二进制不同（构建环境差异）但同源码；部署目录与预览目录均未动；已切回 main |
-| `custom-130 正式包（第 3 版，含上游合并+白线修复）` | merge-upstream-v0665 HEAD `f8b330d` 双 bin + ISCC → `installer\daozai-setup-custom-130.exe`（11,231,232 B，包 `a39e2b61d189f517`，exe `d788d2f95f5bdbc7`/bridge `df3560011ef8a9ab`）= 液态玻璃 + 上游 v0.6.65 + 全部定制 + 内存优化 + 居中辅助移除；**未部署**；已知问题：browser_minimal=1 时收起态黑块（§7.0n 规避：装完关「自动避让」）；默认装 `C:\Program Files\Daozai`；**当前 HEAD** |
+| `custom-130 正式包（第 3 版，含上游合并+白线修复）` | merge-upstream-v0665 HEAD `f8b330d` 双 bin + ISCC → `installer\daozai-setup-custom-130.exe`（11,231,232 B，包 `a39e2b61d189f517`，exe `d788d2f95f5bdbc7`/bridge `df3560011ef8a9ab`）= 液态玻璃 + 上游 v0.6.65 + 全部定制 + 内存优化 + 居中辅助移除；**未部署**；已知问题：browser_minimal=1 时收起态黑块（§7.0n 规避：装完关「自动避让」）；默认装 `C:\Program Files\Daozai`；（已被 `8a5f63d` 取代） |
+| `8a5f63d` | **修 D3D12 分层窗口黑角/白线**：`opaque_surface` 时 owner 始终按岛体轮廓 `SetWindowRgn`，不退回矩形；上游分层显示窗口继续管抗锯齿 = `liquid-test-46-outline-clip`（exe `3783f00131d4ab61`）；1351 passed；收起/展开/展开过程实机无黑底；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `docs/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证；补丁链退役后移到 docs）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
