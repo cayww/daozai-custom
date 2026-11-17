@@ -169,7 +169,7 @@ mod pill_still_tests {
 /// 只有「像玻璃」的配色，没有真折射。现在全部走真折射，矢量玻璃片只在
 /// 没有 wgpu 设备（没开兼容渲染）时兜底。
 /// 控件玻璃的槽位数（= `Ctl::ALL` 的长度；**同时可见数** ≤ `gpu_glass::MAX_CTL`）。
-pub(crate) const CTL_N: usize = 25;
+pub(crate) const CTL_N: usize = 26;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ctl {
@@ -204,10 +204,12 @@ pub(crate) enum Ctl {
     MailTab,
     /// 邮件页「全部账号」筛选 chip（收件箱与回收站共用同一坐标）。
     MailAccount,
+    /// 邮件页无账号时的「去添加」引导按钮（pages.rs page_mail 空态，quota_ui 的 QuotaAdd 同款）。
+    MailSetup,
 }
 
 impl Ctl {
-    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount];
+    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount, Ctl::MailSetup];
     pub(crate) fn idx(self) -> usize { self as usize }
     /// 日程编辑器提醒分段的槽位下标（CalRem0..4）。
     pub(crate) fn rem_index(self) -> usize { self as usize - Ctl::CalRem0 as usize }
@@ -3266,7 +3268,7 @@ impl App {
             // 段中心：list_x+26 与 list_x+82 —— 透镜中心必须逐像素对齐文字。
             Ctl::MailTab=>{
                 if self.page!=5 || self.subpage.is_some() || self.mail.open_uid.is_some()
-                    || self.mail.manage.trash_open {return None;}
+                    || self.mail.manage.trash_open || self.mail.accounts.is_empty() {return None;}
                 let lb=self.mail_list_bounds();
                 let s=self.mail_tab.pos.clamp(-0.25,1.25);
                 let st=(self.mail_tab.vel.abs()*0.06).min(0.5);
@@ -3281,6 +3283,11 @@ impl App {
                 if self.page!=5 || self.subpage.is_some() || self.mail.open_uid.is_some()
                     || self.mail.accounts.is_empty() {return None;}
                 (Rect::from_min_size(Pos2::new(182.0,33.0),Vec2::new(100.0,19.0)),9.5)
+            }
+            // 邮件页空态「去添加」：只在无账号的引导态出现（pages.rs page_mail 同一条件）。
+            Ctl::MailSetup=>{
+                if self.page!=5 || self.subpage.is_some() || !self.mail.accounts.is_empty() {return None;}
+                (Rect::from_min_size(Pos2::new(42.0,88.0),Vec2::new(84.0,26.0)),13.0)
             }
         })
     }

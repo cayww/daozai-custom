@@ -1341,12 +1341,25 @@ impl App {
             c.text(42.0, 60.0, "还没有邮箱", 13.0, W::Bold, theme::WHITE, H::Left);
             let hint = c.fit("在设置 → 邮箱里添加；授权码只存进系统凭据管理器", 10.5, W::Regular, 344.0);
             c.text(42.0, 77.0, &hint, 10.5, W::Regular, theme::GRAY, H::Left);
-            let (go, gc) = if glassy {
+            // GPU 玻璃分支：透镜由着色器画（真折射），这里只留命中区、悬停反馈和文字；
+            // 没上 GPU 时退回矢量玻璃片（非液态皮肤本来就没有折射层）。
+            let (go, gc) = if glassy && self.ctl_on_gpu(Ctl::MailSetup) {
+                let go = c.hit(42.0, 88.0, 84.0, 26.0, "mail-setup");
+                let (hover, _) = c.hover_t(&go);
+                let gc = c.scaled(84.0, 101.0, self.ctl_scale(Ctl::MailSetup));
+                if hover > 0.01 {
+                    let from = paint::chrome_mark(c);
+                    gc.fill(42.0, 88.0, 84.0, 26.0, 13.0, Color32::from_white_alpha((12.0 + hover * 16.0) as u8));
+                    paint::chrome_since(c, from);
+                }
+                (go, gc)
+            } else if glassy {
                 paint::glass_capsule(c, 42.0, 88.0, 84.0, 26.0, "mail-setup", 0.16, 0.42)
             } else {
                 capsule(c, 42.0, 88.0, 84.0, 26.0, "mail-setup", theme::BTN, theme::BTN_HOVER)
             };
-            gc.text(58.0, 105.0, "去添加", size::BODY, W::Regular, theme::WHITE, H::Center);
+            // 胶囊横跨 42..126，文字居中就是 84（原来写在 58，整个按钮看着偏左）。
+            gc.text(84.0, 105.0, "去添加", size::BODY, W::Regular, theme::WHITE, H::Center);
             if go.clicked() {
                 self.open_mail_settings();
             }
