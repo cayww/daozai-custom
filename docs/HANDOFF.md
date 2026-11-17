@@ -18,7 +18,7 @@
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
-| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-42 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-42.exe`（= `daozai-liquid-setup.exe`），9,678,334 B，sha256 前16 `bbb18246ab89a2a6`，内含 exe `a701a6bf12110dfd`。-41 已不在桌面（包本体在 `installer\liquid-test\daozai-liquid-test-41-lowsleep.exe`），-40 及更早已移到 `_archive\` |
+| GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-44 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-44.exe`（= `daozai-liquid-setup.exe`），9,679,811 B，sha256 前16 `c7d479f12387f76d`，内含 exe `f910282cb317dd83`。-42 已不在桌面（包本体在 `installer\liquid-test\daozai-liquid-test-42-mailglass.exe`），-41/-40 及更早已移到 `_archive\` 或只存工程目录 |
 
 **一句话**：日常用的正式版停在 custom-129；`main` 已吃进液态玻璃（50 个 commit，HEAD=`bf116c2`），
 但液态玻璃**没进补丁链**，只在预览目录里跑。上一轮把「视觉细节、帧率、内存」三件收尾了

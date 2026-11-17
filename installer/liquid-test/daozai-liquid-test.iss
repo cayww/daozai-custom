@@ -8,7 +8,7 @@
 
 #define MyAppName "岛仔 液态玻璃测试版"
 #define MyAppVersion "0.6.64"
-#define MyAppBuild "liquid-test-42-mailglass"
+#define MyAppBuild "liquid-test-44-memopt"
 ; 独立数据目录：不和正式版的 %APPDATA%\Daozai 抢设置
 #define MyDataDir "Daozai-LiquidTest"
 
