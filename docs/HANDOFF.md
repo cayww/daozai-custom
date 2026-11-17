@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 13:40
+> **最后更新**：2026-11-17 14:25
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -14,7 +14,7 @@
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
 | 液态玻璃源码 | `main` = `80d1c90`（…→`dabc21b`→`6a2bd1b`→`80d1c90` 静止降帧+深休眠） |
 | **工作树** | **干净**（2026-11-17 13:40 最后一次提交 `68df96d`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-42-mailglass`，exe sha256 前 16 = `a701a6bf12110dfd`。本轮（13:14–13:40）**邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中**；上轮（11:30–13:10）静止降帧（15fps 档）+ 收起深度休眠（1Hz，宠物冻结不挡）；再上轮 MemoryHints A/B 实测后保持默认（留 DAOZAI_WGPU_MEMHINTS 开关）；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-43-idlefps`，exe sha256 前 16 = `ba5d20976e277fbc`。本轮（13:55–14:25）**静止刷新率（1–30Hz）与收起深度休眠做成设置项**（用户实测降帧不省内存，大头在 D3D12）；上轮（13:14–13:40）邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中；再上轮（11:30–13:10）静止降帧（15fps 档）+ 收起深度休眠（1Hz，宠物冻结不挡）；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
@@ -457,6 +457,23 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 - **顺手修文档**：发现 §7.0e–7.1 之间整段被上一轮写坏（每行被 `'` 包裹的 repr 伪影），
   已按规则剥离还原（`'` 游离行删、`     '` 前缀与行尾 `'` 剥）。
 
+### 7.0k 本轮已完成（2026-11-17 13:55–14:25，`f3d493b`，liquid-test-43-idlefps）
+
+用户反馈：静止降帧/深休眠没省到内存（大头在 Direct3D 12 抓屏管线），要求做成可配置项。
+新增两个设置（常规 → 岛体外观，阻尼比之下）：
+
+- **静止刷新率** `liquid_idle_fps`（默认 15，滑杆 1–30）：glass_tick==3 的重绘节拍，
+  `repaint_after=1.0/fps`；30 = 静止不降档。立即生效。
+- **收起深度休眠** `liquid_deep_sleep`（默认开）：关掉后静止态保持「静止刷新率」，
+  不再进 1Hz；deep_sleep 判定加 `&& self.settings.liquid_deep_sleep`。
+
+持久化走 settings.txt 新键 `liquid_idle_fps` / `liquid_deep_sleep`（load clamp 1–30），
+设置页 Debug-diff 自动保存覆盖。验证：1193 passed / 0 failed / 119 ignored；
+冻结模式实拍常规页——两个新条目完整可见、默认值正确。部署标记
+`liquid-test-43-idlefps`，exe sha256 前 16 = `ba5d20976e277fbc`（备份
+`daozai.exe.prev-idlefps`）。**未打包安装包**（42 号包仍有效，43 号待用户发话）。
+
+
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
@@ -564,7 +581,8 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `dabc21b` | **memprof 内存剖析基建 + CalDAV 正则缓存化** = liquid-test-40；1189 passed；**当前 HEAD** |
 | `6a2bd1b` | MemoryHints A/B 后保持默认 Performance + 实验开关 |
 | `80d1c90` | **静止降帧 15fps 档 + 收起深度休眠 1Hz（宠物冻结）** = liquid-test-41；1193 passed |
-| `68df96d` | **邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中** = liquid-test-42-mailglass；1193 passed；**当前 HEAD** |
+| `68df96d` | **邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中** = liquid-test-42-mailglass；1193 passed |
+| `f3d493b` | **静止刷新率（1–30Hz）与收起深度休眠做成设置项** = liquid-test-43-idlefps；1193 passed；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
