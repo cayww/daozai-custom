@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 13:10
+> **最后更新**：2026-11-17 13:40
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -13,8 +13,8 @@
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
 | 液态玻璃源码 | `main` = `80d1c90`（…→`dabc21b`→`6a2bd1b`→`80d1c90` 静止降帧+深休眠） |
-| **工作树** | **干净**（2026-11-17 13:10 最后一次提交 `80d1c90`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-41-lowsleep`，exe sha256 前 16 = `7079dfc4af30fb51`。本轮（11:30–13:10）**静止降帧（15fps 档）+ 收起深度休眠（1Hz，宠物冻结不挡）**；上轮 MemoryHints A/B 实测后保持默认（留 DAOZAI_WGPU_MEMHINTS 开关）。再上轮 memprof 基建+CalDAV 正则缓存。上一轮（19:00–00:25）完成：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
+| **工作树** | **干净**（2026-11-17 13:40 最后一次提交 `68df96d`） |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-42-mailglass`，exe sha256 前 16 = `a701a6bf12110dfd`。本轮（13:14–13:40）**邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中**；上轮（11:30–13:10）静止降帧（15fps 档）+ 收起深度休眠（1Hz，宠物冻结不挡）；再上轮 MemoryHints A/B 实测后保持默认（留 DAOZAI_WGPU_MEMHINTS 开关）；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
@@ -378,110 +378,86 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 
 ### 7.0e 本轮已完成（2026-11-17 02:45–03:35，`9a0efc6`，liquid-test-37）
 
-'
-     '**邮件页**：「全部/未读」按 Pack-v2 demo 的 tab 重做——单块滑动指示器透镜（`Ctl::MailTab`，'
-     '弹簧 300/0.5，滑动中横向拉伸 `1+min(0.5,|v|*0.06)`、纵向略压，按压果冻 ×1.3）；'
-     '「全部账号」chip 上 GPU 透镜（`Ctl::MailAccount`，收件箱/回收站共用坐标）。
+**邮件页**：「全部/未读」按 Pack-v2 demo 的 tab 重做——单块滑动指示器透镜（`Ctl::MailTab`，
+弹簧 300/0.5，滑动中横向拉伸 `1+min(0.5,|v|*0.06)`、纵向略压，按压果冻 ×1.3）；
+「全部账号」chip 上 GPU 透镜（`Ctl::MailAccount`，收件箱/回收站共用坐标）。
 
-'
-     '**修「选中淡填充被压成暗雾」**（用户报：新建日程提醒横排看不清）：GPU 分支的 white_alpha '
-     '淡填充 premultiplied 后亮度极低，浅材质通用换色把它当深色压成墨雾埋掉文字。修法：'
-     '`chrome_mark/chrome_since` 改 pub(crate)，所有 GPU 分支的选中/悬停淡填充登记为玻璃材质'
-     '（编辑器全天/提醒分段、专注页、额度/日历新增）；编辑器选中态文字改用强调色。
+**修「选中淡填充被压成暗雾」**（用户报：新建日程提醒横排看不清）：GPU 分支的 white_alpha 
+淡填充 premultiplied 后亮度极低，浅材质通用换色把它当深色压成墨雾埋掉文字。修法：
+`chrome_mark/chrome_since` 改 pub(crate)，所有 GPU 分支的选中/悬停淡填充登记为玻璃材质
+（编辑器全天/提醒分段、专注页、额度/日历新增）；编辑器选中态文字改用强调色。
 
-'
-     '- Ctl +2（CTL_N 23→25）；MailTab 几何含弹簧位移与形变，段中心 `list_x+26+56*pos` 与文字逐像素对齐；
-'
-     '  回收站/详情页 geom 返回 None。
-'
-     '- 验证：1189 passed；实拍连拍确认滑动+拉伸+停稳对齐；提醒横排文字全部清晰。
+- Ctl +2（CTL_N 23→25）；MailTab 几何含弹簧位移与形变，段中心 `list_x+26+56*pos` 与文字逐像素对齐；
+  回收站/详情页 geom 返回 None。
+- 验证：1189 passed；实拍连拍确认滑动+拉伸+停稳对齐；提醒横排文字全部清晰。
 
-'
-     '### 7.0f 本轮已完成（2026-11-17 09:25–09:50，`d63e0ca`，liquid-test-38）
+### 7.0f 本轮已完成（2026-11-17 09:25–09:50，`d63e0ca`，liquid-test-38）
 
-'
-     '用户反馈「音乐进度条圆钮弹簧效果不强」→ 新增**「弹簧强度」设置项**（液态玻璃参数区，'
-     '0.2–3.0，默认 1.0，立即生效）：update_ctl_springs 每帧按倍率 tune 各弹簧刚度
-'
-     '（按压 300 / 入场 320 / 圆钮放大 1000 / 邮件指示器 300，阻尼比不变），按压果冻幅度同乘。
-'
-     '**圆钮此前完全不参与按压果冻**（只做拖动放大）——现叠一半幅度的果冻
-'
-     '（按住进度条时圆钮回弹，峰值 ≈+27%@3.0），拖动放大不受影响。
-'
-     '验证：1189 passed；liquid_spring=3.0 实拍圆钮弹大→回缩→再弹→稳定。
+用户反馈「音乐进度条圆钮弹簧效果不强」→ 新增**「弹簧强度」设置项**（液态玻璃参数区，
+0.2–3.0，默认 1.0，立即生效）：update_ctl_springs 每帧按倍率 tune 各弹簧刚度
+（按压 300 / 入场 320 / 圆钮放大 1000 / 邮件指示器 300，阻尼比不变），按压果冻幅度同乘。
+**圆钮此前完全不参与按压果冻**（只做拖动放大）——现叠一半幅度的果冻
+（按住进度条时圆钮回弹，峰值 ≈+27%@3.0），拖动放大不受影响。
+验证：1189 passed；liquid_spring=3.0 实拍圆钮弹大→回缩→再弹→稳定。
 
-'
-     '### 7.0g 本轮已完成（2026-11-17 09:55–10:10，`8316e1e`，liquid-test-39）
+### 7.0g 本轮已完成（2026-11-17 09:55–10:10，`8316e1e`，liquid-test-39）
 
-'
-     '- 「弹簧强度」改名**「弹簧刚度」**（存储键 liquid_spring 不变）；新增**「阻尼比」**liquid_zeta
-'
-     '  （0.1–1.0，默认 0.5）：按压/入场/邮件指示器弹簧的 ζ 统一可调（原 0.5/0.55/0.5 写死），
-'
-     '  小=来回弹跳更 Q 弹，1.0=不弹跳直接到位；圆钮拖动放大弹簧保持 ζ=1（干脆不过冲）。
-'
-     '- 设置页顺序：展开动效、悬停触发延时移到液态玻璃参数区**上方**（hint 之上），
-'
-     '  所有皮肤可见性不变。
-'
-     '- 验证：1189 passed；设置页实拍确认顺序与两个滑杆。
+- 「弹簧强度」改名**「弹簧刚度」**（存储键 liquid_spring 不变）；新增**「阻尼比」**liquid_zeta
+  （0.1–1.0，默认 0.5）：按压/入场/邮件指示器弹簧的 ζ 统一可调（原 0.5/0.55/0.5 写死），
+  小=来回弹跳更 Q 弹，1.0=不弹跳直接到位；圆钮拖动放大弹簧保持 ζ=1（干脆不过冲）。
+- 设置页顺序：展开动效、悬停触发延时移到液态玻璃参数区**上方**（hint 之上），
+  所有皮肤可见性不变。
+- 验证：1189 passed；设置页实拍确认顺序与两个滑杆。
 
-'
-     '### 7.0h 本轮已完成（2026-11-17 10:05–11:05，`dabc21b`，liquid-test-40）
+### 7.0h 本轮已完成（2026-11-17 10:05–11:05，`dabc21b`，liquid-test-40）
 
-'
-     '用户要做内存优化 → 新增**内存剖析基建**：`--features memprof`（dhat）+ `--profile memprof`
-'
-     '（带行号符号表）。`DAOZAI_MEMPROF_EXIT=<秒>` 到点自动优雅退出，报告写
-'
-     '`data/diagnostics/dhat-heap.json`。**三个坑**：① Profiler 不 Drop 没报告（taskkill /F 拿不到，
-'
-     '要 ViewportCommand::Close 优雅退出）；② 必须装 `dhat::Alloc` 全局分配器（否则 tg=0 空报告）；
-'
-     '③ release 的 strip=true 让 Rust 帧符号化全失败——要用带符号的 memprof profile + pdb 放 exe 旁边。
-'
-     '**实测结论（80s 会话）**：总分配 19.5GB（egui 每帧 ~4.5MB，框架固有），退出存活堆仅 9.1MB
-'
-     '（无泄漏），提交 622MB 的大头在 wgpu/驱动预留而非 Rust 堆。
-'
-     '**已优化**：CalDAV XML 的 9 个正则从每次调用重编译收敛到 re_cache() LazyLock 缓存
-'
-     '（单次同步临时分配 ~30MB → 编译一次）。
-'
-     '- 验证：1189 passed。
+用户要做内存优化 → 新增**内存剖析基建**：`--features memprof`（dhat）+ `--profile memprof`
+（带行号符号表）。`DAOZAI_MEMPROF_EXIT=<秒>` 到点自动优雅退出，报告写
+`data/diagnostics/dhat-heap.json`。**三个坑**：① Profiler 不 Drop 没报告（taskkill /F 拿不到，
+要 ViewportCommand::Close 优雅退出）；② 必须装 `dhat::Alloc` 全局分配器（否则 tg=0 空报告）；
+③ release 的 strip=true 让 Rust 帧符号化全失败——要用带符号的 memprof profile + pdb 放 exe 旁边。
+**实测结论（80s 会话）**：总分配 19.5GB（egui 每帧 ~4.5MB，框架固有），退出存活堆仅 9.1MB
+（无泄漏），提交 622MB 的大头在 wgpu/驱动预留而非 Rust 堆。
+**已优化**：CalDAV XML 的 9 个正则从每次调用重编译收敛到 re_cache() LazyLock 缓存
+（单次同步临时分配 ~30MB → 编译一次）。
+- 验证：1189 passed。
 
-'
-     '### 7.0i 本轮已完成（2026-11-17 11:30–13:10，`80d1c90`，liquid-test-41）
+### 7.0i 本轮已完成（2026-11-17 11:30–13:10，`80d1c90`，liquid-test-41）
 
-'
-     '功能级降内存两项（依据：驱动池随抓屏+玻璃管线命令吞吐增长，降帧/休眠从源头限制）：
+功能级降内存两项（依据：驱动池随抓屏+玻璃管线命令吞吐增长，降帧/休眠从源头限制）：
 
-'
-     '- **静止档 15fps**（glass_tick=3）：无动画/环境动效/歌词滚动时降半帧，有动静回升 30fps。
-'
-     '- **收起深度休眠**：收起+鼠标远离（24px 余量）+无动画/媒体/通知/吐司持续 2 分钟 →
-'
-     '  整条管线 1Hz；输入事件即时唤醒，媒体/通知变化 ≤1s 内回升。宠物不进门槛——
-'
-     '  pet_state 用系统级空闲判定（人用电脑就永远醒着），深休眠期间宠物动画冻结在
-'
-     '  入睡前姿势（pet_anim_t）。挡因诊断写 pill-sleep.log（10s 限频）。
-'
-     '- pill_still 抽纯函数 + 4 单测；1193 passed。
-'
-     '- 实测：collapsed idle 30fps（120s 计满）→ 1Hz（20s 窗口 tick 冻结），悬停唤醒
-'
-     '  立即回展开态。
-'
-     '- MemoryHints A/B（上轮遗留结论）：MemoryUsage 比 Performance 多 ~85MB 私有提交
-'
-     '  （egui 流式缓冲精确分配产生大量 D3D 对象），默认保持 Performance，
-'
-     '  实验开关 DAOZAI_WGPU_MEMHINTS=memory_usage（`6a2bd1b`）。
+- **静止档 15fps**（glass_tick=3）：无动画/环境动效/歌词滚动时降半帧，有动静回升 30fps。
+- **收起深度休眠**：收起+鼠标远离（24px 余量）+无动画/媒体/通知/吐司持续 2 分钟 →
+  整条管线 1Hz；输入事件即时唤醒，媒体/通知变化 ≤1s 内回升。宠物不进门槛——
+  pet_state 用系统级空闲判定（人用电脑就永远醒着），深休眠期间宠物动画冻结在
+  入睡前姿势（pet_anim_t）。挡因诊断写 pill-sleep.log（10s 限频）。
+- pill_still 抽纯函数 + 4 单测；1193 passed。
+- 实测：collapsed idle 30fps（120s 计满）→ 1Hz（20s 窗口 tick 冻结），悬停唤醒
+  立即回展开态。
+- MemoryHints A/B（上轮遗留结论）：MemoryUsage 比 Performance 多 ~85MB 私有提交
+  （egui 流式缓冲精确分配产生大量 D3D 对象），默认保持 Performance，
+  实验开关 DAOZAI_WGPU_MEMHINTS=memory_usage（`6a2bd1b`）。
 
-'
-     '### 7.1 已提交（`234ff52`，已推送 origin/main）
+### 7.0j 本轮已完成（2026-11-17 13:14–13:40，`68df96d`，liquid-test-42-mailglass）
+
+用户报邮箱页空态两个问题，都修了：
+
+- **无邮箱时「全部/未读」透镜残留**：`Ctl::MailTab` 的 `ctl_geom` 没挡空态——CPU 侧
+  page_mail 空态提前 return 不画文字，GPU 着色器却照常把指示器透镜画在
+  (list_x+26, 42.5)，剩一片悬浮玻璃。修法：geom 守卫补 `|| self.mail.accounts.is_empty()`
+  （与 `Ctl::MailAccount` 同款）。
+- **「去添加」按钮上真玻璃 + 文字居中**：原先只有 CPU 矢量 `glass_capsule`（无折射），
+  且文字画在 x=58（胶囊跨 42..126，中心是 84）。修法：新增 `Ctl::MailSetup`
+  （CTL_N 25→26，geom=42,88,84×26 圆角 13，仅 page5 空态出现），pages.rs 按
+  QuotaAdd 模式分 GPU/矢量/实心三路，文字改画 84。
+- 验证：1193 passed / 0 failed / 119 ignored（--test-threads=1）；冻结背景模式实拍
+  邮箱页空态——透镜消失、按钮玻璃质感、文字居中。实时模式已由用户日常使用验证。
+- 部署：预览目录 exe 已替换（备份 `daozai.exe.prev-mailglass`），标记
+  `liquid-test-42-mailglass`，exe sha256 前 16 = `a701a6bf12110dfd`。
+- **顺手修文档**：发现 §7.0e–7.1 之间整段被上一轮写坏（每行被 `'` 包裹的 repr 伪影），
+  已按规则剥离还原（`'` 游离行删、`     '` 前缀与行尾 `'` 剥）。
+
+### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
 
@@ -587,7 +563,8 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `8316e1e` | **弹簧刚度改名 + 阻尼比设置；展开动效/触发延迟上移** = liquid-test-39；1189 passed；**当前 HEAD** |
 | `dabc21b` | **memprof 内存剖析基建 + CalDAV 正则缓存化** = liquid-test-40；1189 passed；**当前 HEAD** |
 | `6a2bd1b` | MemoryHints A/B 后保持默认 Performance + 实验开关 |
-| `80d1c90` | **静止降帧 15fps 档 + 收起深度休眠 1Hz（宠物冻结）** = liquid-test-41；1193 passed；**当前 HEAD** |
+| `80d1c90` | **静止降帧 15fps 档 + 收起深度休眠 1Hz（宠物冻结）** = liquid-test-41；1193 passed |
+| `68df96d` | **邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中** = liquid-test-42-mailglass；1193 passed；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
