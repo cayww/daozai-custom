@@ -10,6 +10,34 @@ fn compatible(mut options:eframe::NativeOptions,backends:eframe::wgpu::Backends)
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup)=&mut options.wgpu_options.wgpu_setup {
         setup.instance_descriptor.backends=backends;
         setup.power_preference=eframe::wgpu::PowerPreference::LowPower;
+        // 缓冲分配策略：保持 wgpu 默认的 MemoryHints::Performance（攒大块跨帧复用）。
+        // dhat+VMMap A/B 实测（同为新鲜进程、相同 UI 脚本）：MemoryUsage 反而比
+        // Performance 多 ~85MB 私有提交——egui 每帧重建流式缓冲，精确分配产生大量
+        // D3D 缓冲对象，驱动侧固定开销超过省下的池化空间。社区建议不适用于本负载。
+        // 如需实验：DAOZAI_WGPU_MEMHINTS=memory_usage 可切到精确分配。
+        setup.device_descriptor=std::sync::Arc::new(|adapter| {
+            let base_limits=if adapter.get_info().backend==eframe::wgpu::Backend::Gl {
+                eframe::wgpu::Limits::downlevel_webgl2_defaults()
+            }else{
+                eframe::wgpu::Limits::default()
+            };
+            eframe::wgpu::DeviceDescriptor {
+                label:Some("daozai wgpu device (MemoryUsage)"),
+                required_features:eframe::wgpu::Features::default(),
+                required_limits:eframe::wgpu::Limits{
+                    max_texture_dimension_2d:8192,
+                    ..base_limits
+                },
+                // 默认 Performance；实验用 DAOZAI_WGPU_MEMHINTS=memory_usage 切精确分配
+                // （实测比默认多 ~85MB，见上）。
+                memory_hints:if std::env::var("DAOZAI_WGPU_MEMHINTS")
+                    .is_ok_and(|v|v.trim().eq_ignore_ascii_case("memory_usage")) {
+                    eframe::wgpu::MemoryHints::MemoryUsage
+                }else{
+                    eframe::wgpu::MemoryHints::Performance
+                },
+            }
+        });
     }
     options
 }
