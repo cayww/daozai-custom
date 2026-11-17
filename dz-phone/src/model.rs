@@ -115,7 +115,7 @@ impl Skin {
             Self::Cream => "暖白底色配深棕文字和橙色强调，柔和明亮。",
             Self::GlassLight => "浅色磨砂玻璃，透出身后桌面的颜色，文字为深色；按背景明暗自动调整，保证清晰。",
             Self::GlassDark => "深色磨砂玻璃，透出身后桌面的颜色，文字为白色；按背景明暗自动调整，保证清晰。",
-            Self::Liquid => "试验皮肤：GPU 物理折射（Snell + 色散 + Fresnel）+ 真实桌面底片，按背景亮度自动切深/浅材质。需要开启「兼容渲染（Direct3D 12）」并重启岛仔；不开则回退为普通玻璃。",
+            Self::Liquid => "液态玻璃，GPU 物理折射 + 真实桌面底片，自动切深/浅材质。需要开启「兼容渲染（Direct3D 12）」并重启岛仔；不开则回退为普通玻璃。皮肤作者：轻九九九（@cayww）",
         }
     }
     pub fn is_glass(self) -> bool { matches!(self, Self::GlassLight | Self::GlassDark) }

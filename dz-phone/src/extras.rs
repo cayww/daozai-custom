@@ -2344,7 +2344,7 @@ impl App {
                             settings_hint(ui,"悬停多久后展开；80–120 ms 可避开鼠标划过");
                             if self.settings.skin==model::Skin::Liquid {
                                 ui.separator();
-                                settings_hint(ui,"调下面的参数时岛仔会保持展开；切到其他设置页自动收起");
+                                settings_hint(ui,"调下面的参数（仅液态玻璃）时岛仔会保持展开；切到其他设置页自动收起");
                                 let before=self.settings.liquid_prefer_dgpu;
                                 setting_row(ui,"优先独立显卡","优先使用独显渲染玻璃，切换后重启岛仔生效",&mut self.settings.liquid_prefer_dgpu);
                                 if before!=self.settings.liquid_prefer_dgpu {self.settings.save();}
@@ -2384,7 +2384,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_blur_px-1.5).abs()>0.05,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_blur_px=1.5;}
                                     }).response
                                 });
-                                settings_hint(ui,"折射带里五点采样的步长（默认 1.5）；调大整个折射带更「磨」，超过 3 就成毛玻璃");
+                                settings_hint(ui,"折射带里五点采样的步长（默认 1.5）；调大整个折射带更「磨」");
                                 ui.separator();
                                 settings_control_row(ui,"折射带宽",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2402,7 +2402,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_edge_w_px-1.5).abs()>0.05,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_edge_w_px=1.5;}
                                     }).response
                                 });
-                                settings_hint(ui,"边缘那条高光的宽度（默认 1.5）；液态玻璃要细，0 = 关掉白边");
+                                settings_hint(ui,"边缘高光的宽度（默认 1.5）；0 = 关掉白边");
                                 ui.separator();
                                 settings_control_row(ui,"白边亮度",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2411,7 +2411,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_edge_op-0.90).abs()>0.005,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_edge_op=0.90;}
                                     }).response
                                 });
-                                settings_hint(ui,"边缘高光的亮度（默认 0.90）；会随背景明暗自动微调，这里是基准值");
+                                settings_hint(ui,"边缘高光亮度（默认 0.90）；随背景明暗自动微调");
                                 ui.separator();
                                 settings_control_row(ui,"弹簧刚度",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2420,7 +2420,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_spring-1.0).abs()>0.005,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_spring=1.0;}
                                     }).response
                                 });
-                                settings_hint(ui,"控件果冻回弹的快慢（默认 1.0）：调大弹得更快（进度条圆钮、按压反馈、邮件页指示器都变），调小更柔更缓；立即生效不用重启");
+                                settings_hint(ui,"控件果冻回弹的快慢（默认 1.0）：调大弹得更快，调小更柔更缓");
                                 ui.separator();
                                 settings_control_row(ui,"阻尼比",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2429,7 +2429,7 @@ impl App {
                                         if ui.add_enabled((self.settings.liquid_zeta-0.5).abs()>0.005,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_zeta=0.5;}
                                     }).response
                                 });
-                                settings_hint(ui,"回弹的「收劲」（默认 0.5）：调小会来回弹跳几下、更 Q 弹，1.0 = 不弹跳直接到位（进度条圆钮的拖动放大恒为不弹跳）");
+                                settings_hint(ui,"回弹的「收劲」（默认 0.5）：调小会来回弹跳几下、更 Q 弹，1.0 = 不弹跳直接到位");
                                 ui.separator();
                                 settings_control_row(ui,"静止刷新率",56.0,|ui|{
                                     ui.horizontal(|ui|{
@@ -2438,12 +2438,12 @@ impl App {
                                         if ui.add_enabled(self.settings.liquid_idle_fps!=15,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_idle_fps=15;}
                                     }).response
                                 });
-                                settings_hint(ui,"无悬停、无动画时的重绘帧率（默认 15）：调低更省电，但壁纸/窗口变化时玻璃背景跟得越慢；30 = 静止不降档；立即生效");
+                                settings_hint(ui,"无悬停、无动画时的重绘帧率（默认 15）：调低更省电，但壁纸/窗口变化时玻璃背景跟得越慢；30 = 静止不降档");
                                 ui.separator();
                                 let before=self.settings.liquid_deep_sleep;
-                                setting_row(ui,"收起深度休眠","收起且完全静止 2 分钟后整条管线降到 1Hz，任何输入即时唤醒",&mut self.settings.liquid_deep_sleep);
+                                setting_row(ui,"收起态深度休眠","收起且完全静止 2 分钟后降到 1Hz，任何输入即时唤醒",&mut self.settings.liquid_deep_sleep);
                                 if before!=self.settings.liquid_deep_sleep {self.settings.save();}
-                                settings_hint(ui,"默认开；实测它只省电、几乎不省内存（内存大头在 Direct3D 12 抓屏管线），不需要可关");
+                                settings_hint(ui,"默认开；省电可保持开启");
                             }
                         });
                         settings_label(ui,"岛体显示");
