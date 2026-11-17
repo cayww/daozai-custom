@@ -10,6 +10,10 @@
 //! - 岛仔窗口本身设成整体不透明度 1/255 的分层窗口：交换链的画面几乎完全看不见，
 //!   但仍按原来的窗口区域与命中区接收点击、悬停和拖放（不透明度为 0 时系统不再命中）。
 //!   直接对岛仔窗口用 `UpdateLayeredWindow` 不行：翻转模型交换链的画面会盖过分层内容。
+//!
+//! 本项目的定制：D3D12/Vulkan 下 owner 仍由 `native.rs` 用 `SetWindowRgn` 按岛体轮廓硬裁。
+//! 实测 D3D12 交换链不遵守 owner 的 1/255 alpha，只靠它藏黑底会让收起/展开态的圆角外出现黑块、
+//! 展开过程中露出整块黑底；分层窗口只负责在其上方呈现带真实 alpha 的抗锯齿画面。
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::*;

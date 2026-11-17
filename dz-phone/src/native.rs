@@ -582,7 +582,9 @@ impl Window {
         let mut hits=vec![h];
         if let Some((x,y,w,h))=notice_hit {hits.push((px(x),px(y),px(x+w),px(y+h)));}
         *hit().lock().unwrap_or_else(|e| e.into_inner()) = hits;
-        // 毛玻璃：合成引擎的模糊块贴合岛体轮廓，窗口区域仍用矩形（含阴影与拖放感应区）。
+        // 毛玻璃：合成引擎的模糊块贴合岛体轮廓。兼容后端（D3D12/Vulkan/AMD）即使叠了分层显示窗口，
+        // 岛仔窗口自身也必须按轮廓裁剪：D3D12 翻转模型交换链不遵守 owner 的 1/255 alpha，
+        // 矩形窗口区域会把透明画布的黑底露成四角黑块（用户实测：关掉 D3D12 立即消失）。
         let _ = capture;
         // 分层窗口显示的是带真实透明通道的画面时，系统模糊同样能透出来（模糊底板紧贴在岛仔窗口下方，
         // 分层显示窗口在上方）；只有轮廓裁剪或按轮廓补 alpha（内部不透明）时才关掉模糊。
@@ -622,8 +624,11 @@ impl Window {
         if self.opaque_surface {
             if let Some(shapes)=glass.filter(|g|!g.is_empty()) {self.outline.set_shapes(shapes,ppp);}
         }
-        // 不可靠的透明合成路径按真实轮廓裁剪，避免圆角外侧和透明画布留下黑底。
-        let outline_clip=self.opaque_surface && !matches!(self.layering,Layering::Active(_));
+        // 不可靠的透明合成路径始终按真实轮廓裁剪，避免圆角外侧和透明画布留下黑底。
+        // 上游的「分层窗口 + owner alpha=1/255」在 D3D12 交换链上挡不住黑底：一旦这里退回矩形，
+        // 收起/展开态的圆角外就是两块黑角，展开过程中还会露出整块黑底（用户截图实证）。
+        // 上层另有一张带真实 alpha 的显示窗口负责抗锯齿，硬裁只作用于 owner 的交换链，不会吃掉柔边。
+        let outline_clip=self.opaque_surface;
         match glass.filter(|_|outline_clip) {
             Some(shapes) => {
                 let key=glass_key(shapes,ppp);
@@ -744,10 +749,14 @@ mod tests {
                 let soft=(0..h).flat_map(|y|(0..w).map(move|x|(x,y))).filter(|&(x,y)|(1..255).contains(&alpha(x,y))).count();
                 assert!(soft>=80,"圆角和肩部要有抗锯齿过渡像素，实际 {soft}");
                 assert!(frame.chunks_exact(4).all(|p|p[0]<=p[3]&&p[1]<=p[3]&&p[2]<=p[3]),"必须是合法的预乘颜色");
-                // 切到分层窗口后不再用轮廓裁剪岛仔窗口本身。
+                // 切到分层窗口后 owner 仍按轮廓裁剪：D3D12 交换链不遵守 1/255 alpha，
+                // 退回矩形区域会把画布黑底露成四角黑块（用户实测）。柔边由上层显示窗口负责。
                 native.update((0.0,0.0,w as f32,h as f32),(80.0,0.0,240.0,60.0),None,None,Some(&shapes),1.0,false,false);
                 let region=CreateRectRgn(0,0,0,0);
-                if GetWindowRgn(hwnd,region).0!=0 {assert!(PtInRegion(region,10,150).as_bool(),"分层显示后窗口区域应回到矩形");}
+                if GetWindowRgn(hwnd,region).0!=0 {
+                    assert!(!PtInRegion(region,10,150).as_bool(),"分层显示后窗口区域仍须按轮廓裁剪");
+                    assert!(PtInRegion(region,200,30).as_bool(),"岛体内部仍可命中");
+                }
                 let _=DeleteObject(region);
                 assert!(!native.present_frame([w,h],&opaque),"画面没变时不重复提交");
             }
