@@ -639,6 +639,17 @@ impl Window {
         // DirectComposition 已经有逐像素 alpha，不能再套 SetWindowRgn 硬裁：
         // 窗口区域是二值裁剪，会把非液态皮肤的圆角和文字边缘切出锯齿。
         let outline_clip=self.opaque_surface && !eframe::egui_wgpu::winit::direct_composition_active();
+        {
+            // 一次性诊断：透明合成走的是哪条路，直接影响圆角是柔边还是硬裁。
+            // 排障时先看这一行，比截图猜快得多。
+            static LOG: std::sync::Once = std::sync::Once::new();
+            LOG.call_once(|| glass_diagnostic(&format!(
+                "透明合成：opaque={} dcomp={} outline_clip={}",
+                self.opaque_surface,
+                eframe::egui_wgpu::winit::direct_composition_active(),
+                outline_clip
+            )));
+        }
         match glass.filter(|_|outline_clip) {
             Some(shapes) => {
                 let key=glass_key(shapes,ppp);
@@ -646,6 +657,7 @@ impl Window {
                     unsafe {
                         if let Some(rgn)=glass_region(&key) {
                             if SetWindowRgn(self.hwnd, rgn, true) != 0 {
+                                glass_diagnostic(&format!("区域：玻璃轮廓 dcomp={} oc={} key[:6]={:?}",eframe::egui_wgpu::winit::direct_composition_active(),outline_clip,&key[..key.len().min(6)]));
                                 self.glass=Some(key);
                                 // 回到矩形区域时必须重新设置。
                                 self.region=(i32::MIN,0,0,0);
@@ -662,6 +674,7 @@ impl Window {
                 unsafe {
                     let rgn = CreateRectRgn(r.0, r.1, r.2, r.3);
                     if SetWindowRgn(self.hwnd, rgn, true) != 0 {
+                        glass_diagnostic(&format!("区域：整块矩形 dcomp={} oc={} r={:?}",eframe::egui_wgpu::winit::direct_composition_active(),outline_clip,r));
                         self.region = r;
                         self.glass=None;
                         let _ = windows::Win32::Graphics::Dwm::DwmFlush();

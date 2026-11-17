@@ -1329,7 +1329,10 @@ impl App {
             seek_drag:anim::Spring::new(0.0,1000.0,1.0),
             ctl_gpu:[false; CTL_N],
             ctl_down:false,
-            settings_open:false,
+            // 排障开关：`DAOZAI_OPEN_SETTINGS=1` 启动即打开设置页。
+            // 设置页是第二个 OS 窗口（独立 surface），透明合成出问题时只有它能复现，
+            // 有了这个开关就能在无人点击的情况下自动回归。
+            settings_open:std::env::var_os("DAOZAI_OPEN_SETTINGS").is_some(),
             settings_window:std::sync::Arc::new(std::sync::Mutex::new(crate::settings_window::State::load())),
             displays:Vec::new(),
             browser_at_top:false,

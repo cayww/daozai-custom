@@ -62,8 +62,14 @@ fn small_memory_blocks(descriptor:eframe::wgpu::DeviceDescriptor<'static>)->efra
 fn launch_compatible(options:eframe::NativeOptions,launch:&mut impl FnMut(eframe::NativeOptions)->eframe::Result<()>)->eframe::Result<()> {
     // 只有走 DX12 时才给窗口去掉 GDI 重定向表面；Vulkan/OpenGL 仍靠它显示内容。
     // 失败退回 Vulkan/OpenGL 前必须恢复环境变量，否则新窗口会没有可绘制表面。
+    // 而且要先探一次 DComp：这个样式只能在建窗口时给，探不通还去掉表面，
+    // 就只能整进程重开——预检把它变成“一开始就别去掉”。
     let saved=std::env::var_os("DAOZAI_DCOMP");
-    std::env::set_var("DAOZAI_DCOMP","1");
+    if eframe::egui_wgpu::winit::direct_composition_available() {
+        std::env::set_var("DAOZAI_DCOMP","1");
+    } else {
+        std::env::remove_var("DAOZAI_DCOMP");
+    }
     let first=launch(compatible(options.clone(),eframe::wgpu::Backends::DX12));
     match saved {Some(value)=>std::env::set_var("DAOZAI_DCOMP",value),None=>std::env::remove_var("DAOZAI_DCOMP")}
     match first {
@@ -81,6 +87,10 @@ fn forced_compatible()->bool {
 pub fn run(options:eframe::NativeOptions,launch:impl FnMut(eframe::NativeOptions)->eframe::Result<()>)->eframe::Result<()> {
     // 上次崩在显卡 OpenGL 驱动里时，崩溃处理留下的标记会在这里转成设置。
     let _=daozai::renderer::apply_pending_fallback();
+    // `DAOZAI_DCOMP` 只在 DX12 尝试期间有效，却活在进程环境里：关掉兼容渲染后重启时，
+    // 新进程会把它继承下来，窗口被去掉 GDI 表面，而 OpenGL 正是靠这个表面显示 ——
+    // 结果就是「不开 Direct3D 时岛体完全不出现」。启动时先清掉，需要时由 launch_compatible 再设。
+    std::env::remove_var("DAOZAI_DCOMP");
     run_with(forced_compatible() || daozai::renderer::compat_requested(),options,launch)
 }
 

@@ -828,10 +828,16 @@ impl crate::Adapter for super::Adapter {
                 | crate::TextureUses::COPY_SRC
                 | crate::TextureUses::COPY_DST,
             present_modes,
-            composite_alpha_modes: vec![
-                wgt::CompositeAlphaMode::Opaque,
-                wgt::CompositeAlphaMode::PreMultiplied,
-            ],
+            composite_alpha_modes: {
+                // 只有 DComp visual 的交换链能带预乘 alpha；普通 HWND 交换链用
+                // DXGI_ALPHA_MODE_PREMULTIPLIED 会被 CreateSwapChainForHwnd 拒绝，
+                // 表现就是 `Surface::configure` 致命错（打开设置窗口即崩溃）。
+                let mut modes = vec![wgt::CompositeAlphaMode::Opaque];
+                if matches!(surface.target, SurfaceTarget::Visual(_)) {
+                    modes.push(wgt::CompositeAlphaMode::PreMultiplied);
+                }
+                modes
+            },
         })
     }
 
