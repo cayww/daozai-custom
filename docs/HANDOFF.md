@@ -11,7 +11,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 正式版（日常使用） | `D:\software\Daozai`，custom-129（源码锚点 = tag `custom-129`），exe sha256 前 16 = `58432d96c07d9d0e` |
+| 正式版（日常使用） | `D:\software\Daozai`，custom-129（源码锚点 = tag `custom-129`），exe sha256 前 16 = `58432d96c07d9d0e`。**重打包**：`installer\daozai-setup-custom-129.exe` 已用 tag 重构建（内含 exe `e9265cc0dc617bbb`，包 sha `f2b7fbf1ffb12e5e`，9,732,273 B，2026-11-17）；与部署版二进制不同（Rust 非确定性链接）但同源码；部署目录未动 |
 | 液态玻璃源码 | `main` = `80d1c90`（…→`dabc21b`→`6a2bd1b`→`80d1c90` 静止降帧+深休眠） |
 | **工作树** | **干净**（2026-11-17 13:40 最后一次提交 `68df96d`） |
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-44-memopt`，exe sha256 前 16 = `f910282cb317dd83`。本轮（14:35–15:00）**wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）**；上轮（13:55–14:25）静止刷新率（1–30Hz）与收起深度休眠做成设置项；再上轮（13:14–13:40）邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
@@ -567,7 +567,8 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `68df96d` | **邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中** = liquid-test-42-mailglass；1193 passed |
 | `f3d493b` | **静止刷新率（1–30Hz）与收起深度休眠做成设置项** = liquid-test-43-idlefps；1193 passed |
 | `31c7a27` | **wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）** = liquid-test-44-memopt；1193 passed |
-| `daozai-patches 归档退役` | **补丁链退役**：tag `custom-129` 固化正式版锚点；`daozai-patches/` 移出工作区（历史在 git），`PATCHES.md` 移到 `docs/`，上游快照移 `_archive`；HANDOFF 红线/§2/§5 改写；重放校验验证过与 `4b0b427` 一致；**当前 HEAD** |
+| `daozai-patches 归档退役` | **补丁链退役**：tag `custom-129` 固化正式版锚点；`daozai-patches/` 移出工作区（历史在 git），`PATCHES.md` 移到 `docs/`，上游快照移 `_archive`；HANDOFF 红线/§2/§5 改写；重放校验验证过与 `4b0b427` 一致 |
+| `正式版重打包` | `git checkout custom-129` 构建双 bin + ISCC 重打 `daozai-setup-custom-129.exe`（内含 exe `e9265cc0dc617bbb`，包 `f2b7fbf1ffb12e5e`）；与部署版 `58432d96` 二进制不同（构建环境差异）但同源码；部署目录与预览目录均未动；已切回 main；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `docs/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证；补丁链退役后移到 docs）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
