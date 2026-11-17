@@ -219,6 +219,12 @@ pub struct Settings {
     /// 控件弹簧阻尼比 ζ：小 = 弹跳多次更 Q 弹，1.0 = 不弹跳直接到位
     /// （默认 0.5 = 资料包标准；作用于按压/入场/邮件指示器，圆钮放大弹簧恒为 1.0）。
     pub liquid_zeta: f32,
+    /// 液态玻璃静止刷新率（Hz，默认 15）：无悬停/无动画时的重绘节拍。
+    /// 30 = 静止不降档；收起深度休眠（1Hz）由 `liquid_deep_sleep` 单独开关。
+    pub liquid_idle_fps: u8,
+    /// 收起深度休眠开关（默认开）：收起 + 完全静止 2 分钟 → 整条管线降到 1Hz。
+    /// 实测它只省电不省内存（内存大头在 Direct3D 12 抓屏管线），留开关给用户。
+    pub liquid_deep_sleep: bool,
     pub island_size: u32,
     pub island_offset: i32,
     /// 停靠边缘；左右停靠时 `island_offset` 表示上下位置。
@@ -383,7 +389,7 @@ impl OpenAnim {
 
 impl Default for Settings {
     fn default() -> Self {
-                Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_spring: 1.0, liquid_zeta: 0.5, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_battery: true, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+                Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, island_size: 100, island_offset: 0, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_battery: true, clock_12h: false, clock_period: 0, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: false, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
     }
 }
 
@@ -453,6 +459,8 @@ impl Settings {
                 "liquid_chroma_px" => s.liquid_chroma_px = v.parse::<f32>().unwrap_or(8.0).clamp(0.0, 30.0),
                 "liquid_spring" => s.liquid_spring = v.parse::<f32>().unwrap_or(1.0).clamp(0.2, 3.0),
                 "liquid_zeta" => s.liquid_zeta = v.parse::<f32>().unwrap_or(0.5).clamp(0.1, 1.0),
+                "liquid_idle_fps" => s.liquid_idle_fps = v.parse::<u8>().unwrap_or(15).clamp(1, 30),
+                "liquid_deep_sleep" => s.liquid_deep_sleep = v != "0",
                 "liquid_blur_px" => s.liquid_blur_px = v.parse::<f32>().unwrap_or(1.5).clamp(0.0, 4.0),
                 "liquid_band_px" => s.liquid_band_px = v.parse::<f32>().unwrap_or(87.0).clamp(10.0, 140.0),
                 "liquid_edge_w_px" => s.liquid_edge_w_px = v.parse::<f32>().unwrap_or(1.5).clamp(0.0, 4.0),
@@ -556,6 +564,8 @@ impl Settings {
                 ("liquid_chroma_px".into(),format!("{:.1}",self.liquid_chroma_px)),
                 ("liquid_spring".into(),format!("{:.2}",self.liquid_spring)),
                 ("liquid_zeta".into(),format!("{:.2}",self.liquid_zeta)),
+                ("liquid_idle_fps".into(),self.liquid_idle_fps.to_string()),
+                ("liquid_deep_sleep".into(),if self.liquid_deep_sleep {"1"}else{"0"}.into()),
                 ("liquid_blur_px".into(),format!("{:.1}",self.liquid_blur_px)),
                 ("liquid_band_px".into(),format!("{:.1}",self.liquid_band_px)),
                 ("liquid_edge_w_px".into(),format!("{:.1}",self.liquid_edge_w_px)),

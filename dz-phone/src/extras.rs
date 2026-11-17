@@ -2430,6 +2430,20 @@ impl App {
                                     }).response
                                 });
                                 settings_hint(ui,"回弹的「收劲」（默认 0.5）：调小会来回弹跳几下、更 Q 弹，1.0 = 不弹跳直接到位（进度条圆钮的拖动放大恒为不弹跳）");
+                                ui.separator();
+                                settings_control_row(ui,"静止刷新率",56.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        ui.spacing_mut().slider_width=180.0;
+                                        ui.add(egui::Slider::new(&mut self.settings.liquid_idle_fps,1..=30).fixed_decimals(0));
+                                        if ui.add_enabled(self.settings.liquid_idle_fps!=15,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_idle_fps=15;}
+                                    }).response
+                                });
+                                settings_hint(ui,"无悬停、无动画时的重绘帧率（默认 15）：调低更省电，但壁纸/窗口变化时玻璃背景跟得越慢；30 = 静止不降档；立即生效");
+                                ui.separator();
+                                let before=self.settings.liquid_deep_sleep;
+                                setting_row(ui,"收起深度休眠","收起且完全静止 2 分钟后整条管线降到 1Hz，任何输入即时唤醒",&mut self.settings.liquid_deep_sleep);
+                                if before!=self.settings.liquid_deep_sleep {self.settings.save();}
+                                settings_hint(ui,"默认开；实测它只省电、几乎不省内存（内存大头在 Direct3D 12 抓屏管线），不需要可关");
                             }
                         });
                         settings_label(ui,"岛体显示");

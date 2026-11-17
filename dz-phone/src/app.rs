@@ -971,7 +971,8 @@ pub struct App {
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
     /// 液态玻璃的重绘档位：0=不管（交给原有节拍）、1=60fps（有动画/悬停/拖动）、
-    /// 2=30fps（静止，玻璃内容不变）、3=15fps（深静止）、4=收起深度休眠（1Hz）。
+    /// 2=30fps（有环境动画）、3=静止档（帧率=设置项 liquid_idle_fps，默认 15fps）；
+    /// 收起深度休眠（1Hz）在 2/3 档上叠加，由 liquid_deep_sleep 开关控制。
     /// 由 `frame()` 每帧写入，`out.repaint_after` 消费。
     glass_tick:u8,
     /// 收起且完全静止的起始时刻：持续 2 分钟进入深度休眠（整条管线降到 1Hz）。
@@ -2760,13 +2761,15 @@ impl App {
         // 交互形变保持 60 帧，媒体/歌词滚动 30 帧；小表情 20 帧，睡眠 10 帧，静态界面每秒核对提醒。
         // 液态玻璃有自己的档位：1=60fps（动画/悬停/拖动，玻璃要跟手）、2=30fps（静止）。
         // 它必须有别于其它皮肤的「静止 1 秒」——玻璃背景靠持续抓屏刷新，停 1 秒会冻住。
-        // 静止档（3=15fps）：无任何动画/环境动效/歌词滚动时降半帧，有动静回升 30fps。
+        // 静止档（3=静止刷新率）：无任何动画/环境动效/歌词滚动时降到设置项
+        // liquid_idle_fps（默认 15fps），有动静回升 30fps。
         if self.glass_tick==3 && (animating||ambient||lyric_scrolling) {self.glass_tick=2;}
         let cursor_far=!env.cursor.is_some_and(|p|win.expand(24.0).contains(p));
-        // 收起深度休眠：收起 + 无动画 + 鼠标不在岛上（留 24px 余量）+ 无通知/吐司
-        // + 无媒体播放，持续 2 分钟 → 整条管线降到 1Hz（抓屏/玻璃/时钟文字都够用）。
-        // 任何输入事件都会让 egui 立即重绘，悬停/点击的唤醒是即时的；媒体/通知
-        // 状态变化最多 1 秒内被发现并回升到 30/60fps。
+        // 收起深度休眠（设置项可关）：收起 + 无动画 + 鼠标不在岛上（留 24px 余量）
+        // + 无通知/吐司 + 无媒体播放，持续 2 分钟 → 整条管线降到 1Hz
+        // （抓屏/玻璃/时钟文字都够用）。实测它只省电不省内存——内存大头在
+        // D3D12 抓屏管线本身，所以留了开关。任何输入事件都会让 egui 立即重绘，
+        // 悬停/点击的唤醒是即时的；媒体/通知状态变化最多 1 秒内被发现并回升到 30/60fps。
         let pill_still=pill_still(PillStillInput{
             liquid:self.settings.skin==model::Skin::Liquid && self.wgpu_format.is_some(),
             open:self.open, cursor_far, transitioning, ambient, lyric_scrolling,
@@ -2778,7 +2781,7 @@ impl App {
             (true,None)=>Some(self.t),
             (false,_)=>None,
         };
-        let deep_sleep=pill_still && self.pill_still_since.is_some_and(|s|self.t-s>=120.0);
+        let deep_sleep=pill_still && self.settings.liquid_deep_sleep && self.pill_still_since.is_some_and(|s|self.t-s>=120.0);
         self.deep_sleep=deep_sleep;
         if !deep_sleep {self.pet_anim_t=self.t;}
         // 深休眠没触发时把挡因写进诊断（10s 限频，只在收起态记录）——
@@ -2799,7 +2802,8 @@ impl App {
             1 => 1.0/60.0,
             2 | 3 if deep_sleep => 1.0,
             2 => 1.0/30.0,
-            3 => 1.0/15.0,
+            // 静止档帧率来自设置项（默认 15，30 = 静止不降档）。
+            3 => 1.0/(self.settings.liquid_idle_fps.max(1) as f64),
             _ => if transitioning{1.0/60.0}else if ambient||lyric_scrolling{1.0/30.0}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0},
         });
         cmds.append(&mut self.pending);
