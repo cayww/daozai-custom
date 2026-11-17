@@ -11,7 +11,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-130 安装包已生成未部署**：`installer\daozai-setup-custom-130.exe`（9,783,347 B，包 sha `7e469dd5db85cd7f`，内含 exe `7f8b50fca1537ef2` + bridge `d772bff6ac60446a`，main HEAD `7cfcc85`）= 液态玻璃转正 + 今天全部改动（邮箱修复/降帧设置项/D3D12 内存优化）；源码锚点 tag `custom-129`（旧版）；**默认安装路径已改 `C:\Program Files\Daozai`（PrivilegesRequired=admin，2026-11-17 从 D:\software\Daozai 硬编码改惯例）**，老目录升级 Inno 不再记住（HKCU→HKLM 换存储），装完旧 D:\software\Daozai 与其 HKCU 卸载条目需手动清理；用户安装后部署即变 custom-130 |
+| 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤 |
 | 液态玻璃源码 | `main` = `80d1c90`（…→`dabc21b`→`6a2bd1b`→`80d1c90` 静止降帧+深休眠） |
 | **工作树** | **干净**（2026-11-17 13:40 最后一次提交 `68df96d`） |
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-44-memopt`，exe sha256 前 16 = `f910282cb317dd83`。本轮（14:35–15:00）**wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）**；上轮（13:55–14:25）静止刷新率（1–30Hz）与收起深度休眠做成设置项；再上轮（13:14–13:40）邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
