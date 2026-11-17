@@ -981,6 +981,8 @@ pub struct App {
     pill_diag_at:f64,
     /// 当前是否处于收起深度休眠（1Hz）；宠物动画此时整体冻结。
     deep_sleep:bool,
+    /// 深休眠工作集裁剪的下次允许时刻：进入即裁，之后每 5 分钟补一次。
+    workset_trim_at:f64,
     /// 宠物动画时钟：非休眠时跟随 self.t，深休眠时冻结在入睡前姿势。
     pet_anim_t:f64,
     /// 形变强度 0..1：由展开进度的**变化速度**驱动，带衰减。
@@ -1270,6 +1272,7 @@ impl App {
             pill_still_since:None,
             pill_diag_at:0.0,
             deep_sleep:false,
+            workset_trim_at:0.0,
             pet_anim_t:0.0,
             glass_morph:0.0,
             last_progress:0.0,
@@ -2784,6 +2787,16 @@ impl App {
         let deep_sleep=pill_still && self.settings.liquid_deep_sleep && self.pill_still_since.is_some_and(|s|self.t-s>=120.0);
         self.deep_sleep=deep_sleep;
         if !deep_sleep {self.pet_anim_t=self.t;}
+        // 深休眠裁剪工作集：进入即裁，之后每 5 分钟补一次（1Hz 唤醒会碰回少量页）。
+        // 工作态持续重置计时，保证下次进深休眠立刻裁。
+        if deep_sleep {
+            if self.t>=self.workset_trim_at {
+                self.workset_trim_at=self.t+300.0;
+                crate::resources::trim_working_set();
+            }
+        }else{
+            self.workset_trim_at=self.t;
+        }
         // 深休眠没触发时把挡因写进诊断（10s 限频，只在收起态记录）——
         // 「音乐软件关了但 SMTC 会话还在报 playing」这类残留状态一眼可见。
         if !self.open && self.t>=self.pill_diag_at {

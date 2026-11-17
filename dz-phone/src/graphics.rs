@@ -10,11 +10,17 @@ fn compatible(mut options:eframe::NativeOptions,backends:eframe::wgpu::Backends)
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup)=&mut options.wgpu_options.wgpu_setup {
         setup.instance_descriptor.backends=backends;
         setup.power_preference=eframe::wgpu::PowerPreference::LowPower;
-        // 缓冲分配策略：保持 wgpu 默认的 MemoryHints::Performance（攒大块跨帧复用）。
-        // dhat+VMMap A/B 实测（同为新鲜进程、相同 UI 脚本）：MemoryUsage 反而比
-        // Performance 多 ~85MB 私有提交——egui 每帧重建流式缓冲，精确分配产生大量
-        // D3D 缓冲对象，驱动侧固定开销超过省下的池化空间。社区建议不适用于本负载。
-        // 如需实验：DAOZAI_WGPU_MEMHINTS=memory_usage 可切到精确分配。
+        // 缓冲分配策略：实测改用 MemoryHints::Manual（小内存块池 8–64MB）。
+        // dhat+VMMap A/B（同为新鲜进程、展开态悬停 15s 后测，2026-11-17）：
+        //   Performance（wgpu 默认，大块池）：工作集 303MB / 私有提交 600MB
+        //   MemoryUsage（精确分配）：反而比 Performance 多 ~85MB 提交——
+        //     egui 每帧重建流式缓冲，精确分配产生大量 D3D 缓冲对象，驱动侧
+        //     固定开销超过省下的池化空间
+        //   Manual（8–64MB）：工作集 230MB / 私有提交 288MB —— 提交砍半、
+        //     工作集 −24%，本负载资源集合小且稳定，块开销可忽略
+        // 收起深休眠时另有工作集裁剪（见 resources::trim_working_set），
+        // 任务管理器内存列从 ~230MB 掉到 ~30MB。
+        // 回退开关：DAOZAI_WGPU_MEMHINTS=performance 用回 wgpu 默认。
         setup.device_descriptor=std::sync::Arc::new(|adapter| {
             let base_limits=if adapter.get_info().backend==eframe::wgpu::Backend::Gl {
                 eframe::wgpu::Limits::downlevel_webgl2_defaults()
@@ -22,19 +28,18 @@ fn compatible(mut options:eframe::NativeOptions,backends:eframe::wgpu::Backends)
                 eframe::wgpu::Limits::default()
             };
             eframe::wgpu::DeviceDescriptor {
-                label:Some("daozai wgpu device (MemoryUsage)"),
+                label:Some("daozai wgpu device (Manual 8-64MB)"),
                 required_features:eframe::wgpu::Features::default(),
                 required_limits:eframe::wgpu::Limits{
                     max_texture_dimension_2d:8192,
                     ..base_limits
                 },
-                // 默认 Performance；实验用 DAOZAI_WGPU_MEMHINTS=memory_usage 切精确分配
-                // （实测比默认多 ~85MB，见上）。
-                memory_hints:if std::env::var("DAOZAI_WGPU_MEMHINTS")
-                    .is_ok_and(|v|v.trim().eq_ignore_ascii_case("memory_usage")) {
-                    eframe::wgpu::MemoryHints::MemoryUsage
-                }else{
-                    eframe::wgpu::MemoryHints::Performance
+                memory_hints:match std::env::var("DAOZAI_WGPU_MEMHINTS").as_deref().map(str::trim) {
+                    Ok(v) if v.eq_ignore_ascii_case("memory_usage")=>eframe::wgpu::MemoryHints::MemoryUsage,
+                    Ok(v) if v.eq_ignore_ascii_case("performance")=>eframe::wgpu::MemoryHints::Performance,
+                    _=>eframe::wgpu::MemoryHints::Manual {
+                        suballocated_device_memory_block_size:(8*1024*1024)..(64*1024*1024),
+                    },
                 },
             }
         });
