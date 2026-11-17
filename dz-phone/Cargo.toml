@@ -38,6 +38,9 @@ imap = { path = "vendor/imap" }
 imap-proto = { path = "vendor/imap-proto" }
 eframe = { path = "vendor/eframe" }
 egui = { path = "vendor/egui" }
+egui-winit = { path = "vendor/egui-winit" }
+egui-wgpu = { path = "vendor/egui-wgpu" }
+wgpu-hal = { path = "vendor/wgpu-hal" }
 ureq = { path = "vendor/ureq" }
 
 [dependencies]

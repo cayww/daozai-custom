@@ -15,6 +15,7 @@
 | 液态玻璃源码 | `merge-upstream-v0665` HEAD = `bcf44e8`（恢复合并前 D3D12 直出，停用上游分层读回窗口；主线 `main` 仍在 `42a57c9`） |
 | **工作树** | **干净**（2026-11-17 21:38 提交 `bcf44e8`） |
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-52-no-layered`，exe sha256 前 16 = `bc04b8d12c581da4`。岛内棋盘模式（`DAOZAI_LIQUID_FLAT=2`）对照合并前 `-44` 已一致：棋盘裁成圆角胶囊，外层矩形消失；全量测试 1351 passed |
+| **DirectComposition 试验（spike）** | 分支 `directcomp-spike`。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：`WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + `PreMultiplied`；用 `DAOZAI_DCOMP=1` 开启。包 `liquid-test-53-dcomp`（exe `200c0873698f00df`，包 `f1d360e720d64caa`，10,980,463 B）；实机棋盘/普通模式均无黑框、圆角正常，1351 passed |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
 | 测试 | 主线 1176 passed；合并分支最近 **1351 passed / 0 failed / 131 ignored**（2026-11-17 21:37，`bcf44e8` 全量串行）；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
@@ -561,6 +562,32 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
 - 构建成功；全量串行 **1351 passed / 0 failed / 131 ignored**。
 - 岛内棋盘对照 `-52` 与 `-44` 一致：棋盘圆角、外层矩形消失。
 - 打包 `liquid-test-52-no-layered`：exe `bc04b8d12c581da4`，包 `b6d6c9db8b54c31b`，10,979,445 B；-49 包移入 `_archive\`。
+
+### 7.0r DirectComposition 试验（2026-11-17 21:55–22:12，分支 `directcomp-spike`）
+
+目标：不改液态玻璃 WGSL，用正确的透明合成链路解决上游的黑框/锯齿，而不是分层读回窗口。
+
+实现：
+
+- vendor `egui-winit`：`DAOZAI_DCOMP=1` 时**只给第一个窗口**加 `with_no_redirection_bitmap(true)`（创建期样式，之后无法补加；设置窗口仍走普通路径）。
+- vendor `wgpu-hal`：给 DX12 `Device` 加只读 `raw_d3d12_device()`，用于同一个 ID3D12Device 创建 DComp device。
+- vendor `egui-wgpu`：
+  - `RenderState::create(..., compatible_surface=None)` 先建设备；
+  - `DCompositionCreateDevice2` + `CreateVisual` + `CreateTargetForHwnd` + `SetRoot` + `Commit`；
+  - `instance.create_surface_unsafe(SurfaceTargetUnsafe::CompositionVisual(...))`；
+  - DComp device/visual/target 放在 thread_local 保活；
+  - 只对 `ViewportId::ROOT` 生效，设置窗口不碰。
+- `launch-live.cmd` / `launch-freeze.cmd` 增加 `set "DAOZAI_DCOMP=1"`。
+
+验证：
+
+- 编译成功；全量串行 **1351 passed / 0 failed / 131 ignored**。
+- 实机冻结截图：
+  - 岛内棋盘 `DAOZAI_LIQUID_FLAT=2`：圆角胶囊、桌面自然透出，无黑底/外层矩形；
+  - 普通模式：无黑框、无整窗不透明。
+- 包 `liquid-test-53-dcomp`：exe `200c0873698f00df`，包 `f1d360e720d64caa`，10,980,463 B；-52 包移入 `_archive\`。
+
+待办：这是 spike，未合回 `merge-upstream-v0665`；先让用户实机确认，再决定是否替代上游 `layered.rs` 并整理 PR。
 
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 

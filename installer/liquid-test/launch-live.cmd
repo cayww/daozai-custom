@@ -1,8 +1,9 @@
 @echo off
-rem 实时模式：玻璃里是真实的桌面，抓屏实时刷新。
-rem 注意：这个模式下岛仔会把自己从系统捕获里排除，任何截图/录屏都拍不到它。
+rem 实时模式锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷实锟斤拷锟斤拷锟芥，抓锟斤拷实时刷锟铰★拷
+rem 注锟解：锟斤拷锟侥Ｊ斤拷碌锟斤拷谢锟斤拷锟皆硷拷锟斤拷系统锟斤拷锟斤拷锟斤拷锟脚筹拷锟斤拷锟轿何斤拷图/录锟斤拷锟斤拷锟侥诧拷锟斤拷锟斤拷锟斤拷
 setlocal
 set "DAOZAI_DATA_DIR=%LOCALAPPDATA%\Daozai-LiquidTest\data"
+set "DAOZAI_DCOMP=1"
 cd /d "%~dp0"
 start "" "%~dp0daozai.exe"
 endlocal
