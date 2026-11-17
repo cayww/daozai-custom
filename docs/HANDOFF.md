@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 14:25
+> **最后更新**：2026-11-17 15:00
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -14,7 +14,7 @@
 | 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
 | 液态玻璃源码 | `main` = `80d1c90`（…→`dabc21b`→`6a2bd1b`→`80d1c90` 静止降帧+深休眠） |
 | **工作树** | **干净**（2026-11-17 13:40 最后一次提交 `68df96d`） |
-| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-43-idlefps`，exe sha256 前 16 = `ba5d20976e277fbc`。本轮（13:55–14:25）**静止刷新率（1–30Hz）与收起深度休眠做成设置项**（用户实测降帧不省内存，大头在 D3D12）；上轮（13:14–13:40）邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中；再上轮（11:30–13:10）静止降帧（15fps 档）+ 收起深度休眠（1Hz，宠物冻结不挡）；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
+| 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-44-memopt`，exe sha256 前 16 = `f910282cb317dd83`。本轮（14:35–15:00）**wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）**；上轮（13:55–14:25）静止刷新率（1–30Hz）与收起深度休眠做成设置项；再上轮（13:14–13:40）邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
 | 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
@@ -473,6 +473,24 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 `liquid-test-43-idlefps`，exe sha256 前 16 = `ba5d20976e277fbc`（备份
 `daozai.exe.prev-idlefps`）。**未打包安装包**（42 号包仍有效，43 号待用户发话）。
 
+### 7.0l 本轮已完成（2026-11-17 14:35–15:00，`31c7a27`，liquid-test-44-memopt）
+
+用户报：D3D12 不开玻璃 ~160MB、开玻璃 ~210MB（GDI 路径 ~50MB），问社区有没有办法。
+调研 + A/B 实测两项落地（**未打包**）：
+
+- **wgpu `MemoryHints::Manual`（8–64MB 小块池）取代默认 Performance**——实测（展开态
+  悬停 15s，同为新鲜进程）：Performance 工作集 303MB/提交 600MB；MemoryUsage 更差
+  （上轮已证）；**Manual 230MB/288MB，提交砍半、工作集 −24%**。本负载资源集合小且
+  稳定，块开销可忽略。回退：`DAOZAI_WGPU_MEMHINTS=performance`。
+- **深休眠工作集裁剪**：进入深休眠即 `SetProcessWorkingSetSize(-1,-1)`（resources.rs
+  新增 `trim_working_set`），之后每 5 分钟补一次；工作态重置计时保证下次进深休眠
+  立即裁。实测深休眠工作集 **~30MB**（唤醒正常，页软缺页自动载回）。只影响驻留
+  不影响提交。
+- D3D12 的 ~110MB 固定差（vs GDI 50MB）是驱动/运行时 DLL 载入，砍不掉；
+  WGC 帧池本来就是社区建议的 2 缓冲。
+- 验证：1193 passed；部署标记 `liquid-test-44-memopt`，exe `f910282cb317dd83`
+  （备份 `daozai.exe.prev-memopt`）。
+
 
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
@@ -582,7 +600,8 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `6a2bd1b` | MemoryHints A/B 后保持默认 Performance + 实验开关 |
 | `80d1c90` | **静止降帧 15fps 档 + 收起深度休眠 1Hz（宠物冻结）** = liquid-test-41；1193 passed |
 | `68df96d` | **邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中** = liquid-test-42-mailglass；1193 passed |
-| `f3d493b` | **静止刷新率（1–30Hz）与收起深度休眠做成设置项** = liquid-test-43-idlefps；1193 passed；**当前 HEAD** |
+| `f3d493b` | **静止刷新率（1–30Hz）与收起深度休眠做成设置项** = liquid-test-43-idlefps；1193 passed |
+| `31c7a27` | **wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）** = liquid-test-44-memopt；1193 passed；**当前 HEAD** |
 
 > custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
