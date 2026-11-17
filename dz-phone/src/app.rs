@@ -19,6 +19,10 @@ use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
 
 /// 提示停留时长：要够把最长的一句（重启失败说明）读完。
 pub(crate) const TOAST_SECS: f32 = 6.0;
+/// 收起且安静满这么多秒就回收一次工作集（`trim_working_set`）。
+/// 实测收起后如果只等深休眠那 2 分钟，任务管理器里的内存会挂着不动；
+/// 20 秒回收对交互没有可感代价（被触碰的页软缺页载回），数字却能立刻回落。
+const WORKSET_IDLE: f64 = 20.0;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -1058,6 +1062,10 @@ pub struct App {
     deep_sleep:bool,
     /// 深休眠工作集裁剪的下次允许时刻：进入即裁，之后每 5 分钟补一次。
     workset_trim_at:f64,
+    /// 收起且安静（允许音乐在播）的起始时刻：满 `WORKSET_IDLE` 秒就回收一次工作集。
+    /// 和 `pill_still_since` 分开：那个是「降到 1Hz、冻宠物」的深休眠门槛（2 分钟），
+    /// 用户能感知；工作集回收只是把驻留页还给系统，早做才不至于收起后数字挂着一分钟不动。
+    workset_quiet_since:Option<f64>,
     /// 宠物动画时钟：非休眠时跟随 self.t，深休眠时冻结在入睡前姿势。
     pet_anim_t:f64,
     /// 形变强度 0..1：由展开进度的**变化速度**驱动，带衰减。
@@ -1358,6 +1366,7 @@ impl App {
             pill_diag_at:0.0,
             deep_sleep:false,
             workset_trim_at:0.0,
+            workset_quiet_since:None,
             pet_anim_t:0.0,
             glass_morph:0.0,
             last_progress:0.0,
@@ -2894,9 +2903,18 @@ impl App {
         let deep_sleep=pill_still && self.settings.liquid_deep_sleep && self.pill_still_since.is_some_and(|s|self.t-s>=120.0);
         self.deep_sleep=deep_sleep;
         if !deep_sleep {self.pet_anim_t=self.t;}
-        // 深休眠裁剪工作集：进入即裁，之后每 5 分钟补一次（1Hz 唤醒会碰回少量页）。
-        // 工作态持续重置计时，保证下次进深休眠立刻裁。
-        if deep_sleep {
+        // 收起后的工作集回收：**不**等那 2 分钟的深休眠，也不因为「正在放歌」而永远不回收。
+        // 只挡真正会让页面立刻被碰回来的情况：展开中、形变过渡、歌词滚动、吐司/通知。
+        // 播放音乐/番茄钟算常驻状态，挡掉它就等于这台机器永远不回收——实测收起 90 秒
+        // 内存还挂在 230MB（基线 198MB），用户感知就是「一直不落」。
+        let workset_quiet=!self.open && cursor_far && !transitioning && !lyric_scrolling
+            && self.toast.is_none() && self.notice.is_none();
+        self.workset_quiet_since=match (workset_quiet,self.workset_quiet_since) {
+            (true,Some(s))=>Some(s),
+            (true,None)=>Some(self.t),
+            (false,_)=>None,
+        };
+        if workset_quiet && self.workset_quiet_since.is_some_and(|s|self.t-s>=WORKSET_IDLE) {
             if self.t>=self.workset_trim_at {
                 self.workset_trim_at=self.t+300.0;
                 crate::resources::trim_working_set();
