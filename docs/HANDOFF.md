@@ -11,9 +11,9 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
-| 液态玻璃源码 | 分支 `directcomp-spike` HEAD = `4c991bb`（DirectComposition 透明交换链；`merge-upstream-v0665` 仍停在 `bcf44e8`，主线 `main` 仍在 `42a57c9`） |
-| **工作树** | **干净**（2026-11-18 01:16 提交 `4c991bb`） |
+| 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
+| 液态玻璃源码 | 分支 `directcomp-spike` HEAD = `294d483`（DirectComposition 透明交换链；`merge-upstream-v0665` 仍停在 `bcf44e8`，主线 `main` 仍在 `42a57c9`） |
+| **工作树** | **干净**（2026-11-18 02:57 提交 `294d483`） |
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-57-dcomp-fallback`，exe sha256 前 16 = `9fdcbdf1993b0cac`。**DirectComposition 透明交换链**替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑。实机四态验证（液态玻璃普通/棋盘、经典 D3D/OpenGL）均正常 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
@@ -735,6 +735,7 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
 
 | 版本 / 提交 | 内容 |
 |---|---|
+| custom-131 | 正式包：液态玻璃改 DirectComposition 透明交换链（真实预乘 alpha、无 SetWindowRgn 锯齿）+ 收起静置 20s 回收工作集 + 30 处可机修告警清理；`installer/daozai.iss` 0.6.65/custom-131；1351 passed |
 | custom-129 | 「打开」切前台：进程名过滤 + `AttachThreadInput` 绕前台锁 + 返回值检查 + 诊断日志；EDITS 237、重放 239 处 diff 空、1176 passed / 已部署 |
 | custom-128 | 修视频摘要溢出 + 跳转浏览器窗口 + 2 秒宽限消除空态闪烁；EDITS 233、1175 passed |
 | custom-127 | 视频专用展开页 + 收起态视频摘要；EDITS 225、1174 passed |
