@@ -1,1 +1,1 @@
-custom-129
+custom-129（补丁链已退役 2026-11-17，源码锚点 = git tag custom-129 / 4b0b427）

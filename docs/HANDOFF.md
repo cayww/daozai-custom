@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-17 15:00
+> **最后更新**：2026-11-17 15:45
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -11,19 +11,19 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 正式版（日常使用） | `D:\software\Daozai`，补丁链 **custom-129**，exe sha256 前 16 = `58432d96c07d9d0e` |
+| 正式版（日常使用） | `D:\software\Daozai`，custom-129（源码锚点 = tag `custom-129`），exe sha256 前 16 = `58432d96c07d9d0e` |
 | 液态玻璃源码 | `main` = `80d1c90`（…→`dabc21b`→`6a2bd1b`→`80d1c90` 静止降帧+深休眠） |
 | **工作树** | **干净**（2026-11-17 13:40 最后一次提交 `68df96d`） |
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-44-memopt`，exe sha256 前 16 = `f910282cb317dd83`。本轮（14:35–15:00）**wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）**；上轮（13:55–14:25）静止刷新率（1–30Hz）与收起深度休眠做成设置项；再上轮（13:14–13:40）邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中；更早（19:00–00:25）：主题随壁纸明暗自动切换、刘海形状真实轮廓、视频页控件玻璃化、圆钮按 Pack-v2、图标缩小、自适应帧率（静止 30fps）、可选优先独显（548→257MB）、显示器拓扑切换不再花屏 |
-| 补丁链 | `daozai-patches/apply.py`，`PATCH_ID = "custom-129"`，EDITS 237 / NEW_FILES 12 |
+| 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
 | 测试 | 主线 1176 passed；液态玻璃线最近 **1189 passed / 0 failed / 119 ignored**；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
 | GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-44 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-44.exe`（= `daozai-liquid-setup.exe`），9,679,811 B，sha256 前16 `c7d479f12387f76d`，内含 exe `f910282cb317dd83`。-42 已不在桌面（包本体在 `installer\liquid-test\daozai-liquid-test-42-mailglass.exe`），-41/-40 及更早已移到 `_archive\` 或只存工程目录 |
 
-**一句话**：日常用的正式版停在 custom-129；`main` 已吃进液态玻璃（50 个 commit，HEAD=`bf116c2`），
-但液态玻璃**没进补丁链**，只在预览目录里跑。上一轮把「视觉细节、帧率、内存」三件收尾了
-（静止 30fps / 动时 60fps，548MB→257MB）；本轮修「每翻一次页控件白边就黑一次」：
-根因是主题采样框跟着岛体尺寸变（翻页就重新判定深浅），以及玻璃控件的白边被皮肤换色换成了墨色。
+**一句话**：正式版停在 custom-129（源码锚点 tag `custom-129`）；`main` 已吃进液态玻璃 +
+全部后续改动（HEAD=`31c7a27`），预览目录跑的就是它。补丁链已退役（2026-11-17），
+定制记录 = git 提交 + `docs/PATCHES.md`。最新一轮做了 D3D12 内存优化：
+wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）。
 
 ---
 
@@ -32,7 +32,7 @@
 | 项目 | 规则 |
 |---|---|
 | `main` 分支 | 已含液态玻璃，**不要 reset 回 `4b0b427`**，不要把工作树丢弃 |
-| 补丁链 `apply.py` | 仍是 `custom-129`，**不要改**；液态玻璃进链是另一套流程（custom-130），需用户明确同意 |
+| 补丁链 | **已退役（2026-11-17，用户同意归档）**：`daozai-patches/` 已从工作区移除，历史在 git（`git log -- daozai-patches` 可找回）；正式版源码锚点 = tag `custom-129`（`4b0b427`），重建正式版 `git checkout custom-129`；上游快照移到 `_archive\dz-phone-upstream-快照.tar.gz` |
 | 正式部署 `D:\software\Daozai` | **不要覆盖**，不要在正式目录里跑预览版 |
 | `Cargo.lock` | **不要动**，加依赖会破坏 `--locked` 构建 |
 | 用户数据 | 验证时不要真发邮件 / 标已读 / 改账户；`%APPDATA%\Daozai\settings.txt` 是用户的 |
@@ -40,21 +40,24 @@
 
 ---
 
-## 2. 两条线的关系（最容易搞混的地方）
+## 2. 两条线的关系（2026-11-17 起合并为一条）
 
 ```
-上游 xiaotang-daozai v0.6.64
+上游 xiaotang-daozai（remote: upstream）
         │
-        ├── 主线：补丁链 daozai-patches/apply.py  →  custom-129  →  D:\software\Daozai（用户日常用）
-        │        └ 所有定制固化成 EDITS，可从干净源码重放
-        │
-        └── 液态玻璃：feat/liquid-glass-a  →  已快进合并进 main（现为 234ff52）
-                 └ 直接改源码、不走补丁链；只在预览目录跑，未部署到正式目录
+        └── git main = 上游 + 全部 custom 定制（custom-28…129 都是 git 提交，4b0b427=custom-129）
+                 └ + 液态玻璃（feat/liquid-glass-a 快进合并，现为 31c7a27）
 ```
 
-- 主线**只能**通过补丁链改，交付前必须重放校验。
-- 液态玻璃**直接改 main 源码**，不需要补丁链；将来若要进链，是把净差异转成 EDITS（另开一轮）。
-- 两条线共用同一个 `D:\code\daozai-custom` 代码库，但分支不同、交付路径不同。
+- **补丁链（daozai-patches/apply.py，custom-N EDITS 重放）已退役**：git 历史已完整
+  覆盖全部定制，重放校验验证过与 `4b0b427` 一致；上游合并实际一直走 git merge
+  （v0.6.64 合并 = `8bb61d8`，45 冲突人工解决）。
+- **升级上游**：`git fetch upstream && git merge upstream/main`，冲突里对照
+  `git diff custom-129..HEAD` 检查定制是否被冲掉。
+- **重建正式版**：`git checkout custom-129`（= 无液态玻璃的 custom-129）。
+- **新改动**：直接提交 main，不再需要 append_edits + 重放双份劳动。
+- 逐版历史记录：`docs/PATCHES.md`（2963 行，留作历史文档）；逐轮过程复盘看
+  `.workbuddy/memory/` 工作日志。
 
 ---
 
@@ -65,8 +68,7 @@ D:\code\daozai-custom\                       源码库（main = 液态玻璃已�
   dz-phone\src\                              Rust 源码
   dz-phone\src\gpu_glass.rs                  液态玻璃核心（WGSL shader + 抓屏 + 组帧）
   dz-phone\src\wgc.rs                        Windows Graphics Capture 封装
-  daozai-patches\apply.py                    补丁链（custom-129）
-  daozai-patches\PATCHES.md                  逐版详细记录（2963 行，查历史看这里）
+  docs\PATCHES.md                           逐版详细记录（2963 行，补丁链退役后留作历史）
   dz-phone\CHANGELOG.md                      面向用户的中文更新说明
   merge-work\                                测试隔离数据目录 / 重建脚本 / 旧交接备份
   installer\                                 Inno Setup 工程与安装包
@@ -87,7 +89,7 @@ C:\Users\cay\.workbuddy\skills\daozai-custom-build\   本项目的 skill（脚�
 
 ## 4. 目录
 
-- [5. 主线：补丁链规则与流程](#5-主线补丁链规则与流程)
+- [5. 主线工作流（补丁链已退役）](#5-主线工作流补丁链已退役2026-11-17)
 - [6. 液态玻璃：架构与硬约束](#6-液态玻璃架构与硬约束)
 - [7. 待办（接手先做这个）](#7-待办接手先做这个)
 - [8. 版本时间线](#8-版本时间线)
@@ -97,48 +99,11 @@ C:\Users\cay\.workbuddy\skills\daozai-custom-build\   本项目的 skill（脚�
 
 ---
 
-## 5. 主线：补丁链规则与流程
+## 5. 主线工作流（补丁链已退役，2026-11-17）
 
-### 5.1 补丁链结构
-
-```python
-PATCH_ID = "custom-129"
-
-EDITS = [
-    ("src/app.rs",
-     '''<原样文本>''',
-     '''<替换后文本>'''),
-    ...
-]
-NEW_FILES = [("island_status.rs", "island_status.rs"), ...]   # 新增模块放副本，不生成 EDITS
-```
-
-按顺序逐条 `replace`，每条要求**在应用那一刻恰好出现一次**。
-
-**五条铁律**：
-
-1. `old` 在应用那一刻唯一；同一段文本可被多条 EDITS 先后使用，后一条必须排在后面。
-2. 字符串里的反斜杠要转义：Rust 的 `\n` 写成 `\\n`，路径 `\D` 写成 `\\D`（`append_edits.py` 会处理）。
-3. `old`/`new` 里不能出现 `'''`。
-4. 改 `apply.py` **不要用无差别 replace**（会误伤已有 EDITS 的 `new` 片段，重放出两份），改完查 `count`。
-5. **新增模块走 `NEW_FILES`**（现 12 个）：`apply.py` 在 EDITS 之后才复制，副本放在 `daozai-patches/`。
-   改这类文件要**同步副本**，不能生成 EDITS（重放时读不到文件）；新建模块必须登记进 `NEW_FILES`。
-
-### 5.2 标准工作流（九步，一步都不能跳）
-
-| 步骤 | 动作 | 关键命令 |
-|---|---|---|
-| 1 | 读代码定位改动点 | 先 `grep` 确认锚点唯一 |
-| 2 | 改工作源码 | 脚本批量替换，每条断言命中 1 次 |
-| 3 | 编译 | `cargo build --locked --release --bin daozai` |
-| 4 | 全量测试 | `cargo test --locked --release --lib -- --test-threads=1` |
-| 5 | 固化进补丁链 | `python <skill>/scripts/append_edits.py <spec.json>` |
-| 6 | **干净源码重放校验** | `python <skill>/scripts/replay_check.py` |
-| 7 | 部署 | 退进程 → 备份 `daozai.exe.bak-custom<N-1>` → 替换 → 同步 `CUSTOM_BUILD.txt` → 重启 |
-| 8 | 实机验证 | `python <skill>/scripts/ui_probe.py` 截图/模拟操作 |
-| 9 | 同步文档 | `PATCHES.md` / `CHANGELOG.md` / 本文档 / 工作日志 |
-
-**第 6 步是硬门槛**：重放不一致不许部署。转义层级、重复条目、锚点漂移只有重放能发现。
+> 5.1/5.2/5.4 的补丁链流程已随链退役作废，历史全文见 git（`git log -- daozai-patches`）。
+> 现行流程：改源码 → `cargo build --release --locked` → 全量测试 → 提交 main → 部署。
+> 正式版重建 `git checkout custom-129`；升级上游 `git merge upstream/main`。
 
 ### 5.3 构建 / 测试 / 打包
 
@@ -166,7 +131,7 @@ MSYS_NO_PATHCONV=1 "<setup.exe>" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 | 文件 | 内容 |
 |---|---|
-| `daozai-patches/PATCHES.md` | 新章节：问题、根因、改动、验证 |
+| ~~`daozai-patches/PATCHES.md`~~ | 补丁链已退役，此清单作废；现行交付 = 改源码 → 构建 → 测试 → 提交 main → 部署 + HANDOFF/工作日志 |
 | `dz-phone/CHANGELOG.md` | 面向用户的一条中文说明 |
 | `~/Desktop/HANDOFF.md` | 标记 / EDITS 数 / 测试数 / 新章节 / 时间线 |
 | `memory/YYYY-MM-DD.md` | 追加式工作日志，含踩坑与实证 |
@@ -540,7 +505,7 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 5. ~~抓屏节流 `CAPTURE_EVERY=2`~~ —— 已由自适应帧率部分覆盖（静止 30fps）；若还要再压，
    下一个方向是「隔帧抓屏」，但静止时观感未评估。
 6. 侧边停靠（`Dock::Left/Right`）时 band/strength 撞上限，未专门调。
-7. **是否进补丁链（custom-130）**：稳定后另议，需用户明确同意。
+7. ~~是否进补丁链（custom-130）~~：补丁链已退役，此条作废。
 
 ### 7.4 已知限制（不是 bug，别当 bug 修）
 
@@ -601,9 +566,10 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 | `80d1c90` | **静止降帧 15fps 档 + 收起深度休眠 1Hz（宠物冻结）** = liquid-test-41；1193 passed |
 | `68df96d` | **邮箱空态隐藏全部/未读透镜 + 去添加按钮上 GPU 玻璃并文字居中** = liquid-test-42-mailglass；1193 passed |
 | `f3d493b` | **静止刷新率（1–30Hz）与收起深度休眠做成设置项** = liquid-test-43-idlefps；1193 passed |
-| `31c7a27` | **wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）** = liquid-test-44-memopt；1193 passed；**当前 HEAD** |
+| `31c7a27` | **wgpu 内存块改 Manual（提交 600→288MB、工作集 −24%）+ 深休眠裁剪工作集（→~30MB）** = liquid-test-44-memopt；1193 passed |
+| `daozai-patches 归档退役` | **补丁链退役**：tag `custom-129` 固化正式版锚点；`daozai-patches/` 移出工作区（历史在 git），`PATCHES.md` 移到 `docs/`，上游快照移 `_archive`；HANDOFF 红线/§2/§5 改写；重放校验验证过与 `4b0b427` 一致；**当前 HEAD** |
 
-> custom-33 ~ 119 的逐版记录见 `daozai-patches/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证）。
+> custom-33 ~ 119 的逐版记录见 `docs/PATCHES.md`（2963 行，按版本分节，含问题/根因/改动/验证；补丁链退役后移到 docs）。
 > custom-36（性能与安全六项）、custom-37~39（阴影与角部突起，误判两版才定位到悬浮云路径）、
 > custom-40~42（动效与悬停延时）的完整复盘见 `_archive/HANDOFF-2026-11-15.md` 后半部分。
 
@@ -651,8 +617,7 @@ s=re.search(r'const SHADER: &str = r#\"(.*?)\"#;',t,re.S).group(1);\
 pathlib.Path('C:/Users/cay/AppData/Local/Temp/wgsl-check/shader.wgsl').write_text(s,encoding='utf-8')"
 cd /c/Users/cay/AppData/Local/Temp/wgsl-check && MSYS_NO_PATHCONV=1 cargo run --quiet
 
-# 补丁链重放校验（硬门槛）
-python <skill>/scripts/replay_check.py
+# ~~补丁链重放校验~~（链已退役，此步作废）
 
 # 部署到预览目录（必须先停旧实例，否则文件占用）
 Get-CimInstance Win32_Process -Filter "name='daozai.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
@@ -725,5 +690,5 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - `LiquidGlass-Pack-v2`（画心人 · MIT）—— 折射算法与参数表来源，`shader/glass.frag` 是主要参考。
   解压位置：`C:\Users\cay\WorkBuddy\2026-11-13-22-38-27\liquid-pack\LiquidGlass-Pack-v2\`
 - 逐轮实验记录（比本文档更细）：`C:\Users\cay\WorkBuddy\2026-11-13-22-38-27\.workbuddy\memory\2026-11-15.md`
-- 主线逐版记录：`daozai-patches\PATCHES.md`
+- 主线逐版记录：`docs\PATCHES.md`（补丁链退役后移到 docs）
 - 本工作区日志：`C:\Users\cay\WorkBuddy\2026-11-11-23-14-32\.workbuddy\memory\`
