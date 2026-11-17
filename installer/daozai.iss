@@ -1,7 +1,9 @@
 ; 岛仔（自定义构建）安装包 —— Inno Setup 7
 ; 编译：ISCC.exe daozai.iss
-; 特性：选路径安装（HKCU，无需管理员）、浏览器扩展桥宿主注册（Chrome/Edge）、
-;       开机自启（可勾选）、开始菜单/桌面快捷方式、自带卸载器。
+; 特性：默认装到 C:\Program Files\Daozai（{autopf}，需管理员；2026-11-17 从
+;       D:\software\Daozai 硬编码改为软件常用惯例，老用户升级 Inno 会记住原目录）、
+;       浏览器扩展桥宿主注册（Chrome/Edge）、开机自启（可勾选）、
+;       开始菜单/桌面快捷方式、自带卸载器。
 ; 用户数据在 %APPDATA%\Daozai，安装/卸载都不碰。
 
 #define MyAppName "岛仔 Daozai"
@@ -14,10 +16,10 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}（{#MyAppBuild}）
 AppPublisher=自定义构建
-DefaultDirName=D:\software\Daozai
+DefaultDirName={autopf}\Daozai
 DirExistsWarning=no
 AppendDefaultDirName=no
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 DefaultGroupName=岛仔
 DisableProgramGroupPage=yes
 OutputDir=.

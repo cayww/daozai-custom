@@ -1,11 +1,12 @@
-岛仔 Daozai（自定义构建 custom-112）
+岛仔 Daozai（自定义构建 custom-130）
 ====================================
 
 安装内容
   daozai.exe            主程序（灵动岛）
+  默认安装到 C:\Program Files\Daozai（安装时可选其它目录，需管理员权限）
   bridge\extension\     浏览器扩展（岛仔状态桥，Chrome/Edge 通用）
   bridge\daozai_bridge.exe   浏览器扩展桥宿主（主程序副本）
-  注册表（HKCU）：浏览器 Native Messaging 宿主 + 开机自启 + 卸载信息
+  注册表：浏览器 Native Messaging 宿主 + 开机自启（HKCU）+ 卸载信息（HKLM，需管理员）
 
 启用浏览器下载进度上岛（一次性，两步）
   1. 安装包已注册好桥宿主（本机程序 + 注册表）。
