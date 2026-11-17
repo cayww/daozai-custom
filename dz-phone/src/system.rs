@@ -267,7 +267,45 @@ unsafe fn covering_monitor(hwnd: HWND) -> Option<crate::display_layout::Bounds> 
         && r.top <= info.rcMonitor.top
         && r.right >= info.rcMonitor.right
         && r.bottom >= info.rcMonitor.bottom;
+    // 任务栏自动隐藏时，普通最大化窗口的外框也可能覆盖整屏，但标题栏占掉了客户区顶部。
+    // 以客户区是否盖满整屏为准，不看样式位：有的游戏全屏时保留标题栏样式和最大化标志、
+    // 实际并不画标题栏，按样式位判断会把它们当成普通最大化（0.6.65 的无畏契约回归）。
+    if covers && IsZoomed(hwnd).as_bool() && !client_covers(hwnd, &info.rcMonitor) {
+        #[cfg(not(test))] log_maximized_exclusion(hwnd, r, info.rcMonitor);
+        return None;
+    }
     covers.then_some(crate::display_layout::Bounds {left:info.rcMonitor.left,top:info.rcMonitor.top,right:info.rcMonitor.right,bottom:info.rcMonitor.bottom})
+}
+
+/// 客户区（不含标题栏和边框）是否盖满整块屏幕。
+unsafe fn client_covers(hwnd: HWND, monitor: &RECT) -> bool {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    let mut c = RECT::default();
+    if GetClientRect(hwnd, &mut c).is_err() { return false; }
+    let (mut tl, mut br) = (POINT { x: c.left, y: c.top }, POINT { x: c.right, y: c.bottom });
+    if !ClientToScreen(hwnd, &mut tl).as_bool() || !ClientToScreen(hwnd, &mut br).as_bool() { return false; }
+    tl.x <= monitor.left && tl.y <= monitor.top && br.x >= monitor.right && br.y >= monitor.bottom
+}
+
+/// 诊断：盖满屏幕却按普通最大化处理（不隐藏岛仔）的窗口，每个窗口只记一次，便于核对用户反馈。
+#[cfg(not(test))]
+unsafe fn log_maximized_exclusion(hwnd: HWND, window: RECT, monitor: RECT) {
+    use std::sync::Mutex;
+    static LOGGED: Mutex<isize> = Mutex::new(0);
+    let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
+    if *logged == hwnd.0 as isize { return; }
+    *logged = hwnd.0 as isize;
+    let mut cls = [0u16; 128];
+    let n = GetClassNameW(hwnd, &mut cls);
+    let mut c = RECT::default();
+    let _ = GetClientRect(hwnd, &mut c);
+    let line = format!("{} 普通最大化不隐藏：类名={} 样式=0x{:08x} 扩展=0x{:08x} 窗口={:?} 客户区={}×{} 屏幕={:?}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), String::from_utf16_lossy(&cls[..n.max(0) as usize]),
+        GetWindowLongPtrW(hwnd, GWL_STYLE) as u32, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32,
+        (window.left, window.top, window.right, window.bottom), c.right - c.left, c.bottom - c.top,
+        (monitor.left, monitor.top, monitor.right, monitor.bottom));
+    crate::resources::append_log(&crate::model::config_dir().join("diagnostics"), "fullscreen.log", &line);
 }
 
 pub fn fullscreen() -> Option<crate::display_layout::Bounds> {
@@ -313,6 +351,58 @@ mod fullscreen_follow_tests {
     use super::*;
 
     const MAX: Foreground = Foreground { hwnd: 100, pid: 7, root_owner: 100, app_window: true };
+
+    #[test]
+    fn maximized_browser_and_borderless_fullscreen_at_the_same_bounds_are_distinct() {
+        unsafe {
+            let hwnd = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, windows::core::w!("STATIC"),
+                windows::core::w!(""), WS_OVERLAPPEDWINDOW | WS_MAXIMIZE, 0, 0, 320, 240, None, None, None, None).unwrap();
+            let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            assert!(GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info).as_bool());
+            let r = info.rcMonitor;
+            let cover = || SetWindowPos(hwnd, HWND_BOTTOM, r.left, r.top, r.right-r.left, r.bottom-r.top,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED).unwrap();
+            cover();
+            assert!(IsZoomed(hwnd).as_bool());
+            let maximized = covering_monitor(hwnd);
+            // Chromium 进入 F11 时移除标题栏和可调整大小的边框，仍可能保留最大化标志。
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style & !((WS_CAPTION | WS_THICKFRAME).0 as isize));
+            cover();
+            let fullscreen = covering_monitor(hwnd);
+            DestroyWindow(hwnd).unwrap();
+            assert!(fullscreen.is_some(), "无边框全屏仍应隐藏岛仔");
+            assert!(maximized.is_none(), "普通最大化即使盖满屏幕也应显示岛仔");
+        }
+    }
+
+    #[test]
+    fn game_that_keeps_caption_style_but_draws_no_caption_still_hides_the_island() {
+        use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+        unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+            // 不留非客户区：样式里有标题栏，但客户区就是整个窗口（自绘或无边框全屏的游戏）。
+            if m == WM_NCCALCSIZE && w.0 != 0 { return LRESULT(0); }
+            DefWindowProcW(h, m, w, l)
+        }
+        unsafe {
+            let class = windows::core::w!("DaozaiCaptionlessGame");
+            let wc = WNDCLASSW { lpfnWndProc: Some(proc), lpszClassName: class, ..Default::default() };
+            RegisterClassW(&wc);
+            let hwnd = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, class, windows::core::w!(""),
+                WS_OVERLAPPEDWINDOW | WS_MAXIMIZE, 0, 0, 320, 240, None, None, None, None).unwrap();
+            let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            assert!(GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info).as_bool());
+            let r = info.rcMonitor;
+            SetWindowPos(hwnd, HWND_BOTTOM, r.left, r.top, r.right-r.left, r.bottom-r.top,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED).unwrap();
+            let zoomed = IsZoomed(hwnd).as_bool();
+            let captioned = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_CAPTION.0 == WS_CAPTION.0;
+            let result = covering_monitor(hwnd);
+            DestroyWindow(hwnd).unwrap();
+            assert!(zoomed && captioned, "复现条件：最大化且保留标题栏样式");
+            assert!(result.is_some(), "客户区盖满整屏的全屏游戏应隐藏岛仔");
+        }
+    }
 
     #[test]
     fn plugin_panels_and_dialogs_of_the_fullscreen_app_keep_the_island_hidden() {
