@@ -828,7 +828,10 @@ impl crate::Adapter for super::Adapter {
                 | crate::TextureUses::COPY_SRC
                 | crate::TextureUses::COPY_DST,
             present_modes,
-            composite_alpha_modes: vec![wgt::CompositeAlphaMode::Opaque],
+            composite_alpha_modes: vec![
+                wgt::CompositeAlphaMode::Opaque,
+                wgt::CompositeAlphaMode::PreMultiplied,
+            ],
         })
     }
 

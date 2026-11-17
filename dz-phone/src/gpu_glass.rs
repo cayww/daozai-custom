@@ -373,6 +373,8 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 而兼容渲染的窗口底是不透明黑。这里必须把**背后的桌面**画回去，
     // 否则这圈余量会变成明显的黑边/黑色背景 —— 之前涂近黑就是这么来的。
     if (d > inset - 0.25) {
+        // DComp 有真实 alpha：岛体外直接透明，让桌面自己透出来。
+        if (u.notch.w > 0.5) { return vec4<f32>(0.0); }
         let bg = sample_px(p);
         // 紧贴边缘留一点极淡的接触阴影，玻璃才不像凭空浮着。
         let sh = (1.0 - smoothstep(0.0, 7.0, d - 1.0)) * mix(0.06, 0.02, mat);
@@ -413,7 +415,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
             let ce = ctrl_glass(p, p - cr.xy - cr.zw * 0.5, cs.hs, cs.r, cs.d, mat, Ld, edge_bg, cs.mag, cs.refr);
             flat_col = mix(flat_col, ce.rgb, ce.a);
         }
-        return vec4<f32>(flat_col, 1.0);
+        let aa = 1.0 - smoothstep(-1.2, 1.2, d);
+        let a = select(1.0, aa, u.notch.w > 0.5);
+        return vec4<f32>(flat_col * a, a);
     }
 
     // SDF 梯度指向边缘外侧。
@@ -585,7 +589,11 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 抖动：8-bit 输出在平滑渐变上必然出色带（深色壁纸尤其明显）。加 ±1 级噪声
     // 把量化台阶打散，幅度压在 1/255 量级 —— 只让渐变更顺，看不到噪点。
     let dth = (hash21(p) - 0.5) * (1.7 / 255.0);
-    return vec4<f32>(mix(edge_bg, col, vec3<f32>(cov)) + vec3<f32>(dth), 1.0);
+    let out = mix(edge_bg, col, vec3<f32>(cov)) + vec3<f32>(dth);
+    if (u.notch.w > 0.5) {
+        return vec4<f32>(out * cov, cov);
+    }
+    return vec4<f32>(out, 1.0);
 }
 "#;
 
@@ -728,6 +736,18 @@ pub fn set_liquid_look(blur_px: f32, band_px: f32, edge_px: f32, edge_op: f32) {
     LOOK[1].store(band_px.clamp(10.0, 140.0).to_bits(), Relaxed);
     LOOK[2].store(edge_px.clamp(0.0, 4.0).to_bits(), Relaxed);
     LOOK[3].store(edge_op.clamp(0.0, 1.0).to_bits(), Relaxed);
+}
+
+/// DirectComposition 路径下窗口已有真实逐像素 alpha：WGSL 必须输出覆盖率 alpha，
+/// 而不是把桌面画成 alpha=1 的矩形。
+static DCOMP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_direct_composition(active: bool) {
+    DCOMP.store(active, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn direct_composition() -> bool {
+    DCOMP.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn look() -> [f32; 4] {
@@ -1471,8 +1491,8 @@ pub fn frame_for(
         control_params: cprm,
         // 刘海：flare/flare_h 同样 CSS px → 设备像素；非刘海时标志位 0。
         notch: match notch {
-            Some((flare, flare_h)) => [flare * ppp, flare_h * ppp, 1.0, 0.0],
-            None => [0.0, 0.0, 0.0, 0.0],
+            Some((flare, flare_h)) => [flare * ppp, flare_h * ppp, 1.0, if direct_composition() {1.0} else {0.0}],
+            None => [0.0, 0.0, 0.0, if direct_composition() {1.0} else {0.0}],
         },
         pixels_per_point: ppp,
     }

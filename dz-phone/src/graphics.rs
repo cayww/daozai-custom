@@ -60,7 +60,13 @@ fn small_memory_blocks(descriptor:eframe::wgpu::DeviceDescriptor<'static>)->efra
 /// 兼容渲染优先用 Direct3D 12（Windows 原生、睡眠唤醒与换屏处理最稳）；
 /// 设备不支持时再退到 Vulkan。两者都不经过显卡的 OpenGL 驱动。
 fn launch_compatible(options:eframe::NativeOptions,launch:&mut impl FnMut(eframe::NativeOptions)->eframe::Result<()>)->eframe::Result<()> {
-    match launch(compatible(options.clone(),eframe::wgpu::Backends::DX12)) {
+    // 只有走 DX12 时才给窗口去掉 GDI 重定向表面；Vulkan/OpenGL 仍靠它显示内容。
+    // 失败退回 Vulkan/OpenGL 前必须恢复环境变量，否则新窗口会没有可绘制表面。
+    let saved=std::env::var_os("DAOZAI_DCOMP");
+    std::env::set_var("DAOZAI_DCOMP","1");
+    let first=launch(compatible(options.clone(),eframe::wgpu::Backends::DX12));
+    match saved {Some(value)=>std::env::set_var("DAOZAI_DCOMP",value),None=>std::env::remove_var("DAOZAI_DCOMP")}
+    match first {
         Err(eframe::Error::Wgpu(_))=>launch(compatible(options,eframe::wgpu::Backends::VULKAN)),
         result=>result,
     }

@@ -610,6 +610,14 @@ impl Device {
     }
 }
 
+impl Adapter {
+    /// 岛仔定制：DirectComposition 需要 IDXGIDevice；AMD 的 ID3D12Device 不能 QI，
+    /// 所以用同一个 DXGI adapter 建 D3D11 设备再拿 IDXGIDevice。
+    pub fn raw_dxgi_adapter(&self) -> &Dxgi::IDXGIAdapter {
+        &self.raw
+    }
+}
+
 impl Drop for Device {
     fn drop(&mut self) {
         self.rtv_pool.lock().free_handle(self.null_rtv_handle);

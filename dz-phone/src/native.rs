@@ -636,7 +636,9 @@ impl Window {
         // 上游的「分层窗口 + owner alpha=1/255」在 D3D12 交换链上挡不住黑底：一旦这里退回矩形，
         // 收起/展开态的圆角外就是两块黑角，展开过程中还会露出整块黑底（用户截图实证）。
         // 上层另有一张带真实 alpha 的显示窗口负责抗锯齿，硬裁只作用于 owner 的交换链，不会吃掉柔边。
-        let outline_clip=self.opaque_surface;
+        // DirectComposition 已经有逐像素 alpha，不能再套 SetWindowRgn 硬裁：
+        // 窗口区域是二值裁剪，会把非液态皮肤的圆角和文字边缘切出锯齿。
+        let outline_clip=self.opaque_surface && !eframe::egui_wgpu::winit::direct_composition_active();
         match glass.filter(|_|outline_clip) {
             Some(shapes) => {
                 let key=glass_key(shapes,ppp);

@@ -3584,6 +3584,7 @@ impl App {
         // 用全局光标而不是 hover_pos：后者只在指针位于岛仔窗口内才有值，
         // 折叠态只有 45px 高，指针大部分时间在外面，高光会一直是死的。
         let pointer=self.cursor_win.unwrap_or_else(||rect.center());
+        crate::gpu_glass::set_direct_composition(eframe::egui_wgpu::winit::direct_composition_active());
         let frame=crate::gpu_glass::frame_for(
             rect,capture,((win.x*ppp) as u32,(win.y*ppp) as u32),ppp,radius,
             self.glass_morph,
