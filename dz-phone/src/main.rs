@@ -334,6 +334,17 @@ impl eframe::App for Shell {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 内存剖析运行：DAOZAI_MEMPROF_EXIT=<秒> 到点后优雅退出（走 Drop 写 dhat 报告）。
+        #[cfg(feature = "memprof")]
+        if let Some(secs)=std::env::var("DAOZAI_MEMPROF_EXIT").ok().and_then(|v|v.parse::<u64>().ok()) {
+            use std::sync::atomic::{AtomicBool,Ordering};
+            static CLOSED:AtomicBool=AtomicBool::new(false);
+            static START:std::sync::OnceLock<std::time::Instant>=std::sync::OnceLock::new();
+            let start=START.get_or_init(std::time::Instant::now);
+            if start.elapsed().as_secs()>=secs && !CLOSED.swap(true,Ordering::Relaxed) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
         if self.resource_at.ready(Duration::from_secs(30)){
             let (count,bytes)={let textures=ctx.tex_manager();let textures=textures.read();(textures.num_allocated(),textures.allocated().map(|(_,info)|info.bytes_used()).sum())};
             daozai::resources::TEXTURES.store(count,std::sync::atomic::Ordering::Relaxed);
@@ -945,10 +956,19 @@ mod open_path_tests {
     }
 }
 
+// 内存剖析的全局分配器：必须挂在 crate 根，Profiler 才拦得到分配
+// （放函数体内虽然能编译，语义上仍全局生效，但为了可读性放这里）。
+#[cfg(feature = "memprof")]
+#[global_allocator]
+static MEMPROF_ALLOC: dhat::Alloc = dhat::Alloc;
+
 fn main() -> std::process::ExitCode {
     // 浏览器扩展桥宿主已拆成独立二进制 daozai-bridge.exe（见 src/bin/daozai-bridge），
     // 不再复用本 exe，这里直接进入主程序。
     diagnostics::install();
+    // 内存剖析（--features memprof）：Profiler 在 run() 里创建、graphics::run 返回后 Drop，
+    // 写 dhat-heap.json 并挪进 data\diagnostics。不能用 taskkill /F（不走 Drop 没有报告），
+    // 配合 DAOZAI_MEMPROF_EXIT=<秒> 让 Shell 自己发 ViewportCommand::Close 优雅退出。
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
@@ -1035,5 +1055,13 @@ fn run() -> eframe::Result<()> {
             },
         );
     }
-    graphics::run(opts,|opts|eframe::run_native("岛仔", opts, Box::new(|cc| Ok(Box::new(Shell::new(cc))))))
+    // 内存剖析：包住整个 app 运行期，run 返回时 Drop 写报告到 data\diagnostics。
+    // 注意：必须用 --profile memprof 构建（带符号，Rust 帧才能符号化）；taskkill /F 没有报告。
+    #[cfg(feature = "memprof")]
+    let memprof = {
+        let path=daozai::model::config_dir().join("diagnostics").join("dhat-heap.json");
+        dhat::Profiler::builder().file_name(path).build()
+    };
+    let result=graphics::run(opts,|opts|eframe::run_native("岛仔", opts, Box::new(|cc| Ok(Box::new(Shell::new(cc))))));
+    result
 }

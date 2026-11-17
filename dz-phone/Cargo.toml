@@ -29,6 +29,9 @@ required-features = ["record"]
 
 [features]
 record = []
+# 内存剖析：cargo build --features memprof。Profiler 在进程退出时把 dhat-heap.json
+# 写到工作目录，main 里再挪进 data\diagnostics；配合 DAOZAI_MEMPROF_EXIT=<秒> 自动优雅退出。
+memprof = ["dep:dhat"]
 
 [patch.crates-io]
 imap = { path = "vendor/imap" }
@@ -39,6 +42,7 @@ ureq = { path = "vendor/ureq" }
 
 [dependencies]
 eframe = { version = "0.31", default-features = false, features = ["glow", "wgpu", "default_fonts"] }
+dhat = { version = "0.3", optional = true }
 egui_extras = { version = "0.31", default-features = false, features = ["svg", "image"] }
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
 serde = { version = "1", features = ["derive"] }
@@ -124,3 +128,10 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# 内存剖析专用：带行号表（供 dhat 回溯符号化），其余与 release 一致。
+# cargo build --profile memprof --features memprof
+[profile.memprof]
+inherits = "release"
+strip = false
+debug = "line-tables-only"

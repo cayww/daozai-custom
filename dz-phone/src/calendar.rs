@@ -737,16 +737,33 @@ fn discover_at(agent:&ureq::Agent,cfg:&Config,password:&str,start:&str,depth:&st
 
 // ---------------------------------------------------------------- XML
 
+// CalDAV 的 XML 解析正则。以前每次调用都重新编译（一个 `(?is)` 大正则的编译要
+// 分配数 MB），一次同步要编译十几遍 —— dhat 实测单次同步的临时分配上 30MB。
+// 这里统一 LazyLock 缓存；`property_hrefs` 的属性名是插值的，单独保留动态编译。
+fn re_cache(key: &str) -> &'static regex::Regex {
+    use std::sync::LazyLock;
+    static CACHE: LazyLock<std::collections::HashMap<&'static str, regex::Regex>> = LazyLock::new(|| {
+        [
+            ("response", "(?is)<(?:[a-z0-9]+:)?response\\b[^>]*>(.*?)</(?:[a-z0-9]+:)?response>"),
+            ("href", "(?is)<(?:[a-z0-9]+:)?href\\b[^>]*>(.*?)</(?:[a-z0-9]+:)?href>"),
+            ("resourcetype", "(?is)<(?:[a-z0-9]+:)?resourcetype\\b[^>]*>(.*?)</(?:[a-z0-9]+:)?resourcetype>"),
+            ("calendar", "(?is)<(?:[a-z0-9]+:)?calendar(?:\\s[^>]*)?/?>"),
+            ("component-set", "(?is)<(?:[a-z0-9]+:)?supported-calendar-component-set\\b[^>]*>(.*?)</(?:[a-z0-9]+:)?supported-calendar-component-set>"),
+            ("vevent", "(?is)name\\s*=\\s*[\"']VEVENT[\"']"),
+            ("calendar-data", "(?is)<(?:[a-z0-9]+:)?calendar-data\\b[^>]*>(.*?)</(?:[a-z0-9]+:)?calendar-data>"),
+            ("xml-escape", "&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|quot|apos|amp);"),
+            ("status", "(?i)<(?:[a-z0-9]+:)?status[^>]*>\\s*HTTP/\\S+\\s+(\\d{3})"),
+        ].into_iter().map(|(k,v)| (k, regex::Regex::new(v).unwrap())).collect()
+    });
+    CACHE.get(key).unwrap_or_else(|| panic!("未知正则 key: {key}"))
+}
+
 /// 把 PROPFIND/REPORT 的 207 拆成 `(href, 是否日历集合, 是否目录)`。
 fn responses(xml: &str) -> Vec<(String, bool, bool)> {
-    let Ok(block) = regex::Regex::new(r"(?is)<(?:[a-z0-9]+:)?response\b[^>]*>(.*?)</(?:[a-z0-9]+:)?response>") else {
-        return Vec::new();
-    };
-    let Ok(href_re) = regex::Regex::new(r"(?is)<(?:[a-z0-9]+:)?href\b[^>]*>(.*?)</(?:[a-z0-9]+:)?href>") else {
-        return Vec::new();
-    };
-    let resource_type=regex::Regex::new(r"(?is)<(?:[a-z0-9]+:)?resourcetype\b[^>]*>(.*?)</(?:[a-z0-9]+:)?resourcetype>").unwrap();
-    let calendar_type=regex::Regex::new(r"(?is)<(?:[a-z0-9]+:)?calendar(?:\s[^>]*)?/?>").unwrap();
+    let block = re_cache("response");
+    let href_re = re_cache("href");
+    let resource_type = re_cache("resourcetype");
+    let calendar_type = re_cache("calendar");
     block
         .captures_iter(xml)
         .filter_map(|cap| {
@@ -773,7 +790,7 @@ fn property_href(xml:&str,property:&str,base:&str)->Option<String>{
 }
 fn property_hrefs(xml:&str,property:&str,base:&str)->Vec<String>{
     let block=regex::Regex::new(&format!(r"(?is)<(?:[a-z0-9]+:)?{property}\b[^>]*>(.*?)</(?:[a-z0-9]+:)?{property}>")).unwrap();
-    let href=regex::Regex::new(r"(?is)<(?:[a-z0-9]+:)?href\b[^>]*>(.*?)</(?:[a-z0-9]+:)?href>").unwrap();
+    let href=re_cache("href");
     let mut urls=Vec::new();let Ok(base)=url::Url::parse(base)else{return urls;};
     for property in block.captures_iter(xml){for value in href.captures_iter(&property[1]){
         let value=unescape_xml(value[1].trim());if value.is_empty(){continue;}
@@ -816,9 +833,9 @@ fn pick_calendar(xml: &str, base: &str) -> Option<String> {
 
 /// 账号下所有能放日程（VEVENT）的日历集合；只放提醒事项（VTODO）的跳过。最多 12 个。
 fn event_calendars(xml: &str, base: &str) -> Vec<String> {
-    let Ok(block) = regex::Regex::new(r"(?is)<(?:[a-z0-9]+:)?response\b[^>]*>(.*?)</(?:[a-z0-9]+:)?response>") else { return Vec::new(); };
-    let set = regex::Regex::new(r"(?is)<(?:[a-z0-9]+:)?supported-calendar-component-set\b[^>]*>(.*?)</(?:[a-z0-9]+:)?supported-calendar-component-set>").unwrap();
-    let vevent = regex::Regex::new(r#"(?is)name\s*=\s*["']VEVENT["']"#).unwrap();
+    let block = re_cache("response");
+    let set = re_cache("component-set");
+    let vevent = re_cache("vevent");
     let Ok(base_url) = url::Url::parse(base) else { return Vec::new(); };
     let mut out = Vec::new();
     for cap in block.captures_iter(xml) {
@@ -868,9 +885,7 @@ fn ical_lines(text:&str)->Vec<String>{
 }
 
 fn calendar_data(xml: &str) -> Vec<String> {
-    let Ok(re) = regex::Regex::new(r"(?is)<(?:[a-z0-9]+:)?calendar-data\b[^>]*>(.*?)</(?:[a-z0-9]+:)?calendar-data>") else {
-        return Vec::new();
-    };
+    let re = re_cache("calendar-data");
     re.captures_iter(xml)
         .filter_map(|cap| {
             let raw = cap.get(1)?.as_str();
@@ -906,7 +921,7 @@ pub fn dedupe_key(m: &crate::mail::Meeting) -> String {
 }
 
 fn unescape_xml(v: &str) -> String {
-    let re=regex::Regex::new(r"&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|quot|apos|amp);").unwrap();
+    let re=re_cache("xml-escape");
     re.replace_all(v,|c:&regex::Captures|{
         let token=&c[1];
         let ch=match token {
@@ -918,7 +933,7 @@ fn unescape_xml(v: &str) -> String {
 }
 
 fn report_status_error(xml:&str)->Option<u16>{
-    regex::Regex::new(r"(?i)<(?:[a-z0-9]+:)?status[^>]*>\s*HTTP/\S+\s+(\d{3})").unwrap().captures_iter(xml)
+    re_cache("status").captures_iter(xml)
         .filter_map(|c|c[1].parse::<u16>().ok()).find(|code|*code>=400)
 }
 
