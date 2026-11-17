@@ -383,7 +383,7 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
     if settling() {
         return Grab::NoFrame;
     }
-    if let Some((monitor, ident)) = current {
+    if let Some((_monitor, ident)) = current {
         let bound = *BOUND_MONITOR.lock().unwrap_or_else(|e| e.into_inner());
         let changed = guard.as_ref()
             .map(|s| (s.mon_x, s.mon_y, s.sw, s.sh) != ident)

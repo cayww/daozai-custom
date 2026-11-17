@@ -726,7 +726,7 @@ impl App {
                 let input=ui.add_sized([ui.available_width()-38.0,32.0],egui::TextEdit::singleline(&mut self.weather.city_input)
                     .id_salt("weather-city-input").vertical_align(egui::Align::Center).margin(egui::vec2(10.0,7.0)).hint_text("输入城市名称搜索"));
                 let arrow=ui.add_sized([30.0,32.0],egui::Button::new("").corner_radius(7.0)).on_hover_text("选择具体地区");
-                let center=arrow.rect.center();ui.painter().add(egui::Shape::line(vec![center+egui::vec2(-4.0,-2.0),center+egui::vec2(0.0,2.0),center+egui::vec2(4.0,-2.0)],egui::Stroke::new(1.5,ui.visuals().text_color())));
+                let center=arrow.rect.center();ui.painter().add(egui::Shape::line(vec![center+egui::vec2(-4.0,-2.0),center+egui::vec2(0.0,2.0),center+egui::vec2(4.0,-2.0)],egui::Stroke::new(1.5_f32,ui.visuals().text_color())));
                 if input.changed() || input.clicked() {ui.memory_mut(|m|m.open_popup(popup));}
                 if arrow.clicked() {ui.memory_mut(|m|m.toggle_popup(popup));}
                 enter=input.lost_focus() && ui.input(|i|i.key_pressed(egui::Key::Enter));
@@ -1215,12 +1215,12 @@ pub(crate) fn city_row(ui: &mut egui::Ui, selected: bool, removable: bool, title
     let pick = ctx.animate_bool_with_time(response.id.with("selected"), selected, 0.18);
     let base = color(&ctx, Color32::from_rgb(35, 35, 38), Color32::WHITE);
     let fill = paint::mix(paint::mix(base, color(&ctx, Color32::from_rgb(46, 46, 52), Color32::from_rgb(242, 244, 248)), hover), paint::mix(base, accent, 0.14), pick);
-    ui.painter().rect(rect, 10.0, fill, egui::Stroke::new(1.0, paint::mix(Color32::TRANSPARENT, accent, pick)), egui::StrokeKind::Inside);
+    ui.painter().rect(rect, 10.0, fill, egui::Stroke::new(1.0_f32, paint::mix(Color32::TRANSPARENT, accent, pick)), egui::StrokeKind::Inside);
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     // 单选圆点。
     let dot = egui::pos2(rect.left() + 18.0, rect.center().y);
-    ui.painter().circle_stroke(dot, 7.0, egui::Stroke::new(1.4, paint::mix(weak, accent, pick)));
+    ui.painter().circle_stroke(dot, 7.0, egui::Stroke::new(1.4_f32, paint::mix(weak, accent, pick)));
     if pick > 0.0 { ui.painter().circle_filled(dot, 3.8 * pick, accent); }
     // 缓存天气图标：浅色主题下沿用设置页的浅色配色。
     let canvas = Card::new(ui, rect.min, rect);
@@ -1252,7 +1252,7 @@ pub(crate) fn city_row(ui: &mut egui::Ui, selected: bool, removable: bool, title
         if h > 0.0 { painter.circle_filled(remove_rect.center(), 12.0, paint::alpha(danger, 0.18 * h)); }
         let ink = paint::mix(weak, danger, h);
         let c = remove_rect.center();
-        for (a, b) in [(egui::vec2(-4.0, -4.0), egui::vec2(4.0, 4.0)), (egui::vec2(-4.0, 4.0), egui::vec2(4.0, -4.0))] { painter.line_segment([c + a, c + b], egui::Stroke::new(1.5, ink)); }
+        for (a, b) in [(egui::vec2(-4.0, -4.0), egui::vec2(4.0, 4.0)), (egui::vec2(-4.0, 4.0), egui::vec2(4.0, -4.0))] { painter.line_segment([c + a, c + b], egui::Stroke::new(1.5_f32, ink)); }
         removed = remove.clicked();
     }
     (response.clicked() && !removed, removed)

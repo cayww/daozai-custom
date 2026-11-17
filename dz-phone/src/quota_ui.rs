@@ -117,7 +117,7 @@ fn color_picker(ui:&mut egui::Ui,provider:Provider,value:&mut Accent){
             let (rect,response)=ui.allocate_exact_size(egui::vec2(22.0,25.0),egui::Sense::click());
             let on=*value==accent;
             if response.on_hover_text(accent.label()).clicked(){*value=accent;}
-            if on{ui.painter().circle_stroke(rect.center(),10.0,egui::Stroke::new(1.5,Color32::WHITE));}
+            if on{ui.painter().circle_stroke(rect.center(),10.0,egui::Stroke::new(1.5_f32,Color32::WHITE));}
             ui.painter().circle_filled(rect.center(),7.0,accent_color(accent,provider));
         }
         ui.label(egui::RichText::new(value.label()).size(12.0).color(theme::GRAY));
@@ -666,7 +666,7 @@ impl App {
             if self.quota.detail_account.as_deref()==Some(a.id.as_str()){
                 row.response.scroll_to_me(Some(egui::Align::Min));self.quota.detail_account=None;
             }
-            if row.response.dnd_hover_payload::<String>().is_some(){ui.painter().rect_stroke(row.response.rect,10,egui::Stroke::new(2.0,ui.visuals().selection.bg_fill),egui::StrokeKind::Inside);}
+            if row.response.dnd_hover_payload::<String>().is_some(){ui.painter().rect_stroke(row.response.rect,10,egui::Stroke::new(2.0_f32,ui.visuals().selection.bg_fill),egui::StrokeKind::Inside);}
             if let Some(from)=row.response.dnd_release_payload::<String>(){reorder=Some(((*from).clone(),a.id.clone()));}
             if let Some(account)=self.quota.config.accounts.iter_mut().find(|account|account.id==a.id){*account=a;}
             ui.add_space(8.0);
@@ -843,7 +843,7 @@ impl App {
             if !self.quota.note.is_empty(){
                 ui.add_space(8.0);
                 let color=crate::settings_theme::color(ui.ctx(),Color32::from_rgb(112,190,255),Color32::from_rgb(24,94,160));
-                egui::Frame::new().fill(color.gamma_multiply(0.12)).stroke(egui::Stroke::new(1.0,color.gamma_multiply(0.4))).corner_radius(8).inner_margin(10.0).show(ui,|ui|{
+                egui::Frame::new().fill(color.gamma_multiply(0.12)).stroke(egui::Stroke::new(1.0_f32,color.gamma_multiply(0.4))).corner_radius(8).inner_margin(10.0).show(ui,|ui|{
                     ui.set_min_width((ui.available_width()-1.0).max(0.0));
                     ui.label(egui::RichText::new(format!("●  {}",self.quota.note)).size(13.0).strong().color(color));
                 });

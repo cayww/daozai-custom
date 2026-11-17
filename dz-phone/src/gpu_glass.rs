@@ -1327,7 +1327,7 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let gpu = guard.as_mut().unwrap();
         let f = &self.frame;
         let (cw, ch) = (f.capture[2].max(1.0) as i32, f.capture[3].max(1.0) as i32);
-        let mut tex_size = gpu.size;
+        let tex_size;
 
         // 抓屏节流：每帧回读一次屏幕是这条链路里最贵的一段（WGC Map 是 GPU→CPU
         // 同步等待，再加两次 1MB 级拷贝）。几何没变时可以隔帧抓，纹理和 uniform

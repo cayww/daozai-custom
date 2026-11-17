@@ -2457,7 +2457,7 @@ impl App {
         }
         self.clipboard.flush();
         if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
-        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());;
+        let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());
         // 视频摘要要占一整块，其余常驻组件对称让位。
         if self.video_page(){layout.widen(bar::MUSIC,VIDEO_PILL_EXTRA);}
         // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
@@ -3771,7 +3771,7 @@ impl App {
             // 停在中间时绿边以 1.6 秒为周期缓慢呼吸，持续表明「就在中间」。
             let breathe=0.5+0.5*((self.t*std::f64::consts::TAU/1.6).sin() as f32);
             let strength=vis*lerp(0.32,lerp(0.78,1.0,breathe),lock);
-            if lock>0.01 {painter.add(egui::Shape::line(outline(2.0),egui::Stroke::new(5.0,tint(1.0,0.22*strength*lock))));}
+            if lock>0.01 {painter.add(egui::Shape::line(outline(2.0),egui::Stroke::new(5.0_f32,tint(1.0,0.22*strength*lock))));}
             painter.add(egui::Shape::line(points.clone(),egui::Stroke::new(lerp(1.0,1.6,lock),tint(lock,0.95*strength))));
         }
         let mut bounds=body.expand(8.0);
@@ -3817,8 +3817,8 @@ impl App {
                 let d=(m-mid).dot(along).abs();
                 let g=(-((d-front)/18.0).powi(2)).exp()*fade;
                 if g<0.01 {continue;}
-                painter.line_segment([pair[0],pair[1]],egui::Stroke::new(6.0,tint(1.0,0.30*g)));
-                painter.line_segment([pair[0],pair[1]],egui::Stroke::new(1.8,tint(0.45,0.95*g)));
+                painter.line_segment([pair[0],pair[1]],egui::Stroke::new(6.0_f32,tint(1.0,0.30*g)));
+                painter.line_segment([pair[0],pair[1]],egui::Stroke::new(1.8_f32,tint(0.45,0.95*g)));
             }
         }
         Some(bounds)
@@ -4041,7 +4041,7 @@ impl App {
                 Some((_,text_left))=>{
                     let avail=(content_width-LANE_RIGHT_PAD-text_left).max(90.0);
                     // 短歌词在歌词通道内完整居中；长歌词放不下时由后面的横向滚动接管。
-                    let centering=((avail-galley.size().x/c.s).max(0.0)/2.0);
+                    let centering=(avail-galley.size().x/c.s).max(0.0)/2.0;
                     text_left+centering
                 },
                 None=>content_width-LYRIC_BAR_W/2.0,

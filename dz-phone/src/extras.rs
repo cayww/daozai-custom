@@ -1920,13 +1920,13 @@ pub(crate) fn settings_hint(ui:&mut egui::Ui,text:&str){
 pub(crate) fn settings_card(ui:&mut egui::Ui,add:impl FnOnce(&mut egui::Ui)) {
     let ctx=&ui.ctx().clone();
     egui::Frame::new().fill(settings_color(ctx,Color32::from_rgb(35,35,38),Color32::from_rgb(255,255,255)))
-        .stroke(egui::Stroke::new(1.0,settings_color(ctx,Color32::from_rgb(56,57,62),Color32::from_rgb(228,231,236))))
+        .stroke(egui::Stroke::new(1.0_f32,settings_color(ctx,Color32::from_rgb(56,57,62),Color32::from_rgb(228,231,236))))
         .corner_radius(12.0).inner_margin(egui::Margin::symmetric(16,13))
         .show(ui,|ui|{
             ui.set_min_width(ui.available_width());
             ui.spacing_mut().item_spacing.y=8.0;
             // 卡内分隔线压淡：8px 行距已经够分隔，硬线太密会让卡片显得碎。
-            ui.style_mut().visuals.widgets.noninteractive.bg_stroke=egui::Stroke::new(1.0,settings_color(ctx,Color32::from_rgb(48,49,54),Color32::from_rgb(238,240,244)));
+            ui.style_mut().visuals.widgets.noninteractive.bg_stroke=egui::Stroke::new(1.0_f32,settings_color(ctx,Color32::from_rgb(48,49,54),Color32::from_rgb(238,240,244)));
             add(ui);
         });
 }
@@ -2126,7 +2126,7 @@ impl App {
             }
             if ctx.input(|i|i.viewport().close_requested()){self.settings_open=false;self.quota_close_connection();}
             let before=format!("{:?}",self.settings);
-            egui::SidePanel::left("settings-sidebar").resizable(false).exact_width(180.0).frame(egui::Frame::new().fill(settings_color(ctx,Color32::from_rgb(29,29,32),Color32::from_rgb(237,239,243))).stroke(egui::Stroke::new(1.0,settings_color(ctx,Color32::from_rgb(42,42,45),Color32::from_rgb(216,219,225)))).inner_margin(egui::Margin::symmetric(10,12))).show(ctx,|ui|{
+            egui::SidePanel::left("settings-sidebar").resizable(false).exact_width(180.0).frame(egui::Frame::new().fill(settings_color(ctx,Color32::from_rgb(29,29,32),Color32::from_rgb(237,239,243))).stroke(egui::Stroke::new(1.0_f32,settings_color(ctx,Color32::from_rgb(42,42,45),Color32::from_rgb(216,219,225)))).inner_margin(egui::Margin::symmetric(10,12))).show(ctx,|ui|{
                 ui.add_space(5.0);
                 ui.label(egui::RichText::new("设置").size(11.0).color(settings_color(ctx,Color32::from_gray(150),Color32::from_gray(105))));
                 ui.add_space(7.0);
@@ -2332,7 +2332,7 @@ impl App {
                                     if payload.0!=page {
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                                         let y=if self.settings.page_order.iter().position(|p|*p==payload.0).unwrap()<index {row.rect.bottom()}else{row.rect.top()};
-                                        ui.painter().line_segment([egui::pos2(row.rect.left(),y),egui::pos2(row.rect.right(),y)],egui::Stroke::new(2.0,Color32::from_rgb(70,150,255)));
+                                        ui.painter().line_segment([egui::pos2(row.rect.left(),y),egui::pos2(row.rect.right(),y)],egui::Stroke::new(2.0_f32,Color32::from_rgb(70,150,255)));
                                     }
                                 }
                                 if let Some(payload)=row.dnd_release_payload::<PageDrag>() {movement=Some((payload.0,index));}
@@ -3388,7 +3388,7 @@ impl App {
                     .show(ctx,|ui|{
                         egui::Frame::new()
                             .fill(Color32::from_rgba_unmultiplied(r,g,b,a))
-                            .stroke(egui::Stroke::new(1.0,Color32::from_rgba_unmultiplied(255,255,255,(a as f32*0.14) as u8)))
+                            .stroke(egui::Stroke::new(1.0_f32,Color32::from_rgba_unmultiplied(255,255,255,(a as f32*0.14) as u8)))
                             .corner_radius(11.0).inner_margin(egui::Margin::symmetric(14,7))
                             .show(ui,|ui|{
                                 // 长提示（重启失败说明）要换行，不能撑出窗口外。

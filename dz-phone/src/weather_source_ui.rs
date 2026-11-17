@@ -16,13 +16,13 @@ pub(crate) fn provider_option(ui:&mut egui::Ui,provider:Provider,selected:bool,w
     let base=color(ctx,Color32::from_rgb(37,37,41),Color32::WHITE);
     let fill=if selected{crate::paint::mix(base,accent,0.10)}else if response.hovered(){color(ctx,Color32::from_rgb(45,45,50),Color32::from_rgb(246,248,252))}else{base};
     let border=if selected||response.has_focus(){accent}else{color(ctx,Color32::from_rgb(65,65,71),Color32::from_rgb(221,226,234))};
-    painter.rect(rect,9.0,fill,egui::Stroke::new(if selected{1.3}else{1.0},border),egui::StrokeKind::Inside);
+    painter.rect(rect,9.0,fill,egui::Stroke::new(if selected{1.3}else{1.0_f32},border),egui::StrokeKind::Inside);
     let overseas=provider==Provider::OpenMeteo;
     let title=if overseas{"Open-Meteo"}else{"和风天气"};
     let ink=if overseas{accent}else{color(ctx,Color32::from_rgb(111,209,177),Color32::from_rgb(29,139,105))};
     let icon=egui::Rect::from_min_size(rect.min+egui::vec2(10.0,10.0),egui::vec2(24.0,24.0));
     painter.rect_filled(icon,6.0,crate::paint::mix(fill,ink,0.15));
-    let center=icon.center();let stroke=egui::Stroke::new(1.2,ink);
+    let center=icon.center();let stroke=egui::Stroke::new(1.2_f32,ink);
     if overseas {
         painter.circle_stroke(center,7.0,stroke);
         painter.line_segment([center+egui::vec2(-7.0,0.0),center+egui::vec2(7.0,0.0)],stroke);
@@ -161,7 +161,7 @@ impl State {
         else{return;};
         let ink=if self.test_error.is_some(){color(ui.ctx(),Color32::from_rgb(255,155,155),Color32::from_rgb(174,46,46))}else if self.testing.is_some(){color(ui.ctx(),Color32::from_rgb(139,188,255),Color32::from_rgb(36,100,181))}else{color(ui.ctx(),Color32::from_rgb(123,225,169),Color32::from_rgb(25,120,76))};
         ui.add_space(7.0);
-        egui::Frame::new().fill(color(ui.ctx(),dark,light)).stroke(egui::Stroke::new(1.0,ink.gamma_multiply(0.35))).corner_radius(8.0).inner_margin(10).show(ui,|ui|{
+        egui::Frame::new().fill(color(ui.ctx(),dark,light)).stroke(egui::Stroke::new(1.0_f32,ink.gamma_multiply(0.35))).corner_radius(8.0).inner_margin(10).show(ui,|ui|{
             ui.set_min_width(ui.available_width());ui.label(RichText::new(title).size(13.5).strong().color(ink));ui.add(egui::Label::new(RichText::new(detail).size(11.5)).wrap());
         });
     }
@@ -318,7 +318,7 @@ impl App {
             let input=ui.add_sized([(ui.available_width()-38.0).max(90.0),32.0],egui::TextEdit::singleline(&mut self.weather_source.query)
                 .id(input_id).hint_text("输入城市、县或区名称").margin(egui::vec2(9.0,7.0)));
             let arrow=ui.add_sized([30.0,32.0],egui::Button::new("").corner_radius(7.0)).on_hover_text("展开城市候选");
-            let center=arrow.rect.center();ui.painter().add(egui::Shape::line(vec![center+egui::vec2(-4.0,-2.0),center+egui::vec2(0.0,2.0),center+egui::vec2(4.0,-2.0)],egui::Stroke::new(1.5,ui.visuals().text_color())));
+            let center=arrow.rect.center();ui.painter().add(egui::Shape::line(vec![center+egui::vec2(-4.0,-2.0),center+egui::vec2(0.0,2.0),center+egui::vec2(4.0,-2.0)],egui::Stroke::new(1.5_f32,ui.visuals().text_color())));
             if ui.is_enabled(){
                 if self.weather_source.focus_city {input.request_focus();self.weather_source.focus_city=false;}
                 if input.changed()||input.clicked()||before!=self.weather_source.province {ui.memory_mut(|m|m.open_popup(popup));}
@@ -353,7 +353,7 @@ impl App {
                     for (index,location) in results.iter().enumerate(){
                         let chosen=self.weather_source.city_choice.as_ref()==Some(location);
                         let row=crate::weather_ui::city_option(ui,&location.position,chosen,self.weather_source.config.saved.contains(location));
-                        if index==self.weather_source.highlighted {ui.painter().rect_stroke(row.rect.shrink(1.0),7.0,egui::Stroke::new(1.0,ui.visuals().selection.stroke.color),egui::StrokeKind::Inside);if keys.0||keys.1{row.scroll_to_me(None);}}
+                        if index==self.weather_source.highlighted {ui.painter().rect_stroke(row.rect.shrink(1.0),7.0,egui::Stroke::new(1.0_f32,ui.visuals().selection.stroke.color),egui::StrokeKind::Inside);if keys.0||keys.1{row.scroll_to_me(None);}}
                         if row.clicked(){selected=Some(location.clone());}
                     }
                 });

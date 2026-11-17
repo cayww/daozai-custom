@@ -19,7 +19,7 @@ pub struct Lane { pub name:&'static str, limit:usize, active:AtomicUsize, starte
 impl Lane {
     pub const fn new(name:&'static str,limit:usize)->Self{Self{name,limit,active:AtomicUsize::new(0),started:AtomicUsize::new(0),denied:AtomicUsize::new(0)}}
     pub fn acquire(&'static self)->Option<Lease>{
-        if self.active.fetch_update(Ordering::AcqRel,Ordering::Relaxed,|n|(n<self.limit).then_some(n+1)).is_err(){self.denied.fetch_add(1,Ordering::Relaxed);return None;}
+        if self.active.try_update(Ordering::AcqRel,Ordering::Relaxed,|n|(n<self.limit).then_some(n+1)).is_err(){self.denied.fetch_add(1,Ordering::Relaxed);return None;}
         self.started.fetch_add(1,Ordering::Relaxed);Some(Lease(self))
     }
     pub fn spawn(&'static self,run:impl FnOnce()+Send+'static)->Option<std::thread::JoinHandle<()>>{

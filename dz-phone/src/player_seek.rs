@@ -135,8 +135,8 @@ pub(super) fn seek(source:&str,position:f64,duration:f64)->bool{
     use std::time::{Duration,Instant};
     let apple=super::apple_music::is_source(source);
     if !apple && !super::is_qqmusic(source){return false;}
-    // 窗口按进程映像名核对：新版的会话身份名（Tencent.QQMusic）不是文件名，统一换成 QQMusic.exe。
-    let source=if apple {source} else {"QQMusic.exe"};
+    // 窗口按进程映像名核对：新版的会话身份名（Tencent.QQMusic）不是文件名，
+    // 所以下面统一按映像名 "AppleMusic.exe" / "qqmusic.exe" 找窗口。
     unsafe { (||->Option<()> {
         let _dpi=DpiContext(SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
         let ui=automation()?;
