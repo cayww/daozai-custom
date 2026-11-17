@@ -2336,6 +2336,12 @@ impl App {
                                 }).response
                             });
                             settings_hint(ui,"按实际像素渲染，放大不发虚");
+                            let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
+                            settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
+                            settings_hint(ui,self.settings.open_anim.description());
+                            ui.separator();
+                            setting_number(ui,"悬停触发延时",&mut self.settings.hover_delay_ms,0,500," ms",10.0);
+                            settings_hint(ui,"悬停多久后展开；80–120 ms 可避开鼠标划过");
                             if self.settings.skin==model::Skin::Liquid {
                                 ui.separator();
                                 settings_hint(ui,"调下面的参数时岛仔会保持展开；切到其他设置页自动收起");
@@ -2407,22 +2413,24 @@ impl App {
                                 });
                                 settings_hint(ui,"边缘高光的亮度（默认 0.90）；会随背景明暗自动微调，这里是基准值");
                                 ui.separator();
-                                settings_control_row(ui,"弹簧强度",56.0,|ui|{
+                                settings_control_row(ui,"弹簧刚度",56.0,|ui|{
                                     ui.horizontal(|ui|{
                                         ui.spacing_mut().slider_width=180.0;
                                         ui.add(egui::Slider::new(&mut self.settings.liquid_spring,0.2..=3.0).fixed_decimals(2));
                                         if ui.add_enabled((self.settings.liquid_spring-1.0).abs()>0.005,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_spring=1.0;}
                                     }).response
                                 });
-                                settings_hint(ui,"控件果冻回弹的快慢与幅度（默认 1.0）：调大弹得更快更明显（进度条圆钮、按压反馈、邮件页指示器都变），调小更柔更缓；立即生效不用重启");
+                                settings_hint(ui,"控件果冻回弹的快慢（默认 1.0）：调大弹得更快（进度条圆钮、按压反馈、邮件页指示器都变），调小更柔更缓；立即生效不用重启");
+                                ui.separator();
+                                settings_control_row(ui,"阻尼比",56.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        ui.spacing_mut().slider_width=180.0;
+                                        ui.add(egui::Slider::new(&mut self.settings.liquid_zeta,0.1..=1.0).fixed_decimals(2));
+                                        if ui.add_enabled((self.settings.liquid_zeta-0.5).abs()>0.005,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_zeta=0.5;}
+                                    }).response
+                                });
+                                settings_hint(ui,"回弹的「收劲」（默认 0.5）：调小会来回弹跳几下、更 Q 弹，1.0 = 不弹跳直接到位（进度条圆钮的拖动放大恒为不弹跳）");
                             }
-                            ui.separator();
-                            let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
-                            settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
-                            settings_hint(ui,self.settings.open_anim.description());
-                            ui.separator();
-                            setting_number(ui,"悬停触发延时",&mut self.settings.hover_delay_ms,0,500," ms",10.0);
-                            settings_hint(ui,"悬停多久后展开；80–120 ms 可避开鼠标划过");
                         });
                         settings_label(ui,"岛体显示");
                         settings_card(ui,|ui|{

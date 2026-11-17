@@ -3195,8 +3195,9 @@ impl App {
         // 「弹簧强度」设置：刚度 × 倍率（阻尼比不变，果冻形状一致，只是更快/更慢）。
         // 每帧 tune 很便宜（两次乘法），拖滑杆立即生效，不用重启。
         let sk=self.settings.liquid_spring.clamp(0.2,3.0);
+        let zt=self.settings.liquid_zeta.clamp(0.1,1.0);
         self.seek_drag.tune(1000.0*sk,1.0);
-        self.mail_tab.tune(300.0*sk,0.5);
+        self.mail_tab.tune(300.0*sk,zt);
         let ready=self.ctl_glass_ready();
         for ctl in Ctl::ALL {
             let i=ctl.idx();
@@ -3213,10 +3214,10 @@ impl App {
                 self.pointer_down_on(rect.translate(origin.to_vec2()),env)
             };
             self.ctl_press[i].target=if down {1.0}else{0.0};
-            self.ctl_press[i].tune(CTL_PRESS.0*sk,CTL_PRESS.1);
+            self.ctl_press[i].tune(CTL_PRESS.0*sk,zt);
             self.ctl_press[i].step(dt);
             self.ctl_appear[i].target=self.reveal;
-            self.ctl_appear[i].tune(CTL_APPEAR.0*sk,CTL_APPEAR.1);
+            self.ctl_appear[i].tune(CTL_APPEAR.0*sk,zt);
             self.ctl_appear[i].step(dt);
             if ctl==Ctl::MailTab {
                 // 指示器滑到当前筛选段（0=全部，1=未读）。
