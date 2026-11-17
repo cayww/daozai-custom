@@ -2406,6 +2406,15 @@ impl App {
                                     }).response
                                 });
                                 settings_hint(ui,"边缘高光的亮度（默认 0.90）；会随背景明暗自动微调，这里是基准值");
+                                ui.separator();
+                                settings_control_row(ui,"弹簧强度",56.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        ui.spacing_mut().slider_width=180.0;
+                                        ui.add(egui::Slider::new(&mut self.settings.liquid_spring,0.2..=3.0).fixed_decimals(2));
+                                        if ui.add_enabled((self.settings.liquid_spring-1.0).abs()>0.005,egui::Button::new("恢复默认")).clicked(){self.settings.liquid_spring=1.0;}
+                                    }).response
+                                });
+                                settings_hint(ui,"控件果冻回弹的快慢与幅度（默认 1.0）：调大弹得更快更明显（进度条圆钮、按压反馈、邮件页指示器都变），调小更柔更缓；立即生效不用重启");
                             }
                             ui.separator();
                             let anims:Vec<(model::OpenAnim,&str)>=model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();

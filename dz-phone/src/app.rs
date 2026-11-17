@@ -3192,6 +3192,11 @@ impl App {
     /// 顺带算好本帧哪些控件真的交给了 GPU —— 画图标的那一边要据此跳过矢量玻璃片。
     fn update_ctl_springs(&mut self,origin:Pos2,env:&Env){
         let dt=self.dt.clamp(0.0,0.05);
+        // 「弹簧强度」设置：刚度 × 倍率（阻尼比不变，果冻形状一致，只是更快/更慢）。
+        // 每帧 tune 很便宜（两次乘法），拖滑杆立即生效，不用重启。
+        let sk=self.settings.liquid_spring.clamp(0.2,3.0);
+        self.seek_drag.tune(1000.0*sk,1.0);
+        self.mail_tab.tune(300.0*sk,0.5);
         let ready=self.ctl_glass_ready();
         for ctl in Ctl::ALL {
             let i=ctl.idx();
@@ -3208,8 +3213,10 @@ impl App {
                 self.pointer_down_on(rect.translate(origin.to_vec2()),env)
             };
             self.ctl_press[i].target=if down {1.0}else{0.0};
+            self.ctl_press[i].tune(CTL_PRESS.0*sk,CTL_PRESS.1);
             self.ctl_press[i].step(dt);
             self.ctl_appear[i].target=self.reveal;
+            self.ctl_appear[i].tune(CTL_APPEAR.0*sk,CTL_APPEAR.1);
             self.ctl_appear[i].step(dt);
             if ctl==Ctl::MailTab {
                 // 指示器滑到当前筛选段（0=全部，1=未读）。
@@ -3236,14 +3243,17 @@ impl App {
         self.ctl_down && env.cursor.is_some_and(|p|rect.contains(p))
     }
 
-    /// 控件的绘制缩放：入场（0.86 → 1，会冲过头一点）+ 按压（×1.14 的果冻）。
-    /// 圆钮例外：它的拖动放大（×1.9）已经由 `ctl_geom` 的胶囊尺寸承担，
-    /// 这里不能再叠按压放大，否则拖动时 ×1.14×1.9≈2.2 过头。
+    /// 控件的绘制缩放：入场（0.86 → 1，会冲过头一点）+ 按压果冻（默认 ×1.14，
+    /// 幅度随「弹簧强度」设置缩放）。圆钮的拖动放大（×1.9）由 `ctl_geom` 的胶囊
+    /// 尺寸承担，这里只叠**一半幅度**的按压果冻：按住进度条时圆钮在放大镜尺寸上
+    /// 带一点回弹（峰值 ≈×2.0，此前完全不弹，用户反馈「弹簧效果不强」）。
     pub(crate) fn ctl_scale(&self,ctl:Ctl)->f32{
         let i=ctl.idx();
+        let sk=self.settings.liquid_spring.clamp(0.2,3.0);
         let appear=0.82+0.18*self.ctl_appear[i].pos.clamp(0.0,1.15);
-        if ctl==Ctl::Seek {return appear;}
-        appear*(1.0+CTL_PRESS_SCALE*self.ctl_press[i].pos.clamp(0.0,1.3))
+        let press=CTL_PRESS_SCALE*sk*self.ctl_press[i].pos.clamp(0.0,1.3);
+        if ctl==Ctl::Seek {return appear*(1.0+press*0.5);}
+        appear*(1.0+press)
     }
 
     /// 这个控件本帧是不是已经由 GPU 画了玻璃（画图标的一边据此跳过矢量玻璃片）。
