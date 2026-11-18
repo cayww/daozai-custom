@@ -774,6 +774,8 @@ pub(crate) struct MailForm {
     pub email: String,
     pub password: String,
     pub show: bool,
+    /// 设置页的「添加邮箱」弹窗是否打开。
+    pub open: bool,
 }
 
 impl MailState {
@@ -843,6 +845,8 @@ pub(crate) struct CalendarForm {
     pub password: String,
     pub show: bool,
     pub guide_open: bool,
+    /// 设置页的「添加日历」弹窗是否打开。
+    pub open: bool,
 }
 
 impl CalendarState {

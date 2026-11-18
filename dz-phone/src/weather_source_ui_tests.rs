@@ -80,7 +80,7 @@ fn district(name:&str,index:usize)->crate::qweather::Location {
 #[test]
 fn qweather_five_saved_cities_are_independent_selectable_and_removable(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=fixture(SettingsTheme::Dark);
-    h.app.weather_source.selected=Provider::Qweather;h.app.weather_source.mock_verified();
+    h.app.weather_source.selected=Provider::Qweather;h.app.weather_source.mock_verified();h.app.weather_source.config_open=true;
     h.app.settings.weather_saved=vec![district("默认来源城市",0).position];let original=h.app.settings.weather_saved.clone();
     let locations:Vec<_>=["余杭","临平","富阳","临安","桐庐"].iter().enumerate().map(|(i,n)|district(n,i)).collect();
     for location in &locations{h.app.weather_source.mock_choose_city(location.clone());h.app.qweather_add_city();}
@@ -89,7 +89,8 @@ fn qweather_five_saved_cities_are_independent_selectable_and_removable(){
     h.app.weather_source.mock_choose_city(district("建德",6));h.app.qweather_add_city();assert_eq!(h.app.weather_source.config.saved.len(),5,"第六个城市不能绕过上限");
     assert_eq!(h.app.settings.weather_saved,original);assert_eq!(crate::qweather::Config::load().saved.len(),5);
     h.app.weather_source.mock_choose_city(locations[0].clone());
-    for _ in 0..3{draw(&mut h,vec![],egui::vec2(740.0,980.0),1.0);}click(&mut h,"保存并启用");assert!(h.app.weather_source.displayed==Provider::Qweather);
+    // 5 个城市把列表撑长，「保存并启用」被推到视口外；加大视口保证按钮进入绘制区。
+    for _ in 0..3{draw(&mut h,vec![],egui::vec2(740.0,1800.0),1.0);}click(&mut h,"保存并启用");assert!(h.app.weather_source.displayed==Provider::Qweather);
     h.app.qweather_select_location(locations[3].clone());assert!(h.app.weather_source.config.location.as_ref()==Some(&locations[3]));
     h.app.qweather_remove_city(&locations[1]);assert!(h.app.weather_source.config.location.as_ref()==Some(&locations[3]));
     h.app.qweather_remove_city(&locations[3]);assert!(h.app.weather_source.config.location.as_ref()==Some(&locations[0]),"删除当前城市后应切换到剩余城市");
