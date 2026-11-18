@@ -368,7 +368,11 @@ impl App {
                 let active=current==Some(index);
                 let ink=if active {theme::WHITE}else{theme::GRAY};
                 let row=col.faded((1.0-distance.abs()*0.35).clamp(0.0,1.0));
-                let mut job=egui::text::LayoutJob::simple(line.text.clone(),row.font(if active {12.0}else{10.0},if active {W::Semibold}else{W::Regular}),ink,132.0*c.s);
+                let font=row.font(if active {12.0}else{10.0},if active {W::Semibold}else{W::Regular});
+                // 音乐页歌词自动折行：先按阅读顺序分行再逐行 RTL 转换，避免先显示句尾。
+                let text=crate::rtl_text::display_wrapped(&line.text,132.0*c.s,
+                    |s|row.painter.layout_no_wrap(s.to_owned(),font.clone(),ink).size().x).into_owned();
+                let mut job=egui::text::LayoutJob::simple(text,font,ink,132.0*c.s);
                 job.wrap.max_rows=if active {3}else{1};
                 job.wrap.break_anywhere=true;
                 let galley=row.painter.layout_job(job);

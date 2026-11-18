@@ -145,6 +145,9 @@ fn font_bytes(path:&Path)->Option<&'static [u8]>{
     Some(Box::leak(std::fs::read(path).ok()?.into_boxed_slice()))
 }
 
+/// 微软喜马拉雅体字形偏小，放大到与中文大致等高（藏文只有一档字重）。
+const TIBETAN_SCALE: f32 = 1.35;
+
 fn build_fonts()->FontDefinitions {
     let dirs = font_dirs();
     let latin = [
@@ -162,6 +165,10 @@ fn build_fonts()->FontDefinitions {
         find(&[("malgun.ttf", 0), ("NotoSansKR-Regular.otf", 0), ("NotoSansCJK-Regular.ttc", 1)], &dirs),
         find(&[("malgunbd.ttf", 0), ("malgun.ttf", 0), ("NotoSansKR-Bold.otf", 0), ("NotoSansCJK-Bold.ttc", 1)], &dirs),
     ];
+
+    // 藏文：上面几种字体都没有藏文字形（#200）。喜马拉雅体的下加字/元音符号叠在前一个字上，
+    // 不做复杂排版也能拼出常见叠字；缺字体时自动跳过。
+    let tibetan = find(&[("himalaya.ttf", 0), ("NotoSerifTibetan-Regular.ttf", 0), ("NotoSansTibetan-Regular.ttf", 0)], &dirs);
 
     let mut fonts = FontDefinitions::default();
     let mut cache: Vec<(PathBuf, u32, String)> = Vec::new();
@@ -192,6 +199,12 @@ fn build_fonts()->FontDefinitions {
             list.push(k);
         }
         if let Some(k) = add(&mut fonts, &korean[usize::from(i > 0)], format!("korean{i}")) {
+            list.push(k);
+        }
+        if let Some(k) = add(&mut fonts, &tibetan, "tibetan".into()) {
+            if let Some(data) = fonts.font_data.get_mut(&k) {
+                if data.tweak.scale == 1.0 { Arc::make_mut(data).tweak.scale = TIBETAN_SCALE; }
+            }
             list.push(k);
         }
         list.extend(builtin.iter().cloned());

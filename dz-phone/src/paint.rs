@@ -76,7 +76,7 @@ impl<'a> Card<'a> {
         font(size * self.s, w)
     }
     pub fn galley(&self, t: &str, size: f32, w: W, color: Color32) -> std::sync::Arc<egui::Galley> {
-        self.painter.layout_no_wrap(t.to_owned(), self.font(size, w), color)
+        self.painter.layout_no_wrap(crate::rtl_text::display(t).into_owned(), self.font(size, w), color)
     }
     pub fn text_w(&self, t: &str, size: f32, w: W) -> f32 {
         self.galley(t, size, w, Color32::WHITE).size().x / self.s

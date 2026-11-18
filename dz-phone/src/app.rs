@@ -2209,7 +2209,10 @@ impl App {
                 .map(|cache|(cache.galley.clone(),cache.overflow))
         };
         let layout=|text:&str,size:f32| {
-            let mut job=egui::text::LayoutJob::simple(text.to_owned(),theme::font(size,W::Semibold),ink,wrap_width);
+            // RTL 只做单行显示转换（连写+重排），绝不插 \n —— 本地是固定字号+横向滚动，
+            // display_wrapped 的折行语义会破坏 layout_single 的不折行逻辑与宽度计算。
+            let text=crate::rtl_text::display(text).into_owned();
+            let mut job=egui::text::LayoutJob::simple(text,theme::font(size,W::Semibold),ink,wrap_width);
             // 官方的 Center 在超长单行 galley 上会产生负的行内偏移，把整行文字
             // 向左推出绘制起点、压到封面/宠物上（暂停音乐时的长歌词最容易触发）。
             // release 改左对齐，由 shared_header() 按 galley 实际宽度手动居中；
@@ -2221,7 +2224,8 @@ impl App {
         };
         // 单行不折行：横向滚动用，galley 宽度就是整句的真实宽度。
         let layout_single=|text:&str,size:f32| {
-            let mut job=egui::text::LayoutJob::simple(text.to_owned(),theme::font(size,W::Semibold),ink,f32::INFINITY);
+            let text=crate::rtl_text::display(text).into_owned();
+            let mut job=egui::text::LayoutJob::simple(text,theme::font(size,W::Semibold),ink,f32::INFINITY);
             job.halign=egui::Align::Min;
             job.wrap.break_anywhere=false;
             ctx.fonts(|fonts|fonts.layout_job(job))
