@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-18 19:26
+> **最后更新**：2026-11-18 19:50
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -14,7 +14,7 @@
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-133 已打包、未部署（最新）**：`installer\daozai-setup-custom-133.exe`（11,241,513 B，包 sha `a9455e0ad655bb9f`，内含 exe `02786373d87ba563` + bridge `f1ae28626c9db18e`，构建自 main 工作树（告警清理 `2ea229a` + 液态玻璃按钮缩小 + 关配置弹窗收起 + INSTALL-NOTES 反馈日志说明，提交 `14bb37f`）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
 | **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。|
-| 预览版（液态玻璃试验） | 桌面预览目录 `daozai-liquid-setup.exe` = `liquid-test-60-skin-button`（包 sha `3c10d33e4567b5c9`，11,006,160 B；内含 exe `e2afdb7cb93dda40`；安装到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，独立数据目录），**已打包部署、待用户实机验证**。本轮微调：配置按钮夹进皮肤卡（仅液态皮肤显示）+ 下方标题「岛体交互」；上一版 -59（配置归位/修按钮/预览形态切换）与 -58 已移入 `_archive`。此前 -57 起 DirectComposition 透明交换链替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑，实机四态验证正常 |
+| 预览版（液态玻璃试验） | 桌面预览目录 `daozai-liquid-setup.exe` = `liquid-test-61-yi-lyrics`（包 sha `97a615f06917c561`，11,005,199 B；内含 exe `7b1e8d804011cce0`；安装到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，独立数据目录），**已打包部署、待用户实机验证**。本轮：加 Microsoft Yi Baiti（msyi.ttf）字体回退支持彝语歌词；此前 -60（配置按钮夹进皮肤卡/「岛体交互」标题）、-59（配置归位/修按钮/预览形态切换）、-58 已移入 `_archive`。此前 -57 起 DirectComposition 透明交换链替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑，实机四态验证正常 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
 | 测试 | 主线 1176 passed；最近 **1351 passed / 0 failed / 131 ignored**（2026-11-18 13:25，按钮缩小改动后全量串行 `cargo test --locked --release --lib -- --test-threads=1`）；**必须 `--test-threads=1`** |
@@ -780,6 +780,14 @@ release exe `dfd191cc498aed8c8799c42ca822f4`（22,539,776 B）、bridge `e33f1e7
 测试 `liquid_config_button_lives_in_appearance_tab_and_only_for_liquid_skin`：液态皮肤有按钮+弹窗+「岛体交互」标题、无旧标题；切 Classic 皮肤按钮消失；自定义页无按钮。全量 **1372 passed / 0 failed / 132 ignored**。
 打包 `liquid-test-60-skin-button`：包 `3c10d33e4567b5c9`（11,006,160 B）、exe `e2afdb7cb93dda40`；桌面 `daozai-liquid-setup.exe` = 该包，-59 已移入 `_archive`。
 
+### 7.0ac 彝语歌词支持（2026-11-18 19:37–19:50，提交 `ce4a34f`）
+
+用户反馈「彝语歌不行」。诊断：彝文音节 U+A000–A4CF 在 Segoe UI / 雅黑 / Malgun / 喜马拉雅体里**都没有字形**，歌词显示成方框——不是 RTL 方向问题（彝文是 LTR，不需连写）。
+Windows 自带 `C:\Windows\Fonts\msyi.ttf`（Microsoft Yi Baiti），实测 cmap 覆盖 U+A000–A48C 音节 + U+A490–A4C6 部首（用 cmap format4 段直接核对过）。
+修法：和藏文喜马拉雅体完全同构——加进 `theme.rs` 的字体回退链（`yi` key，三档字重都加），缺字体自动跳过；`rtl_text::display()` 对无阿拉伯字母文本 `Cow::Borrowed` 直接返回，排版链路零改动。
+测试 `yi_syllables_have_glyphs_in_all_weights`（抽样 A000/A185/A4C6/A490，三档字重；测试机无该字体则跳过）；RTL 10 测试 + 韩文/彝文字形测试全过；全量 **1373 passed / 0 failed / 132 ignored**。
+打包 `liquid-test-61-yi-lyrics`：包 `97a615f06917c561`（11,005,199 B）、exe `7b1e8d804011cce0`；桌面 `daozai-liquid-setup.exe` = 该包，-60 已移入 `_archive`。
+
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
@@ -845,6 +853,7 @@ release exe `dfd191cc498aed8c8799c42ca822f4`（22,539,776 B）、bridge `e33f1e7
 
 | 版本 / 提交 | 内容 |
 |---|---|
+| `ce4a34f` | **彝语歌词支持**：加 Microsoft Yi Baiti（msyi.ttf）字体回退，彝文音节 U+A000–A4CF 不再显示成方框；LTR 无需连写；1373 passed；`liquid-test-61-yi-lyrics`（exe `7b1e8d804011cce0`），已部署桌面 |
 | `67cd837` 后微调 | **配置按钮夹进皮肤卡 + 标题「岛体交互」**：按钮移到「岛体外观」卡皮肤与形状之间、仅 `Skin::Liquid` 显示（`is_glass()` 不含 Liquid）；下方标题「液态玻璃与交互」→「岛体交互」（通用交互）；1372 passed；`liquid-test-60-skin-button`（exe `e2afdb7cb93dda40`），已部署桌面 |
 | `2342d3c` | **液态玻璃配置归位 + 修按钮 + 预览形态切换**：《液态玻璃与交互》从 tab15 移到「外观」tab13；修「配置液态玻璃」点击无反应（守卫 tab 写死 0 + 弹窗调用在 tab 分支里）；弹窗新增「预览形态」开关（展开/收起），morph 按所选固定形态 = 用户要的「配置里切两个形态」；1372 passed；在 `merge-v0666-selective`，未部署 |
 | main 合并 | 2026-11-18：`directcomp-spike` 快进合并进 `main`（42a57c9 → 21b55ee，80 个提交）并推送 origin；`21b55ee` 含 liquid_shadow 开关，未进包 |
