@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-18 17:00
+> **最后更新**：2026-11-18 17:30
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -13,7 +13,7 @@
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-133 已打包、未部署（最新）**：`installer\daozai-setup-custom-133.exe`（11,241,513 B，包 sha `a9455e0ad655bb9f`，内含 exe `02786373d87ba563` + bridge `f1ae28626c9db18e`，构建自 main 工作树（告警清理 `2ea229a` + 液态玻璃按钮缩小 + 关配置弹窗收起 + INSTALL-NOTES 反馈日志说明，提交 `14bb37f`）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
-| **工作树** | **干净**；HEAD = `12a9329`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。|
+| **工作树** | **干净**；HEAD = `83f3417`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。|
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-57-dcomp-fallback`，exe sha256 前 16 = `9fdcbdf1993b0cac`。**DirectComposition 透明交换链**替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑。实机四态验证（液态玻璃普通/棋盘、经典 D3D/OpenGL）均正常 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
@@ -723,6 +723,20 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
 **未做**：未推送 origin/main、未部署、未重新打包（custom-133 包是合并前的）；提醒三选一对应的上游「双层开关迁移」未合（保留本地细粒度控制，故未引入上游 settings_redesign_ui_tests.rs）。
 
 **坑**：git diff3 在两个深度分叉的大文件上产生语法级交错冲突（自动合并区混入对方代码致括号不匹配），机械选边无解；手工按函数级组装才成功。桌面方案文档 `daozai-v0666-方案优劣对比.md` / `daozai-设置页重组融合方案.md` 有全过程。
+### 7.0y 补合 5 项剩余上游改动（2026-11-18 17:26）
+
+用户选 ①②③⑤⑨。5 个提交全部合入 merge-v0666-selective，HEAD = `83f3417`：
+
+- `b6b5e0b` **声音提醒修复**（08250c5）：新增 `NotificationSound{Silent,System,Health}` 三态 + 内嵌 `health-reminder.wav`（18.5KB）+ `play_health_sound()`（PlaySoundW）。喝水/久坐提示音改为独立播放，不再依赖系统通知气泡是否弹出——修掉「开了声音只显示图标」。Cmd::Notify 由 2 参改 3 参；与已合的「提醒三选一」衔接一致。
+- `6502f70` **裁切修复 #195**（a9fbc6b）：a9fbc6b 三处改动中两处（大小/位置滑杆 wrapped+clamp）已随设置页重组合入，只差 `settings_segmented` 的 `ui.horizontal`→`ui.horizontal_wrapped` 一行，补上。
+- `4dc1672` **滚轮翻矮页误收起**（6156474，**只合 app.rs 部分**）：FrameOut/App 加 `page_scroll_area`，翻到矮页时沿缩短一侧保留 8px 续滚带，`inside`→`page_hover` 用于滚轮入口与 want。**native.rs 的 WH_MOUSE_LL 全局钩子未合**（系统级风险），故「旧页区域继续滚轮翻页」不完整，但「误收起」已解决。滚轮/翻页 69 测试通过。
+- `83f3417` **版本号 0.6.66 + CHANGELOG**：Cargo.toml/Cargo.lock/app.rc（数字版+字符串版）四处 0.6.65→0.6.66；CHANGELOG 新增「吸收上游 v0.6.66 修复」段。
+
+**验证**：`cargo check --all-targets` 通过；单线程全量 **1360 passed / 0 failed / 132 ignored**（比之前多 1 个声音测试）；双 bin release 构建通过。
+
+**仍未合**（用户选择不合/暂缓）：⑥ RTL 歌词（价值≈0、动歌词布局）；⑦ 兼容渲染优化 e992b31/98496d3（本地已删该链路、方案更优）；④ 细条点穿 94fc97c（碰渲染核心、暂缓）；双层开关迁移（保留本地细粒度控制）。
+
+**未做**：未部署；custom-133 包是 17:15 基于设置页重组版打的（不含本轮 5 项 + 版本号 0.6.66），如需体现本轮改动需重新打包。
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
