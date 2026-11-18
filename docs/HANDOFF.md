@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-18 18:58
+> **最后更新**：2026-11-18 19:26
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -14,7 +14,7 @@
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-133 已打包、未部署（最新）**：`installer\daozai-setup-custom-133.exe`（11,241,513 B，包 sha `a9455e0ad655bb9f`，内含 exe `02786373d87ba563` + bridge `f1ae28626c9db18e`，构建自 main 工作树（告警清理 `2ea229a` + 液态玻璃按钮缩小 + 关配置弹窗收起 + INSTALL-NOTES 反馈日志说明，提交 `14bb37f`）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
 | **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。|
-| 预览版（液态玻璃试验） | 桌面预览目录 `daozai-liquid-setup.exe` = `liquid-test-59-cfg-form`（包 sha `84c4dc1f473b0319`，11,005,484 B；内含 exe `dfd191cc498aed8c`，= `2342d3c` 构建；安装到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，独立数据目录），**已打包部署、待用户实机验证**（配置归位/修按钮/预览形态切换三项）。上版 -58（`162afa59339ab71c`）已移入 `_archive`。此前 -57 起 DirectComposition 透明交换链替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑，实机四态验证正常 |
+| 预览版（液态玻璃试验） | 桌面预览目录 `daozai-liquid-setup.exe` = `liquid-test-60-skin-button`（包 sha `3c10d33e4567b5c9`，11,006,160 B；内含 exe `e2afdb7cb93dda40`；安装到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，独立数据目录），**已打包部署、待用户实机验证**。本轮微调：配置按钮夹进皮肤卡（仅液态皮肤显示）+ 下方标题「岛体交互」；上一版 -59（配置归位/修按钮/预览形态切换）与 -58 已移入 `_archive`。此前 -57 起 DirectComposition 透明交换链替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑，实机四态验证正常 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
 | 测试 | 主线 1176 passed；最近 **1351 passed / 0 failed / 131 ignored**（2026-11-18 13:25，按钮缩小改动后全量串行 `cargo test --locked --release --lib -- --test-threads=1`）；**必须 `--test-threads=1`** |
@@ -768,6 +768,18 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
 release exe `dfd191cc498aed8c8799c42ca822f4`（22,539,776 B）、bridge `e33f1e73d7447b3fd8b240949cd68c689e48792db340d322a20417be84f87aef`（378,880 B）。
 **打包部署（19:05）**：`liquid-test-59-cfg-form`，Inno Setup 7 编译；包 `84c4dc1f473b0319`（11,005,484 B）、内含 exe `dfd191cc498aed8c`。桌面 `daozai-liquid-setup.exe` = 该包，旧 -58 备份到 `_archive/daozai-liquid-setup-58.exe`；`_archive/README.md` 指纹表 + HANDOFF 快照 `HANDOFF-2026-11-18-1905.md` 已同步。
 **未做**：未替用户重装/启动（正在跑的是正式版 `D:\software\Daozai\daozai.exe` custom-129，单实例锁）、未推送 origin。CHANGELOG 已加一节。
+### 7.0ab 配置按钮夹进皮肤卡 + 标题「岛体交互」（2026-11-18 19:15–19:26，提交见下）
+
+用户在 59 包实测后追加两条微调：
+
+| 需求 | 改法 |
+|---|---|
+| 「配置液态玻璃」按钮移到皮肤和形状之间，且仅当前是液态玻璃时才显示 | 按钮从「岛体交互」卡挪进「岛体外观」卡，夹在皮肤描述与「背景模糊」之间；显示条件用 `self.settings.skin==Skin::Liquid`。**坑**：`Skin::is_glass()` 只匹配 GlassLight/GlassDark，不含 Liquid，不能拿它判断 |
+| 下方标题「液态玻璃与交互」改成「岛体交互」 | `settings_label(ui,"岛体交互")`；该卡只剩展开动效/悬停延时（对所有皮肤通用），按钮行和 separator 一并去掉 |
+
+测试 `liquid_config_button_lives_in_appearance_tab_and_only_for_liquid_skin`：液态皮肤有按钮+弹窗+「岛体交互」标题、无旧标题；切 Classic 皮肤按钮消失；自定义页无按钮。全量 **1372 passed / 0 failed / 132 ignored**。
+打包 `liquid-test-60-skin-button`：包 `3c10d33e4567b5c9`（11,006,160 B）、exe `e2afdb7cb93dda40`；桌面 `daozai-liquid-setup.exe` = 该包，-59 已移入 `_archive`。
+
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
 工作树干净。上一轮叠在一起的两批改动已合成一个提交，测试包 `liquid-test-15` 就是它的构建：
@@ -833,6 +845,7 @@ release exe `dfd191cc498aed8c8799c42ca822f4`（22,539,776 B）、bridge `e33f1e7
 
 | 版本 / 提交 | 内容 |
 |---|---|
+| `67cd837` 后微调 | **配置按钮夹进皮肤卡 + 标题「岛体交互」**：按钮移到「岛体外观」卡皮肤与形状之间、仅 `Skin::Liquid` 显示（`is_glass()` 不含 Liquid）；下方标题「液态玻璃与交互」→「岛体交互」（通用交互）；1372 passed；`liquid-test-60-skin-button`（exe `e2afdb7cb93dda40`），已部署桌面 |
 | `2342d3c` | **液态玻璃配置归位 + 修按钮 + 预览形态切换**：《液态玻璃与交互》从 tab15 移到「外观」tab13；修「配置液态玻璃」点击无反应（守卫 tab 写死 0 + 弹窗调用在 tab 分支里）；弹窗新增「预览形态」开关（展开/收起），morph 按所选固定形态 = 用户要的「配置里切两个形态」；1372 passed；在 `merge-v0666-selective`，未部署 |
 | main 合并 | 2026-11-18：`directcomp-spike` 快进合并进 `main`（42a57c9 → 21b55ee，80 个提交）并推送 origin；`21b55ee` 含 liquid_shadow 开关，未进包 |
 | custom-132 | 正式包：液态玻璃参数弹窗（皮肤/形状之间按钮唤出，仅 D3D12 兼容渲染开启时显示，弹窗内已去重）+ 折叠指示三角（原字形缺失显示成方块）+ phone-apps 移除内置种子并加「添加 App」入口；1351 passed |
