@@ -1844,7 +1844,7 @@ pub(crate) fn settings_segmented<T:PartialEq+Copy>(ui:&mut egui::Ui,value:&mut T
     let mut changed=false;
     egui::Frame::new().fill(settings_color(ctx,Color32::from_rgb(28,28,30),Color32::from_rgb(230,233,238)))
         .corner_radius(8.0).inner_margin(3).show(ui,|ui|{
-            ui.horizontal(|ui|{
+            ui.horizontal_wrapped(|ui|{
                 ui.spacing_mut().item_spacing.x=2.0;
                 for (option,label) in options {
                     let selected=*value==*option;
