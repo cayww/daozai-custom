@@ -2659,7 +2659,11 @@ impl App {
         let mut keep_colors:Vec<(usize,usize)>=Vec::new();
         // 毛玻璃：真实模糊下保留柔和投影增加层次；无模糊时阴影再减淡一些，保持轻盈。
         let skin_shadow = if !glass_skin {1.0} else if env.glass_blur {0.75} else {0.7};
-        let shadow_k = glass::shadow_alpha(0.0, thick) / 0.12 * skin_shadow;
+        // 液态玻璃可关掉胶囊外围的多层落影（设置 → 液态玻璃 → 岛体投影）：
+        // shadow_k 归零后 shape::shadow_mapped / pill_shadow 的 strength<=0.01 早退
+        // 会跳过全部 4 层；玻璃内部的接触阴影在 shader 侧，不受这里影响。
+        let shadow_k = glass::shadow_alpha(0.0, thick) / 0.12 * skin_shadow
+            * if self.settings.skin==model::Skin::Liquid && !self.settings.liquid_shadow {0.0} else {1.0};
         let island_shadow=|r:Rect,flare:f32,flare_h:f32,radius:f32,strength:f32| if pill {pill_shadow(&painter,r,radius,strength)} else if side {shape::shadow_docked(&painter,r,dock,flare,flare_h,radius,strength)} else {shape::shadow(&painter,r,flare,flare_h,radius,strength)};
         // 拿起时投影加深，像被从屏幕边缘提起来。
         let lifted = self.drag_lift.pos.clamp(0.0, 1.2);

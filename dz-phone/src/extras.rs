@@ -2511,6 +2511,11 @@ impl App {
                                 setting_row(ui,"收起态深度休眠","收起且完全静止 2 分钟后降到 1Hz，任何输入即时唤醒",&mut self.settings.liquid_deep_sleep);
                                 if before!=self.settings.liquid_deep_sleep {self.settings.save();}
                                 settings_hint(ui,"默认开；省电可保持开启");
+                                ui.separator();
+                                let before=self.settings.liquid_shadow;
+                                setting_row(ui,"岛体投影","胶囊外围的多层落影（4 层半透明轮廓叠加）；关掉后玻璃外围不再画影子",&mut self.settings.liquid_shadow);
+                                if before!=self.settings.liquid_shadow {self.settings.save();}
+                                settings_hint(ui,"默认开；浅色壁纸上比较明显，关掉后玻璃外围更干净，玻璃内部的接触阴影保留");
                             }
                         });
                         settings_label(ui,"岛体显示");
