@@ -7,8 +7,8 @@
 ; 这样测试者即使已经装了正式版岛仔，也不会被这个包改掉皮肤和设置。
 
 #define MyAppName "岛仔 液态玻璃测试版"
-#define MyAppVersion "0.6.65"
-#define MyAppBuild "liquid-test-58-fast-trim"
+#define MyAppVersion "0.6.66"
+#define MyAppBuild "liquid-test-59-cfg-form"
 ; 独立数据目录：不和正式版的 %APPDATA%\Daozai 抢设置
 #define MyDataDir "Daozai-LiquidTest"
 
