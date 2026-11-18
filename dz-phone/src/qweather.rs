@@ -30,7 +30,7 @@ impl Config {
 }
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub(crate) enum Error {Invalid,Auth,Rate,Limit,Network,Response,Storage,Disabled}
+pub(crate) enum Error {Invalid,Auth,#[cfg_attr(test,allow(dead_code))]Rate,Limit,Network,Response,Storage,Disabled}
 impl Error {
     pub fn text(self)->&'static str {match self {
         Self::Invalid=>"请填写有效的官方 API Host 和 API Key。",Self::Auth=>"凭据被拒绝，请检查 Host、Key 和两类 API 权限。",

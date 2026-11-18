@@ -1216,6 +1216,8 @@ mod avoidance_tests {
 }
 
 // —— 自定义构建补回：手机连接通道（Phone Link）——
+// 仅测试引用：生产版的标签改由 system::phone_app 按正文首段给出。
+#[cfg(test)]
 const PHONE_CHANNELS: &[(&str,&str)] = &[
     ("YourPhoneMessages_","短信"),
     ("YourPhoneCalling","通话"),
@@ -1259,6 +1261,7 @@ pub(crate) fn phone_channel(id:&str)->bool {
     // 白名单只用来起标签，是否上岛/静音交给 phone-apps.json 按正文判断。
     id.starts_with("Microsoft.YourPhone_")
 }
+#[cfg(test)]
 pub(crate) fn phone_label(id:&str)->&'static str {
     if id.ends_with("!App"){return "连接";}
     PHONE_CHANNELS.iter().find(|(key,_)|id.contains(*key)).map(|(_,label)|*label).unwrap_or("手机")

@@ -23,6 +23,7 @@ pub(super) fn note_seek(seconds:f64){
     if !seconds.is_finite() || !(0.0..86400.0).contains(&seconds){return;}
     if let Ok(mut guard)=SEEK_SYNC.lock(){*guard=Some(SeekSync{position:seconds,at_ms:monotonic_millis(),song_id:None});}
 }
+#[cfg(test)]
 fn note_seek_at(seconds:f64,at_ms:u64){
     if let Ok(mut guard)=SEEK_SYNC.lock(){*guard=Some(SeekSync{position:seconds,at_ms,song_id:None});}
 }
@@ -447,6 +448,7 @@ fn queue_lookup(root:&Path,id:u64)->QueueLookup{
 
 /// 在 `{"<key>":[歌曲, …]}` 中逐首解析，找到第一首 ID 匹配的歌即停止：
 /// 内存只保留一首歌（约 2KB），不再把整个队列解析成 JSON 树。
+#[cfg(test)]
 fn find_in_queue<R:Read>(reader:R,key:&str,id:u64)->Option<(NowPlaying,String)>{search_queue(reader,key,id).ok().flatten()}
 
 /// 与 `find_in_queue` 相同，但区分「完整读完、确实没有这首歌」（`Ok(None)`）

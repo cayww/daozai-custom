@@ -51,7 +51,9 @@ fn compatible(mut options:eframe::NativeOptions,backends:eframe::wgpu::Backends)
 }
 /// 岛仔同时存在的纹理只有几十张。DX12 会按绑定上限预建整张描述符表：
 /// 默认 100 万项约 61MB，65536 项约 4MB，仍有上千倍余量。
+#[cfg(test)]
 const MAX_BINDINGS:u32=65_536;
+#[cfg(test)]
 fn small_memory_blocks(descriptor:eframe::wgpu::DeviceDescriptor<'static>)->eframe::wgpu::DeviceDescriptor<'static>{
     let required_limits=eframe::wgpu::Limits{max_non_sampler_bindings:MAX_BINDINGS,..descriptor.required_limits.clone()};
     eframe::wgpu::DeviceDescriptor{memory_hints:eframe::wgpu::MemoryHints::MemoryUsage,required_limits,..descriptor}

@@ -39,7 +39,7 @@ struct Wgc {
     context: ID3D11DeviceContext,
     _item: GraphicsCaptureItem,
     pool: Direct3D11CaptureFramePool,
-    session: GraphicsCaptureSession,
+    _session: GraphicsCaptureSession,
     staging: ID3D11Texture2D,
     /// 显示器左上角在屏幕坐标系里的位置（多显示器时可能非 0）。
     mon_x: i32,
@@ -345,7 +345,7 @@ fn init(_x: i32, _y: i32, w: u32, h: u32,
 
         let stage = staging(&device, w, h)?;
         Ok(Wgc {
-            _device: device, context, _item: item, pool, session,
+            _device: device, context, _item: item, pool, _session: session,
             staging: stage, mon_x, mon_y, sw, sh, stage_w: w, stage_h: h,
         })
     }

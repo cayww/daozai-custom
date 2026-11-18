@@ -132,7 +132,7 @@ mod shift_slack_tests {
     #[test]
     fn pushing_the_island_to_the_edge_leaves_no_room_outwards(){
         let m=Bounds{left:0,top:0,right:1920,bottom:1080};
-        let (back,forth)=slack(m,Dock::Top,1.0,1.0);
+        let (_back,forth)=slack(m,Dock::Top,1.0,1.0);
         assert_eq!(forth,0,"拉到最右后不能再往右挪，否则展开面板会被裁掉");
         let (back,forth)=slack(m,Dock::Top,1.0,-1.0);
         assert_eq!(back,0,"拉到最左后不能再往左挪");

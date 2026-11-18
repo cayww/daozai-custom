@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::{path::{Path, PathBuf}, time::{Duration, Instant, SystemTime}};
 
+#[cfg(not(test))]
 const RELATIVE: &str = r"Packages\Microsoft.YourPhone_8wekyb3d8bbwe\LocalState\StartMenu\StartMenuCompanion.json";
 /// 卡片刷新很频繁，10 秒读一次足够；文件一有变化则最快 1 秒内重读，
 /// 这样手机断开后电量环能及时收起，而不是等满一个轮询周期。

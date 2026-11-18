@@ -12,6 +12,7 @@ pub(crate) enum Expression {
 }
 
 impl Expression {
+    #[cfg(test)]
     pub const ALL:[Self;12]=[Self::Wink,Self::Smug,Self::Blush,Self::Delighted,Self::SideGlance,Self::Praised,
         Self::Heart,Self::Giggle,Self::ShyPeek,Self::Scan,Self::Peek,Self::Search];
     fn times(self)->[f32;16] {

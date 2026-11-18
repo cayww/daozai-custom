@@ -178,6 +178,7 @@ pub(crate) fn native_fingerprint(source:&str)->Option<(std::time::SystemTime,u64
     None
 }
 
+#[cfg(test)]
 pub(crate) fn read_native(source:&str,track:&str,artist:&str,duration:f64)->Option<Lyrics> {
     read_native_detail(source,track,artist,duration).ok()
 }

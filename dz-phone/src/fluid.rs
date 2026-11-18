@@ -68,6 +68,7 @@ impl Default for Fluid {
 }
 
 impl Fluid {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
     }

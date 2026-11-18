@@ -149,8 +149,6 @@ impl Snapshot {
     }
 }
 
-pub fn read(title:&str,artist:&str,duration:f64)->Option<String>{read_detail(title,artist,duration).ok()}
-
 pub fn read_detail(title:&str,artist:&str,duration:f64)->Result<String,Miss>{
     read_detail_at(&path().ok_or(Miss::Missing)?,title,artist,duration)
 }
@@ -209,7 +207,7 @@ mod tests {
             let duration=track["duration"].as_f64().unwrap_or_default()/1000.0;
             let Some(raw)=select(&value,title,&names.join("/"),duration) else{continue;};
             names.reverse();assert_eq!(select(&value,title,&names.join("、"),duration),Some(raw));count+=1;
-            if count==1 {assert!(read(title,&names.join("/"),duration).is_some());}
+            if count==1 {assert!(read_detail(title,&names.join("/"),duration).is_ok());}
         }
         assert!(count>0);println!("汽水原生缓存：{count} 条歌词通过元数据及歌手顺序检查");
     }

@@ -32,6 +32,7 @@ const PROGRESS_SECONDS: f64 = 15.0;
 /// 单条消息上限（字节）：浏览器侧出了问题也不会把内存顶爆。
 const MAX_MESSAGE: usize = 1 << 20;
 /// 配置 / 状态文件的上限（字节），与主程序一致。
+#[cfg(not(test))]
 const MAX_JSON_BYTES: u64 = 1_048_576;
 
 fn main() {
@@ -338,6 +339,7 @@ impl BridgePrefs {
     }
 }
 
+#[cfg(not(test))]
 #[derive(serde::Deserialize)]
 struct SerdePrefs {
     #[serde(default)]
@@ -347,6 +349,7 @@ struct SerdePrefs {
 }
 
 /// 配置目录：与主程序 model::config_dir() 一致（DAOZAI_DATA_DIR 可覆盖）。
+#[cfg(not(test))]
 fn config_dir() -> PathBuf {
     if let Ok(root) = std::env::var("DAOZAI_DATA_DIR") {
         return PathBuf::from(root);
@@ -354,10 +357,12 @@ fn config_dir() -> PathBuf {
     env_dir("APPDATA").join("Daozai")
 }
 
+#[cfg(not(test))]
 fn env_dir(var: &str) -> PathBuf {
     std::env::var_os(var).map(PathBuf::from).unwrap_or_default()
 }
 
+#[cfg(not(test))]
 fn read_capped(path: &Path) -> Option<Vec<u8>> {
     let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() || meta.len() > MAX_JSON_BYTES { return None; }

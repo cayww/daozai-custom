@@ -73,6 +73,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(non_snake_case)]
     fn 浏览器检测至少找到Edge且路径真实存在() {
         let browsers = installed_browsers();
         let edge = browsers.iter().find(|(name, _)| *name == "Edge");
@@ -84,6 +85,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(non_snake_case)]
     fn AppPaths注册表读取返回存在的路径或无() {
         for image in ["chrome.exe", "msedge.exe"] {
             if let Some(path) = app_path(image) {

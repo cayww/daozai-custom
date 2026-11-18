@@ -1157,10 +1157,12 @@ impl NoticeRules {
 #[derive(Default)]
 pub struct PhoneApps {
     pub items:Vec<(String,String,bool)>,
+    #[cfg(not(test))]
     modified:Option<std::time::SystemTime>,
 }
 impl PhoneApps {
     fn path()->PathBuf{config_dir().join("phone-apps.json")}
+    #[cfg(not(test))]
     fn read_items(path:&Path)->Option<Vec<(String,String,bool)>>{
         let raw=read_capped(path,MAX_JSON_BYTES)?;
         let json=serde_json::from_slice::<serde_json::Value>(&raw).ok()?;
@@ -1227,6 +1229,7 @@ impl Default for BridgePrefs {
 }
 
 impl BridgePrefs {
+    #[cfg(not(test))]
     fn path() -> PathBuf { config_dir().join("bridge.json") }
 
     pub fn load() -> Self {
@@ -1286,6 +1289,7 @@ impl Default for MaaPrefs {
 }
 
 impl MaaPrefs {
+    #[cfg(not(test))]
     fn path() -> PathBuf { config_dir().join("maa.json") }
 
     pub fn load() -> Self {

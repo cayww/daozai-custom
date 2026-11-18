@@ -763,6 +763,7 @@ fn clicking_the_active_clipboard_tab_no_longer_opens_search() {
     assert!(!h.app.clip_search_open,"再点已选中的分栏不该展开搜索框");
 }
 
+#[test]
 fn editing_local_calendar_clears_outdated_reminders() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for reschedule in [false,true] {
@@ -3431,7 +3432,7 @@ fn mail_row_opens_summary_and_back_returns() {
 fn empty_todo_draft_can_be_cancelled_by_clicking_elsewhere(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for text in ["","   "]{
-        let mut h=H::new();let mut r=feature_raster();h.app.todos.items=vec![crate::model::TodoItem{text:"保留任务".into(),due:None,done_on:None,reminded:false,..Default::default()}];h.app.todos.save();
+        let mut h=H::new();h.app.todos.items=vec![crate::model::TodoItem{text:"保留任务".into(),due:None,done_on:None,reminded:false,..Default::default()}];h.app.todos.save();
         h.app.show_page(4);h.hover(H::local(300.0,60.0),1.0);h.click(H::local(70.0,109.0));
         assert!(h.app.adding,"点击添加后应保留空白输入框");
         if !text.is_empty(){h.frame(vec![egui::Event::Text(text.into())]);}
@@ -7974,7 +7975,7 @@ fn side_dock_file_drag_opens_the_shelf_and_drop_saves_it(){
         let mut h=H::new();h.app.settings.dock=dock;
         let edge=if dock==crate::model::Dock::Left{10.0}else{w-10.0};
         let at=Pos2::new(edge,hgt/2.0);
-        let mut frame=|h:&mut H,hovered:bool,dropped:bool|{
+        let frame=|h:&mut H,hovered:bool,dropped:bool|{
             h.t+=1.0/60.0;
             let env=Env{t:h.t,clock:"09:41:00".into(),cursor:Some(at),..Default::default()};
             let mut raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(w,hgt))),time:Some(h.t),focused:true,..Default::default()};
@@ -8531,7 +8532,7 @@ fn weather_icon_atlas_preview(){
         for frame in 0..4 {
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(924.0,700.0))),time:Some(frame as f64),
                 viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
-            let mut output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
+            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
                 let c=Card::new(ui,Pos2::ZERO,ui.max_rect());c.fill(0.0,0.0,924.0,700.0,0.0,egui::Color32::from_rgb(14,15,19));
                 c.text(20.0,38.0,"常驻天气图标",22.0,W::Bold,theme::WHITE,Align::Left);
                 c.text(20.0,61.0,"11类图标 · 顶部横排与侧边竖排 · 当前实际绘制样式",11.5,W::Regular,theme::GRAY,Align::Left);
