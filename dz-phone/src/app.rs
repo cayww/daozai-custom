@@ -595,6 +595,10 @@ pub struct FrameOut {
     /// 鼠标命中区（相对 `win` 左上角），区域外点击穿透到下层窗口。
     pub hit: Rect,
     /// 切到较矮页面时旧页边缘临时保留的续滚范围，不参与绘制/点击命中。
+    /// 极简细条只感应悬停，点击交给下层窗口（命中区清零由 main.rs 消费）。
+    pub click_through: bool,
+    /// 极简收起态细条的精确矩形，供原生层在深休眠下按细条范围唤醒（不用覆盖整窗的 GetWindowRgnBox）。
+    pub strip_rect: Option<Rect>,
     pub page_scroll_area: Option<Rect>,
     pub notice_hit: Option<Rect>,
     /// 文件拖入感应区；独立于普通鼠标命中区。
@@ -2681,7 +2685,10 @@ impl App {
         let notice_shape=notice_rect.map(|r|Rect::from_min_max(Pos2::new(r.left()-36.0,r.top()),r.max));
         let body=messenger_rect.filter(|_|outside_badge.is_none()).map_or(panel,|badge|panel.union(badge));
         let body=notice_shape.map_or(body,|notice|body.union(notice));
-        let minimal_pill = self.effective_minimal() && !self.island_lyrics_active() && self.notice.is_none() && self.t>=self.notification_bell_until && pc < 0.02;
+        // 细条点穿：去掉动画门槛 pc，收起过程早期就进入「点击穿透」；
+        // minimal_pill 仍保留 pc 门槛，视觉表现完全不变。
+        let minimal_strip = self.effective_minimal() && !self.island_lyrics_active() && self.notice.is_none() && self.t>=self.notification_bell_until;
+        let minimal_pill = minimal_strip && pc < 0.02;
         let flare = if minimal_pill || pill { 0.0 } else { lerp(5.0, FLARE, pc) };
         let k = (w / PW).clamp(0.3, 1.1);
         let thickness = if side { crate::side_dock::SIDE_BAR_W } else { BAR_H };
@@ -3004,6 +3011,9 @@ impl App {
             region: rel(floating_toast.into_iter().chain(self.shelf_menu_rect.map(|r|r.union(r + ctx.style().visuals.popup_shadow.margin()).expand(1.0 / ctx.pixels_per_point()))).fold(region,Rect::union).intersect(ui.max_rect())),
             glass: glass_region,
             hit: rel(next_hit),
+            // 极简收起且无通知时点击穿透；strip_rect 就是细条本身的精确矩形。
+            click_through: minimal_strip && !self.open && self.position_drag.is_none(),
+            strip_rect: (minimal_strip && !self.open && self.position_drag.is_none()).then(|| rel(next_hit)),
             page_scroll_area:self.page_scroll_area.map(rel),
             notice_hit:notice_shape.into_iter().chain(notice_details).chain(messenger_rect).chain(self.shelf_menu_rect).reduce(|a,b|a.union(b)).map(rel),
             file_drop_zone:self.settings.visible_pages[3].then(||rel(if side {self.island_rect(win,PW,self.expanded_height())} else {Rect::from_min_size(Pos2::new(cx-PW/2.0,top),Vec2::new(PW,96.0))})),

@@ -11,7 +11,7 @@
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use crate::poll_clock::PollClock;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -79,7 +79,7 @@ impl DragCapture {
 /// 没有播放音乐，例如侧边停靠）一秒才画一帧，拖到岛上往往来不及扩大接收区域。
 /// 这里用一个几乎不占资源的小线程：每 80 ms 看一次鼠标键，只有按住且光标在岛的画布内时
 /// 才请求重绘，让感应区及时生效；平时不触发任何绘制。
-fn watch_drag(hwnd:HWND,ctx:eframe::egui::Context){
+fn watch_drag(hwnd:HWND,ctx:eframe::egui::Context,passive:Arc<AtomicBool>,strip:Arc<Mutex<Option<(i32,i32,i32,i32)>>>){
     let raw=hwnd.0 as isize;
     let mut was_down=false;
     let _=std::thread::Builder::new().name("daozai-drag-watch".into()).spawn(move||loop{
@@ -91,10 +91,27 @@ fn watch_drag(hwnd:HWND,ctx:eframe::egui::Context){
             // 松开后补一帧，让拖放状态及时复位；否则静止时一秒才画一帧，连续点击会沿用上次的按下位置。
             if was_down && !down {ctx.request_repaint();}
             was_down=down;
-            if !down {continue;}
-            let mut cursor=POINT::default();let mut rect=RECT::default();
-            if GetCursorPos(&mut cursor).is_err() || GetWindowRect(hwnd,&mut rect).is_err(){continue;}
-            if cursor.x>=rect.left && cursor.x<rect.right && cursor.y>=rect.top && cursor.y<rect.bottom {ctx.request_repaint();}
+            // 点穿态：光标不产生 WM_MOUSEMOVE，需主动轮询唤醒；范围严格限制在细条矩形，
+            // 不用 GetWindowRgnBox（本地 DComp 下它覆盖整块画布，会持续无谓重绘）。
+            let is_passive=passive.load(Ordering::Relaxed);
+            let inside_strip=if is_passive {
+                let strip=strip.lock().unwrap_or_else(|e|e.into_inner());
+                let mut cursor=POINT::default();let mut window=RECT::default();
+                match (&*strip,GetCursorPos(&mut cursor),GetWindowRect(hwnd,&mut window)) {
+                    (Some((l,t,r,b)),Ok(()),Ok(())) => {
+                        let x=cursor.x-window.left;let y=cursor.y-window.top;
+                        x>=*l && x<*r && y>=*t && y<*b
+                    },
+                    _=>false,
+                }
+            } else {false};
+            if !down && !inside_strip {continue;}
+            if down {
+                let mut cursor=POINT::default();let mut rect=RECT::default();
+                if GetCursorPos(&mut cursor).is_err() || GetWindowRect(hwnd,&mut rect).is_err(){continue;}
+                if cursor.x<rect.left || cursor.x>=rect.right || cursor.y<rect.top || cursor.y>=rect.bottom {continue;}
+            }
+            ctx.request_repaint();
         }
     });
 }
@@ -392,6 +409,10 @@ pub struct Window {
     opaque_surface: bool,
     /// 读回画面没有透明通道时，用来补算边缘 alpha 的岛体轮廓（物理像素）。
     outline: ShapeAlpha,
+    /// 极简细条点穿态（普通 bool 标志，不写任何 WS_EX_TRANSPARENT/LAYERED 样式位）。
+    passive: Arc<AtomicBool>,
+    /// 点穿态细条的精确物理矩形，供 watch_drag 在该范围内唤醒悬停。
+    strip: Arc<Mutex<Option<(i32,i32,i32,i32)>>>,
 }
 
 /// 按岛体轮廓补出来的 alpha：轮廓每帧随 `update` 更新，蒙版只在轮廓或画面尺寸变化时重算。
@@ -464,8 +485,10 @@ impl Window {
         // 本机验证用：DAOZAI_OUTLINE_TEST=alpha 按 AMD 等路径处理；=opaque 再假装读回的画面没有透明通道。
         let opaque_surface=surface_needs_outline_clip(backend,&vendor,&renderer) || outline_test().is_some();
         if opaque_surface{glass_diagnostic(&format!("渲染兼容：{vendor} {renderer} {backend:?}，不直接信任系统透明合成，首帧前先按轮廓裁剪"));}
-        watch_drag(hwnd,cc.egui_ctx.clone());
-        Some(Self { hwnd, layering:Layering::Pending, region: (i32::MIN, 0, 0, 0), expanded: false, hook, browser_state:(None,PollClock::default()), drag_capture:DragCapture::default(), glass:None, backdrop:None, blur:false, blur_unavailable:false, opaque_surface, outline:ShapeAlpha::default() })
+        let passive=Arc::new(AtomicBool::new(false));
+        let strip=Arc::new(Mutex::new(None));
+        watch_drag(hwnd,cc.egui_ctx.clone(),passive.clone(),strip.clone());
+        Some(Self { hwnd, layering:Layering::Pending, region: (i32::MIN, 0, 0, 0), expanded: false, hook, browser_state:(None,PollClock::default()), drag_capture:DragCapture::default(), glass:None, backdrop:None, blur:false, blur_unavailable:false, opaque_surface, outline:ShapeAlpha::default(), passive, strip })
     }
 
     /// 使用目标屏幕的物理坐标定位，并在缩放、岛体大小、水平位置或屏幕连接变化后重新校正。
@@ -554,6 +577,14 @@ impl Window {
         Some(eframe::egui::pos2(r.left as f32/scale,r.top as f32/scale))
     }
 
+    /// 极简细条点穿且鼠标键按下时返回 true，main.rs 据此过滤光标避免岛抢回悬停。
+    /// 读普通 passive 标志，不依赖 WS_EX_TRANSPARENT 样式位。
+    pub fn holding_through_strip(&self)->bool {
+        use windows::Win32::UI::Input::KeyboardAndMouse::VK_MBUTTON;
+        self.passive.load(Ordering::Relaxed) && unsafe {
+            [VK_LBUTTON,VK_RBUTTON,VK_MBUTTON].iter().any(|key|GetAsyncKeyState(key.0 as i32)<0)
+        }
+    }
     pub fn take_foreground_change(&mut self)->bool {
         let changed=FG_CHANGED.swap(false,Ordering::Relaxed);
         if changed {self.browser_state.1=PollClock::default();}
@@ -573,6 +604,7 @@ impl Window {
         region: (f32, f32, f32, f32),
         hit_rect: (f32, f32, f32, f32),
         notice_hit: Option<(f32,f32,f32,f32)>,
+        strip_rect: Option<(f32,f32,f32,f32)>,
         file_drop_zone: Option<(f32,f32,f32,f32)>,
         glass: Option<&[crate::app::GlassShape]>,
         ppp: f32,
@@ -598,6 +630,11 @@ impl Window {
         let mut hits=vec![h];
         if let Some((x,y,w,h))=notice_hit {hits.push((px(x),px(y),px(x+w),px(y+h)));}
         *hit().lock().unwrap_or_else(|e| e.into_inner()) = hits;
+        // 点穿态：有可见区域、命中区为空、无通知命中、非拖放捕获。
+        // 只写普通标志，绝不翻转 WS_EX_TRANSPARENT/WS_EX_LAYERED（那是 DComp 渲染核心）。
+        let is_passive=(r.2>r.0 && r.3>r.1) && h.2==h.0 && notice_hit.is_none() && !capture;
+        self.passive.store(is_passive,Ordering::Relaxed);
+        *self.strip.lock().unwrap_or_else(|e|e.into_inner())=strip_rect.map(|(x,y,w,h)|(px(x),px(y),px(x+w),px(y+h)));
         // 毛玻璃：合成引擎的模糊块贴合岛体轮廓。兼容后端（D3D12/Vulkan/AMD）即使叠了分层显示窗口，
         // 岛仔窗口自身也必须按轮廓裁剪：D3D12 翻转模型交换链不遵守 owner 的 1/255 alpha，
         // 矩形窗口区域会把透明画布的黑底露成四角黑块（用户实测：关掉 D3D12 立即消失）。
@@ -732,9 +769,9 @@ mod tests {
             let hwnd=CreateWindowExW(WS_EX_TOOLWINDOW,windows::core::w!("STATIC"),windows::core::w!(""),WS_POPUP,-10000,-10000,px(400.0),px(200.0),None,None,None,None).unwrap();
             let saved=hit().lock().unwrap_or_else(|e|e.into_inner()).clone();
             {
-                let mut native=Window{hwnd,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable,opaque_surface:surface_needs_outline_clip(backend,vendor,renderer),outline:ShapeAlpha::default()};
+                let mut native=Window{hwnd,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable,opaque_surface:surface_needs_outline_clip(backend,vendor,renderer),outline:ShapeAlpha::default(),passive:Arc::new(AtomicBool::new(false)),strip:Arc::new(Mutex::new(None))};
                 let shapes=[crate::app::GlassShape::Round(eframe::egui::Rect::from_min_max(eframe::egui::pos2(80.0,60.0),eframe::egui::pos2(320.0,160.0)),25.0)];
-                native.update((0.0,0.0,400.0,200.0),(80.0,60.0,240.0,100.0),None,None,Some(&shapes),ppp,false,false);
+                native.update((0.0,0.0,400.0,200.0),(80.0,60.0,240.0,100.0),None,None,None,Some(&shapes),ppp,false,false);
                 let region=CreateRectRgn(0,0,0,0);
                 GetWindowRgn(hwnd,region);
                 assert!(PtInRegion(region,px(200.0),px(100.0)).as_bool());
@@ -742,7 +779,7 @@ mod tests {
                 assert!(!PtInRegion(region,px(81.0),px(61.0)).as_bool(),"圆角外侧必须透出桌面");
                 assert!(!native.blur);
                 assert!(native.backdrop.is_none(),"轮廓兼容模式不能再启用独立模糊底板");
-                native.update((0.0,0.0,0.0,0.0),(0.0,0.0,0.0,0.0),None,None,None,ppp,false,false);
+                native.update((0.0,0.0,0.0,0.0),(0.0,0.0,0.0,0.0),None,None,None,None,ppp,false,false);
                 GetWindowRgn(hwnd,region);
                 assert!(!PtInRegion(region,px(200.0),px(100.0)).as_bool(),"隐藏时不能留下上一帧轮廓");
                 let _=DeleteObject(region);
@@ -763,11 +800,11 @@ mod tests {
             let hwnd=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,windows::core::w!("BUTTON"),windows::core::w!(""),WS_POPUP|WS_VISIBLE,-10000,-10000,w as i32,h as i32,None,None,None,None).unwrap();
             let saved=hit().lock().unwrap_or_else(|e|e.into_inner()).clone();
             {
-                let mut native=Window{hwnd,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable:false,opaque_surface:true,outline:ShapeAlpha::default()};
+                let mut native=Window{hwnd,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable:false,opaque_surface:true,outline:ShapeAlpha::default(),passive:Arc::new(AtomicBool::new(false)),strip:Arc::new(Mutex::new(None))};
                 let island=crate::shape::outline(Rect::from_min_max(pos2(80.0,0.0),pos2(320.0,60.0)),12.0,10.0,20.0);
                 let shapes=[GlassShape::Outline(island)];
                 let opaque=[0u8,0,0,255].repeat(w*h);
-                native.update((0.0,0.0,w as f32,h as f32),(80.0,0.0,240.0,60.0),None,None,Some(&shapes),1.0,false,false);
+                native.update((0.0,0.0,w as f32,h as f32),(80.0,0.0,240.0,60.0),None,None,None,Some(&shapes),1.0,false,false);
                 assert!(!native.wants_frames(),"D3D12 下必须走合并前的 owner 轮廓裁剪，不能启用分层读回");
                 assert!(!native.present_frame([w,h],&opaque),"分层读回已停用");
                 assert!(matches!(native.layering,Layering::Pending));
@@ -861,7 +898,7 @@ mod tests {
             let create=||TestWindow(CreateWindowExW(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW|WS_EX_TOPMOST,windows::core::w!("STATIC"),windows::core::w!(""),WS_POPUP|WS_VISIBLE,-10000,-10000,416,140,None,None,None,None).unwrap());
             for layered in [false,true] {
                 let island=create();let cover=create();
-                let mut native=Window{hwnd:island.0,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable:false,opaque_surface:false,outline:ShapeAlpha::default()};
+                let mut native=Window{hwnd:island.0,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable:false,opaque_surface:false,outline:ShapeAlpha::default(),passive:Arc::new(AtomicBool::new(false)),strip:Arc::new(Mutex::new(None))};
                 if layered {
                     let mut display=crate::layered::Layered::new().unwrap();
                     display.present(island.0,[416,140],&vec![0;416*140*4]).unwrap();
@@ -910,8 +947,8 @@ mod tests {
             assert!(above(cover.0,island.0),"先复现其他窗口盖住岛体");
             let foreground=GetForegroundWindow();
             let saved=hit().lock().unwrap_or_else(|e|e.into_inner()).clone();
-            let mut native=Window{hwnd:island.0,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable:false,opaque_surface:false,outline:ShapeAlpha::default()};
-            let update=|native:&mut Window,expanded|native.update((0.0,0.0,416.0,140.0),(0.0,0.0,416.0,140.0),None,None,None,1.0,false,expanded);
+            let mut native=Window{hwnd:island.0,layering:Layering::Pending,region:(0,0,0,0),expanded:false,hook:HWINEVENTHOOK::default(),browser_state:(None,PollClock::now()),drag_capture:DragCapture::default(),glass:None,backdrop:None,blur:false,blur_unavailable:false,opaque_surface:false,outline:ShapeAlpha::default(),passive:Arc::new(AtomicBool::new(false)),strip:Arc::new(Mutex::new(None))};
+            let update=|native:&mut Window,expanded|native.update((0.0,0.0,416.0,140.0),(0.0,0.0,416.0,140.0),None,None,None,None,1.0,false,expanded);
             update(&mut native,true);
             assert!(above(island.0,cover.0),"展开时必须重新抬高实际窗口层级，不能只检查置顶标记");
             assert_eq!(GetForegroundWindow(),foreground,"悬停展开不能抢走当前应用的输入焦点");
