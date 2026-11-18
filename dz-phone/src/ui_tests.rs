@@ -9215,19 +9215,30 @@ fn liquid_tuning_preview_form_switches_collapsed_and_expanded(){
 }
 
 #[test]
-fn liquid_config_button_lives_in_appearance_tab(){
+fn liquid_config_button_lives_in_appearance_tab_and_only_for_liquid_skin(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let mut h=H::new();
     h.app.settings_open=true;
     h.app.settings.render_compat=true;
-    // 外观页：应有「配置液态玻璃」入口与「预览形态」开关（弹窗打开时）。
+    // 外观页 + 液态皮肤：皮肤与形状之间应有「配置液态玻璃」入口，弹窗里有「预览形态」开关。
+    h.app.settings.skin=crate::model::Skin::Liquid;
     h.app.settings_tab=crate::extras::SETTINGS_TAB_APPEARANCE;
     h.app.liquid_cfg_open=true;
     let shapes=render_settings(&mut h);
-    assert!(has_text(&shapes,"配置液态玻璃"),"外观页应有配置液态玻璃按钮");
+    assert!(has_text(&shapes,"配置液态玻璃"),"液态皮肤的外观页应有配置液态玻璃按钮");
     assert!(has_text(&shapes,"预览形态"),"配置弹窗应有预览形态开关");
-    // 自定义与集成页：不再出现配置按钮。
+    // 通用交互块标题是「岛体交互」，不再叫「液态玻璃与交互」。
+    assert!(has_text(&shapes,"岛体交互"),"应有岛体交互块");
+    assert!(!has_text(&shapes,"液态玻璃与交互"),"通用交互块不应再叫液态玻璃与交互");
+
+    // 切到非液态皮肤：配置按钮必须消失（is_glass() 只含毛玻璃浅/深，不含 Liquid，别用它判断）。
     h.app.liquid_cfg_open=false;
+    h.app.settings.skin=crate::model::Skin::Classic;
+    let shapes=render_settings(&mut h);
+    assert!(!has_text(&shapes,"配置液态玻璃"),"非液态皮肤不该显示配置按钮");
+
+    // 自定义与集成页：也不再出现配置按钮。
+    h.app.settings.skin=crate::model::Skin::Liquid;
     h.app.settings_tab=crate::extras::SETTINGS_TAB_CUSTOM;
     let shapes=render_settings(&mut h);
     assert!(!has_text(&shapes,"配置液态玻璃"),"自定义与集成页不应再有配置按钮");

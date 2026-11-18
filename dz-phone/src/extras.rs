@@ -2593,6 +2593,14 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                             let skins:Vec<(Skin,&str)>=Skin::ALL.iter().map(|s|(*s,s.label())).collect();
                             settings_control_row_right(ui,"皮肤",|ui|{settings_segmented(ui,&mut self.settings.skin,&skins,64.0);});
                             settings_hint(ui,self.settings.skin.description());
+                            // 「配置液态玻璃」入口夹在皮肤与形状之间，且只在当前就是液态玻璃皮肤时出现。
+                            // 注意 is_glass() 只含毛玻璃浅/深，不含 Liquid，这里必须用 Skin::Liquid 判断。
+                            if self.settings.skin==Skin::Liquid {
+                                ui.horizontal(|ui|{
+                                    if ui.button("配置液态玻璃").clicked(){self.liquid_cfg_open=!self.liquid_cfg_open;}
+                                    settings_hint(ui,"折射、色散、投影、休眠等液态玻璃专属参数，弹窗里调");
+                                });
+                            }
                             if self.settings.skin.is_glass() {
                                 let mut blur=self.settings.glass_blur;
                                 setting_row(ui,"背景模糊","需开启系统“透明效果”；关闭后改为烟熏半透明",&mut blur);
@@ -2626,15 +2634,11 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                                 setting_row(ui,"OLED 像素偏移","防止 OLED 屏幕烧屏：收起静止时让岛体缓慢移动几个像素，不改动你保存的位置",&mut self.settings.oled_shift);
                             });
                         });
-                        // ===== 液态玻璃与交互 =====
-                        // 从「自定义与集成」搬来：整块是上游也有的外观/交互内容，便于随液态玻璃并入上游。
-                        settings_label(ui,"液态玻璃与交互");
+                        // ===== 岛体交互（所有皮肤通用）=====
+                        // 从「自定义与集成」搬来：展开动效/悬停延时对所有皮肤生效，与液态玻璃无关。
+                        // 「配置液态玻璃」按钮已移到上面的「岛体外观」卡（皮肤与形状之间）。
+                        settings_label(ui,"岛体交互");
                         settings_card(ui,|ui|{
-                            ui.horizontal(|ui|{
-                                if ui.button("配置液态玻璃").clicked(){self.liquid_cfg_open=!self.liquid_cfg_open;}
-                                settings_hint(ui,"折射、色散、投影、休眠等液态玻璃专属参数，弹窗里调");
-                            });
-                            ui.separator();
                             let anims:Vec<(crate::model::OpenAnim,&str)>=crate::model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
                             settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
                             settings_hint(ui,self.settings.open_anim.description());
