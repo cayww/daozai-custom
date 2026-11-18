@@ -1,6 +1,6 @@
 //! 设置、通知队列与岛仔表情。
 use crate::settings_theme::color as settings_color;
-use crate::app::{App, Cmd, Env, Phase, HUD_TRACK_W, HUD_TRACK_X, HUD_W, PAGE_NAMES};
+use crate::app::{App, Cmd, Env, NotificationSound, Phase, HUD_TRACK_W, HUD_TRACK_X, HUD_W, PAGE_NAMES};
 use crate::paint::{Card, H};
 use crate::theme::{self, size, W};
 use eframe::egui::{self, Color32, Rect};
@@ -310,8 +310,10 @@ impl App {
         if self.muted() && a.status.is_none() && crate::otp::extract("",&a.body,&[]).is_none() { return; }
         if self.settings.notifications {
             if system && a.source==AlertSource::Internal && self.settings.system_notify {
-                self.pending
-                    .push(Cmd::Notify(a.title.clone(), a.body.clone()));
+                let sound = if !self.settings.sound { NotificationSound::Silent }
+                    else if a.health().is_some() { NotificationSound::Health }
+                    else { NotificationSound::System };
+                self.pending.push(Cmd::Notify(a.title.clone(), a.body.clone(), sound));
             }
             let same_event=|old:&Alert| match (&a.meeting,&old.meeting) {
                 (Some((next,_)),Some((previous,_)))=>crate::calendar::dedupe_key(next)==crate::calendar::dedupe_key(previous),
@@ -855,7 +857,7 @@ let phone=crate::system::phone_channel(&id);
         if self.notice.as_ref().is_some_and(|a|!allowed(a)){self.notice=None;}
         if self.hud_notice.as_ref().is_some_and(|a|!allowed(a)){self.hud_notice=None;}
         if self.fullscreen_hidden {
-            self.pending.retain(|cmd|!matches!(cmd,Cmd::Notify(title,_)if HealthReminder::ALL.into_iter().any(|kind|title==kind.title())));
+            self.pending.retain(|cmd|!matches!(cmd,Cmd::Notify(title,..)if HealthReminder::ALL.into_iter().any(|kind|title==kind.title())));
         }
         if !self.settings.notification_preview {
             for a in self.alerts.iter_mut().chain(self.notice.iter_mut()).chain(self.hud_notice.iter_mut()) {
@@ -1769,7 +1771,10 @@ impl App {
             }
             _=>{
                 if setting_button(c,43.0,56.0,152.0,if self.settings.notifications{"提醒 · 开"}else{"提醒 · 关"},self.settings.notifications,"set-notice"){self.settings.notifications=!self.settings.notifications;}
-                if setting_button(c,212.0,56.0,153.0,if self.settings.sound{"声音 · 开"}else{"声音 · 关"},self.settings.sound,"set-sound"){self.settings.sound=!self.settings.sound;}
+                if setting_button(c,212.0,56.0,153.0,if self.settings.system_notify && self.settings.sound{"声音 · 开"}else{"声音 · 关"},self.settings.system_notify && self.settings.sound,"set-sound"){
+                    self.settings.sound=!(self.settings.system_notify && self.settings.sound);
+                    if self.settings.sound {self.settings.system_notify=true;}
+                }
                 if setting_button(c,43.0,84.0,152.0,if self.settings.read_notifications{"断开系统通知"}else{"连接系统通知"},self.settings.read_notifications,"set-listener"){self.pending.push(if self.settings.read_notifications{Cmd::DisconnectNotifications}else{Cmd::RequestNotifications});}
                 let status=c.fit(&self.listener_status,10.5,W::Regular,170.0);c.text(210.0,97.0,&status,10.5,W::Regular,theme::GRAY,H::Left);
             }
@@ -2771,14 +2776,14 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                         settings_label(ui,"提醒");
                         settings_card(ui,|ui|{
                             setting_row(ui,"提醒总开关","关闭后饮水、专注、待办及聊天软件提醒都不显示",&mut self.settings.notifications);
-                            // 提醒方式：系统通知与提示音合成三选一；提示音只作用于系统通知，岛上提醒本身不发声。
+                            // 提醒方式由系统通知和提示音两个设置共同决定。
                             ui.separator();
                             ui.add_enabled_ui(self.settings.notifications,|ui|{
                                 let mut mode:u8=if !self.settings.system_notify{0}else if self.settings.sound{2}else{1};
                                 settings_control_row_right(ui,"提醒方式",|ui|{settings_segmented(ui,&mut mode,&[(0,"仅岛上"),(1,"加系统通知"),(2,"系统通知 + 声音")],96.0);});
                                 settings_hint(ui,["只在岛上提醒，不发送 Windows 系统通知","同时在 Windows 通知中心留下记录，不响铃","同时发送 Windows 系统通知并播放提示音"][mode as usize]);
                                 self.settings.system_notify=mode>0;
-                                if mode>0 {self.settings.sound=mode==2;}
+                                self.settings.sound=mode==2;
                             });
                         });
                         settings_label(ui,"系统提示");

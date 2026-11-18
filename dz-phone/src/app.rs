@@ -329,6 +329,9 @@ pub(crate) const UNREAD_SLOT: f32 = 36.0;
 /// 收起时两个来源图标的间距：并排各占一格，不叠放。
 fn unread_step(_horizontal: bool) -> f32 { 22.0 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotificationSound { Silent, System, Health }
+
 /// 交给外壳执行的副作用。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cmd {
@@ -340,7 +343,7 @@ pub enum Cmd {
     Focus,
     Reveal(PathBuf),
     Copy(String),
-    Notify(String, String),
+    Notify(String, String, NotificationSound),
     RequestNotifications,
     RequestQqNotifications,
     DisconnectNotifications,
