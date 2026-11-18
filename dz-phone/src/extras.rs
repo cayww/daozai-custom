@@ -1866,11 +1866,11 @@ pub(crate) fn settings_control_row_right(ui:&mut egui::Ui,title:&str,controls:im
 }
 
 /// 设置项下方的说明文字。
-    /// 液态玻璃参数弹窗：参数从岛体外观卡里独立出来，靠「配置液态玻璃」按钮唤出。
-    /// 调参时岛仔保持展开的逻辑在 app 的状态机里（设置页开着 + 常规页 + 玻璃皮肤），
-    /// 与参数 UI 放在哪个容器无关；离开常规页或关掉设置窗就自动收起弹窗。
+    /// 液态玻璃参数弹窗：入口按钮在「外观 → 液态玻璃与交互」卡里，靠「配置液态玻璃」唤出。
+    /// 调参时的取景形态（展开/收起）由弹窗里的「预览形态」开关决定，逻辑在 app 的状态机里
+    /// （设置页开着 + 外观页 + 玻璃皮肤 + 弹窗开着）；离开外观页或关掉设置窗就自动收起弹窗。
 fn liquid_glass_config_window(app:&mut crate::app::App,ctx:&egui::Context){
-        if !(app.settings_open && app.settings_tab==0 && app.settings.render_compat) {app.liquid_cfg_open=false;}
+        if !(app.settings_open && app.settings_tab==SETTINGS_TAB_APPEARANCE && app.settings.render_compat) {app.liquid_cfg_open=false;}
         let mut open=app.liquid_cfg_open;
         if !open {return;}
         egui::Window::new(egui::RichText::new("液态玻璃配置").size(14.0).strong())
@@ -1879,7 +1879,10 @@ fn liquid_glass_config_window(app:&mut crate::app::App,ctx:&egui::Context){
             .show(ctx,|ui|{
                 egui::ScrollArea::vertical().max_height(430.0).show(ui,|ui|{
                     ui.set_min_width(ui.available_width());
-                    settings_hint(ui,"调参数时岛仔会保持展开");
+                    settings_hint(ui,"调参数时岛仔会保持下面选中的形态，方便直接看效果");
+                    let forms:[(bool,&str);2]=[(false,"展开态"),(true,"收起态")];
+                    settings_control_row_right(ui,"预览形态",|ui|{settings_segmented(ui,&mut app.liquid_preview_collapsed,&forms,62.0);});
+                    settings_hint(ui,"展开态看展开后的控件玻璃；收起态看胶囊常驻条的玻璃");
                                 ui.separator();
                                 let before=app.settings.liquid_prefer_dgpu;
                                 setting_row(ui,"优先独立显卡","优先使用独显渲染玻璃，切换后重启岛仔生效",&mut app.settings.liquid_prefer_dgpu);
@@ -2623,6 +2626,22 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                                 setting_row(ui,"OLED 像素偏移","防止 OLED 屏幕烧屏：收起静止时让岛体缓慢移动几个像素，不改动你保存的位置",&mut self.settings.oled_shift);
                             });
                         });
+                        // ===== 液态玻璃与交互 =====
+                        // 从「自定义与集成」搬来：整块是上游也有的外观/交互内容，便于随液态玻璃并入上游。
+                        settings_label(ui,"液态玻璃与交互");
+                        settings_card(ui,|ui|{
+                            ui.horizontal(|ui|{
+                                if ui.button("配置液态玻璃").clicked(){self.liquid_cfg_open=!self.liquid_cfg_open;}
+                                settings_hint(ui,"折射、色散、投影、休眠等液态玻璃专属参数，弹窗里调");
+                            });
+                            ui.separator();
+                            let anims:Vec<(crate::model::OpenAnim,&str)>=crate::model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
+                            settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
+                            settings_hint(ui,self.settings.open_anim.description());
+                            ui.separator();
+                            setting_number(ui,"悬停触发延时",&mut self.settings.hover_delay_ms,0,500," ms",10.0);
+                            settings_hint(ui,"悬停多久后展开；80–120 ms 可避开鼠标划过");
+                        });
                     }
                     SETTINGS_TAB_POSITION=>{
                         settings_card(ui,|ui|{
@@ -3202,23 +3221,8 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                     }
 
                     SETTINGS_TAB_CUSTOM=>{
-                        // ===== 本地定制：液态玻璃配置 / 展开动画 / 悬停延时 =====
-                        settings_label(ui,"液态玻璃与交互");
-                        settings_card(ui,|ui|{
-                            ui.horizontal(|ui|{
-                                if ui.button("配置液态玻璃").clicked(){self.liquid_cfg_open=!self.liquid_cfg_open;}
-                                settings_hint(ui,"折射、色散、投影、休眠等液态玻璃专属参数，弹窗里调");
-                            });
-                            ui.separator();
-                            let anims:Vec<(crate::model::OpenAnim,&str)>=crate::model::OpenAnim::ALL.iter().map(|a|(*a,a.label())).collect();
-                            settings_control_row_right(ui,"展开动效",|ui|{settings_segmented(ui,&mut self.settings.open_anim,&anims,52.0);});
-                            settings_hint(ui,self.settings.open_anim.description());
-                            ui.separator();
-                            setting_number(ui,"悬停触发延时",&mut self.settings.hover_delay_ms,0,500," ms",10.0);
-                            settings_hint(ui,"悬停多久后展开；80–120 ms 可避开鼠标划过");
-                        });
-                        liquid_glass_config_window(self,ctx);
-                        // ===== 本地定制：手机连接 =====
+                        // ===== 本地定制：手机连接 / 浏览器下载 / MAA =====
+                        // 液态玻璃与交互已移到「外观」页（SETTINGS_TAB_APPEARANCE），便于整块并入上游。
                         settings_label(ui,"连接状态");
                         settings_card(ui,|ui|{
                             // 连接状态：直接读手机连接卡片，不经电量开关。
@@ -3422,6 +3426,9 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                     }
                 });
             });
+            // 液态玻璃参数弹窗挂在视口顶层（而非某个 tab 的滚动区里），这样离开「外观」页时
+            // 守卫能可靠地把 liquid_cfg_open 清掉、弹窗随之收起。
+            liquid_glass_config_window(self,ctx);
             self.avoidance.dialog(ctx,&mut self.settings);
             if before!=format!("{:?}",self.settings){self.settings.save();}
             ctx.set_style(original_style);

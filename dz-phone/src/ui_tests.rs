@@ -9146,11 +9146,12 @@ fn video_page_offers_open_tab_and_gap_keeps_media(){
 #[test]
 fn liquid_tuning_keeps_island_expanded_while_settings_page_is_open(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let appearance=crate::extras::SETTINGS_TAB_APPEARANCE;
     let mut h=H::new();
     h.app.settings.skin=crate::model::Skin::Liquid;
     h.app.settings_open=true;
-    h.app.settings_tab=0;
-    // 参数已搬进「液态玻璃配置」弹窗：只有弹窗开着才算调参。
+    h.app.settings_tab=appearance;
+    // 参数已搬进「液态玻璃配置」弹窗（入口在外观页）：只有弹窗开着才算调参。
     // 鼠标完全不在岛上，普通状态机会保持收起，打开弹窗时必须强制展开。
     h.app.liquid_cfg_open=true;
     for _ in 0..40 {h.frame(vec![]);}
@@ -9158,7 +9159,7 @@ fn liquid_tuning_keeps_island_expanded_while_settings_page_is_open(){
     assert!(h.app.progress()>0.98,"展开要走到位，不然看不全折射");
 
     // 关掉配置弹窗 → 恢复普通悬停（鼠标不在岛上，LEAVE_DELAY 后收起），
-    // 即使设置页仍开着、仍在常规页。
+    // 即使设置页仍开着、仍在外观页。
     h.app.liquid_cfg_open=false;
     for _ in 0..60 {h.frame(vec![]);}
     assert!(!h.app.open,"关掉配置弹窗后应收起");
@@ -9169,10 +9170,10 @@ fn liquid_tuning_keeps_island_expanded_while_settings_page_is_open(){
     assert!(h.app.open);
     h.app.settings_tab=1;
     for _ in 0..60 {h.frame(vec![]);}
-    assert!(!h.app.open,"离开常规页后应恢复普通悬停行为");
+    assert!(!h.app.open,"离开外观页后应恢复普通悬停行为");
 
-    // 回到常规页又展开；关掉设置窗口再收起。
-    h.app.settings_tab=0;
+    // 回到外观页又展开；关掉设置窗口再收起。
+    h.app.settings_tab=appearance;
     for _ in 0..40 {h.frame(vec![]);}
     assert!(h.app.open);
     h.app.settings_open=false;
@@ -9183,10 +9184,77 @@ fn liquid_tuning_keeps_island_expanded_while_settings_page_is_open(){
     // 非液态皮肤不受影响。
     h.app.settings.skin=crate::model::Skin::Classic;
     h.app.settings_open=true;
-    h.app.settings_tab=0;
+    h.app.settings_tab=appearance;
     h.app.liquid_cfg_open=true;
     for _ in 0..40 {h.frame(vec![]);}
     assert!(!h.app.open,"只有液态玻璃需要边调边看");
+}
+
+#[test]
+fn liquid_tuning_preview_form_switches_collapsed_and_expanded(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.skin=crate::model::Skin::Liquid;
+    h.app.settings_open=true;
+    h.app.settings_tab=crate::extras::SETTINGS_TAB_APPEARANCE;
+    h.app.liquid_cfg_open=true;
+    // 默认展开态：和原来一致，强制展开到位。
+    for _ in 0..40 {h.frame(vec![]);}
+    assert!(h.app.open && h.app.progress()>0.98,"默认预览形态应为展开态");
+
+    // 切到收起态：即使弹窗仍开着、鼠标不在岛上，也必须收回胶囊。
+    h.app.liquid_preview_collapsed=true;
+    for _ in 0..80 {h.frame(vec![]);}
+    assert!(!h.app.open,"收起态预览时岛仔应收成胶囊");
+    assert!(h.app.progress()<0.02,"收起要走到位才能看清收起态玻璃");
+
+    // 切回展开态：再次强制展开。
+    h.app.liquid_preview_collapsed=false;
+    for _ in 0..40 {h.frame(vec![]);}
+    assert!(h.app.open && h.app.progress()>0.98,"切回展开态应重新展开");
+}
+
+#[test]
+fn liquid_config_button_lives_in_appearance_tab(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings_open=true;
+    h.app.settings.render_compat=true;
+    // 外观页：应有「配置液态玻璃」入口与「预览形态」开关（弹窗打开时）。
+    h.app.settings_tab=crate::extras::SETTINGS_TAB_APPEARANCE;
+    h.app.liquid_cfg_open=true;
+    let shapes=render_settings(&mut h);
+    assert!(has_text(&shapes,"配置液态玻璃"),"外观页应有配置液态玻璃按钮");
+    assert!(has_text(&shapes,"预览形态"),"配置弹窗应有预览形态开关");
+    // 自定义与集成页：不再出现配置按钮。
+    h.app.liquid_cfg_open=false;
+    h.app.settings_tab=crate::extras::SETTINGS_TAB_CUSTOM;
+    let shapes=render_settings(&mut h);
+    assert!(!has_text(&shapes,"配置液态玻璃"),"自定义与集成页不应再有配置按钮");
+}
+
+/// 渲染设置页并返回 shapes（供上面的断言用；用大视口避免滚动裁切）。
+fn render_settings(h:&mut H)->Vec<egui::epaint::ClippedShape>{
+    let output=std::sync::Arc::new(std::sync::Mutex::new(None));
+    let capture=output.clone();
+    egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+        let id=viewport.ids.this;
+        let raw=egui::RawInput{viewport_id:id,time:Some(1.0),focused:true,
+            screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1800.0))),
+            viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),
+            ..Default::default()};
+        *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+    });
+    h.ctx.set_embed_viewports(false);
+    let mut shapes=Vec::new();
+    for _ in 0..4 {
+        let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+        if let Some(out)=output.lock().unwrap().take(){shapes=out.shapes;}
+    }
+    shapes
+}
+fn has_text(shapes:&[egui::epaint::ClippedShape],phrase:&str)->bool{
+    shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains(phrase)))
 }
 
 #[test]

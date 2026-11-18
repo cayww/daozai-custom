@@ -1115,6 +1115,9 @@ pub struct App {
     pub(crate) phone_app_new:String,
     /// 液态玻璃参数弹窗的开关（设置 → 岛体外观 → 配置液态玻璃）。
     pub(crate) liquid_cfg_open:bool,
+    /// 液态玻璃配置弹窗里的「预览形态」：false=展开态（默认，弹窗开着时强制展开），
+    /// true=收起态（强制收回胶囊）。只影响调参时的取景，不写入 settings.txt。
+    pub(crate) liquid_preview_collapsed:bool,
     /// 浏览器下载偏好（`bridge.json`，桥宿主与设置页共用）。
     pub(crate) browser_prefs:crate::model::BridgePrefs,
     /// MAA（明日方舟助手）对接：事件日志跟随器、进度日志跟随器、任务进度追踪、常驻胶囊。
@@ -1403,6 +1406,7 @@ impl App {
             phone_apps:model::PhoneApps::load(),
             phone_app_new:String::new(),
             liquid_cfg_open:false,
+            liquid_preview_collapsed:false,
             browser_prefs:model::BridgePrefs::load(),
             maa_watch:Default::default(),
             maa_prog:Default::default(),
@@ -3644,10 +3648,12 @@ impl App {
     /// 是不是正在「液态玻璃配置」弹窗里调参。
     /// 参数已搬进独立弹窗，鼠标停在弹窗上时岛仔的悬停状态机收不到事件，
     /// 默认会收成一颗胶囊 —— 滑杆拖了半天，折射/色散/白边的变化根本看不见。
-    /// 所以弹窗开着时强制保持展开（`morph` 里单独接管）；关掉弹窗即恢复
-    /// 普通悬停、岛体随之收起。设置页开着但没开弹窗不算调参。
+    /// 所以弹窗开着时由 `morph` 单独接管形态：按弹窗里的「预览形态」固定成
+    /// 展开态（默认）或收起态，方便对比两种形态下的玻璃效果；关掉弹窗即恢复
+    /// 普通悬停。配置块在「外观」页（`SETTINGS_TAB_APPEARANCE`），离开该页或
+    /// 关掉设置窗就不算调参。
     pub(crate) fn liquid_tuning(&self)->bool{
-        self.settings_open && self.settings_tab==0 && self.glassy() && !self.hover_lock && self.liquid_cfg_open
+        self.settings_open && self.settings_tab==crate::extras::SETTINGS_TAB_APPEARANCE && self.glassy() && !self.hover_lock && self.liquid_cfg_open
     }
 
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
@@ -3959,12 +3965,27 @@ impl App {
             self.w.target=bw;
             self.h.target=bh;
         } else if self.liquid_tuning() {
-            // 调液态玻璃参数时始终展开（见 `liquid_tuning`）。
-            // 不走 `hover_since` 的入场缓冲 —— 那是给鼠标划过的，这里没有鼠标，
-            // 一进设置页就该直接按当前动效展开一次。
+            // 调液态玻璃参数时按「预览形态」固定收起/展开（见 `liquid_tuning`）。
+            // 不走 hover_since/leave_since 缓冲 —— 那是给鼠标划过的，这里没有鼠标，
+            // 一切换形态就该按当前动效直接到位，看清该形态下的玻璃效果。
             self.hover_since=None;
             self.leave_since=None;
-            if !self.open {
+            if self.liquid_preview_collapsed {
+                // 收起态预览：收回胶囊常驻形态（与正常收起一致，清掉媒体浮层/编辑态）。
+                if self.open {
+                    self.open=false;
+                    self.music_volume_open=false;
+                    self.tune_close(bw,bh);
+                    self.cancel_edit();
+                    self.confirm_clear=None;
+                } else {
+                    self.w.tune(close.0,close.1);
+                    self.h.tune(close.0,close.1);
+                    self.w.target=bw;
+                    self.h.target=bh;
+                }
+            } else if !self.open {
+                // 展开态预览（默认）：强制展开。
                 self.open=true;
                 let target_h=self.expanded_height();
                 self.tune_open(PW,target_h);
