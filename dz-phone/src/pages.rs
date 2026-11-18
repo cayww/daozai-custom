@@ -169,10 +169,11 @@ impl App {
             let gpu=ctl_gpu[ctl.idx()];
             if has && glassy && !gpu {
                 // 没有 wgpu 设备（没开兼容渲染）时的兜底：矢量玻璃片。
-                paint::glass_disc(&c.scaled(x,y,s),x,y,13.5,0.16+hover*0.74);
+                paint::glass_disc(&c.scaled(x,y,s),x,y,crate::app::MEDIA_CTL_R,0.16+hover*0.74);
             } else if has && hover>0.01 {
                 // GPU 玻璃自己不跟悬停变亮，补一层很淡的白，保住「这个能点」的反馈。
-                let (r,a)=if gpu {(13.5,14.0)} else {(12.5,20.0)};
+                // 液态玻璃(gpu)跟随圆盘半径；else 12.5 是其他皮肤的悬停圈，不动。
+                let (r,a)=if gpu {(crate::app::MEDIA_CTL_R,14.0)} else {(12.5,20.0)};
                 c.faded(hover).circle(x,y,r,Color32::from_white_alpha(a as u8));
             }
             (response,c.scaled(x,y,s))

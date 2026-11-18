@@ -9148,12 +9148,23 @@ fn liquid_tuning_keeps_island_expanded_while_settings_page_is_open(){
     h.app.settings.skin=crate::model::Skin::Liquid;
     h.app.settings_open=true;
     h.app.settings_tab=0;
-    // 鼠标完全不在岛上：普通状态机会保持收起，调参时必须强制展开。
+    // 参数已搬进「液态玻璃配置」弹窗：只有弹窗开着才算调参。
+    // 鼠标完全不在岛上，普通状态机会保持收起，打开弹窗时必须强制展开。
+    h.app.liquid_cfg_open=true;
     for _ in 0..40 {h.frame(vec![]);}
-    assert!(h.app.open,"调液态玻璃参数时岛仔必须保持展开");
+    assert!(h.app.open,"配置弹窗开着时岛仔必须保持展开");
     assert!(h.app.progress()>0.98,"展开要走到位，不然看不全折射");
 
-    // 切到别的设置页 → 恢复普通悬停行为（鼠标不在岛上，LEAVE_DELAY 后收起）。
+    // 关掉配置弹窗 → 恢复普通悬停（鼠标不在岛上，LEAVE_DELAY 后收起），
+    // 即使设置页仍开着、仍在常规页。
+    h.app.liquid_cfg_open=false;
+    for _ in 0..60 {h.frame(vec![]);}
+    assert!(!h.app.open,"关掉配置弹窗后应收起");
+
+    // 切到别的设置页 → 恢复普通悬停行为。
+    h.app.liquid_cfg_open=true;
+    for _ in 0..40 {h.frame(vec![]);}
+    assert!(h.app.open);
     h.app.settings_tab=1;
     for _ in 0..60 {h.frame(vec![]);}
     assert!(!h.app.open,"离开常规页后应恢复普通悬停行为");
@@ -9163,6 +9174,7 @@ fn liquid_tuning_keeps_island_expanded_while_settings_page_is_open(){
     for _ in 0..40 {h.frame(vec![]);}
     assert!(h.app.open);
     h.app.settings_open=false;
+    h.app.liquid_cfg_open=false;
     for _ in 0..60 {h.frame(vec![]);}
     assert!(!h.app.open,"关掉设置窗口后应收起");
 
@@ -9170,6 +9182,7 @@ fn liquid_tuning_keeps_island_expanded_while_settings_page_is_open(){
     h.app.settings.skin=crate::model::Skin::Classic;
     h.app.settings_open=true;
     h.app.settings_tab=0;
+    h.app.liquid_cfg_open=true;
     for _ in 0..40 {h.frame(vec![]);}
     assert!(!h.app.open,"只有液态玻璃需要边调边看");
 }

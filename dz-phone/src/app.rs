@@ -29,6 +29,10 @@ use std::path::PathBuf;
 // ---------- 几何（逻辑点；原版 125% 截图 ÷ 1.25） ----------
 pub const PW: f32 = 419.0; // 展开面板宽
 pub const PH: f32 = 140.0; // 展开面板高
+/// 液态玻璃下音乐/视频页控制按钮（词/上一首/播放/下一首/音量）的玻璃圆盘半径。
+/// 13.5 时圆盘下沿 131.5 会压到分页指示条上沿 130.8；缩到 11.5 留出约 1.3 点间隙。
+/// pages.rs 的矢量兜底与这里的 GPU 透镜必须同值（ctl_geom 注释要求逐像素一致）。
+pub(crate) const MEDIA_CTL_R: f32 = 11.5;
 pub const MUSIC_PAGE: usize = 0;
 /// 收起态网页视频摘要的宽度（逻辑点）；MUSIC 槽原本只有 14 点，需要加宽容纳标题和进度条。
 pub(crate) const VIDEO_PILL_W: f32 = 132.0;
@@ -3366,11 +3370,11 @@ impl App {
         let chrome_gone=self.calendar.draft.is_some() || self.task_dialog.is_some();
         Some(match ctl {
             Ctl::Gear=>{if chrome_gone {return None;} disc(394.0,18.0,13.0)}
-            Ctl::Lyric=>{if !media||!has {return None;} disc(74.0,118.0,13.5)}
-            Ctl::Prev=>{if !media||!has {return None;} disc(162.0,118.0,13.5)}
-            Ctl::Play=>{if !media||!has {return None;} disc(210.5,118.0,13.5)}
-            Ctl::Next=>{if !media||!has {return None;} disc(258.0,118.0,13.5)}
-            Ctl::Volume=>{if !music||!has {return None;} disc(367.0,118.0,13.5)}
+            Ctl::Lyric=>{if !media||!has {return None;} disc(74.0,118.0,MEDIA_CTL_R)}
+            Ctl::Prev=>{if !media||!has {return None;} disc(162.0,118.0,MEDIA_CTL_R)}
+            Ctl::Play=>{if !media||!has {return None;} disc(210.5,118.0,MEDIA_CTL_R)}
+            Ctl::Next=>{if !media||!has {return None;} disc(258.0,118.0,MEDIA_CTL_R)}
+            Ctl::Volume=>{if !music||!has {return None;} disc(367.0,118.0,MEDIA_CTL_R)}
             Ctl::IslandLyrics=>{
                 if !music||!has||self.side() {return None;}
                 (Rect::from_min_size(Pos2::new(279.0,108.0),Vec2::new(68.0,20.0)),10.0)
@@ -3585,12 +3589,13 @@ impl App {
     /// 半透明玻璃片会露出后面的壁纸，反而更脏）。
     pub(crate) fn glassy(&self)->bool{self.settings.skin==model::Skin::Liquid}
 
-    /// 是不是正在设置页里调液态玻璃的参数（常规 → 岛体外观 里那七个滑杆）。
-    /// 这时候鼠标停在设置窗口上，岛仔的悬停状态机一个事件都收不到，
+    /// 是不是正在「液态玻璃配置」弹窗里调参。
+    /// 参数已搬进独立弹窗，鼠标停在弹窗上时岛仔的悬停状态机收不到事件，
     /// 默认会收成一颗胶囊 —— 滑杆拖了半天，折射/色散/白边的变化根本看不见。
-    /// 所以这一段时间强制保持展开（`morph` 里单独接管）。
+    /// 所以弹窗开着时强制保持展开（`morph` 里单独接管）；关掉弹窗即恢复
+    /// 普通悬停、岛体随之收起。设置页开着但没开弹窗不算调参。
     pub(crate) fn liquid_tuning(&self)->bool{
-        self.settings_open && self.settings_tab==0 && self.glassy() && !self.hover_lock
+        self.settings_open && self.settings_tab==0 && self.glassy() && !self.hover_lock && self.liquid_cfg_open
     }
 
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，

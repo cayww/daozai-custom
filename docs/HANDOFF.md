@@ -11,13 +11,13 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-132 已打包、未部署（最新）**：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
+| 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-133 已打包、未部署（最新）**：`installer\daozai-setup-custom-133.exe`（11,241,100 B，包 sha `a41348b0804328ea`，内含 exe `1e2c3eedff85c1a1` + bridge `f04ba85363175531`，构建自 main 工作树（告警清理提交 `2ea229a` + 液态玻璃按钮缩小 + INSTALL-NOTES 反馈日志说明，均未提交）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
-| **工作树** | **干净**（2026-11-18 13:15 提交 `2ea229a` 并推送 origin/main：rust-analyzer 告警清理，源码自身 warning 清零，见 §7.0v）；HEAD = `2ea229a`，检出分支 = `main` |
+| **工作树** | **4 文件未提交**（2026-11-18 13:25：app.rs/pages.rs 液态玻璃按钮缩小 + installer 版本号/反馈说明，见 §7.0w）；HEAD = `2ea229a`（已推送），检出分支 = `main` |
 | 预览版（液态玻璃试验） | 已部署到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，标记 `liquid-test-57-dcomp-fallback`，exe sha256 前 16 = `9fdcbdf1993b0cac`。**DirectComposition 透明交换链**替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑。实机四态验证（液态玻璃普通/棋盘、经典 D3D/OpenGL）均正常 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
-| 测试 | 主线 1176 passed；最近 **1351 passed / 0 failed / 131 ignored**（2026-11-18 12:55，告警清理后全量串行 `cargo test --locked --release --lib -- --test-threads=1`）；**必须 `--test-threads=1`** |
+| 测试 | 主线 1176 passed；最近 **1351 passed / 0 failed / 131 ignored**（2026-11-18 13:25，按钮缩小改动后全量串行 `cargo test --locked --release --lib -- --test-threads=1`）；**必须 `--test-threads=1`** |
 | 单实例锁 | `Local\Daozai.SingleInstance` —— 正式版与预览版**不能同时运行** |
 | GitHub 发布 | **Beta**：https://github.com/cayww/daozai-custom/releases/tag/liquid-test-18（tag 指向 `f415518`）；**本地新包 liquid-test-55 未发 GitHub**：`C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai-liquid-setup-55.exe`（= `daozai-liquid-setup.exe`），10,983,849 B，sha256 前16 `8b4a7d8c4fa11818`，内含 exe `6eb9cdad9a585a09`。-53 已移入 `_archive\` |
 
@@ -690,6 +690,16 @@ A/B（同一份 settings、同一时刻壁纸、冻结模式）：
   下 daozai 自身 warning = **0 条**（剩余 240 条全在 vendor：egui/imap-proto/wgpu-hal/ureq/egui-wgpu，按约定不动）。
   全量串行测试 **1351 passed / 0 failed / 131 ignored**（新增测试已注册：总 test 1482，含 131 ignored）。
 - **交付**：`2ea229a`（17 文件 55+/14-）已提交并推送 origin/main，工作树干净；未打包、未部署、未改 Cargo.lock。
+
+### 7.0w 正式包 custom-133：液态玻璃按钮缩小 + 反馈日志说明（2026-11-18 13:25，未提交）
+
+用户两条需求：① 液态玻璃下把《词》/上一首/播放暂停/下一首/音量按钮改小一点点、不与底部分页指示条重叠，且不影响其他皮肤；② 构建正式安装包，把「各项问题反馈该提供哪些 log 文件」写进反馈说明。
+
+- **按钮缩小**（`app.rs` / `pages.rs`）：按钮可见大小 = 玻璃圆盘半径，原来 13.5 使下沿 131.5 压到指示条上沿 130.8（重叠约 0.7 点）。新增 `pub(crate) const MEDIA_CTL_R: f32 = 11.5`，圆盘下沿抬到 129.5、留约 1.3 点间隙。GPU 折射透镜（ctl_geom 五个按钮）与矢量兜底（pages.rs glass_disc + gpu 悬停圈）同用该常量，保持逐像素一致。其他皮肤走 `else (12.5,20.0)` 分支，未动；命中点击区未动，坐标测试不受影响。视频页共用这套控件会一起缩小（同属液态玻璃）。
+- **反馈说明**：写进 `installer/INSTALL-NOTES.txt`（daozai.iss 里已标 `isreadme`，装完自动打开）。首选「设置→关于→收集诊断」生成桌面 zip；再按崩溃/黑屏/内存/歌词/天气/验证码/邮件/通知/QQ微信/浏览器桥/日历/卡顿分类，列出 `%APPDATA%\Daozai\diagnostics\` 下应附的具体文件。依据 = 源码实际写入点 + collect-diagnostics.ps1 收集清单；`pill-sleep.log`/`liquid-glass.log` 不在诊断包内，已单独点名。
+- **打包**：`daozai.iss` 的 MyAppBuild custom-132 → custom-133；ISCC 编译成功（仅历史固有的 HKCU/admin 提示）。包 `daozai-setup-custom-133.exe` 11,241,100 B、sha256 前16 `a41348b0804328ea`；exe `1e2c3eedff85c1a1`（22,782,464 B）、bridge `f04ba85363175531`（476,672 B）。编译前已停掉运行中的 daozai_bridge.exe（PID 34168）避免占用。
+- **验证**：`cargo check --all-targets` 无 error；全量 `cargo test --locked --release --lib -- --test-threads=1` = 1351 passed / 0 failed / 131 ignored。
+- **未做**：4 文件未提交（app.rs、pages.rs、installer/daozai.iss、installer/INSTALL-NOTES.txt，另 CHANGELOG.md），未部署正式目录，等用户确认提交/部署。
 
 ### 7.1 已提交（`234ff52`，已推送 origin/main）
 
