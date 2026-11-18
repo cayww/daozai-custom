@@ -1285,21 +1285,27 @@ mod phone_channel_tests {
     }
     #[test]
     fn 从正文首段识别手机应用与黑名单(){
-        let apps=crate::model::PhoneApps::builtin();
-        assert_eq!(crate::system::phone_app("QQ · 小号 · 这是一条测试正文内容",&apps),Some(("QQ".to_string(),true)));
-        assert_eq!(crate::system::phone_app("微信 · 某人 · 晚上好",&apps),Some(("微信".to_string(),true)));
-        assert_eq!(crate::system::phone_app("来电 · 138xxxx",&apps),Some(("电话".to_string(),true)));
-        assert_eq!(crate::system::phone_app("Steam · 夏季特惠",&apps),Some(("连接".to_string(),false)));
-        assert_eq!(crate::system::phone_app("",&apps),None);
-        assert_eq!(crate::system::phone_app("一条很长的普通消息内容里没有应用名",&apps),None);
+        // 名单默认为空（没有内置种子）：短名走兜底（当标签、默认放行）；
+        // Steam 这类想静音要自己在 phone-apps.json 加 allow=false 条目。
+        let empty=crate::model::PhoneApps::default();
+        assert_eq!(crate::system::phone_app("QQ · 小号 · 这是一条测试正文内容",&empty),Some(("QQ".to_string(),true)));
+        assert_eq!(crate::system::phone_app("微信 · 某人 · 晚上好",&empty),Some(("微信".to_string(),true)));
+        // 内置名单已移除：空名单下没有「来电→电话」的映射，短名兜底直接用「来电」当标签；
+        // 想显示成「电话」需在 JSON 里加 {"name":"来电","label":"电话","allow":true}。
+        assert_eq!(crate::system::phone_app("来电 · 138xxxx",&empty),Some(("来电".to_string(),true)));
+        assert_eq!(crate::system::phone_app("Steam · 夏季特惠",&empty),Some(("Steam".to_string(),true)));
+        assert_eq!(crate::system::phone_app("",&empty),None);
+        assert_eq!(crate::system::phone_app("一条很长的普通消息内容里没有应用名",&empty),None);
         // 名单是外部配置：加新 App 只需往 JSON 里加一条，不改代码。
-        let mut custom=crate::model::PhoneApps::builtin();
+        let mut custom=crate::model::PhoneApps::default();
         custom.items.push(("小红书".to_string(),"小红书".to_string(),true));
+        custom.items.push(("Steam".to_string(),"连接".to_string(),false));
         assert_eq!(crate::system::phone_app("小红书 · 有人回复了你",&custom),Some(("小红书".to_string(),true)));
+        assert_eq!(crate::system::phone_app("Steam · 夏季特惠",&custom),Some(("连接".to_string(),false)));
     }
     #[test]
     fn 短信与来电按正文特征识别(){
-        let apps=crate::model::PhoneApps::builtin();
+        let apps=crate::model::PhoneApps::default();
         // 短信用手机号当来源：认不出号码也要归到「短信」，不能退化成「连接」。
         assert_eq!(phone_app("+86106826974003139 · 【清枫北京科技】您的验证码：4342，如非本人操作",&apps),Some(("短信".to_string(),true)));
         assert_eq!(phone_app("10691234 · 您的验证码 8899",&apps),Some(("短信".to_string(),true)));

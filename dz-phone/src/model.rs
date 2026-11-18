@@ -1055,15 +1055,6 @@ pub fn human_size(bytes: u64) -> String {
 
 // —— 自定义构建：外部配置类型与工具（PhoneApps / MAA / 浏览器桥 / 限长读取）——
 
-fn builtin_phone_apps()->Vec<(String,String,bool)>{
-    let allow=[("QQ","QQ"),("微信","微信"),("WeChat","微信"),("支付宝","支付宝"),("Alipay","支付宝"),
-        ("Gmail","Gmail"),("邮件","Gmail"),("短信","短信"),("信息","短信"),("电话","电话"),("来电","电话"),("验证码","验证码")];
-    let silent=["Steam","Discord","12306","大麦","BOSS直聘","Boss直聘","明日方舟"];
-    let mut items:Vec<(String,String,bool)>=allow.iter().map(|(k,v)|((*k).to_string(),(*v).to_string(),true)).collect();
-    items.extend(silent.iter().map(|k|((*k).to_string(),"连接".to_string(),false)));
-    items
-}
-
 pub(crate) const MAX_JSON_BYTES: u64 = 1_048_576;
 
 pub(crate) fn read_capped(path:&Path,max:u64)->Option<Vec<u8>> {
@@ -1160,14 +1151,15 @@ impl NoticeRules {
     }
 }
 
+/// 名单默认为空：没有内置种子，`phone-apps.json` 不存在时也不再自动写盘 ——
+/// 想加条目直接编辑 JSON（或设置页「添加 App」）。名单未命中时由
+/// `system::phone_app` 按来电/短信特征与短名兜底判定。
+#[derive(Default)]
 pub struct PhoneApps {
     pub items:Vec<(String,String,bool)>,
     modified:Option<std::time::SystemTime>,
 }
-
-impl Default for PhoneApps { fn default()->Self{Self::builtin()} }
 impl PhoneApps {
-    pub fn builtin()->Self{Self{items:builtin_phone_apps(),modified:None}}
     fn path()->PathBuf{config_dir().join("phone-apps.json")}
     fn read_items(path:&Path)->Option<Vec<(String,String,bool)>>{
         let raw=read_capped(path,MAX_JSON_BYTES)?;
@@ -1182,17 +1174,15 @@ impl PhoneApps {
     }
     pub fn load()->Self{
         #[cfg(test)]
-        { return Self::builtin(); }
+        { return Self::default(); }
         #[cfg(not(test))]
         {
             let path=Self::path();
-            let mut this=Self::builtin();
+            let mut this=Self::default();
             if let Ok(meta)=fs::metadata(&path){
                 this.modified=meta.modified().ok();
-                if let Some(items)=Self::read_items(&path){this.items=items;return this;}
+                if let Some(items)=Self::read_items(&path){this.items=items;}
             }
-            this.save();
-            this.modified=fs::metadata(&path).ok().and_then(|m|m.modified().ok());
             this
         }
     }

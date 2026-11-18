@@ -1091,6 +1091,10 @@ pub struct App {
     pub(crate) phone_icons:std::collections::HashMap<String,eframe::egui::TextureHandle>,
     /// 手机连接通知的来源 App 名单（`phone-apps.json`，支持热重载）。
     pub(crate) phone_apps:crate::model::PhoneApps,
+    /// 设置页「添加 App」输入框的暂存内容（点添加后写入名单并落盘）。
+    pub(crate) phone_app_new:String,
+    /// 液态玻璃参数弹窗的开关（设置 → 岛体外观 → 配置液态玻璃）。
+    pub(crate) liquid_cfg_open:bool,
     /// 浏览器下载偏好（`bridge.json`，桥宿主与设置页共用）。
     pub(crate) browser_prefs:crate::model::BridgePrefs,
     /// MAA（明日方舟助手）对接：事件日志跟随器、进度日志跟随器、任务进度追踪、常驻胶囊。
@@ -1376,6 +1380,8 @@ impl App {
             phone_counts:Default::default(),
             phone_icons:Default::default(),
             phone_apps:model::PhoneApps::load(),
+            phone_app_new:String::new(),
+            liquid_cfg_open:false,
             browser_prefs:model::BridgePrefs::load(),
             maa_watch:Default::default(),
             maa_prog:Default::default(),
