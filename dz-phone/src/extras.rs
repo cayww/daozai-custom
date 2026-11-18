@@ -1883,9 +1883,8 @@ fn liquid_glass_config_window(app:&mut crate::app::App,ctx:&egui::Context){
             .show(ctx,|ui|{
                 egui::ScrollArea::vertical().max_height(430.0).show(ui,|ui|{
                     ui.set_min_width(ui.available_width());
-                    settings_hint(ui,"调这些参数（仅液态玻璃）时岛仔会保持展开；切到其他设置页或关闭窗口自动收起");
+                    settings_hint(ui,"调参数时岛仔会保持展开");
                                 ui.separator();
-                                settings_hint(ui,"调这些参数（仅液态玻璃）时岛仔会保持展开；切到其他设置页或关闭窗口自动收起");
                                 let before=app.settings.liquid_prefer_dgpu;
                                 setting_row(ui,"优先独立显卡","优先使用独显渲染玻璃，切换后重启岛仔生效",&mut app.settings.liquid_prefer_dgpu);
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
