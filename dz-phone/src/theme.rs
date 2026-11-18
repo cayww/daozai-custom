@@ -1,7 +1,8 @@
 //! 配色、字体与字号。
 //!
 //! 字体：拉丁/数字用 Segoe UI（Windows 原生 UI 字体，与原版 DirectWrite 渲染同源），
-//! 中文回退到微软雅黑 UI，韩文回退到 Malgun Gothic。三档字重：常规 / 半粗 / 粗。
+//! 中文回退到微软雅黑 UI，韩文回退到 Malgun Gothic，藏文回退到喜马拉雅体，彝文回退到 Microsoft Yi Baiti。
+//! 三档字重：常规 / 半粗 / 粗。
 //! 非 Windows（开发机、录屏）按 `DAOZAI_FONT_DIR` → 常见系统路径依次查找
 //! 度量兼容的 Selawik 与 Noto Sans SC。
 
@@ -170,6 +171,11 @@ fn build_fonts()->FontDefinitions {
     // 不做复杂排版也能拼出常见叠字；缺字体时自动跳过。
     let tibetan = find(&[("himalaya.ttf", 0), ("NotoSerifTibetan-Regular.ttf", 0), ("NotoSansTibetan-Regular.ttf", 0)], &dirs);
 
+    // 彝文（U+A000–A4CF）：上面的字体都没有彝文字形，歌词会显示成方框。
+    // Windows 自带 Microsoft Yi Baiti（msyi.ttf），彝文音节/部首齐全且是从左往右写，
+    // 放进回退链即可，和藏文一样缺字体时自动跳过。彝文不需要连写/RTL 重排。
+    let yi = find(&[("msyi.ttf", 0), ("NotoSansYi-Regular.ttf", 0)], &dirs);
+
     let mut fonts = FontDefinitions::default();
     let mut cache: Vec<(PathBuf, u32, String)> = Vec::new();
     let mut add = |fonts: &mut FontDefinitions, face: &Option<Face>, key: String| -> Option<String> {
@@ -207,6 +213,9 @@ fn build_fonts()->FontDefinitions {
             }
             list.push(k);
         }
+        if let Some(k) = add(&mut fonts, &yi, "yi".into()) {
+            list.push(k);
+        }
         list.extend(builtin.iter().cloned());
         fonts.families.insert(fam.clone(), list);
     }
@@ -234,6 +243,28 @@ mod tests {
                 let font=super::font(14.0,weight);
                 for ch in "눈, 코, 입 향기로운 숨을 담은 너의 코 사랑해 眼鼻嘴 TAEYANG ㄱㄴㅏ".chars().filter(|c|!c.is_whitespace()){
                     assert!(ctx.fonts(|f|f.has_glyph(&font,ch)),"缺少字形：{ch}，字体：{font:?}");
+                }
+            }
+        });
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn yi_syllables_have_glyphs_in_all_weights(){
+        // 彝语歌词：彝文音节（U+A000–A4C6）必须由 msyi.ttf 回退提供字形，三档字重都要有。
+        // 微软彝文字体是 Windows 自带组件，测试机若被裁剪掉则跳过（和藏文一致的降级策略）。
+        if super::find(&[("msyi.ttf", 0), ("NotoSansYi-Regular.ttf", 0)], &super::font_dirs()).is_none() {
+            eprintln!("测试机无彝文字体（msyi.ttf），跳过彝文字形断言");
+            return;
+        }
+        let ctx=eframe::egui::Context::default();
+        super::load_fonts(&ctx);
+        let _=ctx.run(Default::default(),|ctx|{
+            for weight in [super::W::Regular,super::W::Semibold,super::W::Bold]{
+                let font=super::font(14.0,weight);
+                // 抽样：音节区起点、中段、终点，以及部首区一个。
+                for ch in ['\u{A000}','\u{A185}','\u{A4C6}','\u{A490}'].iter() {
+                    assert!(ctx.fonts(|f|f.has_glyph(&font,*ch)),"缺少彝文字形：{ch}，字体：{font:?}");
                 }
             }
         });
