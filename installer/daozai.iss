@@ -7,8 +7,8 @@
 ; 用户数据在 %APPDATA%\Daozai，安装/卸载都不碰。
 
 #define MyAppName "岛仔 Daozai"
-#define MyAppVersion "0.6.65"
-#define MyAppBuild "custom-133"
+#define MyAppVersion "0.6.66"
+#define MyAppBuild "custom-134"
 
 [Setup]
 AppId={{A58C1D9E-4F02-4B6A-9C33-1E7B5D2F8A44}}
