@@ -5,6 +5,8 @@ Unicode true
 !include "x64.nsh"
 !include "WinVer.nsh"
 !include "FileFunc.nsh"
+!include "StrFunc.nsh"
+${StrRep} ; 声明要用 StrRep 宏（生成 Native Messaging JSON 时路径转义）
 
 !ifndef APP_ID
   !define APP_ID "Daozai"
@@ -13,6 +15,14 @@ Unicode true
   !define APP_NAME "岛仔"
 !endif
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_ID}"
+; 浏览器扩展桥宿主（Native Messaging）：源文件路径由命令行 /DPROJECT_DIR 提供，
+; bridge exe 在 PROJECT_DIR\target\release，扩展在仓库根 browser-bridge\extension。
+!ifndef EXTENSION_DIR
+  !define EXTENSION_DIR "..\browser-bridge\extension"
+!endif
+!ifndef BRIDGE_EXE
+  !define BRIDGE_EXE "${PROJECT_DIR}\target\release\daozai-bridge.exe"
+!endif
 Name "${APP_NAME}"
 OutFile "${OUTPUT_FILE}"
 InstallDir "$LOCALAPPDATA\Programs\${APP_ID}"
@@ -257,6 +267,8 @@ Section "安装"
   File /oname=daozai.exe "${SOURCE_EXE}"
   File "${PROJECT_DIR}\LICENSE"
   File "${PROJECT_DIR}\THIRD_PARTY_NOTICES.txt"
+  ; 浏览器扩展桥宿主（Native Messaging）：复制 exe/扩展 + 生成清单 + 注册 Chrome/Edge。
+  Call WriteBridgeManifest
   ; 诊断脚本已内嵌在程序里（daozai.exe --collect-diagnostics），清掉测试版留下的单独诊断文件。
   Delete "$INSTDIR\收集岛仔诊断.cmd"
   Delete "$INSTDIR\scripts\collect-diagnostics.ps1"
@@ -274,6 +286,7 @@ Section "安装"
   ${EndIf}
   CreateShortcut "$SMPROGRAMS\${APP_NAME}.lnk" "$INSTDIR\daozai.exe"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}设置.lnk" "$INSTDIR\daozai.exe" "--settings"
+  CreateShortcut "$SMPROGRAMS\浏览器扩展（加载这个文件夹）.lnk" "$INSTDIR\bridge\extension"
   ; 岛仔打不开、卡死时的备用入口；能打开时用「设置 → 关于 → 收集诊断」。
   CreateShortcut "$SMPROGRAMS\收集${APP_NAME}诊断.lnk" "$INSTDIR\daozai.exe" "--collect-diagnostics" "$INSTDIR\daozai.exe" 0
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_NAME} Daozai"
@@ -291,10 +304,39 @@ Section "安装"
   IntOp $0 $0 + $3
   ${GetSize} "$INSTDIR" "/M=THIRD_PARTY_NOTICES.txt /S=0K /G=0" $3 $1 $2
   IntOp $0 $0 + $3
+  ${GetSize} "$INSTDIR" "/M=daozai_bridge.exe /S=0K /G=0" $3 $1 $2
+  IntOp $0 $0 + $3
   IntOp $0 $0 + 8
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" $0
   Delete "$INSTDIR\uninstall.ps1"
 SectionEnd
+
+; 浏览器扩展桥宿主：生成 Native Messaging host 清单（JSON 里路径要双反斜杠）。
+; 保持纯 ASCII，避开编码坑；内容与旧 Inno 包 com.daozai.island.json 一致。
+Function WriteBridgeManifest
+  SetOutPath "$INSTDIR\bridge"
+  ; 浏览器扩展在线时桥进程一直运行，会锁住目标 exe 导致覆盖静默失败。
+  ; 先结束它；扩展下次收发消息时浏览器会自动拉起，无感恢复。
+  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM daozai_bridge.exe /F'
+  Pop $0
+  Pop $1
+  File /oname=daozai_bridge.exe "${BRIDGE_EXE}"
+  File "${EXTENSION_DIR}\manifest.json"
+  File "${EXTENSION_DIR}\sw.js"
+  ; $INSTDIR 里的反斜杠替换成双反斜杠，填进 JSON 字符串。
+  StrCpy $2 "$INSTDIR\bridge\daozai_bridge.exe"
+  ${StrRep} $3 "$2" "\" "\\"
+  FileOpen $4 "$INSTDIR\bridge\com.daozai.island.json" w
+  FileWrite $4 '{"name":"com.daozai.island",'
+  FileWrite $4 '"description":"Daozai status bridge for browser extensions",'
+  FileWrite $4 '"path":"$3",'
+  FileWrite $4 '"type":"stdio",'
+  FileWrite $4 '"allowed_origins":["chrome-extension://dcmheeclfeihicoaakoffjbbepfdfcin/"]}'
+  FileClose $4
+  ; Chrome 与 Edge 各注册一份（HKCU，无需管理员）。
+  WriteRegStr HKCU "Software\Google\Chrome\NativeMessagingHosts\com.daozai.island" "" "$INSTDIR\bridge\com.daozai.island.json"
+  WriteRegStr HKCU "Software\Microsoft\Edge\NativeMessagingHosts\com.daozai.island" "" "$INSTDIR\bridge\com.daozai.island.json"
+FunctionEnd
 
 Function un.onInit
   SetShellVarContext current
@@ -303,6 +345,18 @@ FunctionEnd
 
 Section "Uninstall"
   Call un.CheckClosed
+  ; 浏览器扩展桥宿主：先结束进程再删文件，注册表两份一并清掉。
+  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /IM daozai_bridge.exe /F'
+  Pop $0
+  Pop $1
+  Delete "$INSTDIR\bridge\daozai_bridge.exe"
+  Delete "$INSTDIR\bridge\com.daozai.island.json"
+  Delete "$INSTDIR\bridge\extension\manifest.json"
+  Delete "$INSTDIR\bridge\extension\sw.js"
+  RMDir "$INSTDIR\bridge\extension"
+  RMDir "$INSTDIR\bridge"
+  DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\com.daozai.island"
+  DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\com.daozai.island"
   Delete "$INSTDIR\daozai.exe"
   Delete "$INSTDIR\daozai-previous.exe"
   Delete "$INSTDIR\daozai-v0.2-backup.exe"
@@ -316,6 +370,7 @@ Section "Uninstall"
   Delete "$DESKTOP\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}设置.lnk"
+  Delete "$SMPROGRAMS\浏览器扩展（加载这个文件夹）.lnk"
   Delete "$SMPROGRAMS\收集${APP_NAME}诊断.lnk"
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APP_ID}"
   ${If} $0 == '"$INSTDIR\daozai.exe"'
