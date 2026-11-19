@@ -234,7 +234,9 @@ fn hash21(p : vec2<f32>) -> f32 {
     return fract((q.x + q.y) * q.x);
 }
 
-// 纹理固定 1280x512，只写左上角 (tw,th)；px 是 capture 内的物理像素坐标。
+// px 是 capture 内的物理像素坐标。u.extra.y/z 是有效帧尺寸 (tw,th)；
+// 纹理分配尺寸从纹理本身查（textureDimensions），不再硬编码 1280x512 ——
+// 这样旧路径(纹理 1280x512 + 帧写左上角) 与零拷贝共享路径(纹理就等于帧尺寸) 都对。
 fn sample_px(px : vec2<f32>) -> vec3<f32> {
     // FLAT=2：用棋盘格当背景，折射位移、色散、越界都会直接显形。
     if (u.misc.w > 1.5) {
@@ -246,7 +248,9 @@ fn sample_px(px : vec2<f32>) -> vec3<f32> {
         return mix(vec3<f32>(0.80, 0.84, 0.90), vec3<f32>(0.18, 0.22, 0.30), ln);
     }
     let tex = vec2<f32>(u.extra.y, u.extra.z);
-    let scale = vec2<f32>(u.extra.y / 1280.0, u.extra.z / 512.0);
+    // 纹理实际分配尺寸：旧路径固定 1280x512（帧只在左上角），共享路径等于帧尺寸。
+    let alloc = vec2<f32>(textureDimensions(bg));
+    let scale = tex / alloc;
     let uv = clamp(px / tex, vec2<f32>(0.001), vec2<f32>(0.999)) * scale;
     return textureSampleLevel(bg, samp, uv, 0.0).rgb;
 }
