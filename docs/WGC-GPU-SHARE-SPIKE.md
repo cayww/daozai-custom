@@ -43,6 +43,21 @@ WGC 帧(D3D11) → CopyResource 到共享 D3D11 纹理(NT handle)
 - producer：`AcquireSync(0,500ms)` → `CopySubresourceRegion` → `Begin/End(event query)` → `Flush` → spin `GetData` → `ReleaseSync(0)`。
 - consumer：D3D12 从 keyed-mutex 句柄打开的资源无法 QI `IDXGIKeyedMutex`，故用一次性 1×1 `copy_texture_to_buffer` 触发状态转换屏障刷 shader cache。**这是驱动行为，不是契约**。
 
+## 真机验证记录（2026-11-19，RTX 4070 Ti SUPER + 2560x1440）
+
+- 编译 + 1372 测试通过；`DAOZAI_LIQUID_GPU_SHARE=1` 启动进程存活、无崩溃。
+- 日志强证明零拷贝链路跑通：`D3D11 绑定到同卡 RTX 4070 Ti SUPER` → `GPU 共享纹理已创建`
+  → `[gpu-share] frame N` 持续增长 → `[gpu-share] 导入共享纹理 WxH`（展开动画按尺寸重建）；
+  **全程无 `capture: src=wgc` / `mean_r=`** = CPU 读回路径确实被绕过。
+- **发现并修复真实 bug（提交 `9342a24`）**：初版共享路径在 `prepare()` 开头分流，绕过了 `capture()`，
+  导致 `enable_capture_exclusion()`（WDA_EXCLUDEFROMCAPTURE）从未执行 → WGC 帧抓到岛仔自己 →
+  展开态出现「玻璃里显示玻璃」的巨大错位文字重影。修复：共享路径入口主动调排除；冻结诊断模式
+  (`DAOZAI_LIQUID_FREEZE_BG`) 整段跳过共享路径交回 `capture()`（冻结模式的排除/底片时序不适用共享帧）。
+  修复后日志出现 `exclude: 检查 #0 窗口 1 个，重设 1 个`，重影消失。
+- 视觉对照：冻结模式（旧路径）展开面板截图正常——壁纸折射自然、无重影/黑块、文字清楚。
+  正常模式下 WDA 排除使岛仔本体从截屏消失（预期行为），故共享路径的画面无法直接截图，
+  但它与旧路径共用同一 WGC 干净帧 + 同一 shader + 同一 uniform，仅数据进显存方式不同。
+
 ## 已知限制 / 风险（未解决）
 
 1. **未实机验证**：本机无 WGC + D3D12 真实画面，共享路径的正确性待真机确认。
