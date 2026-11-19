@@ -4173,6 +4173,13 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 setting_row(ui,"优先独立显卡","独显渲染液态玻璃，需开启兼容渲染(D3D 12)，零拷贝也需要独显，重启生效",&mut app.settings.liquid_prefer_dgpu);
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
                                 settings_hint(ui,"混合显卡机器建议开启：同卡才能零拷贝、也更省内存");
+                                // 与 D3D12 那处一致：改了启动期生效的开关就直接给「立即重启」。
+                                if app.settings.liquid_prefer_dgpu!=app.prefer_dgpu_running {
+                                    ui.horizontal(|ui|{
+                                        ui.label(egui::RichText::new("优先独显重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));
+                                        if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
+                                    });
+                                }
                                 ui.separator();
                                 // spike 实验：零拷贝抓屏（去掉 Map(READ) CPU 同步读回）。
                                 // 默认关闭；出错可随时关掉退回旧路径，方便 A/B 对比。
@@ -4180,6 +4187,12 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 setting_row(ui,"零拷贝抓屏（实验）","玻璃背景不走 CPU 读回，降低卡顿；异常时请关闭",&mut app.settings.liquid_gpu_share);
                                 if before!=app.settings.liquid_gpu_share {app.settings.save();}
                                 settings_hint(ui,"仅液态皮肤 + 兼容渲染(D3D12) 生效，重启后生效；非液态皮肤无影响");
+                                if app.settings.liquid_gpu_share!=app.gpu_share_running {
+                                    ui.horizontal(|ui|{
+                                        ui.label(egui::RichText::new("零拷贝重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));
+                                        if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
+                                    });
+                                }
                                 ui.separator();
                                 settings_control_row(ui,"形变强度",56.0,|ui|{
                                     ui.horizontal(|ui|{

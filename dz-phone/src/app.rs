@@ -910,6 +910,10 @@ pub struct App {
     pub settings: model::Settings,
     /// 本次运行实际使用兼容渲染（Direct3D 12）；设置里的开关与它不同时提示重启。
     pub render_compat_running: bool,
+    /// 本次启动时的显卡偏好 / 零拷贝开关快照。这两项都在启动期生效，
+    /// 设置里改了与快照不同就提示「立即重启」，和 D3D12 那处保持一致。
+    pub prefer_dgpu_running: bool,
+    pub gpu_share_running: bool,
     pub(crate) todos: model::TodoList,
     pub(crate) water: model::Water,
     pub(crate) shelf: model::Shelf,
@@ -1269,9 +1273,13 @@ impl App {
         let weather_source=crate::weather_source_ui::State::load();
         let mut weather=crate::weather::State::load(&settings.weather_city,settings.weather_position.as_ref());
         if weather_source.displayed==crate::weather_source_ui::Provider::Qweather {weather.snapshot=weather_source.runtime.snapshot();}
+        let prefer_dgpu_running=settings.liquid_prefer_dgpu;
+        let gpu_share_running=settings.liquid_gpu_share;
         Self {
             opts,
             render_compat_running: settings.render_compat,
+            prefer_dgpu_running,
+            gpu_share_running,
             settings,
             todos: model::TodoList::load(),
             water: model::Water::default(),
