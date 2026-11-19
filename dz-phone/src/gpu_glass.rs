@@ -48,6 +48,8 @@ pub struct GlassFrame {
     pub look: [f32; 4],
     /// 刘海形状：(flare px, flare_h px, 是否刘海, _)。非刘海时第 3 项为 0。
     pub notch: [f32; 4],
+    /// 光源配置：x = 高光跟随鼠标强度 0..1（0=固定左上，1=完全跟随）。
+    pub lightcfg: [f32; 4],
     /// 逻辑点 → 物理像素的比例。主题采样区域要按它换算成固定的设备像素尺寸。
     pub pixels_per_point: f32,
 }
@@ -89,6 +91,8 @@ struct Uniforms {
     // 刘海形状：x=flare（顶部外扩宽度，px）、y=flare_h（外扩高度，px）、
     // z=是否刘海（>0.5 生效）、w=保留。非刘海形状时 z=0，走普通圆角矩形。
     notch: [f32; 4],
+    // 光源配置：x=高光跟随鼠标强度 0..1，其余保留。
+    lightcfg: [f32; 4],
 }
 
 impl Uniforms {
@@ -178,6 +182,8 @@ struct U {
     look   : vec4<f32>,
     // 刘海形状：(flare px, flare_h px, 是否刘海, _)。
     notch  : vec4<f32>,
+    // 光源配置：(跟随鼠标强度 0..1, _, _, _)。
+    lightcfg : vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> u : U;
 @group(0) @binding(1) var bg : texture_2d<f32>;
@@ -416,7 +422,9 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     let plen = length(to_ptr);
     let swung = to_ptr / max(plen, 1e-3);
     let up_bias = vec2<f32>(swung.x, min(swung.y, -0.18));
-    let Ld = normalize(mix(normalize(vec2<f32>(-0.45, -0.65)), up_bias, smoothstep(3.0, 48.0, plen)) + vec2<f32>(1e-6));
+    // 跟随强度（设置项）：0 = 光源固定左上不跟鼠标，1 = 完全跟随（原行为）。
+    let follow = clamp(u.lightcfg.x, 0.0, 1.0);
+    let Ld = normalize(mix(normalize(vec2<f32>(-0.45, -0.65)), up_bias, smoothstep(3.0, 48.0, plen) * follow) + vec2<f32>(1e-6));
 
     // 背后未折射的桌面色：控件玻璃的材质补偿、局部 scrim 和最后的边缘混合都要用。
     let edge_bg = sample_px(p);
@@ -809,6 +817,7 @@ fn uniforms(f: &GlassFrame, tex: (u32, u32)) -> Uniforms {
         cprm: f.control_params,
         look: f.look,
         notch: f.notch,
+        lightcfg: f.lightcfg,
     }
 }
 
@@ -1602,6 +1611,8 @@ pub fn frame_for(
     pointer: (f32, f32),
     origin: (f32, f32),
     lightness: f32,
+    // 高光跟随鼠标强度 0..1（0=固定左上，1=完全跟随）。
+    light_follow: f32,
     // 岛内控件玻璃（屏幕坐标的逻辑点矩形 + 圆角 + 放大/折射倍数），**按绘制顺序**给：
     // 靠后的压在前面的上面。
     controls: &[Ctl],
@@ -1661,6 +1672,7 @@ pub fn frame_for(
             Some((flare, flare_h)) => [flare * ppp, flare_h * ppp, 1.0, if direct_composition() {1.0} else {0.0}],
             None => [0.0, 0.0, 0.0, if direct_composition() {1.0} else {0.0}],
         },
+        lightcfg: [light_follow.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
         pixels_per_point: ppp,
     }
 }
@@ -1699,7 +1711,7 @@ mod tests {
         use eframe::egui::{Pos2, Rect};
         let body = Rect::from_min_size(Pos2::new(100.0, 20.0), eframe::egui::vec2(200.0, 30.0));
         let capture = Rect::from_min_size(Pos2::new(60.0, 0.0), eframe::egui::vec2(280.0, 90.0));
-        let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0, &[], None);
+        let f = frame_for(body, capture, (1920, 1080), 1.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0, 1.0, &[], None);
         assert_eq!(f.bounds, [40.0, 20.0, 200.0, 30.0]);
         assert_eq!(f.clip, [-1.0, 1.0, 1.0, -1.0], "viewport 已由 egui 设为 callback 矩形");
         // 折射 / 色散走原子量 → optics → uniform 的两个不同槽位：
@@ -1707,7 +1719,7 @@ mod tests {
         // 设置项单位是 CSS px，进 uniform 前要乘 ppp（着色器全程设备像素）。
         set_liquid_optics(60.0, 15.0);
         let u = uniforms(&frame_for(body, capture, (1920, 1080), 2.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0,
-                                   (150.0, 30.0), (0.0, 0.0), 1.0, &[], None), (280, 90));
+                                   (150.0, 30.0), (0.0, 0.0), 1.0, 1.0, &[], None), (280, 90));
         assert_eq!(u.params[0], 30.0, "色散进 params.x，并按 ppp 换算到设备像素");
         assert_eq!(u.misc[2], 120.0, "折射进 misc.z，并按 ppp 换算到设备像素");
         set_liquid_optics(48.0, 8.0);
@@ -1722,7 +1734,7 @@ mod tests {
         // 越界的控件必须被丢掉，否则着色器会 clamp 到边缘像素拉出色带。
         let outside = Rect::from_min_size(Pos2::new(50.0, 25.0), eframe::egui::vec2(50.0, 20.0));
         let ctl = |rect, radius| Ctl { rect, radius, mag: 1.10, refract: 0.35 };
-        let f = frame_for(body, capture, (1920, 1080), 2.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0,
+        let f = frame_for(body, capture, (1920, 1080), 2.0, 15.0, 0.0, [0.6, 0.7, 0.8], 1.0, (150.0, 30.0), (0.0, 0.0), 1.0, 1.0,
                           &[ctl(outside, 6.0), ctl(lyric, 6.0)], None);
         assert_eq!(f.controls[0], [40.0, 50.0, 100.0, 40.0], "控件按 2x 换算到 capture 内物理像素");
         assert_eq!(f.control_params[0], [12.0, 1.0, 1.10, 0.35], "圆角/启用/放大/折射一起进 uniform");
@@ -1731,9 +1743,9 @@ mod tests {
 
     #[test]
     fn uniforms_are_packed_without_padding() {
-        // 8 个 vec4（bounds/params/extra/tint/quad/misc/look/notch）+ crect[13] + cprm[13]
-        // 全是 16 字节对齐，544 = 34×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
-        assert_eq!(std::mem::size_of::<Uniforms>(), 544);
-        assert_eq!(std::mem::size_of::<Uniforms>(), 8 * 16 + MAX_CTL * 32);
+        // 9 个 vec4（bounds/params/extra/tint/quad/misc/look/notch/lightcfg）+ crect[13] + cprm[13]
+        // 全是 16 字节对齐，560 = 35×16，没有任何隐式填充。加字段时同步改这里和 WGSL 的 `U`。
+        assert_eq!(std::mem::size_of::<Uniforms>(), 560);
+        assert_eq!(std::mem::size_of::<Uniforms>(), 9 * 16 + MAX_CTL * 32);
     }
 }

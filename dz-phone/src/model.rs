@@ -231,6 +231,10 @@ pub struct Settings {
     pub liquid_edge_w_px: f32,
     /// 液态玻璃：白边亮度（0~1，默认 0.90）。
     pub liquid_edge_op: f32,
+    /// 液态玻璃：高光跟随鼠标的强度（0~1，默认 1.0）。
+    /// 0 = 光源固定左上、完全不跟鼠标；1 = 完全跟随（默认，原行为）。
+    /// 中间值 = 部分跟随，高光摆动幅度按比例缩小。
+    pub liquid_light_follow: f32,
     /// 控件弹簧刚度倍率：>1 更快更弹，<1 更慢更柔。乘在按压/入场弹簧刚度、
     /// 按压果冻幅度、进度条圆钮放大弹簧上（默认 1.0 = 资料包标准）。
     pub liquid_spring: f32,
@@ -421,7 +425,7 @@ impl OpenAnim {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, liquid_gpu_share: false, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_clock: true, show_battery: true, show_weather: true, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, liquid_gpu_share: false, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_clock: true, show_battery: true, show_weather: true, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
     }
 }
 
@@ -502,6 +506,7 @@ impl Settings {
                 "liquid_band_px" => s.liquid_band_px = v.parse::<f32>().unwrap_or(87.0).clamp(10.0, 140.0),
                 "liquid_edge_w_px" => s.liquid_edge_w_px = v.parse::<f32>().unwrap_or(1.5).clamp(0.0, 4.0),
                 "liquid_edge_op" => s.liquid_edge_op = v.parse::<f32>().unwrap_or(0.90).clamp(0.0, 1.0),
+                "liquid_light_follow" => s.liquid_light_follow = v.parse::<f32>().unwrap_or(1.0).clamp(0.0, 1.0),
                 "island_size" => s.island_size = island_size_value(v.parse::<u32>().unwrap_or(100)),
                 "island_offset" => s.island_offset = v.parse::<i32>().unwrap_or(0).clamp(-ISLAND_OFFSET_MAX, ISLAND_OFFSET_MAX),
                 "oled_shift" => s.oled_shift = v != "0",
@@ -618,6 +623,7 @@ impl Settings {
                 ("liquid_band_px".into(),format!("{:.1}",self.liquid_band_px)),
                 ("liquid_edge_w_px".into(),format!("{:.1}",self.liquid_edge_w_px)),
                 ("liquid_edge_op".into(),format!("{:.2}",self.liquid_edge_op)),
+                ("liquid_light_follow".into(),format!("{:.2}",self.liquid_light_follow)),
                 ("island_size".into(),island_size_value(self.island_size).to_string()),
                 ("island_offset".into(),self.island_offset.clamp(-ISLAND_OFFSET_MAX,ISLAND_OFFSET_MAX).to_string()),
                 ("oled_shift".into(),(self.oled_shift as u8).to_string()),
@@ -1221,6 +1227,14 @@ impl PhoneApps {
     pub fn lookup(&self,head:&str)->Option<(String,bool)>{
         self.items.iter().find(|(name,_,_)|head.contains(name.as_str()))
             .map(|(_,label,allow)|(label.clone(),*allow))
+    }
+    /// 检测到新通知来源时自动登记：名单里没有同名项就加一条（label=name、allow=true），
+    /// 返回是否真的加了。加完由调用方 save()。按 name 精确匹配，避免 contains 误判。
+    pub fn add_if_missing(&mut self,name:&str)->bool{
+        if name.is_empty(){return false;}
+        if self.items.iter().any(|(n,_,_)|n==name){return false;}
+        self.items.push((name.to_string(),name.to_string(),true));
+        true
     }
 }
 

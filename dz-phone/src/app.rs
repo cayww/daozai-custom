@@ -1111,8 +1111,6 @@ pub struct App {
     pub(crate) phone_icons:std::collections::HashMap<String,eframe::egui::TextureHandle>,
     /// 手机连接通知的来源 App 名单（`phone-apps.json`，支持热重载）。
     pub(crate) phone_apps:crate::model::PhoneApps,
-    /// 设置页「添加 App」输入框的暂存内容（点添加后写入名单并落盘）。
-    pub(crate) phone_app_new:String,
     /// 液态玻璃参数弹窗的开关（设置 → 岛体外观 → 配置液态玻璃）。
     pub(crate) liquid_cfg_open:bool,
     /// 液态玻璃配置弹窗里的「预览形态」：false=展开态（默认，弹窗开着时强制展开），
@@ -1404,7 +1402,6 @@ impl App {
             phone_counts:Default::default(),
             phone_icons:Default::default(),
             phone_apps:model::PhoneApps::load(),
-            phone_app_new:String::new(),
             liquid_cfg_open:false,
             liquid_preview_collapsed:false,
             browser_prefs:model::BridgePrefs::load(),
@@ -3684,6 +3681,7 @@ impl App {
             self.glass_morph,
             crate::gpu_glass::NEUTRAL_TINT,self.t as f32,
             (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]),self.liquid_k,
+            self.settings.liquid_light_follow,
             &self.glass_controls(origin),
             // 刘海形状：把肩部参数传给着色器；胶囊/圆角矩形传 None。
             if self.settings.island_shape==model::IslandShape::Notch {Some((flare,flare_h))}else{None});

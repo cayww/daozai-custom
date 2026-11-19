@@ -1466,6 +1466,23 @@ pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String
     None
 }
 
+/// 通知正文首段里是否是一个"名单里还没有的新 App 名"，需要自动登记到 phone-apps.json。
+/// 只登记像 App 来源的短名；来电/短信特征、过长文本、名单已命中的都不登记，
+/// 避免把"电话/短信"标签或整句话塞进名单。
+pub(crate) fn phone_new_app(head:&str, body:&str, apps:&crate::model::PhoneApps)->Option<String> {
+    let head=head.trim();
+    if head.is_empty(){return None;}
+    // 名单已按 contains 命中（含同名）→ 不动。
+    if apps.items.iter().any(|(name,_,_)|head.contains(name.as_str())||name==head){return None;}
+    // 来电 / 短信特征：来源是号码、手机号或固定标签词，不是 App 名。
+    if body.contains("传入呼叫")||body.contains("未接来电"){return None;}
+    if matches!(head,"来电"|"电话"|"短信"|"连接"|"手机"){return None;}
+    let digits=head.chars().all(|c|c.is_ascii_digit()||matches!(c,'+'|'-'|' '|'('|')'));
+    if digits||body.contains("验证码")||body.contains('【')||body.contains("短信"){return None;}
+    // 只登记短名（和 phone_app 的兜底阈值一致）。
+    if head.chars().count()<=12 {Some(head.to_string())}else{None}
+}
+
 pub(crate) fn phone_channel(id:&str)->bool {
     // 只要是手机连接（Phone Link）发出来的就归手机通道：
     // WinRT 有时给主 AUMID（`!App`），有时给子通道（`YourPhoneMessages_…` /
@@ -1481,7 +1498,20 @@ pub(crate) fn phone_label(id:&str)->&'static str {
 
 #[cfg(test)]
 mod phone_channel_tests {
-    use super::{phone_app,phone_channel,phone_label};
+    use super::{phone_app,phone_channel,phone_label,phone_new_app};
+    #[test]
+    fn 新App自动登记判定(){
+        let mut apps=crate::model::PhoneApps::default();
+        // 新短名 App → 应登记
+        assert_eq!(phone_new_app("小红书","小红书 · 有人回复了你",&apps),Some("小红书".to_string()));
+        // 名单已有的不再登记
+        apps.items.push(("小红书".into(),"小红书".into(),true));
+        assert_eq!(phone_new_app("小红书","小红书 · 又一条",&apps),None);
+        // 来电/短信特征、号码、长文本不登记
+        assert_eq!(phone_new_app("来电","来电 · 138xxxx",&apps),None);
+        assert_eq!(phone_new_app("1380000","1380000 · 您的验证码 1234",&apps),None);
+        assert_eq!(phone_new_app("一条很长的普通消息内容没有应用名","x",&apps),None);
+    }
     #[test]
     fn 只放行手机连接白名单通道(){
         // 现在只要是手机连接的 AUMID 都算手机通道（白名单只管标签）；

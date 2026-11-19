@@ -1448,6 +1448,15 @@ impl App {
         // 真实手机连接通知只报主 AUMID，改由正文识别来源；
         // 明确命中黑名单的静默，识别不出的按「连接」放行，避免漏掉来电等重要通知。
         let phone_info: Option<(String, bool)> = if phone {
+            // 检测到名单里没有的新 App → 自动登记（默认开启）并写回 phone-apps.json；
+            // 之后设置页只保留勾选列表，不再手动输入 App 名。
+            let head=body.split('·').next().unwrap_or("").trim().to_string();
+            if let Some(new_app)=crate::system::phone_new_app(&head,&body,&self.phone_apps) {
+                if self.phone_apps.add_if_missing(&new_app) {
+                    self.phone_apps.save();
+                    log_notice(&format!("AUTO-ADD 手机 App 名单 + {new_app}"));
+                }
+            }
             Some(
                 crate::system::phone_app(&body, &self.phone_apps)
                     .unwrap_or(("连接".to_string(), true)),
@@ -4260,6 +4269,15 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 });
                                 settings_hint(ui,"边缘高光亮度（默认 0.90）；随背景明暗自动微调");
                                 ui.separator();
+                                settings_control_row(ui,"高光跟随鼠标",56.0,|ui|{
+                                    ui.horizontal(|ui|{
+                                        ui.spacing_mut().slider_width=180.0;
+                                        ui.add(egui::Slider::new(&mut app.settings.liquid_light_follow,0.0..=1.0).fixed_decimals(2));
+                                        if ui.add_enabled((app.settings.liquid_light_follow-1.0).abs()>0.005,egui::Button::new("恢复默认")).clicked(){app.settings.liquid_light_follow=1.0;}
+                                    }).response
+                                });
+                                settings_hint(ui,"高光是否随鼠标方向摆动（默认 1.0）：0 = 固定左上光，不跟鼠标；1 = 完全跟随");
+                                ui.separator();
                                 settings_control_row(ui,"弹簧刚度",56.0,|ui|{
                                     ui.horizontal(|ui|{
                                         ui.spacing_mut().slider_width=180.0;
@@ -6116,18 +6134,7 @@ impl App {
                                 setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
                             });
                             ui.separator();
-                            ui.label(egui::RichText::new("手机 App 名单：勾选立即生效；名单为空时按来电/短信特征与短名兜底，新 App 想固定标签或静音就加一条。也可直接改 %APPDATA%\\Daozai\\phone-apps.json。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
-                            ui.horizontal(|ui|{
-                                ui.add(egui::TextEdit::singleline(&mut self.phone_app_new).hint_text("App 名（按通知正文首段匹配）").desired_width(170.0));
-                                if ui.button("添加").clicked(){
-                                    let name=self.phone_app_new.trim().to_string();
-                                    if !name.is_empty() && self.phone_apps.items.iter().all(|(n,_,_)|*n!=name){
-                                        self.phone_apps.items.push((name.clone(),name,true));
-                                        self.phone_apps.save();
-                                    }
-                                    self.phone_app_new.clear();
-                                }
-                            });
+                            ui.label(egui::RichText::new("手机 App 名单：检测到新 App 通知时自动加入并默认开启，这里只需取消勾选即可静音。也可直接改 %APPDATA%\\Daozai\\phone-apps.json。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             let before_phone_apps=self.phone_apps.items.clone();
                             for (name,label,allow) in &mut self.phone_apps.items {
                                 let title=if label==name {name.clone()} else {format!("{} · {}",label,name)};
