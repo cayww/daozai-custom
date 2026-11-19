@@ -6,6 +6,10 @@ use std::{io::{Read, Write}, path::PathBuf, sync::{mpsc::{self, Receiver}, Arc, 
 const REPOSITORY: &str = "https://github.com/cayww/daozai-custom";
 const API: &str = "https://api.github.com/repos/cayww/daozai-custom/releases/latest";
 const RELEASES: &str = "https://github.com/cayww/daozai-custom/releases/latest";
+// 国内访问 GitHub release 常超时；这些是可用的加速镜像（拼接完整原始 URL）。
+// 探测时选最快返回有效 exe 文件头的那个，全部失败则直连。下载后仍按 sha256 校验，
+// 镜像即使被篡改也过不了校验。
+const MIRRORS: [&str; 3] = ["https://ghfast.top", "https://gh-proxy.com", "https://ghproxy.net"];
 const STARTUP_DELAY: Duration = Duration::from_secs(10);
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(3600);
@@ -131,11 +135,8 @@ impl State {
         if self.rx.is_some() && !self.automatic_check { ctx.request_repaint_after(Duration::from_millis(100)); }
     }
 
-    pub(crate) fn ui(&mut self, ui: &mut egui::Ui, enabled: bool) {
-        if !enabled {
-            ui.label(egui::RichText::new("更新检查已关闭 · 自定义构建保护").size(11.5).color(ui.visuals().weak_text_color()));
-            return;
-        }
+    pub(crate) fn ui(&mut self, ui: &mut egui::Ui, _enabled: bool) {
+        // 关闭自动检查时仍保留手动按钮：用户在「关于」里关掉的只是启动自动检查。
         let wait = self.manual_wait();
         if ui.add_enabled(self.rx.is_none() && wait.is_zero(), egui::Button::new("检查更新我的仓库")).clicked() {
             self.begin_check(ui.ctx(), false, check);
@@ -405,14 +406,61 @@ fn release_info(value: &serde_json::Value, current: &str) -> Result<Option<Relea
         notes: value["body"].as_str().unwrap_or("").to_owned(), package }))
 }
 
+/// 探测一个下载源：只取前 4 字节，验证是 Windows exe（MZ 头）。
+/// 返回耗时（毫秒），失败返回 None。
+fn probe_source(url: &str) -> Option<u128> {
+    let started = Instant::now();
+    let response = http_agent().ok()?.get(url).set("Range", "bytes=0-3").call().ok()?;
+    // 206=部分内容，200=镜像忽略 Range 返回整包（也接受，但只读 4 字节）。
+    let status = response.status();
+    if status != 200 && status != 206 { return None; }
+    let mut head = [0u8; 4];
+    let mut reader = response.into_reader();
+    use std::io::Read;
+    let got = reader.read(&mut head).ok()?;
+    if got < 2 || head[0] != b'M' || head[1] != b'Z' { return None; }
+    Some(started.elapsed().as_millis())
+}
+
+/// 自动选最快的下载源：并发探测三个镜像与直连，返回最先确认可用（且最快）的 URL。
+/// 全部失败时返回原始 URL（直连兜底，让下载函数给出正常错误提示）。
+fn pick_download_url(original: &str) -> String {
+    let mut candidates: Vec<String> = MIRRORS.iter().map(|m| format!("{m}/{original}")).collect();
+    candidates.push(original.to_string()); // 直连作为兜底候选
+    let (tx, rx) = mpsc::channel::<(String, u128)>();
+    for url in candidates.clone() {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            if let Some(ms) = probe_source(&url) { let _ = tx.send((url, ms)); }
+        });
+    }
+    drop(tx);
+    // 最多等 4 秒收集探测结果，选耗时最短的。
+    let deadline = Instant::now() + Duration::from_secs(4);
+    let mut best: Option<(String, u128)> = None;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() { break; }
+        match rx.recv_timeout(remaining) {
+            Ok((url, ms)) => {
+                if best.as_ref().is_none_or(|(_, best_ms)| ms < *best_ms) { best = Some((url, ms)); }
+            }
+            Err(_) => break,
+        }
+    }
+    best.map(|(url, _)| url).unwrap_or_else(|| original.to_string())
+}
+
 fn download(release: &Release, tx: &mpsc::Sender<Event>, cancel: &AtomicBool) -> Result<PathBuf, String> {
     let package = release.package.as_ref().ok_or("请通过浏览器下载此版本")?;
     let root = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).ok_or("无法找到更新缓存目录")?.join("Daozai/Updates");
     let work = root.join(format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
     std::fs::create_dir_all(&work).map_err(|_| "无法创建更新缓存")?;
     let result = (|| {
+        // 自动侦测最快可用的下载源（镜像 / 直连）；探测期间不取消，避免用户误以为卡住。
+        let url = pick_download_url(&package.url);
         let response = http_agent()?
-            .get(&package.url).call().map_err(|_| "连接下载服务器失败，请检查网络或代理，或使用网盘下载")?;
+            .get(&url).call().map_err(|_| "连接下载服务器失败，请检查网络或代理后重试")?;
         if !response.get_url().starts_with("https://") { return Err("更新下载未使用安全连接".into()); }
         let mut input = response.into_reader();
         let mut output = std::fs::File::create(work.join("update.zip")).map_err(|_| "无法保存更新包")?;
@@ -432,7 +480,7 @@ fn transfer(input: &mut impl Read, output: &mut impl Write, package: &Package, c
     let mut buffer = [0u8; 65536]; let mut total = 0u64;
     loop {
         if cancel.load(Ordering::Relaxed) { return Err("下载已取消".into()); }
-        let length = input.read(&mut buffer).map_err(|_| "下载中断或等待超时，请重试或使用网盘下载")?;
+        let length = input.read(&mut buffer).map_err(|_| "下载中断或等待超时，请重试")?;
         if length == 0 { break; }
         total += length as u64;
         if total > package.size { return Err("更新包大小不符，请重新下载".into()); }
@@ -781,7 +829,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = crate::app::App::new(&ctx, Default::default());
         app.updates.result = Some(Ok(Some(Release { version: "v0.6.63".into(),
-            notes: "- 更新下载支持 Windows 系统代理\n- 连接失败及时提示，避免长时间停在 0%\n- 新增网盘下载入口".into(), page: RELEASES.into(),
+            notes: "- 更新下载支持 Windows 系统代理\n- 连接失败及时提示，避免长时间停在 0%\n- 更新下载自动选择最快镜像".into(), page: RELEASES.into(),
             package: Some(Package { url: String::new(), size: 100, hash: String::new() }) })));
         app.updates.dialog_open = true;
         app.settings_tab = 9;
@@ -805,7 +853,7 @@ mod tests {
             ("update-dialog", None, ""),
             ("update-connecting", Some(0.0), ""),
             ("update-downloading", Some(0.42), ""),
-            ("update-failed", None, "连接下载服务器失败，请检查网络或代理，或使用网盘下载"),
+            ("update-failed", None, "连接下载服务器失败，请检查网络或代理后重试"),
         ] {
         app.updates.cancel = progress.map(|_| Arc::new(AtomicBool::new(false)));
         app.updates.progress = progress.unwrap_or_default();

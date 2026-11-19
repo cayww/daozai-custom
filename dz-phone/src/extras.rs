@@ -2404,6 +2404,8 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                         8=>egui::include_image!("../assets/settings-icons/system/calendar.svg"),
                         SETTINGS_TAB_APPEARANCE=>egui::include_image!("../assets/settings-icons/system/appearance.svg"),
                         SETTINGS_TAB_POSITION=>egui::include_image!("../assets/settings-icons/system/position.svg"),
+                        // 自定义与集成：里面是浏览器 / 手机 / MAA / 网易云等外部集成，用浏览器图标比「关于」贴切。
+                        SETTINGS_TAB_CUSTOM=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
                         _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
                     };
                     let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(23.0,23.0));
@@ -3404,6 +3406,11 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                                 ui.add_space(8.0);
                                 ui.vertical(|ui|self.updates.ui(ui,self.settings.update_check));
                             });
+                            ui.separator();
+                            // 开关放这里：旧配置里 update_check=0 的用户也能自己打开。
+                            let before=self.settings.update_check;
+                            setting_row(ui,"自动检查更新","启动时自动检查本仓库 releases；关闭后仍可用下方按钮手动检查", &mut self.settings.update_check);
+                            if before!=self.settings.update_check{self.settings.save();}
                             ui.label(egui::RichText::new("桌面顶部的音乐、专注、提醒与日程小助手。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                             ui.horizontal_wrapped(|ui|{
                                 if ui.button("打开本地数据目录").clicked(){self.pending.push(Cmd::Open(crate::model::config_dir()));}
