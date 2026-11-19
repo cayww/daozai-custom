@@ -1069,3 +1069,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 包 `installer\daozai-setup-custom-135.exe` = 11,111,784 B、sha256 前16 `0f1feadfe4cc3415`。
 - **已安装到 `D:\software\Daozai`**：`/VERYSILENT /DIR=D:\software\Daozai`，退出码 0、无 Runtime error；产物含主 exe / bridge / extension / CUSTOM_BUILD.txt / INSTALL-NOTES；`CUSTOM_BUILD.txt`=custom-135、exe/bridge 指纹与构建一致；HKCU Run 启动项 `D:\software\Daozai\daozai.exe` 已写入。日志已清理。
 - 自定义玻璃皮肤需在设置里手动选（官方默认经典）。
+
+### 7.0ag 自有发布线 v1.0.0 + GitHub release（2026-11-19 14:10–14:40，提交 `c80ac50`/`f15b9a7`）
+
+用户要求：版本从 1.0.0 起、发布到自己的 releases（像上游那样）、更新检查改指本仓库、关于页去捐赠保留上游介绍。
+- **源码改动**（提交 `c80ac50`）：`Cargo.toml` 0.6.66→**1.0.0**；`updates.rs` REPOSITORY/API/RELEASES 全改 `cayww/daozai-custom`，按钮文案「检查更新」→「检查更新我的仓库」，去掉指向别人网盘的 BACKUP_DOWNLOAD 和「网盘下载」入口；关于页 `support_author`（微信/支付宝二维码）→ `about_upstream`（原仓库链接 + 简短介绍），连带删 `release_support_codes`/`support_code_image` 及二维码测试、旧预览测试。提交 `f15b9a7` 把 Cargo.toml 的 `repository` 也改成 `cayww/daozai-custom`（元数据，不进二进制）。
+- 验证：`cargo check --all-targets` 通过、全量 **1372 passed / 0 failed / 131 ignored**（比 1373 少 1 是删了旧预览测试）。
+- **NSIS 包**：把上游 `setup.nsi` 复制进 `installer/`（PROJECT_DIR 要传 `D:\code\daozai-custom\dz-phone` 才有 assets/LICENSE/THIRD_PARTY_NOTICES），`/INPUTCHARSET UTF8` + `/DAPP_VERSION=1.0.0`；安装器 exe `2df39c291a7d6cec`（FileVersion 1.0.0）；包 `installer\Daozai-v1.0.0-windows-x64.exe` sha `19d22dede8a86f58`（9,121,464 B）。
+- **GitHub release**：tag **`v1.0.0`**（用户要求像上游那样用版本号），name「岛仔 v1.0.0（自定义发布线）」，id 450962032，页面 https://github.com/cayww/daozai-custom/releases/tag/v1.0.0 ，body=「与上游不同的部分」清单（用户指定）。
+- **asset 两个**（对齐上游发布惯例 + 更新模块）：`Daozai-Setup-v1.0.0-x64.exe`（NSIS 安装器，sha 19d22ded）+ `Daozai-v1.0.0-windows-x64.zip`（便携 zip，内含 `Daozai-v1.0.0-windows-x64/daozai.exe`=2df39c29，sha 4f277493，11,245,228 B）。**zip 是关键**：`updates.rs::release_info` 硬编码期望 `Daozai-v{ver}-windows-x64.zip` + URL + sha256 digest，只有它匹配才能让「检查更新我的仓库 → 下载并安装」真正工作；已用 API 验证匹配通过。
+- 坑：从 Bash 启动系统脚本加载器被安全策略拦（改用专门的命令工具）、Bash 的 /tmp 与 Python 路径不互通（用 C:/Users/.../AppData/Local/Temp）。
+- 未打包 Inno custom-136；日常安装仍 custom-135（§7.0af）。未推送 origin/main。

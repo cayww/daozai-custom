@@ -1,1 +1,5 @@
 *setup-*.exe
+
+# 发布产物放 GitHub releases，不进源码库
+Daozai-v*.exe
+Daozai-v*.zip
