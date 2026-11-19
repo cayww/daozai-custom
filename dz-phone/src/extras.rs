@@ -4174,7 +4174,9 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
                                 settings_hint(ui,"混合显卡机器建议开启：同卡才能零拷贝、也更省内存");
                                 // 与 D3D12 那处一致：改了启动期生效的开关就直接给「立即重启」。
-                                if app.settings.liquid_prefer_dgpu!=app.prefer_dgpu_running {
+                                // 启动值由 main.rs 写进环境变量（建窗前快照），无需额外字段。
+                                let dgpu_boot=std::env::var("DAOZAI_LIQUID_PREFER_DGPU").map(|v|v!="0").unwrap_or(app.settings.liquid_prefer_dgpu);
+                                if app.settings.liquid_prefer_dgpu!=dgpu_boot {
                                     ui.horizontal(|ui|{
                                         ui.label(egui::RichText::new("优先独显重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));
                                         if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
@@ -4187,7 +4189,8 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 setting_row(ui,"零拷贝抓屏（实验）","玻璃背景不走 CPU 读回，降低卡顿；异常时请关闭",&mut app.settings.liquid_gpu_share);
                                 if before!=app.settings.liquid_gpu_share {app.settings.save();}
                                 settings_hint(ui,"仅液态皮肤 + 兼容渲染(D3D12) 生效，重启后生效；非液态皮肤无影响");
-                                if app.settings.liquid_gpu_share!=app.gpu_share_running {
+                                let share_boot=std::env::var("DAOZAI_LIQUID_GPU_SHARE").map(|v|v!="0").unwrap_or(app.settings.liquid_gpu_share);
+                                if app.settings.liquid_gpu_share!=share_boot {
                                     ui.horizontal(|ui|{
                                         ui.label(egui::RichText::new("零拷贝重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));
                                         if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
