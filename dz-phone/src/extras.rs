@@ -3225,8 +3225,41 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                     }
 
                     SETTINGS_TAB_CUSTOM=>{
-                        // ===== 本地定制：手机连接 / 浏览器下载 / MAA =====
-                        // 液态玻璃与交互已移到「外观」页（SETTINGS_TAB_APPEARANCE），便于整块并入上游。
+                        // ===== 本地定制的第三方集成：网易云 / 手机 / 浏览器 / MAA =====
+                        // 按「跟谁集成」分组，相关的卡片挨在一起；液态玻璃与交互已移到
+                        // 「外观」页（SETTINGS_TAB_APPEARANCE），便于整块并入上游。
+
+                        // ---- 网易云音乐 ----
+                        settings_label(ui,"网易云音乐");
+                        settings_card(ui,|ui|{
+                            let fixed=crate::smtc::netease_control::shortcut_fixed();
+                            ui.label(egui::RichText::new(if fixed{"快捷方式已带调试端口"}else{"快捷方式还没有调试端口"}).size(12.5).strong());
+                            settings_hint(ui,"拖动播放进度条需要改网易云快捷方式的启动参数；启动岛仔时会自动修复全部快捷方式，重启网易云后生效。只改参数，不动客户端本身。");
+                            ui.separator();
+                            if ui.button("修复快捷方式").clicked(){
+                                let count=crate::smtc::netease_control::fix_all_shortcuts();
+                                if count==0 {self.say("没找到需要修改的网易云快捷方式，可以在下方手动选择");}
+                                else {self.say(format!("已修复 {count} 个快捷方式，重启网易云后生效"));}
+                            }
+                            ui.horizontal(|ui|{
+                                ui.label(egui::RichText::new("找不到时手动指定：").size(11.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
+                                if ui.button("选择文件").clicked(){
+                                    match crate::system::pick_files_for("选择网易云快捷方式",false){
+                                        Ok(files)=>if let Some(path)=files.first(){
+                                            match crate::smtc::netease_control::fix_shortcut(path){
+                                                Ok(message)=>self.say(message),
+                                                Err(error)=>self.say(error),
+                                            }
+                                        }else{self.say("未选择文件");},
+                                        Err(error)=>self.say(format!("打开文件对话框失败：{}",error)),
+                                    }
+                                }
+                            });
+                        });
+
+                        // ---- 手机（连接状态 + 手机功能）----
+                        settings_label(ui,"手机");
+                        settings_hint(ui,"下面两项配合：先在「连接状态」里配对手机，再到「手机功能」里开关电量与通知转发。");
                         settings_label(ui,"连接状态");
                         settings_card(ui,|ui|{
                             // 连接状态：直接读手机连接卡片，不经电量开关。
@@ -3310,7 +3343,8 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                             }
                             if before_phone_apps!=self.phone_apps.items{self.phone_apps.save();}
                         });
-                        // ===== 本地定制：浏览器下载 =====
+                        // ---- 浏览器（安装 + 下载提示 + 工作原理）----
+                        settings_label(ui,"浏览器");
                         settings_label(ui,"安装");
                         settings_card(ui,|ui|{
                             bridge_card_body(self,ctx,ui);
@@ -3327,7 +3361,8 @@ fn settings_feature_header(&mut self,ui:&mut egui::Ui,page:usize,description:&st
                         settings_card(ui,|ui|{
                             ui.label(egui::RichText::new("浏览器扩展把下载事件发给本机桥进程，桥写入状态总线后由岛仔显示。Chrome/Edge 出于安全不允许软件静默安装本地扩展，所以首次使用需要按上方指引手动加载一次。").size(12.0).color(settings_color(ctx,Color32::from_gray(180),Color32::from_gray(75))));
                         });
-                        // ===== 本地定制：MAA =====
+                        // ---- MAA（状态 + 上岛提醒 + 路径）----
+                        settings_label(ui,"MAA");
                         // 对接前提：通知名单里开启 MAA，本页配置才可操作（与状态跟随同步）。
                         let maa_on=self.maa_enabled();
                         let maa_exe=self.notification_apps.items.iter()

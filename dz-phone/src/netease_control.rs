@@ -219,6 +219,13 @@ fn ensure_shortcut_with(port:u16,extra:Option<&Path>)->bool{
     ok
 }
 
+/// 设置页「修复快捷方式」按钮：同步修全部，返回修好的条数。
+/// 与启动自动修复共用同一套修法（patch_shortcut 幂等）。
+pub fn fix_all_shortcuts()->usize{
+    let paths=shortcut_paths();
+    if ensure_shortcut(config().port){paths.len()}else{0}
+}
+
 /// 打开岛仔时自动修一遍，不用用户点任何按钮。
 /// 扫描放后台线程、进程内只跑一次；patch_shortcut 幂等，重复执行不会改文件。
 pub fn boot_scan_shortcuts(){
