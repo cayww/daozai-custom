@@ -1101,4 +1101,5 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **实测诊断**：两个 cloudmusic.exe 命令行都是 `"D:\software\CloudMusic\cloudmusic.exe" --remote-debugging-port=9222`（15:17:26 与 15:17:47 启动，同一父进程），但 **9222 端口无监听** = 僵死残留。岛仔代码只改 .lnk 参数 + 作为 CDP **客户端**连接端口，不启动/不杀网易云进程。结论：网易云"托盘退出不干净"是它自身固有行为（不带 debug 也有），debug 参数放大了后果（残留实例占调试端口 → 新实例启动异常）。用户猜测基本对，是诱因非唯一根因。
 - **立即处理**：复核 PID 26312/6580/22472 身份后仅结束这三个残留进程（未动其他程序），确认网易云进程清空。
 - **代码方案**（关键：用户指出"岛仔开机自启时，启动一次性检测没用"→ 改事件驱动）：挂钩 `app.rs::update_media()` 里「SMTC 会话消失」分支（就是歌词/音乐页自动关闭的地方），仅当退出前 `self.media.source` 是 `cloudmusic.exe` 时调用检测；`netease_control.rs` 新增 `stale_instance_warning()` 用 Toolhelp 快照数 cloudmusic.exe 主进程，≥2 判为残留并提示（15 分钟冷却，cfg!(test) 直接返回 false 不影响 UI 测试）。**只提示，不自动杀进程**。此方案不依赖岛仔/网易云谁先启动。
-- 验证：check --all-targets + 全量 1372 passed。提交 66337d6。未打包/未发布/未推送。
+- 验证：check --all-targets + 全量 1372 passed。提交 66337d6。
+- **推送 + 覆盖 v1.0.0**（用户要求，15:37–15:43）：`git push origin main` 成功（70f12de→15345be，2 提交）。重构建 exe `74f83162af68bd1b`、NSIS 安装器 sha `1abd184ca1767647`（9,125,779 B）、zip sha `54837b94ba0ee90f`（11,255,959 B，内含 exe=74f83162）。删旧 asset（766637577/766637740）后同名重传；API 验证 zip 仍符合更新模块（名字/URL/size/sha256）。发布页 https://github.com/cayww/daozai-custom/releases/tag/v1.0.0 。本地与 origin/main 均 15345be，工作树干净。
