@@ -1103,3 +1103,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **代码方案**（关键：用户指出"岛仔开机自启时，启动一次性检测没用"→ 改事件驱动）：挂钩 `app.rs::update_media()` 里「SMTC 会话消失」分支（就是歌词/音乐页自动关闭的地方），仅当退出前 `self.media.source` 是 `cloudmusic.exe` 时调用检测；`netease_control.rs` 新增 `stale_instance_warning()` 用 Toolhelp 快照数 cloudmusic.exe 主进程，≥2 判为残留并提示（15 分钟冷却，cfg!(test) 直接返回 false 不影响 UI 测试）。**只提示，不自动杀进程**。此方案不依赖岛仔/网易云谁先启动。
 - 验证：check --all-targets + 全量 1372 passed。提交 66337d6。
 - **推送 + 覆盖 v1.0.0**（用户要求，15:37–15:43）：`git push origin main` 成功（70f12de→15345be，2 提交）。重构建 exe `74f83162af68bd1b`、NSIS 安装器 sha `1abd184ca1767647`（9,125,779 B）、zip sha `54837b94ba0ee90f`（11,255,959 B，内含 exe=74f83162）。删旧 asset（766637577/766637740）后同名重传；API 验证 zip 仍符合更新模块（名字/URL/size/sha256）。发布页 https://github.com/cayww/daozai-custom/releases/tag/v1.0.0 。本地与 origin/main 均 15345be，工作树干净。
+
+### 7.0ak 融合 e992b31 截图省 CPU 补丁到定制版 vendor（2026-11-19 15:47–16:00，提交 `700e4d4`）
+
+用户问 PR 文案「vendor 更新到官方最新」与定制版差异、哪个更好、要求融合以"性能优化到最佳"。
+- **盘点结论（纠正记忆）**：两边 vendor 版本完全相同（eframe/egui/egui-wgpu/egui-winit 0.31.1、wgpu-hal 24.0.4），差异不是版本而是**各自补丁不同**。关键性能补丁归属：`e992b31`（截图读回省 CPU 约四成，**上游/PR 有、custom 无**）；`cf76bbb`（自适应帧率静止30/动时60 + eframe Poll 补丁，**custom 有、上游/PR 无**）；`9c91ebb`（DComp 透明交换链，custom 有）；`beda038`（液态主体，PR 有）。两边各有对方没有的优化。
+- **不整体 cherry-pick**：`e992b31` 是混合提交（引入 egui-wgpu vendor + 改 layered.rs/main.rs/resources.rs 应用层 + Cargo.lock），与 custom 独立的 DComp 线（`6475d44`→`9c91ebb`）和 `cf76bbb` 会冲突。改为**手工移植三处核心补丁**（与 DComp 无关、可共存）：
+  1. `vendor/egui-wgpu/src/capture.rs`：`ctx.request_repaint()` → `request_repaint_after(1ms)`（截图交付只多画一帧，原逻辑连画两帧）；
+  2. `vendor/egui/src/context.rs`：`send_viewport_cmd_to` 里 Screenshot 命令且是本 viewport 时不 `request_repaint_of`；
+  3. `vendor/egui/src/input_state/mod.rs`：`wants_repaint_after` 里 Screenshot 事件不算用户输入（其余事件仍触发立即重绘）。
+- **收益边界（重要，别高估）**：三处补丁只作用于**兼容渲染（render_compat）截图读回**路径。液态皮肤走 DComp/WGC 不经过读回、经典皮肤 OpenGL 下 `opaque_surface=false` 本就不走读回——**只在 D3D12 + 经典皮肤 + 兼容渲染**组合下有收益。custom 应用层 `schedule_repaint`+`glass_tick`（cf76bbb）已解决大部分帧率问题，此次是补齐 vendor 层、让两边优化全集重合。
+- 验证：`cargo check --all-targets` + 全量 **1372 passed / 0 failed**。diff 仅 3 文件 / 10 行插入 / 3 行删除。提交 700e4d4。未打包/未发布/未推送。
