@@ -1080,3 +1080,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **asset 两个**（对齐上游发布惯例 + 更新模块）：`Daozai-Setup-v1.0.0-x64.exe`（NSIS 安装器，sha 19d22ded）+ `Daozai-v1.0.0-windows-x64.zip`（便携 zip，内含 `Daozai-v1.0.0-windows-x64/daozai.exe`=2df39c29，sha 4f277493，11,245,228 B）。**zip 是关键**：`updates.rs::release_info` 硬编码期望 `Daozai-v{ver}-windows-x64.zip` + URL + sha256 digest，只有它匹配才能让「检查更新我的仓库 → 下载并安装」真正工作；已用 API 验证匹配通过。
 - 坑：从 Bash 启动系统脚本加载器被安全策略拦（改用专门的命令工具）、Bash 的 /tmp 与 Python 路径不互通（用 C:/Users/.../AppData/Local/Temp）。
 - 未打包 Inno custom-136；日常安装仍 custom-135（§7.0af）。未推送 origin/main。
+
+### 7.0ah 清理 liquid-test 目录（2026-11-19 14:41，提交 `ad23629`）
+
+用户确认液态玻璃测试已完成，不再需要测试内容。删掉 `installer/liquid-test/` 整个目录：6 个追踪文件（iss / 两个启动 cmd / 测试说明 / 反馈与卸载 / .gitignore）+ 57 个未追踪测试 exe，合计 **519MB**。删前确认全仓库无源码/脚本引用该目录。追踪文件可从 git 历史恢复；测试 exe 是构建产物。提交 `ad23629`。installer 目录现只剩正式发布相关（daozai.iss / setup.nsi / INSTALL-NOTES.txt / .gitignore + 各正式包 exe）。
