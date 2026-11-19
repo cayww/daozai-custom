@@ -1113,4 +1113,5 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   2. `vendor/egui/src/context.rs`：`send_viewport_cmd_to` 里 Screenshot 命令且是本 viewport 时不 `request_repaint_of`；
   3. `vendor/egui/src/input_state/mod.rs`：`wants_repaint_after` 里 Screenshot 事件不算用户输入（其余事件仍触发立即重绘）。
 - **收益边界（重要，别高估）**：三处补丁只作用于**兼容渲染（render_compat）截图读回**路径。液态皮肤走 DComp/WGC 不经过读回、经典皮肤 OpenGL 下 `opaque_surface=false` 本就不走读回——**只在 D3D12 + 经典皮肤 + 兼容渲染**组合下有收益。custom 应用层 `schedule_repaint`+`glass_tick`（cf76bbb）已解决大部分帧率问题，此次是补齐 vendor 层、让两边优化全集重合。
-- 验证：`cargo check --all-targets` + 全量 **1372 passed / 0 failed**。diff 仅 3 文件 / 10 行插入 / 3 行删除。提交 700e4d4。未打包/未发布/未推送。
+- 验证：`cargo check --all-targets` + 全量 **1372 passed / 0 failed**。diff 仅 3 文件 / 10 行插入 / 3 行删除。提交 700e4d4。
+- **推送 + 覆盖 v1.0.0**（用户要求，16:05–16:12）：`git push origin main` 成功（4bc70ed→2af861f，2 提交）。重构建 exe `5533ba64c55997a7`（本次 cargo 确实重编了 egui——日志出现 `egui (lib) generated 31 warnings`，证明 vendor 补丁进二进制）。NSIS 安装器 sha `8cf6999e2c14c13d`（9,126,102 B）、zip sha `7469cb4c8a8f3edf`（11,256,143 B，内含 exe=5533ba64）。删旧 asset（766734127/766734323）后同名重传；API 验证 zip 仍符合更新模块（名字/URL/size/sha256）。本地与 origin 均 2af861f，工作树干净。
