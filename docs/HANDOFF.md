@@ -1058,3 +1058,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修复**：把卡片加回「自定义与集成」页；新增 `netease_control::fix_all_shortcuts()`（包装私有 `ensure_shortcut`，同步修全部、返回条数）供"修复快捷方式"按钮用。
 - **顺便重组该页**：按"跟谁集成"分组，相关卡片挨在一起——网易云音乐 → 手机（连接状态 + 手机功能）→ 浏览器（安装 + 下载提示 + 工作原理）→ MAA（状态 + 上岛提醒 + 路径）；每组前加组标题（复用带蓝色竖条的 `settings_label`），手机组加一句说明两项如何配合。未用折叠 `settings_section`（默认折叠反而让用户找不到内容）。
 - 验证：`cargo check --all-targets` 通过；全量 **1373 passed / 0 failed / 132 ignored**。未打包、未部署、未推送。
+
+### 7.0af 打并安装 custom-135 正式包（2026-11-19 13:19–13:26，提交见下）
+
+用户要求打正式包并安装到 `D:\software\Daozai`。决策：版本 custom-135（0.6.66），装到日常部署目录。
+- 打包前确认：`D:\software\Daozai` **原本不存在**（HANDOFF 旧记录说跑 custom-129，实际已被清理过，常见位置/注册表均无岛仔安装）——无需备份，直接装。
+- 基础源码 main `39cf9d3`（含 §7.0ae 网易云卡片恢复 + 设置页重组），全量测试 1373 passed（§7.0ae 已验证，复用）。
+- 提交 `88f163c`（iss 版本 0.6.65→0.6.66 保持、custom-134→**custom-135**）。
+- 双 bin release：exe `c66336a6c0cb10a7`（22,526,976 B）、bridge `9ee551099d3f8871`（376,320 B）。
+- 包 `installer\daozai-setup-custom-135.exe` = 11,111,784 B、sha256 前16 `0f1feadfe4cc3415`。
+- **已安装到 `D:\software\Daozai`**：`/VERYSILENT /DIR=D:\software\Daozai`，退出码 0、无 Runtime error；产物含主 exe / bridge / extension / CUSTOM_BUILD.txt / INSTALL-NOTES；`CUSTOM_BUILD.txt`=custom-135、exe/bridge 指纹与构建一致；HKCU Run 启动项 `D:\software\Daozai\daozai.exe` 已写入。日志已清理。
+- 自定义玻璃皮肤需在设置里手动选（官方默认经典）。
