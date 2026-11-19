@@ -372,7 +372,10 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 内缩后抗锯齿完整落在窗口区域内，区域只裁到已经完全透明的部分。
     // inset 必须大于「白边半宽(1.6) + aa 半宽(0.8)」，否则白边外半部分被区域裁掉，
     // 边缘会变成 1px 硬跳变（实测 y:43 → 181，跨 138）—— 这就是看到的锯齿。
-    let inset = 3.0;
+    // DComp 透明交换链有逐像素 alpha、不套 SetWindowRgn 硬裁，不需要这个内缩：
+    // 内缩 3px 会让玻璃比窗口小一圈，露出的环带回补色在浅背景上就是那圈"白边"。
+    // DComp 下 inset=0 → 玻璃画满、高光包住整圈，且真实 alpha 不会有锯齿。
+    let inset = select(3.0, 0.0, u.notch.w > 0.5);
     let half_size = max(u.bounds.zw * 0.5 - vec2<f32>(inset), vec2<f32>(2.0));
     let local = p - u.bounds.xy - u.bounds.zw * 0.5;
     let radius = max(min(u.extra.x - inset, min(half_size.x, half_size.y)), 0.0);
