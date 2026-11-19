@@ -1084,3 +1084,13 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 ### 7.0ah 清理 liquid-test 目录（2026-11-19 14:41，提交 `ad23629`）
 
 用户确认液态玻璃测试已完成，不再需要测试内容。删掉 `installer/liquid-test/` 整个目录：6 个追踪文件（iss / 两个启动 cmd / 测试说明 / 反馈与卸载 / .gitignore）+ 57 个未追踪测试 exe，合计 **519MB**。删前确认全仓库无源码/脚本引用该目录。追踪文件可从 git 历史恢复；测试 exe 是构建产物。提交 `ad23629`。installer 目录现只剩正式发布相关（daozai.iss / setup.nsi / INSTALL-NOTES.txt / .gitignore + 各正式包 exe）。
+
+### 7.0ai 修复更新按钮 + 镜像自动下载 + 设置页图标（2026-11-19 14:50–15:10，提交 `61954e4`）
+
+用户反馈：v1.0.0 版本页只显示「更新检查已关闭 · 自定义构建保护」、没有按钮；且国内用户难访问 GitHub，要求配置可用镜像自动侦测；另要求换「自定义与集成」图标。
+- **根因**：`Settings::default()` 里 `update_check: false`（自定义构建历史默认，当初防官方更新覆盖本地改动）；现在已是自有 release 线，应默认开。改 `model.rs` 默认 true + 注释；关于页加 `setting_row` 开关（旧配置 update_check=0 的用户可自行开启）；`updates.ui()` 去掉 `!enabled` 时直接 return 的逻辑——关掉自动检查仍保留手动按钮，参数改 `_enabled`。
+- **镜像**：实测 `ghfast.top` / `gh-proxy.com` / `ghproxy.net` 三个能真实下载 v1.0.0 asset（Range 请求前 4 字节均为 `4d5a9000`=MZ exe 头；gh.llkk.cc / ghproxy.cc 超时）。`updates.rs` 加 `MIRRORS` 常量 + `probe_source()`（4 字节 MZ 校验、记录耗时）+ `pick_download_url()`（4 线程并发探测三个镜像+直连，最多等 4s，选最快；全失败直连兜底）；`download()` 用它替换 `package.url`。**安全**：探测只是一层前缀，下载后原 sha256 校验不变，镜像篡改过不了。清理了指向别人网盘的 BACKUP_DOWNLOAD 和残留文案。
+- **图标**：`SETTINGS_TAB_CUSTOM=15` 原来落到 `_` 用 `about.svg`；改成 `browser.svg`（这页是浏览器/手机/MAA/网易云集成）。
+- 验证 `check --all-targets` 通过、全量 **1372 passed / 0 failed / 131 ignored**。
+- **覆盖 v1.0.0 asset**（用户选不升 v1.0.1）：重构建 exe `0bb5b14b628bbfa9`、新 NSIS 安装器 sha `4c7dae0773cc8fb8`（9,124,200 B）、新 zip sha `28527d058abf44bd`（11,252,934 B，内含 exe=0bb5b14b）。删旧 asset（id 766547390/766550691）后重传同名；API 验证更新链路仍匹配（asset 名/URL/size/sha256 digest 齐全）。
+- 注：已装 v1.0.0 的用户不会收到"新版本"提示（版本号没变），但重新下载得到的是修复版。未推送 origin/main。
