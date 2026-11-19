@@ -2,10 +2,10 @@
 use eframe::egui;
 use std::{io::{Read, Write}, path::PathBuf, sync::{mpsc::{self, Receiver}, Arc, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 
-const REPOSITORY: &str = "https://github.com/Renly1994/xiaotang-daozai";
-const API: &str = "https://api.github.com/repos/Renly1994/xiaotang-daozai/releases/latest";
-const RELEASES: &str = "https://github.com/Renly1994/xiaotang-daozai/releases/latest";
-const BACKUP_DOWNLOAD: &str = "https://pan.quark.cn/s/0a39b4e1f332";
+// 自定义构建：更新检查指向自己的仓库 releases，而不是上游。
+const REPOSITORY: &str = "https://github.com/cayww/daozai-custom";
+const API: &str = "https://api.github.com/repos/cayww/daozai-custom/releases/latest";
+const RELEASES: &str = "https://github.com/cayww/daozai-custom/releases/latest";
 const STARTUP_DELAY: Duration = Duration::from_secs(10);
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(3600);
@@ -137,7 +137,7 @@ impl State {
             return;
         }
         let wait = self.manual_wait();
-        if ui.add_enabled(self.rx.is_none() && wait.is_zero(), egui::Button::new("检查更新")).clicked() {
+        if ui.add_enabled(self.rx.is_none() && wait.is_zero(), egui::Button::new("检查更新我的仓库")).clicked() {
             self.begin_check(ui.ctx(), false, check);
         }
         match &self.result {
@@ -278,9 +278,7 @@ impl State {
                         }
                         ui.add_space(2.0);
                         ui.horizontal(|ui| {
-                            ui.hyperlink_to(egui::RichText::new("网盘下载").size(11.5).color(theme::BLUE),BACKUP_DOWNLOAD);
-                            ui.label(egui::RichText::new("·").color(theme::DIM));
-                            ui.hyperlink_to(egui::RichText::new("浏览器下载").size(11.5).color(theme::GRAY),&release.page);
+                            ui.hyperlink_to(egui::RichText::new("浏览器下载").size(11.5).color(theme::BLUE),&release.page);
                             ui.label(egui::RichText::new("·").color(theme::DIM));
                             ui.hyperlink_to(egui::RichText::new("查看发布说明").size(11.5).color(theme::GRAY),&release.page);
                         });
