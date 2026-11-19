@@ -232,7 +232,9 @@ impl CaptureState {
                 },
             ))
             .ok();
-            ctx.request_repaint();
+            // 岛仔：交付截图只需要一帧。request_repaint() 会连画两帧，兼容渲染每次读回都要多画一帧；
+            // 非零延迟只触发一次（egui 会再扣掉一帧的预测时长，实际仍是下一帧就画）。
+            ctx.request_repaint_after(std::time::Duration::from_millis(1));
         });
     }
 }
