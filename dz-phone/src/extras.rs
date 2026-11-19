@@ -4170,7 +4170,7 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                     settings_hint(ui,"展开态看展开后的控件玻璃；收起态看胶囊常驻条的玻璃");
                                 ui.separator();
                                 let before=app.settings.liquid_prefer_dgpu;
-                                setting_row(ui,"优先独立显卡","独显渲染玻璃，并让抓屏用同一张卡（零拷贝需要），重启生效",&mut app.settings.liquid_prefer_dgpu);
+                                setting_row(ui,"优先独立显卡","独显渲染液态玻璃，需开启兼容渲染(D3D 12)，零拷贝也需要独显，重启生效",&mut app.settings.liquid_prefer_dgpu);
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
                                 settings_hint(ui,"混合显卡机器建议开启：同卡才能零拷贝、也更省内存");
                                 ui.separator();

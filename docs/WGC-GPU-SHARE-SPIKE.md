@@ -33,9 +33,9 @@ WGC 帧(D3D11) → CopyResource 到共享 D3D11 纹理(NT handle)
 
 ## 实现要点
 
-| 文件 | 改动 |
-|---|---|
-| `dz-phone/src/wgc.rs` | `SharedFrame`(producer COM资源) + `SharedHandle`(consumer句柄)；`adapter_by_luid` 按 wgpu 同卡建 D3D11 设备；`shared_texture` 建 `SHARED_NTHANDLE\|KEYEDMUTEX` 纹理；`grab_shared` 用 keyed mutex + `D3D11_QUERY_EVENT` spin 替代 Map |
+| 文件                        | 改动                                                                                                                                                                                                                                           |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dz-phone/src/wgc.rs`       | `SharedFrame`(producer COM资源) + `SharedHandle`(consumer句柄)；`adapter_by_luid` 按 wgpu 同卡建 D3D11 设备；`shared_texture` 建 `SHARED_NTHANDLE\|KEYEDMUTEX` 纹理；`grab_shared` 用 keyed mutex + `D3D11_QUERY_EVENT` spin 替代 Map          |
 | `dz-phone/src/gpu_glass.rs` | `import_shared_handle`：`as_hal::<Dx12>` → `raw_d3d12_device().OpenSharedHandle` → `texture_from_raw` → `create_texture_from_hal`（wgpu 24 是 2 参数版）；`make_gpu_inner` 写 adapter LUID；`prepare()` 开头分流，成功则跳过整条 CPU 合成/上传 |
 
 ### 同步契约（来自 scrying 实证）
@@ -78,6 +78,7 @@ WGC 的 D3D11 设备和 wgpu 的 D3D12 设备必须在同一张显卡上，共�
 `D3D11 设备绑定到 wgpu 同卡 adapter: "..."`。
 
 三种情况：
+
 1. 都在独显（混合显卡机器开 `liquid_prefer_dgpu=1`）：显存直连，收益最大。
 2. 都在核显（无独显机器，或关掉 prefer_dgpu）：同卡共享系统内存，仍零拷贝，
    省掉 Map(READ) 的 CPU 同步等待，但没有 PCIe 传输可省，收益小一些。
@@ -89,9 +90,10 @@ WGC 的 D3D11 设备和 wgpu 的 D3D12 设备必须在同一张显卡上，共�
 只设环境变量，无消费者，零副作用。液态皮肤但 glow 后端同理不生效。
 
 **文案**（设置页，已按此更新）：
-- 优先独立显卡：「独显渲染玻璃，并让抓屏用同一张卡（零拷贝需要），重启生效」
+
+- 优先独立显卡：「独显渲染液态玻璃，需开启兼容渲染(D3D 12)，零拷贝也需要独显，重启生效」
 - 零拷贝抓屏（实验）：「玻璃背景不走 CPU 读回，降低卡顿；异常时请关闭」
-  + 提示「仅液态皮肤 + 兼容渲染(D3D12) 生效，重启后生效；非液态皮肤无影响」
+  - 提示「仅液态皮肤 + 兼容渲染(D3D12) 生效，重启后生效；非液态皮肤无影响」
 
 ## 已知限制 / 风险（未解决）
 
