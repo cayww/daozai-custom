@@ -13,6 +13,10 @@
 
 use eframe::egui_wgpu::{self, wgpu};
 use std::sync::Mutex;
+#[cfg(windows)]
+use windows::Win32::Foundation::HANDLE;
+#[cfg(windows)]
+use windows::Win32::Graphics::Direct3D12::ID3D12Resource;
 
 /// 没有封面时的中性淡彩。
 pub const NEUTRAL_TINT: [f32; 3] = [0.62, 0.66, 0.74];
@@ -106,6 +110,11 @@ struct GlassGpu {
     texture: Option<wgpu::Texture>,
     bind_group: Option<wgpu::BindGroup>,
     size: (u32, u32),
+    /// spike: 从 D3D11 共享句柄导入的纹理 + 它的 bind_group + 尺寸。
+    /// 与旧的 `texture` 分开：GPU 共享路径用它绑定 shader 的 bg，绕过 CPU 上传。
+    shared: Option<(wgpu::Texture, wgpu::BindGroup, u32, u32)>,
+    /// spike: 一次性 1x1 copy 的 staging buffer，用于刷 D3D12 的状态屏障 / shader cache。
+    scratch: Option<wgpu::Buffer>,
 }
 
 static GPU: Mutex<Option<GlassGpu>> = Mutex::new(None);
@@ -661,7 +670,20 @@ fn make_gpu_inner(device: &wgpu::Device, format: wgpu::TextureFormat) -> GlassGp
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
-    GlassGpu { pipeline, layout, uniform, sampler, texture: None, bind_group: None, size: (0, 0) }
+    // spike: 把 wgpu 的 D3D12 adapter LUID 交给 wgc，让它把 D3D11 设备建在同一块卡上。
+    #[cfg(windows)]
+    {
+        let mut luid: Option<windows::Win32::Foundation::LUID> = None;
+        unsafe {
+            device.as_hal::<wgpu::hal::api::Dx12, _, _>(|hal| {
+                if let Some(d) = hal {
+                    luid = Some(d.raw_d3d12_device().GetAdapterLuid());
+                }
+            });
+        }
+        if let Some(l) = luid { crate::wgc::set_wgpu_luid(l); }
+    }
+    GlassGpu { pipeline, layout, uniform, sampler, texture: None, bind_group: None, size: (0, 0), shared: None, scratch: None }
 }
 
 /// DAOZAI_LIQUID_FLAT=1：玻璃内原样输出背景，用于检查抓屏与屏幕是否对齐。
@@ -1225,6 +1247,9 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4], ppp: f32) -> Option<(
     }
     let want = ((w as u64) << 32) | (h as u64);
     let (raw, bw, bh, from_wgc) = match crate::wgc::grab(x, y, w, h) {
+        // spike: 零拷贝共享帧由 prepare() 直接消费，不会走到 CPU 合成路径。
+        // 真走到这里说明分流失效，返回 None 让上层保留上一帧，不制造错误画面。
+        crate::wgc::Grab::Shared(_) => return None,
         crate::wgc::Grab::Frame(p, tw, th) => (p, tw, th, true),
         // WGC 这一帧还没有新画面：复用上一帧纹理。
         // **绝对不能退回 GDI**：GDI BitBlt 读的是桌面 DC，WDA_EXCLUDEFROMCAPTURE
@@ -1299,13 +1324,80 @@ fn capture(_x: i32, _y: i32, w: i32, h: i32, _body: [f32; 4], _ppp: f32) -> Opti
     Some((rgba, w, h))
 }
 
+/// spike: 把 WGC 导出的 D3D11 共享纹理导入到 wgpu(D3D12) 的纹理。
+///
+/// 全链路不落地 CPU：OpenSharedHandle 拿到的是同一块显存的 ID3D12Resource，
+/// texture_from_raw 把它包成 hal 纹理，create_texture_from_hal 再交给 wgpu 管理。
+/// 参照 wgpu-external-frame / scrying 的实证做法；wgpu 24 的 create_texture_from_hal
+/// 只有 (hal_texture, desc) 两个参数（新版本才有第三个 initial_state）。
+#[cfg(windows)]
+fn import_shared_handle(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform: &wgpu::Buffer,
+    sampler: &wgpu::Sampler,
+    shared: &crate::wgc::SharedHandle,
+) -> Option<(wgpu::Texture, wgpu::BindGroup)> {
+    // 1) 拿 wgpu 的 raw D3D12 device（项目 vendor 的定制访问器）。
+    let mut raw: Option<windows::Win32::Graphics::Direct3D12::ID3D12Device> = None;
+    unsafe {
+        device.as_hal::<wgpu::hal::api::Dx12, _, _>(|hal| {
+            if let Some(d) = hal { raw = Some(d.raw_d3d12_device().clone()); }
+        });
+    }
+    let raw = raw?;
+    // 2) 打开 D3D11 导出的 NT handle，得到同一块显存的 D3D12 resource。
+    let mut resource: Option<ID3D12Resource> = None;
+    unsafe {
+        raw.OpenSharedHandle::<HANDLE, ID3D12Resource>(HANDLE(shared.handle.0), &mut resource).ok()?;
+    }
+    let resource = resource?;
+    // 3) hal 纹理 → wgpu 纹理。格式与 WGC 帧一致（BGRA8），只做纹理采样。
+    let size = wgpu::Extent3d { width: shared.w, height: shared.h, depth_or_array_layers: 1 };
+    let desc = wgpu::TextureDescriptor {
+        label: Some("daozai-glass-shared"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Bgra8Unorm,
+        // COPY_SRC 是 1x1 刷屏障所需的；TEXTURE_BINDING 供 shader 采样。
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    };
+    let hal_tex = unsafe {
+        <wgpu::hal::api::Dx12 as wgpu::hal::Api>::Device::texture_from_raw(
+            resource,
+            wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureDimension::D2,
+            size,
+            1,
+            1,
+        )
+    };
+    let texture = unsafe {
+        device.create_texture_from_hal::<wgpu::hal::api::Dx12>(hal_tex, &desc)
+    };
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("daozai-glass-shared-bind"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&view) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+        ],
+    });
+    Some((texture, bind_group))
+}
+
 impl egui_wgpu::CallbackTrait for GlassCallback {
     fn prepare(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         _screen: &egui_wgpu::ScreenDescriptor,
-        _encoder: &mut wgpu::CommandEncoder,
+        encoder: &mut wgpu::CommandEncoder,
         _resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let mut guard = GPU.lock().unwrap_or_else(|e| e.into_inner());
@@ -1328,6 +1420,60 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let f = &self.frame;
         let (cw, ch) = (f.capture[2].max(1.0) as i32, f.capture[3].max(1.0) as i32);
         let tex_size;
+
+        // ===== spike: 零拷贝 GPU 共享路径（DAOZAI_LIQUID_GPU_SHARE=1）=====
+        // WGC 帧 → D3D11 共享纹理 → D3D12 OpenSharedHandle → wgpu 纹理 → shader 采样。
+        // 没有 Map(READ)、没有 CPU 像素拷贝、没有 queue.write_texture。
+        // 任何一步失败都 return Grab::Unavailable，回退到下面的旧 staging 路径。
+        #[cfg(windows)]
+        if crate::wgc::gpu_share_enabled() {
+            let shared = crate::wgc::grab_shared(f.capture[0] as i32, f.capture[1] as i32, cw, ch);
+            if let crate::wgc::Grab::Shared(sh) = shared {
+                let need_import = gpu.shared.as_ref()
+                    .map(|(_, _, w, h)| *w != sh.w || *h != sh.h)
+                    .unwrap_or(true);
+                if need_import {
+                    match import_shared_handle(device, &gpu.layout, &gpu.uniform, &gpu.sampler, &sh) {
+                        Some((tex, bind)) => {
+                            gpu.bind_group = Some(bind.clone());
+                            gpu.shared = Some((tex, bind, sh.w, sh.h));
+                            gpu.size = (sh.w, sh.h);
+                            diag(&format!("[gpu-share] 导入共享纹理 {}x{}", sh.w, sh.h));
+                        }
+                        None => diag("[gpu-share] 导入失败，回退 staging"),
+                    }
+                }
+                if gpu.shared.is_some() {
+                    // D3D12 从 keyed-mutex 句柄打开的资源无法 QI IDXGIKeyedMutex；
+                    // 一次性 1x1 copy 让 wgpu 插入状态转换屏障，刷掉可能陈旧的 shader view。
+                    if gpu.scratch.is_none() {
+                        gpu.scratch = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("daozai-gpu-share-scratch"),
+                            size: 256,
+                            usage: wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        }));
+                    }
+                    let src = gpu.shared.as_ref().unwrap();
+                    encoder.copy_texture_to_buffer(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &src.0, mip_level: 0,
+                            origin: wgpu::Origin3d { x: sh.w.saturating_sub(1), y: sh.h.saturating_sub(1), z: 0 },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: gpu.scratch.as_ref().unwrap(),
+                            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(1) },
+                        },
+                        wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                    );
+                    let u = uniforms(f, (sh.w, sh.h));
+                    queue.write_buffer(&gpu.uniform, 0, u.bytes());
+                    return Vec::new();
+                }
+            }
+            // Grab::Shared 处理完但没成功（NoFrame/Unavailable/导入失败）→ 落到下面旧路径。
+        }
 
         // 抓屏节流：每帧回读一次屏幕是这条链路里最贵的一段（WGC Map 是 GPU→CPU
         // 同步等待，再加两次 1MB 级拷贝）。几何没变时可以隔帧抓，纹理和 uniform
