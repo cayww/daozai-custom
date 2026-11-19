@@ -4174,6 +4174,13 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
                                 settings_hint(ui,"修改后需重启岛仔生效");
                                 ui.separator();
+                                // spike 实验：零拷贝抓屏（去掉 Map(READ) CPU 同步读回）。
+                                // 默认关闭；出错可随时关掉退回旧路径，方便 A/B 对比。
+                                let before=app.settings.liquid_gpu_share;
+                                setting_row(ui,"零拷贝抓屏（实验）","玻璃背景直接从显卡取帧，减少卡顿；若有异常请关闭",&mut app.settings.liquid_gpu_share);
+                                if before!=app.settings.liquid_gpu_share {app.settings.save();}
+                                settings_hint(ui,"实验功能，切换后重启岛仔生效");
+                                ui.separator();
                                 settings_control_row(ui,"形变强度",56.0,|ui|{
                                     ui.horizontal(|ui|{
                                         ui.spacing_mut().slider_width=180.0;

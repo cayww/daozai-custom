@@ -1127,6 +1127,10 @@ fn run() -> eframe::Result<()> {
     // 核显 548MB、独显 274MB（工作集）。用 is_surface_supported 过滤，保证选中的卡
     // 一定能呈现到本窗口，不会黑屏；另把虚拟/远程显示适配器垫底。
     let boot = daozai::model::Settings::load();
+    // spike v1.0.1：零拷贝抓屏开关（设置页 → 环境变量 → wgc::gpu_share_enabled）。
+    // 必须在建窗 / 创建 wgpu device 之前设好：gpu_share_enabled 用 OnceLock 只读一次，
+    // 且 WGC 的 D3D11 设备要据此绑定到 wgpu 同卡。设置页为准，显式写 1/0。
+    std::env::set_var("DAOZAI_LIQUID_GPU_SHARE", if boot.liquid_gpu_share { "1" } else { "0" });
     if boot.skin == daozai::model::Skin::Liquid && boot.liquid_prefer_dgpu {
         opts.wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(
             eframe::egui_wgpu::WgpuSetupCreateNew {

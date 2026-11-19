@@ -89,7 +89,17 @@ static WGPU_LUID: Mutex<Option<LUID>> = Mutex::new(None);
 /// spike: 是否启用 GPU 共享纹理路径（默认关闭，完全不影响旧路径）。
 pub fn gpu_share_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("DAOZAI_LIQUID_GPU_SHARE").is_ok())
+    *ENABLED.get_or_init(|| {
+        // "1"/"true"/任意非空非0 视为开启；"0"/未设置视为关闭。
+        // 启动期 main.rs 会把设置页的 liquid_gpu_share 写进来。
+        match std::env::var("DAOZAI_LIQUID_GPU_SHARE") {
+            Ok(v) => {
+                let v = v.trim();
+                !v.is_empty() && v != "0" && v.to_lowercase() != "false"
+            }
+            Err(_) => false,
+        }
+    })
 }
 pub fn set_wgpu_luid(luid: LUID) {
     *WGPU_LUID.lock().unwrap_or_else(|e| e.into_inner()) = Some(luid);
