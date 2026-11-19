@@ -1426,7 +1426,14 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         // 没有 Map(READ)、没有 CPU 像素拷贝、没有 queue.write_texture。
         // 任何一步失败都 return Grab::Unavailable，回退到下面的旧 staging 路径。
         #[cfg(windows)]
-        if crate::wgc::gpu_share_enabled() {
+        // 关键：冻结诊断模式（截图看玻璃）必须整段跳过共享路径，全部交回 capture()。
+        // 否则 WDA 排除 / 冻结底片的时序会被这里的抢跑打乱，且零拷贝帧里会抓到
+        // 岛仔自己 → "玻璃里显示玻璃"的重影。正常模式始终排除自身，可安全走共享。
+        if crate::wgc::gpu_share_enabled()
+            && std::env::var("DAOZAI_LIQUID_FREEZE_BG").is_err() {
+            // 复刻 capture() 的 WDA 排除：正常模式每帧排除自身。
+            // 不做这一步，WGC 帧会抓到岛仔自己，玻璃出现自我反馈条纹。
+            enable_capture_exclusion();
             let shared = crate::wgc::grab_shared(f.capture[0] as i32, f.capture[1] as i32, cw, ch);
             if let crate::wgc::Grab::Shared(sh) = shared {
                 let need_import = gpu.shared.as_ref()
