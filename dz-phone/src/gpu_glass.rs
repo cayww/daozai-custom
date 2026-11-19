@@ -401,7 +401,7 @@ fn fs(i : VOut) -> @location(0) vec4<f32> {
     // 非 DComp 路径：1.2px 足够平滑；再宽会在实时模式下露出滞后 1~2 帧的桌面色，
     // 边缘反而显得毛躁。DComp 路径：背景是真实 alpha 合成、无抓屏滞后，
     // 用 fwidth 自适应宽度（SDF 抗锯齿标准做法），inset=0 画满后边缘才不会锯齿。
-    let aa_w = select(1.2, max(fwidth(d) * 0.75, 1.0), u.notch.w > 0.5);
+    let aa_w = select(1.2, max(fwidth(d) * 1.1, 1.4), u.notch.w > 0.5);
     let aa = 1.0 - smoothstep(-aa_w, aa_w, d);
 
     // 光源方向跟着指针走。桌面没有陀螺仪，指针是唯一能表达「用户正在动」的输入：
