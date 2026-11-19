@@ -4170,16 +4170,16 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                     settings_hint(ui,"展开态看展开后的控件玻璃；收起态看胶囊常驻条的玻璃");
                                 ui.separator();
                                 let before=app.settings.liquid_prefer_dgpu;
-                                setting_row(ui,"优先独立显卡","优先使用独显渲染玻璃，切换后重启岛仔生效",&mut app.settings.liquid_prefer_dgpu);
+                                setting_row(ui,"优先独立显卡","独显渲染玻璃，并让抓屏用同一张卡（零拷贝需要），重启生效",&mut app.settings.liquid_prefer_dgpu);
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
-                                settings_hint(ui,"修改后需重启岛仔生效");
+                                settings_hint(ui,"混合显卡机器建议开启：同卡才能零拷贝、也更省内存");
                                 ui.separator();
                                 // spike 实验：零拷贝抓屏（去掉 Map(READ) CPU 同步读回）。
                                 // 默认关闭；出错可随时关掉退回旧路径，方便 A/B 对比。
                                 let before=app.settings.liquid_gpu_share;
-                                setting_row(ui,"零拷贝抓屏（实验）","玻璃背景直接从显卡取帧，减少卡顿；若有异常请关闭",&mut app.settings.liquid_gpu_share);
+                                setting_row(ui,"零拷贝抓屏（实验）","玻璃背景不走 CPU 读回，降低卡顿；异常时请关闭",&mut app.settings.liquid_gpu_share);
                                 if before!=app.settings.liquid_gpu_share {app.settings.save();}
-                                settings_hint(ui,"实验功能，切换后重启岛仔生效");
+                                settings_hint(ui,"仅液态皮肤 + 兼容渲染(D3D12) 生效，重启后生效；非液态皮肤无影响");
                                 ui.separator();
                                 settings_control_row(ui,"形变强度",56.0,|ui|{
                                     ui.horizontal(|ui|{

@@ -685,7 +685,7 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
             spins += 1;
             if signaled == 0 { std::hint::spin_loop(); }
         }
-        shared.mutex.ReleaseSync(0);
+        let _ = shared.mutex.ReleaseSync(0);
         drop(frame);
         if signaled == 0 { log("wgc: [gpu-share] event query 超时，丢弃该帧"); return Grab::NoFrame; }
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);

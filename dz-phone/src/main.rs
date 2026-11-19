@@ -1130,6 +1130,8 @@ fn run() -> eframe::Result<()> {
     // spike v1.0.1：零拷贝抓屏开关（设置页 → 环境变量 → wgc::gpu_share_enabled）。
     // 必须在建窗 / 创建 wgpu device 之前设好：gpu_share_enabled 用 OnceLock 只读一次，
     // 且 WGC 的 D3D11 设备要据此绑定到 wgpu 同卡。设置页为准，显式写 1/0。
+    // 这里无条件设置是无害的：非液态皮肤没有 GlassCallback，不会有人读这个变量；
+    // 液态皮肤 + glow 后端（无 wgpu）同样不注册回调，零副作用。
     std::env::set_var("DAOZAI_LIQUID_GPU_SHARE", if boot.liquid_gpu_share { "1" } else { "0" });
     if boot.skin == daozai::model::Skin::Liquid && boot.liquid_prefer_dgpu {
         opts.wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(
