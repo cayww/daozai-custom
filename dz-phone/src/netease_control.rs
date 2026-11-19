@@ -238,6 +238,44 @@ pub fn boot_scan_shortcuts(){
     });
 }
 
+/// 检测网易云「残留 + 新实例」僵死态：进程里有 2 个及以上 cloudmusic.exe 主进程。
+/// 正常网易云只有 1 个主进程（reporter 是独立进程名，不计入）。
+/// 岛仔改快捷方式加了 --remote-debugging-port，残留实例占着调试端口会让新实例启动异常；
+/// 这里只提示用户，不自动杀进程。由「网易云 SMTC 会话消失」事件触发（不是轮询），
+/// 内部只对提示做冷却：命中后 15 分钟内不再重复提示。
+/// 返回 true 表示「此刻该提示一次」。
+pub fn stale_instance_warning()->bool{
+    if cfg!(test){return false;}
+    #[cfg(not(windows))]
+    { let _ = (); false }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot,Process32FirstW,Process32NextW,PROCESSENTRY32W,TH32CS_SNAPPROCESS};
+        use windows::Win32::Foundation::CloseHandle;
+        static LAST_WARN:std::sync::OnceLock<Mutex<Option<Instant>>>=std::sync::OnceLock::new();
+        let mut last=LAST_WARN.get_or_init(||Mutex::new(None)).lock().unwrap_or_else(|e|e.into_inner());
+        let now=Instant::now();
+        if last.is_some_and(|at|now.duration_since(at)<Duration::from_secs(15*60)){return false;} // 15 分钟冷却
+        unsafe {
+            let snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+            let Ok(snapshot)=snapshot else{return false;};
+            let mut entry=PROCESSENTRY32W{dwSize:std::mem::size_of::<PROCESSENTRY32W>() as u32,..Default::default()};
+            let mut count=0u32;
+            let mut more=Process32FirstW(snapshot,&mut entry).is_ok();
+            while more {
+                let len=entry.szExeFile.iter().position(|c|*c==0).unwrap_or(entry.szExeFile.len());
+                if String::from_utf16_lossy(&entry.szExeFile[..len]).eq_ignore_ascii_case("cloudmusic.exe"){
+                    count+=1;
+                    if count>=2{break;}
+                }
+                more=Process32NextW(snapshot,&mut entry).is_ok();
+            }
+            let _=CloseHandle(snapshot);
+            if count>=2 {*last=Some(now);true} else {false}
+        }
+    }
+}
+
 /// 用户手动选一条网易云快捷方式：确认它确实指向客户端后，把这条和扫描到的其它快捷方式
 /// 一起修（与自动托管重启里同一套修法）。只修所选那条时，用户从开始菜单子文件夹点开的
 /// 往往是另一条，看起来就像「选择文件没生效」。

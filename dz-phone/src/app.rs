@@ -4667,6 +4667,13 @@ impl App {
             // smtc 的 MediaMemory 只记「完整音乐」，这里顶住 2 秒，别闪「暂无音乐」。
             // 只对「浏览器视频 → 空会话」生效：换成别的来源或音乐播放器退出时仍立即清空。
             if self.video_page() && m.source.trim().is_empty() && self.t<self.media_gap_until {return;}
+            // 网易云退出（SMTC 会话消失）这一刻检查残留实例：从托盘退出常留 2 个 cloudmusic.exe，
+            // 再启动会因调试端口冲突起不来。这里只提示，不自动杀进程。函数内部自带节流。
+            #[cfg(windows)]
+            if self.media.source.eq_ignore_ascii_case("cloudmusic.exe")
+                && crate::smtc::netease_control::stale_instance_warning() {
+                self.say("网易云有残留进程未退出，可能导致再次启动时失败。请在任务管理器结束所有「NetEase Cloud Music」进程后重新打开。");
+            }
             self.music_volume_ui=None;
             self.music_volume_quiet_until=0.0;
             self.music_volume_open=false;
