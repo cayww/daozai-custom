@@ -10,8 +10,9 @@
 
 #![cfg(windows)]
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 use windows::core::{factory, Interface};
 use windows::Graphics::SizeInt32;
 use windows::Graphics::Capture::{
@@ -86,6 +87,118 @@ unsafe impl Sync for SharedFrame {}
 /// spike: wgpu 设备的 D3D12 adapter LUID。WGC 的 D3D11 设备必须建在同一块 GPU 上，
 /// 否则共享纹理会经系统内存中转，零拷贝收益归零。由 gpu_glass 在拿到 wgpu device 后写入。
 static WGPU_LUID: Mutex<Option<LUID>> = Mutex::new(None);
+
+// ===== spike: 零拷贝路径的主题色小范围取样 =====
+// 零拷贝帧不落地 CPU，而主题明暗原本只在 capture() 的 staging 读回里算。
+// 这里用一张**独立、固定尺寸**的 staging（与随抓屏变化的 s.staging 隔离），
+// 只把主题采样框那一小块从干净 WGC 帧读回算平均亮度。按时间节流，失败静默。
+const THEME_STAGE_W: u32 = 1024; // ≥ 520CSS × 常见 ppp 上限，固定不变
+const THEME_STAGE_H: u32 = 256;
+/// 主题亮度两次采样之间的最小间隔。按时间而非按帧节流：无论帧率高低
+/// （静止深休眠可低至个位数 fps），主题色滞后都不超过 500ms，且静止态不空转。
+const THEME_SAMPLE_INTERVAL_MS: u64 = 500;
+static THEME_STAGE: Mutex<Option<ID3D11Texture2D>> = Mutex::new(None);
+static THEME_RECT: Mutex<Option<(i32,i32,i32,i32)>> = Mutex::new(None);
+static THEME_LUMA: AtomicU32 = AtomicU32::new(0x3f59_999a); // 0.85 默认浅色
+static THEME_LAST_SAMPLE: Mutex<Option<Instant>> = Mutex::new(None);
+/// 毫秒时间戳的进程级原点（OnceLock 保证只初始化一次，跨平台安全）。
+static THEME_EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+fn theme_epoch() -> Instant { *THEME_EPOCH.get_or_init(Instant::now) }
+
+/// 纯判断：距上次采样是否已过 interval。用于把「按时间节流」逻辑单独单测，
+/// 锁定「低帧率下延迟不放大、静止态不空转」。now/last 都是毫秒时间戳。
+fn theme_sample_due(now_ms: u64, last_ms: Option<u64>, interval_ms: u64) -> bool {
+    match last_ms {
+        None => true,
+        Some(last) => now_ms.saturating_sub(last) >= interval_ms,
+    }
+}
+
+/// gpu_glass 每帧设置主题采样框（相对抓屏缓冲坐标）；None 表示不采样。
+pub fn set_theme_rect(rect:Option<(i32,i32,i32,i32)>){if let Ok(mut g)=THEME_RECT.lock(){*g=rect;}}
+/// 取最近一次采样到的背景亮度（f32 bits）。无采样时返回默认值，不影响调用方。
+pub fn theme_luma()->f32{f32::from_bits(THEME_LUMA.load(Ordering::Relaxed))}
+
+/// 纯边界计算：把主题采样框 rect（相对抓屏缓冲坐标）换算成源 box（相对显示器帧）
+/// 与读回尺寸 (left,top,right,bottom,rw,rh)。任何退化/越界/溢出都返回 None，
+/// 调用方据此静默跳过。抽成不依赖 COM 的纯函数，专门单测「尺寸剧烈变化时绝不越界」。
+/// - rw/rh 先夹到固定 staging 上限（1024×256），杜绝 from_raw_parts 越界；
+/// - 源 box 必须完整落在显示器帧 [0,sw)×[0,sh) 内，否则 CopySubresourceRegion 会失败；
+/// - 全程用 i64 中间运算，极端 i32 坐标也不会溢出 panic（debug 构建尤其重要）。
+fn theme_sample_box(
+    rect: Option<(i32,i32,i32,i32)>, sx: i32, sy: i32, sw: i32, sh: i32,
+) -> Option<(i32,i32,i32,i32,u32,u32)> {
+    let (rx0,ry0,rx1,ry1)=rect?;
+    if rx1<=rx0 || ry1<=ry0 {return None;}
+    let rw=((rx1 as i64-rx0 as i64).min(THEME_STAGE_W as i64) as u32).max(0);
+    let rh=((ry1 as i64-ry0 as i64).min(THEME_STAGE_H as i64) as u32).max(0);
+    if rw==0 || rh==0 {return None;}
+    if sw<=0 || sh<=0 {return None;}
+    let left=sx as i64+rx0 as i64;
+    let top=sy as i64+ry0 as i64;
+    let right=left+rw as i64;
+    let bottom=top+rh as i64;
+    if left<0 || top<0 || right>sw as i64 || bottom>sh as i64 {return None;}
+    // 能走到这里说明 right<=sw<=i32::MAX 且 left>=0，安全收窄回 i32。
+    Some((left as i32,top as i32,right as i32,bottom as i32,rw,rh))
+}
+
+/// 从干净 WGC 帧 src_tex 里取 theme_rect 小块算平均亮度，写 THEME_LUMA。
+/// 全部失败路径静默——主题色只是视觉微调，绝不能影响零拷贝主渲染或导致崩溃。
+/// sx/sy = 抓屏矩形在显示器帧里的原点；sw/sh = 显示器帧尺寸（用于裁剪源 box）。
+#[cfg(windows)]
+fn sample_theme_luma(
+    device:&ID3D11Device, context:&ID3D11DeviceContext,
+    src_tex:&ID3D11Texture2D, sx:i32, sy:i32, sw:i32, sh:i32,
+) {
+    let rect=THEME_RECT.lock().ok().and_then(|g|*g);
+    let Some((left,top,right,bottom,rw,rh))=theme_sample_box(rect,sx,sy,sw,sh) else{return;};
+    let stage={
+        let Ok(mut guard)=THEME_STAGE.lock() else{return;};
+        if guard.is_none(){
+            let desc=D3D11_TEXTURE2D_DESC{
+                Width:THEME_STAGE_W, Height:THEME_STAGE_H, MipLevels:1, ArraySize:1,
+                Format:DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc:DXGI_SAMPLE_DESC{Count:1,Quality:0},
+                Usage:D3D11_USAGE_STAGING, BindFlags:0,
+                CPUAccessFlags:D3D11_CPU_ACCESS_READ.0 as u32, MiscFlags:0,
+            };
+            let mut tex:Option<ID3D11Texture2D>=None;
+            if unsafe{device.CreateTexture2D(&desc,None,Some(&mut tex))}.is_err(){return;}
+            *guard=tex;
+        }
+        let Some(stage)=guard.as_ref() else{return;};
+        stage.clone()
+    };
+    let box_src=D3D11_BOX{left:left as u32,top:top as u32,front:0,right:right as u32,bottom:bottom as u32,back:1};
+    unsafe{
+        // 复制采样框到固定 staging 左上角；目标尺寸 rw×rh 恒 ≤ staging 尺寸。
+        context.CopySubresourceRegion(&stage,0,0,0,0,src_tex,0,Some(&box_src));
+        let mut mapped=D3D11_MAPPED_SUBRESOURCE::default();
+        if context.Map(&stage,0,D3D11_MAP_READ,0,Some(&mut mapped)).is_err(){return;}
+        if !mapped.pData.is_null(){
+            let ptr=mapped.pData as *const u8;
+            let pitch=mapped.RowPitch as usize;
+            // 每行只读 rw*4 字节；rw ≤ THEME_STAGE_W，pitch ≥ THEME_STAGE_W*4，绝不越界。
+            if pitch>=THEME_STAGE_W as usize*4 {
+                let mut sum=0.0f32; let mut n=0.0f32;
+                for y in (0..rh as usize).step_by(4){
+                    let row=std::slice::from_raw_parts(ptr.add(y*pitch),rw as usize*4);
+                    for x in (0..rw as usize).step_by(4){
+                        let i=x*4;
+                        sum+=(row[i] as f32+row[i+1] as f32+row[i+2] as f32)/3.0;
+                        n+=1.0;
+                    }
+                }
+                if n>0.0{
+                    let luma=(sum/n/255.0).clamp(0.0,1.0);
+                    THEME_LUMA.store(luma.to_bits(),Ordering::Relaxed);
+                }
+            }
+        }
+        let _=context.Unmap(&stage,0);
+    }
+}
 /// spike: 是否启用 GPU 共享纹理路径（默认关闭，完全不影响旧路径）。
 pub fn gpu_share_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -685,11 +798,181 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
             spins += 1;
             if signaled == 0 { std::hint::spin_loop(); }
         }
+        // 主题色小范围取样：按时间节流（≥500ms），从这张干净帧读采样框算亮度。
+        // 用 Instant 而非帧计数：低帧率下主题滞后不放大，60fps 也不必每帧读回。
+        // 失败静默、与共享纹理/keyed mutex 无关（副本在独立固定 staging 上读回）。
+        let now = Instant::now();
+        let due = match THEME_LAST_SAMPLE.lock() {
+            Ok(mut guard) => {
+                let epoch = theme_epoch();
+                let now_ms = now.duration_since(epoch).as_millis() as u64;
+                let last_ms = (*guard).map(|t| t.duration_since(epoch).as_millis() as u64);
+                if theme_sample_due(now_ms, last_ms, THEME_SAMPLE_INTERVAL_MS) {
+                    *guard = Some(now);
+                    true
+                } else { false }
+            }
+            Err(_) => false, // 锁中毒则本次跳过，不影响主渲染
+        };
+        if due {
+            sample_theme_luma(&s._device, &s.context, &src_tex, sx, sy, s.sw, s.sh);
+        }
         let _ = shared.mutex.ReleaseSync(0);
         drop(frame);
         if signaled == 0 { log("wgc: [gpu-share] event query 超时，丢弃该帧"); return Grab::NoFrame; }
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 || n % 600 == 0 { log(&format!("wgc: [gpu-share] frame {} cap={}x{}", n, bw, bh)); }
         Grab::Shared(SharedHandle { handle: shared.handle, w: bw, h: bh })
+    }
+}
+
+
+// ===== 单测：锁定主题取样边界逻辑，确保尺寸变化时绝不越界 =====
+#[cfg(test)]
+mod theme_sample_tests {
+    use super::{theme_sample_box, theme_sample_due, THEME_STAGE_W, THEME_STAGE_H, THEME_SAMPLE_INTERVAL_MS};
+
+    // 按时间节流的纯判断：从未采过立即采；未到间隔不采；到间隔采。
+    #[test]
+    fn theme_sample_due_respects_interval() {
+        let iv = THEME_SAMPLE_INTERVAL_MS;
+        assert!(theme_sample_due(1000, None, iv), "首次应立即采样");
+        assert!(!theme_sample_due(1499, Some(1000), iv), "间隔未满 500ms 不采");
+        assert!(theme_sample_due(1500, Some(1000), iv), "正好 500ms 应采样");
+        assert!(theme_sample_due(9999, Some(1000), iv), "远超间隔应采样");
+    }
+
+    // 低帧率场景：帧数少不该拖慢主题响应——只看时间是否到期。
+    #[test]
+    fn theme_sample_due_is_frame_rate_independent() {
+        // 假设 5fps：200ms 一帧，累计 500ms 才 3 帧。关键是时间到就采，与帧数无关。
+        let iv = THEME_SAMPLE_INTERVAL_MS;
+        assert!(!theme_sample_due(400, Some(0), iv), "5fps 第 2 帧 400ms 未到期");
+        assert!(theme_sample_due(600, Some(0), iv), "5fps 第 3 帧 600ms 已到期，立即采样");
+        // 时间倒退（系统时钟回拨）时用 saturating_sub 兜底，不会误判成到期。
+        assert!(!theme_sample_due(100, Some(500), iv), "时钟回拨不应触发采样");
+    }
+
+    // 正常情况：采样框完整落在显示器帧内，原样换算。
+    #[test]
+    fn theme_sample_box_normal_within_frame() {
+        // rect=(10,20)-(110,80)，抓屏原点(0,0)，显示器 1920x1080
+        assert_eq!(
+            theme_sample_box(Some((10, 20, 110, 80)), 0, 0, 1920, 1080),
+            Some((10, 20, 110, 80, 100, 60))
+        );
+    }
+
+    // 抓屏原点非零（多显示器，主屏在右）：源 box 要叠加 sx/sy 偏移。
+    #[test]
+    fn theme_sample_box_respects_capture_origin() {
+        // 抓屏原点 sx=100,sy=50；rect=(10,20)-(60,40) → box=(110,70)-(160,90)
+        assert_eq!(
+            theme_sample_box(Some((10, 20, 60, 40)), 100, 50, 1920, 1080),
+            Some((110, 70, 160, 90, 50, 20))
+        );
+    }
+
+    // 尺寸变化核心场景：采样框宽高超过固定 staging 上限，必须被夹住，
+    // 这样读回时 from_raw_parts(ptr, rw*4) 的 rw 恒 ≤ 1024，绝不越界。
+    #[test]
+    fn theme_sample_box_clamps_to_staging_limit() {
+        // 起点在帧内、宽高远超固定 staging 上限：必须夹到 1024×256 而非越界。
+        let huge = (
+            0,
+            0,
+            THEME_STAGE_W as i32 * 3,
+            THEME_STAGE_H as i32 * 3,
+        );
+        let got = theme_sample_box(Some(huge), 0, 0, 100000, 100000);
+        let (l, t, r, b, rw, rh) = got.expect("宽高夹取后仍应有效");
+        assert_eq!(rw, THEME_STAGE_W, "rw 必须夹到 1024");
+        assert_eq!(rh, THEME_STAGE_H, "rh 必须夹到 256");
+        assert_eq!(r - l, THEME_STAGE_W as i32, "源 box 宽应与 rw 一致");
+        assert_eq!(b - t, THEME_STAGE_H as i32, "源 box 高应与 rh 一致");
+        // 读回字节数不得超过一行 pitch 下限（1024*4）——这就是防越界的本质。
+        assert!((rw as usize) * 4 <= THEME_STAGE_W as usize * 4);
+    }
+
+    // 源 box 右下越出显示器帧 → 必须拒绝（CopySubresourceRegion 会失败）。
+    #[test]
+    fn theme_sample_box_rejects_out_of_frame() {
+        // right=2000 超上限夹到 1024 后 right=1034 合法；这里用「夹取后仍越界」的坐标：
+        // 起点 1500 + 夹取后的 1024 = 2524 > sw=1920
+        assert_eq!(theme_sample_box(Some((1500, 10, 3000, 60)), 0, 0, 1920, 1080), None);
+        // 起点 y=1000 + 夹取后的 256 = 1256 > sh=1080
+        assert_eq!(theme_sample_box(Some((10, 1000, 60, 3000)), 0, 0, 1920, 1080), None);
+        // 叠加非零原点后越界：sx=1900 + left=10 + 宽50 = 1960 > 1920
+        assert_eq!(theme_sample_box(Some((10, 10, 60, 60)), 1900, 0, 1920, 1080), None);
+    }
+
+    // 负坐标：源 box 左上越出显示器帧 → 拒绝。
+    #[test]
+    fn theme_sample_box_rejects_negative_origin() {
+        assert_eq!(theme_sample_box(Some((-5, 10, 40, 60)), 0, 0, 1920, 1080), None);
+        assert_eq!(theme_sample_box(Some((10, -5, 40, 60)), 0, 0, 1920, 1080), None);
+    }
+
+    // 退化/非法矩形与非法显示器尺寸 → 拒绝。
+    #[test]
+    fn theme_sample_box_rejects_degenerate_and_invalid_frame() {
+        assert_eq!(theme_sample_box(None, 0, 0, 1920, 1080), None);
+        assert_eq!(theme_sample_box(Some((10, 10, 10, 60)), 0, 0, 1920, 1080), None); // 宽=0
+        assert_eq!(theme_sample_box(Some((10, 10, 60, 10)), 0, 0, 1920, 1080), None); // 高=0
+        assert_eq!(theme_sample_box(Some((60, 60, 10, 10)), 0, 0, 1920, 1080), None); // 翻转
+        assert_eq!(theme_sample_box(Some((10, 10, 60, 60)), 0, 0, 0, 0), None);       // 空显示器
+        assert_eq!(theme_sample_box(Some((10, 10, 60, 60)), 0, 0, -1920, 1080), None); // 负尺寸
+    }
+
+    // 极端 i32 坐标：全程 i64 中间运算，绝不溢出 panic（debug 构建也会过）。
+    #[test]
+    fn theme_sample_box_never_overflows() {
+        // rx1-rx0 接近 i32 上限；斜杠坐标取 i32 极值。
+        assert_eq!(
+            theme_sample_box(Some((i32::MIN, i32::MIN, i32::MAX, i32::MAX)), 0, 0, 1920, 1080),
+            None
+        );
+        // 抓屏原点为极值，与采样框相加不会 wrap 成"看似合法"的小坐标。
+        assert_eq!(
+            theme_sample_box(Some((1, 1, 50, 50)), i32::MAX, i32::MAX, 1920, 1080),
+            None
+        );
+        assert_eq!(
+            theme_sample_box(Some((1, 1, 50, 50)), i32::MIN, i32::MIN, 1920, 1080),
+            None
+        );
+    }
+
+    // 紧贴下/右边界：等于显示器帧尺寸是合法的（right==sw, bottom==sh）。
+    #[test]
+    fn theme_sample_box_allows_exact_edge() {
+        assert_eq!(
+            theme_sample_box(Some((1820, 1020, 1920, 1080)), 0, 0, 1920, 1080),
+            Some((1820, 1020, 1920, 1080, 100, 60))
+        );
+    }
+
+    // 属性式扫描：在多种显示器尺寸下，只要返回 Some，保证 rw/rh 不超上限、
+    // box 落在帧内、且 w==rw/h==rh ——覆盖"尺寸频繁变化"的连续取值。
+    #[test]
+    fn theme_sample_box_invariant_across_sizes() {
+        for sw in [640, 1280, 1920, 2560, 3840] {
+            for sh in [480, 720, 1080, 1440, 2160] {
+                for (rx0, ry0) in [(0, 0), (7, 13), (100, 200)] {
+                    for (w, h) in [(50, 30), (1000, 400), (5000, 3000)] {
+                        let rect = (rx0, ry0, rx0 + w, ry0 + h);
+                        if let Some((l, t, r, b, rw, rh)) =
+                            theme_sample_box(Some(rect), 0, 0, sw, sh)
+                        {
+                            assert!(rw <= THEME_STAGE_W && rh <= THEME_STAGE_H);
+                            assert!(l >= 0 && t >= 0 && r <= sw && b <= sh);
+                            assert_eq!(r - l, rw as i32);
+                            assert_eq!(b - t, rh as i32);
+                            assert!((rw as usize) * 4 <= THEME_STAGE_W as usize * 4);
+                        }
+                    }
+                }
+            }
+        }
     }
 }

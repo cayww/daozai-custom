@@ -1438,7 +1438,12 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
             // 复刻 capture() 的 WDA 排除：正常模式每帧排除自身。
             // 不做这一步，WGC 帧会抓到岛仔自己，玻璃出现自我反馈条纹。
             enable_capture_exclusion();
+            // 主题色：零拷贝不经过 capture()，需把采样框交给 grab_shared 低频读回算亮度。
+            let tb = theme_rect(f.bounds, cw, ch, f.pixels_per_point);
+            crate::wgc::set_theme_rect(Some(tb));
             let shared = crate::wgc::grab_shared(f.capture[0] as i32, f.capture[1] as i32, cw, ch);
+            // 把采样到的亮度同步到 BG_LUMA（未采样到时 theme_luma 返回上次值，无副作用）。
+            BG_LUMA.store(crate::wgc::theme_luma().to_bits(), std::sync::atomic::Ordering::Relaxed);
             if let crate::wgc::Grab::Shared(sh) = shared {
                 let need_import = gpu.shared.as_ref()
                     .map(|(_, _, w, h)| *w != sh.w || *h != sh.h)
