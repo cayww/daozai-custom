@@ -1455,4 +1455,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 用户实测 GDI 稳定，但对比 WGC 少两个效果：玻璃里无鼠标投影、鼠标靠近边缘无逐渐扩大的彩虹带。
 - **根因**：GDI BitBlt 抓桌面 DC **不含鼠标光标**（WGC 帧含）；shader 色散 `tap5` 采 R/B 偏移，靠指针高对比像素才明显，没指针就弱到看不见。两者同源。
 - **修法**（9c5327f）：`grab_raw` 加 `draw_cursor` 参数，GDI 早退传 true——BitBlt 后用 `GetCursorInfo` + `DrawIconEx` 把系统光标画进抓屏 buffer（相对矩形坐标）；底片构建传 false（干净壁纸不烙光标）、WGC 兜底传 false。光标不是窗口、不受 WDA 排除影响。
-- 新 exe `e2ee484e3374e58d`，已部署（编译前停了用户正在用的进程）。**待用户验证**：鼠标投影+边缘彩边是否恢复、GDI 稳定性是否不受影响。
+- 新 exe `e2ee484e3374e58d`，已部署（编译前停了用户正在用的进程）。用户后续决定取消 GDI 方案（见下）。
+
+##### 7.0zze.2 GDI 方案取消，回到两模式（提交 `3e349a6`，2026-11-20 23:50）
+- 用户实测：非零拷贝（staging，`liquid_gpu_share=0`）换分辨率没问题 → GDI 非必需。决定**不单独做 GDI**。
+- **移除**（3 增 42 删）：`gdi_capture_enabled()` / `DAOZAI_LIQUID_GDI_CAPTURE` 配置键、capture() 的 GDI 早退、grab_raw 的 draw_cursor 参数 + DrawIconEx 补光标、零拷贝判断里的 GDI 开关；删 `start-gdi-test.bat`。grab_raw 恢复原始签名。
+- **最终模式**：只有零拷贝（`liquid_gpu_share=1`）/ 非零拷贝（`=0`），由原配置控制。换分辨率问题用非零拷贝解决；零拷贝 device-lost 风暴保留此前修复。
+- **耦合点解耦评估**：7 个耦合点逐个评估后决定不解耦（6 个设计必需/系统限制，1 个触发场景极窄）。避免重蹈十几轮越改越乱的覆辙。
+- 新 exe `f7b93b47366235fa`，已部署。编译通过、全量测试未跑。分支 `fix/wgc-recreate` HEAD=3e349a6。
