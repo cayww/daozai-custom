@@ -720,6 +720,9 @@ fn make_gpu_inner(device: &wgpu::Device, format: wgpu::TextureFormat) -> GlassGp
             device.as_hal::<wgpu::hal::api::Dx12, _, _>(|hal| {
                 if let Some(d) = hal {
                     luid = Some(d.raw_d3d12_device().GetAdapterLuid());
+                    // 共享 fence：consumer 侧创建并导出，producer(D3D11) 稍后打开。
+                    // 只建一次；失败自动回退 1x1 copy barrier。
+                    crate::wgc::init_shared_fence(d.raw_d3d12_device());
                 }
             });
         }
@@ -1534,29 +1537,46 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                     }
                 }
                 if gpu.shared.is_some() {
-                    // D3D12 从 keyed-mutex 句柄打开的资源无法 QI IDXGIKeyedMutex；
-                    // 一次性 1x1 copy 让 wgpu 插入状态转换屏障，刷掉可能陈旧的 shader view。
-                    if gpu.scratch.is_none() {
-                        gpu.scratch = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("daozai-gpu-share-scratch"),
-                            size: 256,
-                            usage: wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        }));
+                    // 共享 fence 方案：对同一条 D3D12 队列 Wait(producer signal 的值)，
+                    // GPU 自己保证拷完才采样，CPU 零等待、也不依赖驱动屏障 hack。
+                    // 失败（fence_value=0 / 队列不可用）回退旧 1x1 copy barrier。
+                    #[cfg(windows)]
+                    let waited = unsafe {
+                        let mut done = false;
+                        device.as_hal::<wgpu::hal::api::Dx12, _, _>(|hal| {
+                            if let Some(h) = hal {
+                                done = crate::wgc::consumer_wait_fence(h.raw_queue(), sh.fence_value);
+                            }
+                        });
+                        done
+                    };
+                    #[cfg(not(windows))]
+                    let waited = false;
+                    if !waited {
+                        // D3D12 从 keyed-mutex 句柄打开的资源无法 QI IDXGIKeyedMutex；
+                        // 一次性 1x1 copy 让 wgpu 插入状态转换屏障，刷掉可能陈旧的 shader view。
+                        if gpu.scratch.is_none() {
+                            gpu.scratch = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("daozai-gpu-share-scratch"),
+                                size: 256,
+                                usage: wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
+                            }));
+                        }
+                        let src = gpu.shared.as_ref().unwrap();
+                        encoder.copy_texture_to_buffer(
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &src.0, mip_level: 0,
+                                origin: wgpu::Origin3d { x: sh.w.saturating_sub(1), y: sh.h.saturating_sub(1), z: 0 },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::TexelCopyBufferInfo {
+                                buffer: gpu.scratch.as_ref().unwrap(),
+                                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(1) },
+                            },
+                            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                        );
                     }
-                    let src = gpu.shared.as_ref().unwrap();
-                    encoder.copy_texture_to_buffer(
-                        wgpu::TexelCopyTextureInfo {
-                            texture: &src.0, mip_level: 0,
-                            origin: wgpu::Origin3d { x: sh.w.saturating_sub(1), y: sh.h.saturating_sub(1), z: 0 },
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        wgpu::TexelCopyBufferInfo {
-                            buffer: gpu.scratch.as_ref().unwrap(),
-                            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(1) },
-                        },
-                        wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-                    );
                     // 诊断：几何视口 vs 纹理真实尺寸 vs uniform tex，三者必须相等，
                     // 不等就是放大/铺不满的直接来源（shader: p=uv*tex, scale=tex/alloc）。
                     if tick % 600 == 0 {
