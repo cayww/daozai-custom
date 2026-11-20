@@ -2987,8 +2987,12 @@ impl App {
                 ("notice",self.notice.is_some()),("hud",self.hud_notice.is_some())];
             let blocked=reasons.iter().filter(|(_,v)|*v).map(|(k,_)|*k).collect::<Vec<&str>>().join(",");
             if !blocked.is_empty() {
+                // 带上光标/判定窗口/ppp，定位换分辨率后「blocked=cursor」到底是
+                // 光标真的停在岛上，还是坐标换算错位（cursor 落在 win 内但物理上不在）。
+                let cur=env.cursor.map(|p|format!("({:.1},{:.1})",p.x,p.y)).unwrap_or("None".into());
                 crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),
-                    "pill-sleep.log",&format!("t={:.0} blocked={blocked} media_title={:?}",self.t,self.media.title));
+                    "pill-sleep.log",&format!("t={:.0} blocked={blocked} cursor={} win=({:.0},{:.0},{:.0},{:.0}) media_title={:?}",
+                        self.t,cur,win.min.x,win.min.y,win.max.x,win.max.y,self.media.title));
             }
         }
         let repaint_after=std::time::Duration::from_secs_f64(match self.glass_tick {
