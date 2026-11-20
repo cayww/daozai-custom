@@ -1382,3 +1382,13 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修法**（7c53175）：`wgc.rs` 加 `LOST_STREAK` 递增退避（1s→2s→4s→8s），device-lost 后设 `SETTLE_UNTIL`，期间 `settling()` 让 grab/grab_shared 直接 NoFrame、不再 StartCapture；成功出帧 `note_capture_ok()` 清零。三处 device-lost 分支统一接入。从 54 次风暴降到等设备稳定后 1-2 次重建。
 - 新 exe `1a8ad6fba96c790d`，已部署预览目录、清空 liquid-glass.log/glass-diagnostics.txt。编译通过，全量测试未跑（用户要求）。**待用户验证**：换分辨率后光标不再持续闪；日志里"device-lost"行只有个位数而非几十次。
 - main HEAD=`7c53175`（ahead origin 8，未 push）。
+
+### 7.0zzc 社区调研根治重建风暴：EVENT query 非法 Begin + 退避过早清零（2026-11-20 21:50–22:00，提交 `1d03311`）
+- 用户实测：退避让闪变慢，但岛仔也闪、液态玻璃没了、分辨率改回来仍闪。日志每轮停在「连续 1 次、冷却 1000ms」→ 退避被单帧成功清零，永远升不上去。
+- **社区调研**（用户问"社区有没有提到"）：
+  - 微软 `D3D11_QUERY` 文档：`D3D11_QUERY_EVENT` 的 **`Begin()` 是 disabled 的**，正确用法只 `End()` 标记 GPU 时间线点 + `GetData` 轮询 BOOL（Chromium ANGLE `Renderer11::finish()` / Dawn `QueueD3D11` 均如此）。
+  - 微软 Screen capture 文档：device lost/尺寸变化用 `FramePool.Recreate` 而非整体重建（未采纳，改动大风险高）。
+  - Dawn 源码注释：命令未 flush 时 `GetData` 可能永不 true（我们已显式 Flush，非主因）。
+- **修法**（1d03311）：① 去掉 `s.context.Begin(&shared.done)`（EVENT query 非法调用，疑为 GetData 永不 signal、误判 device lost 的元凶）；② `note_capture_ok` 改为连续成功 30 帧(~1s)才清退避，任何 lost 清零成功计数——解决"好一帧坏一帧"时每轮从头 1s 的问题。
+- 新 exe `587b86b71a490633a`，已部署预览目录、清空日志。编译通过，全量测试未跑。**待用户验证**：换分辨率后 device-lost 行是否归零、玻璃是否恢复、是否不再闪。
+- main HEAD=`1d03311`（ahead origin 10，未 push）。
