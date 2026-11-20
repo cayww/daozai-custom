@@ -1419,3 +1419,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修法**（e3055de，在干净分支重做）：去掉 Begin，只 End + GetData（Chromium ANGLE/Dawn 实证）；spin 加 `yield_now` + 每 256 次查 device-lost 提前退出（顺带消除 200 万纯 spin 卡 UI）。Recreate 保留为 device 真 lost 的兜底。
 - 新 exe `4df89c1959ff49d4`，已部署。**待用户验证**：换分辨率后玻璃正常更新、不闪、无 device-lost 误判。
 - ⚠️ 这是污染链 1d03311 里的同一修复，但这次在干净分支（de4da1a + Recreate）上重做，不含其它污染提交。
+
+#### 7.0zzd.3 精确 device-lost 判定 + HRESULT 诊断（提交 `e702e6e`）
+- 用户实测 e3055de：正常启动完全正常（60+ 帧、展开收起动画都有），**只有换分辨率后** event query 超时判 device_lost → Recreate → 玻璃定格。去 Begin 有效但没根治换分辨率场景。
+- **怀疑**：`GetDeviceRemovedReason().is_err()` 判定过宽——任何 Err 都被当成真 lost，可能设备其实没真 removed。
+- **修法**（e702e6e）：只有明确 `0x887A0005`(DEVICE_REMOVED)/`0x887A0006`(DEVICE_RESET) 才算真 lost 触发 Recreate；其它码当偶发超时丢帧、保住会话。日志加 `reason=0x{:08X}` + spins 数。
+- 新 exe `aa9159853347292b`，已部署。**这次日志会给出决定性数据**：换分辨率超时时 reason 是 0（判决过宽，本次修复即生效）还是 0x887A0005（真 lost，需从 device 重建源头解决）。待用户实测并附日志。
