@@ -744,6 +744,15 @@ pub fn set_morph_scale(v: f32) {
     MORPH_SCALE.store(v.clamp(0.0, 3.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
+/// DAOZAI_LIQUID_GDI_CAPTURE=1：实验开关，强制走纯 GDI BitBlt 抓屏，
+/// 完全绕开 WGC/D3D11 共享纹理（换分辨率时 D3D11 device 会被 DWM 移除 →
+/// 0x887A0005 重建风暴 → 玻璃定格）。仍保留 WDA_EXCLUDEFROMCAPTURE 排除自身，
+/// 社区实测（Win10 2004+）GDI BitBlt 下该标志也让窗口区域露出背后桌面。
+/// 仅用于验证；默认关闭，走原有 WGC/零拷贝路径。
+fn gdi_capture_enabled() -> bool {
+    std::env::var("DAOZAI_LIQUID_GDI_CAPTURE").is_ok_and(|v| v.trim() != "0")
+}
+
 /// DAOZAI_LIQUID_CAPTURE_EVERY：抓屏节流倍数（默认 1 = 每帧都抓）。
 /// 设为 2 时玻璃背景按 30fps 更新，岛体自身动画仍是 60fps。
 fn capture_every() -> u64 {
@@ -1286,6 +1295,16 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4], ppp: f32) -> Option<(
         disable_capture_exclusion();
     }
     let want = ((w as u64) << 32) | (h as u64);
+    // GDI 实验模式：完全绕开 WGC/D3D11（换分辨率 device-lost 的根源）。
+    // 上面 enable_capture_exclusion() 已执行，这里验证 GDI BitBlt 是否也能
+    // 靠 WDA 排除自身、抓到干净桌面（社区实测 Win10 2004+ 可行）。
+    if gdi_capture_enabled() {
+        let (p, tw, th) = grab_raw(x, y, w, h)?;
+        LAST_CAP.store(want, std::sync::atomic::Ordering::Relaxed);
+        let out = compose_with_plate(&p, tw, th, x, y, body,
+                                     if frozen { false } else { true }, frozen)?;
+        return Some((out, tw, th));
+    }
     let (raw, bw, bh, from_wgc) = match crate::wgc::grab(x, y, w, h) {
         // spike: 零拷贝共享帧由 prepare() 直接消费，不会走到 CPU 合成路径。
         // 真走到这里说明分流失效，返回 None 让上层保留上一帧，不制造错误画面。
@@ -1485,6 +1504,7 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         // 否则 WDA 排除 / 冻结底片的时序会被这里的抢跑打乱，且零拷贝帧里会抓到
         // 岛仔自己 → "玻璃里显示玻璃"的重影。正常模式始终排除自身，可安全走共享。
         if crate::wgc::gpu_share_enabled()
+            && !gdi_capture_enabled()
             && std::env::var("DAOZAI_LIQUID_FREEZE_BG").is_err() {
             // 复刻 capture() 的 WDA 排除：正常模式每帧排除自身。
             // 不做这一步，WGC 帧会抓到岛仔自己，玻璃出现自我反馈条纹。
