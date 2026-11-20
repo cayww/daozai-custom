@@ -577,6 +577,13 @@ impl Window {
         Some(eframe::egui::pos2(r.left as f32/scale,r.top as f32/scale))
     }
 
+    /// 窗口真实物理像素尺寸（GetWindowRect），用于核对 egui ppp 是否双重缩放。
+    pub fn window_pixel_size(&self)->Option<[i32;2]>{
+        let mut r=RECT::default();
+        unsafe { GetWindowRect(self.hwnd,&mut r).ok()?; }
+        Some([r.right-r.left, r.bottom-r.top])
+    }
+
     /// 极简细条点穿且鼠标键按下时返回 true，main.rs 据此过滤光标避免岛抢回悬停。
     /// 读普通 passive 标志，不依赖 WS_EX_TRANSPARENT 样式位。
     pub fn holding_through_strip(&self)->bool {
