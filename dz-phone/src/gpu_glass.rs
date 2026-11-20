@@ -1569,6 +1569,19 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                 let mean = if n > 0 { sum / n } else { 0 };
                 diag(&format!("tick={tick} cap={tw}x{th} mean_r={mean} tex={:?} clip={:?} bounds={:?}", gpu.size, f.clip, f.bounds));
             }
+            // ===== 关键：staging 路径必须保证 bind_group 指向 staging texture =====
+            // 零拷贝成功时会把 gpu.bind_group 换成共享纹理的 bind，导入失败时（见上）
+            // 又把它清成 None。换屏/settling 期间 grab_shared 返回 NoFrame 会落到本
+            // 路径：若这里只凭 `gpu.texture.is_none()` 决定是否重建 bind_group，
+            //   - gpu.texture 已存在 + bind 仍指向旧共享纹理 → paint 采样旧内容
+            //     （背景放大 / 定格静态壁纸）；
+            //   - bind 为 None → paint 直接 return（没铺满 / 黑屏）。
+            // 这正是换屏后症状时有时无的根因。切换到 staging 时一律重建，确保
+            // bind_group 与本路径写入的 gpu.texture 是同一张纹理。
+            if gpu.shared.is_some() || gpu.bind_group.is_none() {
+                gpu.shared = None;
+                gpu.texture = None;
+            }
             if gpu.texture.is_none() {
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("daozai-glass-backdrop"),
