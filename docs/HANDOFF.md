@@ -1412,4 +1412,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 用户实测日志（`%APPDATA%\Daozai\diagnostics\liquid-glass.log`）：换分辨率 device-lost **从 54 次降到 1 次**，`pool.Recreate` 成功、之后 `perf tick` 稳定运行无再 lost —— **重建风暴/闪烁根治**。
 - **但**：Recreate 之后**0 次"导入共享纹理"/出帧**，玻璃定格。原因：微软 Screen capture 文档 + sekin.in/macmyths 明确 Recreate 会丢弃池内所有旧帧，之后必须 "resume the session" 才会重新驱动帧到达；我们只 Recreate 没重启 session。
 - **修法**（`e2e8c7a`）：`recreate_after_device_lost` 在 `pool.Recreate` 后加 `session.StartCapture()`（session/item 对象保留，只在新 pool 上激活，非整体重建），错误做容错（幂等，避免误触发整体重建风暴）。
-- 新 exe `4b90a59c4ffe8163`，已部署（部署前先 taskkill 停进程——exe 被占用）。**待用户验证**：换分辨率后玻璃是否恢复更新（日志 Recreate 后应有"导入共享纹理"/frame）、是否不闪。
+- 新 exe `4b90a59c4ffe8163`，已部署（部署前先 taskkill 停进程——exe 被占用）。用户实测：不闪了，但玻璃仍静态——Recreate+StartCapture 后帧还是 0 到达。
+
+#### 7.0zzd.2 真因：EVENT query 非法 Begin 误判 device lost（提交 `e3055de`）
+- **真因链**（日志 + 社区实证）：`s.context.Begin(D3D11_QUERY_EVENT)` 非法（微软文档明确 "Begin is disabled"）→ `GetData` 永不 signal → 200 万 spin 超时 → `signaled==0` → `GetDeviceRemovedReason().is_err()` 误判 device lost → Recreate 用 item.Size() 1920x1080 错配有效帧 420x105 → 抓屏搞坏、玻璃定格。**设备其实没真 lost**（Recreate 能建纹理、StartCapture 不报错）。
+- **修法**（e3055de，在干净分支重做）：去掉 Begin，只 End + GetData（Chromium ANGLE/Dawn 实证）；spin 加 `yield_now` + 每 256 次查 device-lost 提前退出（顺带消除 200 万纯 spin 卡 UI）。Recreate 保留为 device 真 lost 的兜底。
+- 新 exe `4df89c1959ff49d4`，已部署。**待用户验证**：换分辨率后玻璃正常更新、不闪、无 device-lost 误判。
+- ⚠️ 这是污染链 1d03311 里的同一修复，但这次在干净分支（de4da1a + Recreate）上重做，不含其它污染提交。
