@@ -1132,3 +1132,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 更新弹窗删过时「自定义构建/reapply.ps1」提示 + CUSTOM_BUILD 常量（bb39ee6）；app.rc 版本改 build.rs 从 CARGO_PKG_VERSION 渲染，修复 update.ps1「安装包版本不匹配」（9eaaa7b）。版本回退 d3bf5b6。
 - **零拷贝换屏 bug**（c097c4d）：共享纹理缓存键只有 (w,h)，换屏重建会话后尺寸不变→继续采样旧纹理→放大/定格壁纸/没铺满/发黑。修法：SharedHandle 带 EPOCH，缓存键用 (w,h,epoch)，导入失败清缓存回退 staging。全量 1390 passed。实机换屏效果待用户验证；未打包/未覆盖 release。
 - 工作树另有用户删的 installer/V1.0.1-NOTES.txt（未纳入我的提交）。
+
+
+### 7.0zu v1.1.1 仍复现 → v1.1.2 二次修 bind_group（2026-11-20，详版见桌面权威副本 §7.0zu）
+- v1.1.1 换屏 bug 用户实测仍在。社区调研佐证旧代资源/1x1 barrier 非契约。
+- 第二处根因：切屏 settling 回退 staging 时 bind_group 仍指旧共享纹理或为 None，而 staging 只在 texture 为 None 时建 bind → 采样旧内容（放大/定格壁纸）或不画（没铺满/黑屏）。
+- 修法（949c028）：staging 路径开头检测 shared.is_some() || bind_group.is_none() 时强制重建 texture+bind。版本 1.1.2，按用户要求未跑全量测试。
+- v1.1.2 release（id 452420750）exe `bc4547984fd937e4` / zip `78ada1405d8835c8`，API 复核一致；main push 到 949c028。待用户再次实机验证。
