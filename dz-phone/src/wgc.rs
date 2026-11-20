@@ -636,7 +636,16 @@ fn recreate_after_device_lost(s: &mut Wgc, w: u32, h: u32) -> windows::core::Res
             Width: item_size.Width.max(1), Height: item_size.Height.max(1),
         };
         s.pool.Recreate(&d3d_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)?;
-        log(&format!("wgc: device-lost 恢复——pool.Recreate {}x{}（保留 session，未重新 StartCapture）", size.Width, size.Height));
+        // 社区实证（微软 Screen capture / sekin.in / macmyths）：Recreate 会丢弃池内
+        // 所有旧帧，必须 "resume the session" 才会重新驱动帧到达。此前只 Recreate
+        // 不重启 session → 帧永久不再到达 → 玻璃定格（实测 Recreate 后 0 次导入/出帧）。
+        // session 对象保留（没新建），只在新 pool 上重新激活；不同于此前每次整体
+        // 重建的 StartCapture 风暴，这里 device 稳定后只会发生一次。
+        // StartCapture 若报"已在运行"也不算失败——幂等，忽略即可；真正失败由后续帧是否到达判断。
+        match s._session.StartCapture() {
+            Ok(()) => log(&format!("wgc: device-lost 恢复——pool.Recreate {}x{} + session 重新激活", size.Width, size.Height)),
+            Err(e) => log(&format!("wgc: device-lost 恢复——pool.Recreate {}x{}，session 重启返回 {:?}（可能已在运行，继续观察帧）", size.Width, size.Height, e)),
+        }
 
         // 3) 重建绑在旧 device 上的 staging 与共享纹理。
         let stage = staging(&device, w, h)?;
