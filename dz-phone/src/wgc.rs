@@ -458,6 +458,28 @@ pub fn settling() -> bool {
         .is_some_and(|t| std::time::Instant::now() < t)
 }
 
+/// device lost 的连续次数：换分辨率期 DWM 会重置 D3D11 device，刚重建就立刻抓
+/// 会撞在设备仍被移除的窗口里（实测重建后下一帧又 0x887A0005）。用递增冷却等
+/// 系统彻底稳定，而不是 lost 当帧立即 Recreate/init。成功出帧后清零。
+static LOST_STREAK: AtomicU32 = AtomicU32::new(0);
+
+/// device 真 lost 时调用：设冷却期（2s→4s→8s 封顶），期间 settling() 挡住抓屏，
+/// 不再创建 device/Recreate。冷却结束后下一帧走正常 init 建全新会话。
+fn cooldown_after_device_lost() {
+    let n = LOST_STREAK.fetch_add(1, Ordering::Relaxed).min(3);
+    let ms = 2000u64 << n; // 2s, 4s, 8s, 8s
+    *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(ms));
+    log(&format!("wgc: device-lost 第 {} 次，冷却 {}ms（等设备稳定后再重建，不立即 Recreate）", n + 1, ms));
+}
+
+/// 成功产出一帧：清除 device-lost 计数（系统已稳定）。
+fn note_capture_ok() {
+    if LOST_STREAK.swap(0, Ordering::Relaxed) != 0 {
+        log("wgc: 抓屏恢复，清除 device-lost 计数");
+    }
+}
+
 fn staging(device: &ID3D11Device, w: u32, h: u32) -> windows::core::Result<ID3D11Texture2D> {    let desc = D3D11_TEXTURE2D_DESC {
         Width: w,
         Height: h,
@@ -597,77 +619,6 @@ fn init(_x: i32, _y: i32, w: u32, h: u32,
     }
 }
 
-/// device lost 后原地恢复抓屏（微软 WGC 官方指引）。
-///
-/// 关键：在**原 frame pool 对象**上调 `Recreate` 换新的 D3D11 device，保留
-/// session / item / pool 本身，不重新 `StartCapture`。此前做法是 `*guard = None`
-/// 销毁整个 Wgc 再 init —— 每轮重建都 StartCapture + DWM 重合成 + 捕获黄框重启，
-/// 换分辨率期设备反复 lost 时形成重建风暴（实测 54 次），表现为鼠标/岛体持续闪。
-///
-/// `Recreate` 只换 device/pool 内部纹理，session 仍绑在原 pool 上继续工作。
-/// device 换掉后，staging 与共享纹理都绑在旧 device 上、必须一并重建。
-/// 返回 Err 表示恢复失败（调用方按 Unavailable 回退，下一帧再试）。
-fn recreate_after_device_lost(s: &mut Wgc, w: u32, h: u32) -> windows::core::Result<()> {
-    unsafe {
-        // 1) 新建 D3D11 device/context，仍绑定 wgpu 同卡 adapter。
-        let luid = *WGPU_LUID.lock().unwrap_or_else(|e| e.into_inner());
-        let adapter = luid.and_then(adapter_by_luid);
-        let (adapter, driver_type) = match adapter {
-            Some(a) => (Some(a), D3D_DRIVER_TYPE_UNKNOWN),
-            None => (None, D3D_DRIVER_TYPE_HARDWARE),
-        };
-        let mut device: Option<ID3D11Device> = None;
-        let mut context: Option<ID3D11DeviceContext> = None;
-        D3D11CreateDevice(
-            adapter.as_ref(), driver_type, windows::Win32::Foundation::HMODULE::default(),
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT, None, D3D11_SDK_VERSION,
-            Some(&mut device), None, Some(&mut context),
-        )?;
-        let device = device.ok_or_else(|| windows::core::Error::from(windows::core::HRESULT(0x8000_4005u32 as i32)))?;
-        let context = context.ok_or_else(|| windows::core::Error::from(windows::core::HRESULT(0x8000_4005u32 as i32)))?;
-
-        // 2) 包装成 WinRT IDirect3DDevice，在原 pool 上 Recreate。
-        let dxgi: IDXGIDevice = device.cast()?;
-        let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi)?;
-        let d3d_device: IDirect3DDevice = inspectable.cast()?;
-        // 用 item.Size() 的最新尺寸（换分辨率后可能已变），与 init 一致。
-        let item_size = s._item.Size()?;
-        let size = SizeInt32 {
-            Width: item_size.Width.max(1), Height: item_size.Height.max(1),
-        };
-        s.pool.Recreate(&d3d_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)?;
-        // 社区实证（微软 Screen capture / sekin.in / macmyths）：Recreate 会丢弃池内
-        // 所有旧帧，必须 "resume the session" 才会重新驱动帧到达。此前只 Recreate
-        // 不重启 session → 帧永久不再到达 → 玻璃定格（实测 Recreate 后 0 次导入/出帧）。
-        // session 对象保留（没新建），只在新 pool 上重新激活；不同于此前每次整体
-        // 重建的 StartCapture 风暴，这里 device 稳定后只会发生一次。
-        // StartCapture 若报"已在运行"也不算失败——幂等，忽略即可；真正失败由后续帧是否到达判断。
-        match s._session.StartCapture() {
-            Ok(()) => log(&format!("wgc: device-lost 恢复——pool.Recreate {}x{} + session 重新激活", size.Width, size.Height)),
-            Err(e) => log(&format!("wgc: device-lost 恢复——pool.Recreate {}x{}，session 重启返回 {:?}（可能已在运行，继续观察帧）", size.Width, size.Height, e)),
-        }
-
-        // 3) 重建绑在旧 device 上的 staging 与共享纹理。
-        let stage = staging(&device, w, h)?;
-        let shared = if gpu_share_enabled() {
-            match shared_texture(&device, w, h) {
-                Ok(t) => Some(t),
-                Err(e) => { log(&format!("wgc: 恢复时共享纹理创建失败，回退 staging: {:?}", e)); None }
-            }
-        } else { None };
-
-        s._device = device;
-        s.context = context;
-        s.staging = stage;
-        s.stage_w = w;
-        s.stage_h = h;
-        s.shared = shared;
-        // 新共享纹理 = 新 NT handle，递增代次让 wgpu 侧重新 OpenSharedHandle。
-        EPOCH.fetch_add(1, Ordering::Relaxed);
-        Ok(())
-    }
-}
-
 /// 抓屏结果。必须区分「没有新帧」和「WGC 不可用」：
 /// 前者应当复用上一帧纹理，后者才回退 GDI —— 否则会 GDI/WGC 交替导致闪烁。
 pub enum Grab {
@@ -752,15 +703,13 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         }
     }
     if device_lost {
-        // 微软 WGC 指引：在原 pool 上 Recreate 新 device，保留 session/item，
-        // 不销毁整个会话（避免 StartCapture 风暴导致换分辨率后持续闪）。
-        if recreate_after_device_lost(s, bw, bh).is_err() {
-            // Recreate 失败兜底：整体重建，下一帧重新 init。
-            *guard = None;
-            FAILED.store(false, Ordering::Relaxed);
-            TRIED.store(false, Ordering::Relaxed);
-            log("wgc: device lost，Recreate 失败，回退整体重建会话");
-        }
+        // 微软 WGC 指引 + 实测：device removed 后不能当帧立即重建——刚建的新 device
+        // 会撞在 DWM 仍重置设备的窗口里（重建后下一帧又 0x887A0005）。销毁死会话 +
+        // 递增冷却，期间 settling() 挡住抓屏；冷却结束后走正常 init 建全新会话。
+        *guard = None;
+        FAILED.store(false, Ordering::Relaxed);
+        TRIED.store(false, Ordering::Relaxed);
+        cooldown_after_device_lost();
         return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
@@ -809,6 +758,7 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 || n % 600 == 0 { log(&format!("wgc: frame {} cap={}x{}", n, bw, bh)); }
         if mapped.pData.is_null() { return Grab::NoFrame; }
+        note_capture_ok();
         Grab::Frame(rgba, bw, bh)
     }
 }
@@ -876,14 +826,11 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         }
     }
     if device_lost {
-        // 同 grab()：原 pool 上 Recreate 恢复，保留 session 避免 StartCapture 风暴。
-        // 注意共享纹理尺寸用 bw/bh（有效帧），与当前缓存键一致。
-        if recreate_after_device_lost(s, bw, bh).is_err() {
-            *guard = None;
-            FAILED.store(false, Ordering::Relaxed);
-            TRIED.store(false, Ordering::Relaxed);
-            log("wgc: [gpu-share] device lost，Recreate 失败，回退整体重建会话");
-        }
+        // 同 grab()：销毁死会话 + 冷却，不立即重建（避免新 device 又撞窗口期）。
+        *guard = None;
+        FAILED.store(false, Ordering::Relaxed);
+        TRIED.store(false, Ordering::Relaxed);
+        cooldown_after_device_lost();
         return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
@@ -967,16 +914,16 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
             let lost = code == 0x887A0005 || code == 0x887A0006;
             log(&format!("wgc: [gpu-share] event query 超时 spins={}，device_lost={} reason=0x{:08X}", spins, lost, code));
             if lost {
-                // 同前：原 pool Recreate 恢复，避免每次超时都整体重建 → StartCapture 风暴。
-                if recreate_after_device_lost(s, bw, bh).is_err() {
-                    *guard = None;
-                    FAILED.store(false, Ordering::Relaxed);
-                    TRIED.store(false, Ordering::Relaxed);
-                }
+                // 同前：销毁 + 冷却，不立即重建（这是日志里 0x887A0005 反复的来源）。
+                *guard = None;
+                FAILED.store(false, Ordering::Relaxed);
+                TRIED.store(false, Ordering::Relaxed);
+                cooldown_after_device_lost();
             }
             return Grab::NoFrame;
         }
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
+        note_capture_ok();
         if n == 0 || n % 600 == 0 { log(&format!("wgc: [gpu-share] frame {} cap={}x{}", n, bw, bh)); }
         Grab::Shared(SharedHandle { handle: shared.handle, w: bw, h: bh, epoch: EPOCH.load(Ordering::Relaxed) })
     }
