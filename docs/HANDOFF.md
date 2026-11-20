@@ -1139,3 +1139,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 第二处根因：切屏 settling 回退 staging 时 bind_group 仍指旧共享纹理或为 None，而 staging 只在 texture 为 None 时建 bind → 采样旧内容（放大/定格壁纸）或不画（没铺满/黑屏）。
 - 修法（949c028）：staging 路径开头检测 shared.is_some() || bind_group.is_none() 时强制重建 texture+bind。版本 1.1.2，按用户要求未跑全量测试。
 - v1.1.2 release（id 452420750）exe `bc4547984fd937e4` / zip `78ada1405d8835c8`，API 复核一致；main push 到 949c028。待用户再次实机验证。
+
+
+### 7.0zv v1.1.3：非0拷贝复制模式铺不满 + settle 固定 1s（2026-11-20，详版见桌面权威副本 §7.0zv）
+> 用户明确 16:26 起不上传 release，只本地打包。
+- 问题1：非0拷贝「仅2号屏→复制」铺不满。根因 = grab() 的 src_box 按显示器几何算，复制模式 WGC 真实帧更小，CopySubresourceRegion 静默裁剪→staging 留黑。修法：GetDesc 取真实帧尺寸，框超出就丢帧；grab()/grab_shared() 都加（60b4eed）。
+- 问题2：移除 settle-learned 全套（LEARNED_SETTLE_MS/TOPO_CHANGED_AT/note_plate_ready/落盘），稳定期固定 SETTLE_MS=1000，保留 DAOZAI_SETTLE_MS 覆盖。
+- 本轮按要求未跑全量测试；本地包 exe `2890bfb86a80f167` / zip `e495d16d0626360b`，**未上传 release**。main push 到 60b4eed。待用户验证。
