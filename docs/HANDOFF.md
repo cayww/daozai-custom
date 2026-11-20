@@ -1494,3 +1494,13 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   2. **wgpu-scry**（与本项目链路几乎一样：WGC+D3D11共享纹理→wgpu D3D12）把 explicit D3D12 fence 从 future work 升级为 shipped：host 创建 fence→producer D3D11 OpenSharedFence→每帧 `Signal(n+1)` + **新纹理**→consumer `Queue.Wait(n+1)`；每帧 fresh resource + fence_value + fail-fast + fallback。
   3. scrying/微软**都没有会话内 device-lost 恢复银弹**；健壮性来自每帧新资源 + stale/dim-match guard + 可诊断 metrics。微软 robmikh 承认 WGC 内部 device-lost bug。
   4. 结论：保持 main 的自动重启 workaround（进程级重建能同时重建 D3D11+D3D12，最可靠）；可选增强 A=stale/dim-match guard（低风险）、B=fence 替 event query（中风险、消除主线程空转）；不建议继续堆会话内恢复机制。
+
+### 7.0zzg.1 【重要更正】社区确有成功案例——OBS Studio（2026-11-21 00:45）
+- 用户追问"有没有人用新建 device + 重建资源 + frame pool.Recreate 成功过"。深挖确认：**有，生产级——OBS Studio**（`libobs-winrt/winrt-capture.cpp` + `libobs-d3d11/d3d11-subsystem.cpp`，2016 年起稳定多年）。
+- **成功要素**（我们缺的）：
+  1. **统一 D3D device 所有者**（OBS graphics subsystem `gs_get_device_obj`）：device lost 时统一重建 device + `gs_register_loss_callbacks` 回调所有消费者。我们的 wgpu(D3D12) 与 WGC(D3D11) 各自独立、无统一重建 → D3D11 重建了 D3D12 没跟上，共享纹理句柄失效（印证"双 device"怀疑）。
+  2. **两段式** `device_loss_release`（撤销事件 + Close pool/session + 清空 COM 引用）→ 重建 device → `device_loss_rebuild`。
+  3. **rebuild 时重建 `GraphicsCaptureItem`**（用保存的 window/monitor 重新 CreateForWindow/CreateForMonitor），不复用旧 item；再 `FramePool::Create` + `CreateCaptureSession` + 重注册 FrameArrived + `StartCapture`。我们 Recreate 保留旧 item，可能帧不到达。
+  4. **do-while 重试直到拿到可用 device**（微软 ScreenCapturePlayer 示例同款）；我们重建一次失败就冷却/放弃。
+- **结论更正**：之前"没有银弹"过于悲观。进程重启 workaround 本质=强制统一重建两侧 device，方向正确；进程内做对需模仿 OBS 统一 device 管理（大改）；低风险改进=重启前先试一次 OBS 式完整会话重建（Close→重建item→新device→Create pool→StartCapture）+重试，失败再重启。
+- 研究文档 `docs/research-fence-device-lost.md` §6（研究分支 commit `4f764e8`），桌面副本同步。
