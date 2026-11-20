@@ -69,13 +69,19 @@ pub struct SharedFrame {
     pub h: u32,
 }
 
-/// spike: 交给 consumer(wgpu) 的轻量句柄。只带 handle + 尺寸，
+/// spike: 交给 consumer(wgpu) 的轻量句柄。只带 handle + 尺寸 + 抓屏源代次，
 /// 不含 COM 对象——同步在 producer 侧已经做完，consumer 只管导入采样。
+///
+/// `epoch` 是换屏感知的关键：显示器拓扑变化会重建 WGC 会话与共享纹理（新的 NT
+/// handle），但抓屏矩形尺寸由岛仔 UI 决定、往往不变。consumer 若只按尺寸判断
+/// 是否重新导入，就会继续采样旧纹理 → 背景放大 / 静止壁纸 / 没铺满 / 发黑。
+/// 带上 EPOCH 后，consumer 一发现代次变了就重新 OpenSharedHandle。
 #[derive(Clone, Copy)]
 pub struct SharedHandle {
     pub handle: windows::Win32::Foundation::HANDLE,
     pub w: u32,
     pub h: u32,
+    pub epoch: u64,
 }
 
 // COM 接口与 HANDLE 在这个进程里只在持有 WGC 锁的单一线程上下文里使用，
@@ -854,7 +860,7 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         if signaled == 0 { log("wgc: [gpu-share] event query 超时，丢弃该帧"); return Grab::NoFrame; }
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 || n % 600 == 0 { log(&format!("wgc: [gpu-share] frame {} cap={}x{}", n, bw, bh)); }
-        Grab::Shared(SharedHandle { handle: shared.handle, w: bw, h: bh })
+        Grab::Shared(SharedHandle { handle: shared.handle, w: bw, h: bh, epoch: EPOCH.load(Ordering::Relaxed) })
     }
 }
 
