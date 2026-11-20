@@ -912,19 +912,29 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         let shared = s.shared.as_ref().unwrap();
         // producer 独占：keyed mutex key=0，超时 500ms 放弃（避免卡住 UI 线程）。
         if shared.mutex.AcquireSync(0, 500).is_err() { drop(frame); return Grab::NoFrame; }
-        // event query：标记这一批 GPU 写的结束点。
-        s.context.Begin(&shared.done);
+        // D3D11_QUERY_EVENT 按微软文档 Begin 是 disabled 的，只能用 End 标记
+        // GPU 时间线事件点 + GetData 轮询 BOOL（Chromium ANGLE/Dawn 均如此）。
+        // 此前错误地 Begin(EVENT query) 让 query 状态机异常、GetData 永不 signal
+        // → 误判 device lost → 触发 Recreate/整体重建 → 玻璃定格/闪。
         s.context.CopySubresourceRegion(&shared.tex, 0, 0, 0, 0, &src_tex, 0, Some(&box_clamped));
         s.context.End(&shared.done);
         s.context.Flush();
-        // spin 等 GPU 真正写完。event query 返回 BOOL(4 bytes)；加次数上限兜底防死锁。
+        // 等 GPU 写完：yield 让出 CPU（纯 spin 占死主线程 → 改分辨率后输入卡），
+        // 每 256 次查一次 device lost 提前退出，上限兜底防死锁。
         let mut signaled: i32 = 0;
         let mut spins = 0u32;
+        let mut lost_early = false;
         while signaled == 0 && spins < 2_000_000 {
             let _ = s.context.GetData(&shared.done, Some(&mut signaled as *mut _ as *mut core::ffi::c_void), 4, 0);
             spins += 1;
-            if signaled == 0 { std::hint::spin_loop(); }
+            if signaled != 0 { break; }
+            if spins % 256 == 0 && unsafe { s._device.GetDeviceRemovedReason().is_err() } {
+                lost_early = true;
+                break;
+            }
+            std::thread::yield_now();
         }
+        if lost_early { signaled = 0; }
         // 主题色小范围取样：按时间节流（≥500ms），从这张干净帧读采样框算亮度。
         // 用 Instant 而非帧计数：低帧率下主题滞后不放大，60fps 也不必每帧读回。
         // 失败静默、与共享纹理/keyed mutex 无关（副本在独立固定 staging 上读回）。
