@@ -1078,8 +1078,10 @@ fn fill_gradient(buf: &mut [u8], w: u32, x0: i32, y0: i32, x1: i32, y1: i32, top
 }
 
 /// 纯 GDI 抓屏，返回自上而下的 RGBA；不做任何岛体处理。
+/// `draw_cursor`：GDI BitBlt 抓桌面 DC **不含鼠标光标**（WGC 帧含），
+/// GDI 模式下手动把系统光标画进 buffer，玻璃里才有鼠标投影 + 靠边缘的色散彩边。
 #[cfg(windows)]
-fn grab_raw(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
+fn grab_raw(x: i32, y: i32, w: i32, h: i32, draw_cursor: bool) -> Option<(Vec<u8>, u32, u32)> {
     use windows::Win32::Graphics::Gdi::*;
     use windows::Win32::Graphics::Gdi::HGDIOBJ;
     if w <= 0 || h <= 0 || w > 2048 || h > 1024 { return None; }
@@ -1098,6 +1100,23 @@ fn grab_raw(x: i32, y: i32, w: i32, h: i32) -> Option<(Vec<u8>, u32, u32)> {
         let bmp = CreateDIBSection(mem, &info, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
         let old_bmp = SelectObject(mem, HGDIOBJ(bmp.0));
         let ok = BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY).is_ok();
+        // GDI 抓屏补光标：光标不是窗口，不受 WDA_EXCLUDEFROMCAPTURE 影响，
+        // BitBlt 后手动 DrawIconEx 把系统光标画到相对位置。这样玻璃采样到
+        // 鼠标的高对比形状 → 恢复 WGC 里的鼠标投影与靠近边缘的色散彩边。
+        if ok && draw_cursor {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GetCursorInfo, DrawIconEx, CURSORINFO, CURSOR_SHOWING, DI_NORMAL,
+            };
+            let mut ci = CURSORINFO { cbSize: std::mem::size_of::<CURSORINFO>() as u32, ..Default::default() };
+            if GetCursorInfo(&mut ci).is_ok()
+                && (ci.flags.0 & CURSOR_SHOWING.0) != 0
+                && !ci.hCursor.0.is_null() {
+                let cx = ci.ptScreenPos.x - x;
+                let cy = ci.ptScreenPos.y - y;
+                // 0,0 + DI_NORMAL = 用光标自身尺寸、含 mask（透明像素正确）。
+                let _ = DrawIconEx(mem, cx, cy, ci.hCursor, 0, 0, 0, None, DI_NORMAL);
+            }
+        }
         let (bw, bh) = (w as u32, h as u32);
         let mut rgba = vec![0u8; (bw * bh * 4) as usize];
         if ok && !bits.is_null() {
@@ -1182,7 +1201,7 @@ fn compose_with_plate(raw: &[u8], bw: u32, bh: u32, x: i32, y: i32,
     };
     if need_new {
         let ax = x - PLATE_ANCHOR;
-        let big = grab_raw(ax, y, PLATE_W as i32, PLATE_H as i32);
+        let big = grab_raw(ax, y, PLATE_W as i32, PLATE_H as i32, false); // 底片要干净壁纸，不烙光标
         let (mut data, pw, ph, fpx, fpy) = if let Some((d, pw, ph)) = big {
             (d, pw, ph, ax, y)
         } else {
@@ -1299,7 +1318,7 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4], ppp: f32) -> Option<(
     // 上面 enable_capture_exclusion() 已执行，这里验证 GDI BitBlt 是否也能
     // 靠 WDA 排除自身、抓到干净桌面（社区实测 Win10 2004+ 可行）。
     if gdi_capture_enabled() {
-        let (p, tw, th) = grab_raw(x, y, w, h)?;
+        let (p, tw, th) = grab_raw(x, y, w, h, true)?; // GDI 模式补光标，恢复 WGC 的鼠标投影/彩边
         LAST_CAP.store(want, std::sync::atomic::Ordering::Relaxed);
         let out = compose_with_plate(&p, tw, th, x, y, body,
                                      if frozen { false } else { true }, frozen)?;
@@ -1317,7 +1336,7 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4], ppp: f32) -> Option<(
         // 复用旧纹理最多让玻璃的几何错一帧，退回 GDI 会让整块玻璃糊成条纹。
         crate::wgc::Grab::NoFrame => return None,
         crate::wgc::Grab::Unavailable => {
-            let (p, tw, th) = grab_raw(x, y, w, h)?;
+            let (p, tw, th) = grab_raw(x, y, w, h, false)?; // 原兜底路径不补光标，保持原行为
             (p, tw, th, false)
         }
     };
