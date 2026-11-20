@@ -1365,3 +1365,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修法**（815932b）：`impl Drop for Wgc` 显式 `session.Close()` + `pool.Close()` 断开引用环；清理三处对 `&mut Wgc` 无效的 `drop(s)` no-op（真正释放靠 `*guard = None` 触发 Drop，NLL 已验证借用合法）。
 - 编译通过（无 error）；全量测试**未跑**（用户要求）。新 exe `ca8923b6e02d3043` / bridge `6afcdde3c358bdf3`，已备份上一版为 `daozai.exe.prev-before-wgc-close` 并部署到预览目录。**待用户实机验证**：反复换分辨率后内存不再持续上涨（线程数、32MB 块不再累积）。
 - main HEAD=`815932b`（ahead origin 3，未 push）。
+
+### 7.0zza 换分辨率后 20 秒工作集回收不触发——cursor_far 按岛仔命中区判定（2026-11-20 21:15–21:30，提交 `afdf877`/`e32b343`）
+- 用户实测：WGC Close 修复后内存不再涨，但换分辨率后 **20 秒工作集回收不触发**，且光标闪/跳。
+- **诊断**（`afdf877`，pill-sleep.log 挡因行加 cursor/win 坐标）：`blocked=cursor` 恒真；实测 `cursor=(625,168)`、`win=(0,0,640,270)`。
+- **根因**：`cursor_far=!env.cursor.is_some_and(|p|win.expand(24).contains(p))`——用整个**透明画布 win(640×270)** 判"鼠标在岛上"，而岛仔命中区 `hit` 收起时只有顶部约 300×50。换分辨率后窗口变大/移位，鼠标离开岛仔、只要还在画布内就算"近" → `workset_quiet` 永不满足 → 回收永不触发。
+- **修法**（e32b343）：`cursor_far` 改按 `hit.expand(24)` + 未读徽章判定；通知/吐司已有独立挡因不重复。诊断坐标日志保留。
+- 新 exe `0fcbf892ab7f1c46c`，已部署预览目录、清空 pill-sleep.log。编译通过，全量测试未跑（用户要求）。**待用户验证**：鼠标移离岛仔后 20 秒回收触发（WS 275MB→~30MB），挡因不再有 cursor。
+- main HEAD=`e32b343`（ahead origin 5，未 push）。
