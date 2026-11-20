@@ -431,6 +431,69 @@ fn monitor_rects_desc() -> String {
         .join(" ")
 }
 
+/// 纯诊断：用 QueryDisplayConfig 打印真实拓扑与每块物理 target 的分辨率。
+/// EnumDisplayMonitors 在复制模式下只报一个合并桌面，看不到副屏 target；
+/// QueryDisplayConfig 能看到 source(桌面) → 多个 target(物理屏) 的映射，
+/// 这是判断「复制模式不同分辨率导致 DWM 镜像缩放」的关键证据。
+fn diag_display_config() {
+    use windows::Win32::Devices::Display::{
+        GetDisplayConfigBufferSizes, QueryDisplayConfig, DISPLAYCONFIG_MODE_INFO,
+        DISPLAYCONFIG_PATH_INFO, DISPLAYCONFIG_TOPOLOGY_ID, QDC_ONLY_ACTIVE_PATHS,
+        DISPLAYCONFIG_MODE_INFO_TYPE_TARGET, DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE,
+    };
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    unsafe {
+        let mut npath: u32 = 0;
+        let mut nmode: u32 = 0;
+        if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut npath, &mut nmode) != ERROR_SUCCESS {
+            log("qdc: GetDisplayConfigBufferSizes 失败");
+            return;
+        }
+        let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); npath as usize];
+        let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); nmode as usize];
+        let mut topo = DISPLAYCONFIG_TOPOLOGY_ID(0);
+        let rc = QueryDisplayConfig(
+            QDC_ONLY_ACTIVE_PATHS,
+            &mut npath, paths.as_mut_ptr(),
+            &mut nmode, modes.as_mut_ptr(),
+            Some(&mut topo),
+        );
+        if rc != ERROR_SUCCESS {
+            log(&format!("qdc: QueryDisplayConfig 失败 {:?}", rc));
+            return;
+        }
+        // 拓扑名
+        let topo_name = match topo.0 {
+            1 => "INTERNAL", 2 => "CLONE", 4 => "EXTEND", 8 => "EXTERNAL", _ => "UNKNOWN",
+        };
+        // 每个 target 的分辨率：从 path.targetInfo.modeInfoIdx 找对应 mode。
+        // cloneGroupId / targetId 在 _bitfield 里，这里只打印 source id 和分辨率，
+        // 足以判断是否有多个不同分辨率的 target。
+        let mut targets: Vec<String> = Vec::new();
+        for p in paths.iter().take(npath as usize) {
+            let src_id = p.sourceInfo.id;
+            let midx = (unsafe { p.targetInfo.Anonymous.modeInfoIdx } & 0xFFFF) as usize;
+            let mut size = String::from("?");
+            if midx < nmode as usize && modes[midx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE_TARGET {
+                let m = &modes[midx].Anonymous.targetMode.targetVideoSignalInfo.activeSize;
+                size = format!("{}x{}", m.cx, m.cy);
+            }
+            // 同 source 的 clone group：source id 相同即同一桌面被镜像到多屏
+            targets.push(format!("src{}:{}", src_id, size));
+        }
+        // source mode 尺寸（桌面分辨率）
+        let mut sources: Vec<String> = Vec::new();
+        for m in modes.iter().take(nmode as usize) {
+            if m.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE {
+                let s = &m.Anonymous.sourceMode;
+                sources.push(format!("{}x{}", s.width, s.height));
+            }
+        }
+        log(&format!("qdc: topology={}({}) paths={} sources=[{}] targets=[{}]",
+                     topo.0, topo_name, npath, sources.join(","), targets.join(",")));
+    }
+}
+
 /// 拓扑变化后的稳定期时长，固定 1000ms。可用 `DAOZAI_SETTLE_MS` 覆盖，方便实机调试。
 /// 原先的自学习（按上次稳定耗时 ×0.85 逐次收敛）已移除：学习值全局共享，快机器学出的
 /// 400ms 不够慢机器/复制模式的 DWM 重构动画用，反而导致抓到过渡帧铺不满。
@@ -567,6 +630,8 @@ fn init(_x: i32, _y: i32, w: u32, h: u32,
         let item_size = item.Size()?;
         let (fw, fh) = (item_size.Width.max(1), item_size.Height.max(1));
         log(&format!("wgc: item.Size()={}x{} rcMonitor={}x{}", fw, fh, sw, sh));
+        // 纯诊断：打印 QueryDisplayConfig 的真实拓扑与各 target 分辨率（只读，不改渲染）。
+        diag_display_config();
         let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
             &d3d_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2,
             SizeInt32 { Width: fw, Height: fh },
