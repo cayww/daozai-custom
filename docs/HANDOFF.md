@@ -1115,3 +1115,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **收益边界（重要，别高估）**：三处补丁只作用于**兼容渲染（render_compat）截图读回**路径。液态皮肤走 DComp/WGC 不经过读回、经典皮肤 OpenGL 下 `opaque_surface=false` 本就不走读回——**只在 D3D12 + 经典皮肤 + 兼容渲染**组合下有收益。custom 应用层 `schedule_repaint`+`glass_tick`（cf76bbb）已解决大部分帧率问题，此次是补齐 vendor 层、让两边优化全集重合。
 - 验证：`cargo check --all-targets` + 全量 **1372 passed / 0 failed**。diff 仅 3 文件 / 10 行插入 / 3 行删除。提交 700e4d4。
 - **推送 + 覆盖 v1.0.0**（用户要求，16:05–16:12）：`git push origin main` 成功（4bc70ed→2af861f，2 提交）。重构建 exe `5533ba64c55997a7`（本次 cargo 确实重编了 egui——日志出现 `egui (lib) generated 31 warnings`，证明 vendor 补丁进二进制）。NSIS 安装器 sha `8cf6999e2c14c13d`（9,126,102 B）、zip sha `7469cb4c8a8f3edf`（11,256,143 B，内含 exe=5533ba64）。删旧 asset（766734127/766734323）后同名重传；API 验证 zip 仍符合更新模块（名字/URL/size/sha256）。本地与 origin 均 2af861f，工作树干净。
+
+
+### 7.0zr 版本线收尾：关于页改版 + 粗体文案解析 + v1.1.0 覆盖重打（2026-11-20 14:10，提交 `6d70348`）
+> 完整过程见桌面权威副本 `C:\Users\cay\Desktop\HANDOFF.md` §7.0zr；此处摘要。
+- 设置页标签 `关于上游` → `关于岛仔`；内容改为本项目介绍（作者 cayww，主链接 cayww/daozai-custom，保留原上游链接），删掉先前塞入的「功能亮点」清单。
+- `updates.rs`：release notes `**粗体**` 解析为真粗体（+单测）。
+- 全量测试 1389 passed / 0 failed / 131 ignored。双 bin 重编，exe `40ca290e`。
+- v1.1.0 覆盖重打：NSIS 安装包 sha `0a97e5fb489909a1`（9,295,319 B）、便携 zip sha `99cc373b651c957f`（11,295,078 B，首次补 zip 供更新模块用）。
+- GitHub release v1.1.0 删旧 exe asset 后同名重传 + 新增 zip asset，API 复核 name/size/sha256/URL 一致。未 push / 未部署。
