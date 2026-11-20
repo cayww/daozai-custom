@@ -134,6 +134,8 @@ static GRAB_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(
 static LAST_CAP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// 抓到的桌面平均亮度（0..1）的 f32 位模式，供 App 决定深/浅材质。
 static BG_LUMA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f59_999a); // 0.85，未抓屏前默认浅色
+/// 从浅到深的大幅突变待确认：连续两次采样都低才采纳，挡掉开机过渡暗帧（同 wgc::THEME_DARK_PENDING）。
+static BG_DARK_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// DWM 捕获排除是否已经尝试过 / 成功设置了几个窗口。
 static EXCLUSION_TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static EXCLUSION_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1312,7 +1314,13 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4], ppp: f32) -> Option<(
             diag(&format!("theme: luma={:.2}→{:.2} 框=[{},{} {}x{}] 岛体高={:.0}",
                           prev, luma, tx0, ty0, tx1 - tx0, ty1 - ty0, body[3]));
         }
-        BG_LUMA.store(luma.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        // 开机/切屏早期桌面还在合成，抓到的过渡帧偏黑。采纳会把液态玻璃判成深色
+        // 材质且不易恢复（开机变黑、重启才好）。大幅「浅→深」突变要求连续两次
+        // 采样都低才采纳：真深色壁纸是持续的，过渡帧是短暂的；平滑变化不受影响。
+        let pending = BG_DARK_PENDING.load(std::sync::atomic::Ordering::Relaxed);
+        let (commit, new_pending) = crate::wgc::theme_luma_commit(prev, luma, pending);
+        if let Some(v) = commit { BG_LUMA.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed); }
+        BG_DARK_PENDING.store(new_pending, std::sync::atomic::Ordering::Relaxed);
     }
     if GRAB_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 120 == 0 {
         diag(&format!("capture: src={} inner={:.0} outer={:.0} cap={}x{}",

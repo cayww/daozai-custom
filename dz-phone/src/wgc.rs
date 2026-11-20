@@ -100,6 +100,8 @@ const THEME_SAMPLE_INTERVAL_MS: u64 = 500;
 static THEME_STAGE: Mutex<Option<ID3D11Texture2D>> = Mutex::new(None);
 static THEME_RECT: Mutex<Option<(i32,i32,i32,i32)>> = Mutex::new(None);
 static THEME_LUMA: AtomicU32 = AtomicU32::new(0x3f59_999a); // 0.85 默认浅色
+/// 从浅到深的大幅突变待确认：连续两次采样都低才真正采纳，挡掉开机过渡暗帧。
+static THEME_DARK_PENDING: AtomicBool = AtomicBool::new(false);
 static THEME_LAST_SAMPLE: Mutex<Option<Instant>> = Mutex::new(None);
 /// 毫秒时间戳的进程级原点（OnceLock 保证只初始化一次，跨平台安全）。
 static THEME_EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -141,6 +143,18 @@ fn theme_sample_box(
     if left<0 || top<0 || right>sw as i64 || bottom>sh as i64 {return None;}
     // 能走到这里说明 right<=sw<=i32::MAX 且 left>=0，安全收窄回 i32。
     Some((left as i32,top as i32,right as i32,bottom as i32,rw,rh))
+}
+
+/// 主题亮度要不要落盘：大幅「浅→深」突变要求连续两次采样都低才采纳。
+/// 开机/切屏早期抓到过渡暗帧，若立即采纳会把液态玻璃判成深色（黑底）且不易恢复；
+/// 真·深色壁纸是持续的，第二次采样仍低就会采纳。平滑变化/变亮立即采纳。
+/// 返回 (要写入的新亮度, 更新后的待确认标记)。
+pub(crate) fn theme_luma_commit(prev: f32, luma: f32, pending: bool) -> (Option<f32>, bool) {
+    if prev - luma > 0.30 {
+        if pending { (Some(luma), false) } else { (None, true) }
+    } else {
+        (Some(luma), false)
+    }
 }
 
 /// 从干净 WGC 帧 src_tex 里取 theme_rect 小块算平均亮度，写 THEME_LUMA。
@@ -192,7 +206,16 @@ fn sample_theme_luma(
                 }
                 if n>0.0{
                     let luma=(sum/n/255.0).clamp(0.0,1.0);
-                    THEME_LUMA.store(luma.to_bits(),Ordering::Relaxed);
+                    // 开机/切屏早期桌面还在合成，抓到的过渡帧偏黑。采纳它会把液态玻璃
+                    // 判成深色材质（黑底），且之后采样被节流、一直不恢复 →
+                    // 「开机后液态玻璃变黑、重启才好」。
+                    // 判据：从浅到深的大幅突变不立即采纳，要求连续两次采样都低才认
+                    // （真·深色壁纸是持续的，过渡帧是短暂的）。浅→深平滑变化不受影响。
+                    let prev=f32::from_bits(THEME_LUMA.load(Ordering::Relaxed));
+                    let pending=THEME_DARK_PENDING.load(Ordering::Relaxed);
+                    let (commit,new_pending)=theme_luma_commit(prev,luma,pending);
+                    if let Some(v)=commit { THEME_LUMA.store(v.to_bits(),Ordering::Relaxed); }
+                    THEME_DARK_PENDING.store(new_pending,Ordering::Relaxed);
                 }
             }
         }
@@ -830,7 +853,21 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
 // ===== 单测：锁定主题取样边界逻辑，确保尺寸变化时绝不越界 =====
 #[cfg(test)]
 mod theme_sample_tests {
-    use super::{theme_sample_box, theme_sample_due, THEME_STAGE_W, THEME_STAGE_H, THEME_SAMPLE_INTERVAL_MS};
+    use super::{theme_sample_box, theme_sample_due, theme_luma_commit, THEME_STAGE_W, THEME_STAGE_H, THEME_SAMPLE_INTERVAL_MS};
+
+    #[test]
+    fn 开机过渡暗帧不立即采纳(){
+        // 浅背景(0.85)→过渡暗帧(0.2)：突变不采纳，标记待确认
+        assert_eq!(theme_luma_commit(0.85,0.2,false),(None,true));
+        // 紧接着又采到低值(真深色壁纸)→采纳
+        assert_eq!(theme_luma_commit(0.85,0.2,true),(Some(0.2),false));
+        // 渐变(0.85→0.7)立即采纳，不标记
+        assert_eq!(theme_luma_commit(0.85,0.7,false),(Some(0.7),false));
+        // 变亮(0.2→0.8)立即采纳
+        assert_eq!(theme_luma_commit(0.2,0.8,false),(Some(0.8),false));
+        // 过渡帧后恢复浅色→采纳浅色并清标记
+        assert_eq!(theme_luma_commit(0.85,0.83,true),(Some(0.83),false));
+    }
 
     // 按时间节流的纯判断：从未采过立即采；未到间隔不采；到间隔采。
     #[test]
