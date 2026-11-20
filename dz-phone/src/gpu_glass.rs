@@ -1557,6 +1557,12 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                         },
                         wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
                     );
+                    // 诊断：几何视口 vs 纹理真实尺寸 vs uniform tex，三者必须相等，
+                    // 不等就是放大/铺不满的直接来源（shader: p=uv*tex, scale=tex/alloc）。
+                    if tick % 600 == 0 {
+                        diag(&format!("[gpu-share] scale: geom(cw,ch)={}x{} tex(sh)={}x{} ppp={:.4}",
+                                      cw, ch, sh.w, sh.h, f.pixels_per_point));
+                    }
                     // 几何 uniform 用视口尺寸(cw,ch)，不用抓取尺寸(sh.w/h)：
                     // 二者正常相等，但换屏协商降级/异常帧时 sh 可能小于 cw——
                     // 用 sh 会让 p=uv*tex 的有效区缩水、玻璃只铺一部分。
