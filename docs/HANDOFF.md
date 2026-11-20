@@ -1433,3 +1433,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 新 exe `756504f8f4e4355d`（Deployed & 校验一致）。注意：a29934d 修正了 7ddd492 误把 wgc.rs 换行改 CRLF 的问题（逻辑 diff 仅 32+/85-）。编译通过，测试未跑。
 - **实测失败**：用户反馈液态玻璃回退、岛仔仍闪。日志是固定 2 秒循环：`init OK → "抓屏恢复清计数" → 立刻 0x887A0005 → 冷却 2000ms → init OK → ...`（32 次超时/33 次冷却/17 次导入）。**我重犯了污染链踩过的坑**：`note_capture_ok()` 在恢复第一帧就清 LOST_STREAK，冷却永远停在"第 1 次=2s"升不到 4s/8s；且冷却期似乎没真正挡住 init。
 - **⛔ 停止打补丁**：这条线已连续十几轮"改一个机制试一次"、且反复重犯同类错误（退避清零、CRLF）。继续下去对用户不负责。**待用户决策**（见下）。
+
+#### 7.0zze 转向：GDI 抓屏实验开关（提交 `176f3a8`，2026-11-20 23:00）
+- 用户问"液态玻璃能否不依赖 D3D11"。社区调研（用户要求）找到：
+  - **glass-backdrop-rs**（GitHub/MCheng404，MIT）：液态玻璃 + **纯 GDI BitBlt** 抓屏 + WGSL shader，明确不依赖 WGC/D3D11；用后台低优先级线程 + unchanged-frame detection 避免卡渲染线程。
+  - **flamingo 项目 2026-10-05 实测**：Win10 2004+ 下 `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` 后用 BitBlt 抓屏，窗口区域抓到背后窗口（黑 0.000），分层窗口同样——推翻本项目 `wgc.rs:3` "GDI 下 WDA 只会变黑"的旧注释（可能基于旧 Windows/时序）。
+  - **Electron-Liquid-Glass**：走 DXGI Desktop Duplication + D3D11（不用 WGC），有成熟 device-lost 流程。
+- **修法**（176f3a8）：加实验开关 `DAOZAI_LIQUID_GDI_CAPTURE=1`——跳过零拷贝/WGC，`capture()` 直接用 `grab_raw`(GDI BitBlt)，保留 WDA 排除。默认关闭。
+- 预览目录加 `start-gdi-test.bat`（设 GDI_CAPTURE=1 + GPU_SHARE=0 双保险）。新 exe `e0f4b7ddb7858c71`，已部署、清日志。**待用户验证**：GDI 模式下玻璃是否干净（无自抓条纹）、换分辨率是否不闪/不失效。
