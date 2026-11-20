@@ -303,6 +303,15 @@ pub fn frames() -> u64 { FRAMES.load(Ordering::Relaxed) }
 /// 抓屏源代次；换屏重建会话后递增。GPU 底片用它判断是否失效。
 pub fn epoch() -> u64 { EPOCH.load(Ordering::Relaxed) }
 
+/// 判断是否 D3D11 设备丢失（0x887A0005 DEVICE_REMOVED / 0x887A0006 DEVICE_RESET）。
+/// 换显示模式（尤其复制到不同分辨率）会让 DWM 重建合成器、驱动重置我们的 D3D11 设备，
+/// 此后所有 CreateTexture2D/Copy 都失败、会话永久卡死 —— 表现为背景定格在换屏前那张、
+/// 视口变了纹理没变 → 玻璃被拉伸放大。必须销毁整个 Wgc 会话重建 device。
+fn is_device_lost(e: &windows::core::Error) -> bool {
+    let code = e.code().0 as u32;
+    code == 0x887A0005 || code == 0x887A0006 // DXGI_ERROR_DEVICE_REMOVED / DEVICE_RESET
+}
+
 /// 查询矩形中心点所在显示器的句柄与身份 (mon_x, mon_y, sw, sh)。用矩形中心而非
 /// 左上角，避免岛体落在两屏交界时左上角被判给隔壁屏。
 fn monitor_for_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(HMONITOR, (i32, i32, i32, i32))> {
@@ -657,11 +666,26 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
     }
     let Some(s) = guard.as_mut() else { return Grab::Unavailable };
     // 展开动画里抓屏矩形会变，staging 纹理跟着重建（只在尺寸变化时）。
+    // device lost 时不能只 resize 纹理（会永久失败），要销毁整个会话重建 device。
+    let mut device_lost = false;
     if s.stage_w != bw || s.stage_h != bh {
         match staging(&s._device, bw, bh) {
             Ok(t) => { s.staging = t; s.stage_w = bw; s.stage_h = bh; }
-            Err(e) => { log(&format!("wgc: staging resize FAILED {:?}", e)); return Grab::Unavailable; }
+            Err(e) => {
+                log(&format!("wgc: staging resize FAILED {:?}", e));
+                device_lost = is_device_lost(&e);
+                if !device_lost { return Grab::Unavailable; }
+            }
         }
+    }
+    if device_lost {
+        drop(s);
+        *guard = None;
+        EPOCH.fetch_add(1, Ordering::Relaxed);
+        FAILED.store(false, Ordering::Relaxed);
+        TRIED.store(false, Ordering::Relaxed);
+        log("wgc: device lost，已销毁会话，下一帧重建 device");
+        return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
     if sx < 0 || sy < 0 || sx + w > s.sw || sy + h > s.sh { return Grab::Unavailable; }
@@ -764,11 +788,25 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
     // 会话没有共享纹理（创建失败或关闭开关）→ 回退让调用方走旧路径。
     if s.shared.is_none() { return Grab::Unavailable; }
     // 展开动画里尺寸会变：共享纹理按新尺寸重建（wgpu 侧会据此重新导入）。
+    let mut device_lost = false;
     if s.shared.as_ref().is_none_or(|t| t.w != bw || t.h != bh) {
         match shared_texture(&s._device, bw, bh) {
             Ok(t) => s.shared = Some(t),
-            Err(e) => { log(&format!("wgc: [gpu-share] shared resize FAILED {:?}", e)); return Grab::Unavailable; }
+            Err(e) => {
+                log(&format!("wgc: [gpu-share] shared resize FAILED {:?}", e));
+                device_lost = is_device_lost(&e);
+                if !device_lost { return Grab::Unavailable; }
+            }
         }
+    }
+    if device_lost {
+        drop(s);
+        *guard = None;
+        EPOCH.fetch_add(1, Ordering::Relaxed);
+        FAILED.store(false, Ordering::Relaxed);
+        TRIED.store(false, Ordering::Relaxed);
+        log("wgc: [gpu-share] device lost，已销毁会话，下一帧重建 device");
+        return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
     if sx < 0 || sy < 0 || sx + w > s.sw || sy + h > s.sh { return Grab::Unavailable; }
@@ -830,7 +868,20 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         }
         let _ = shared.mutex.ReleaseSync(0);
         drop(frame);
-        if signaled == 0 { log("wgc: [gpu-share] event query 超时，丢弃该帧"); return Grab::NoFrame; }
+        if signaled == 0 {
+            // 超时常见原因是 device lost：device 被移除后 query 永不 signal。
+            // 检查一次，是则销毁会话重建；否则只是偶发丢帧。
+            let lost = unsafe { s._device.GetDeviceRemovedReason().is_err() };
+            log(&format!("wgc: [gpu-share] event query 超时，device_lost={}", lost));
+            if lost {
+                drop(s);
+                *guard = None;
+                EPOCH.fetch_add(1, Ordering::Relaxed);
+                FAILED.store(false, Ordering::Relaxed);
+                TRIED.store(false, Ordering::Relaxed);
+            }
+            return Grab::NoFrame;
+        }
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 || n % 600 == 0 { log(&format!("wgc: [gpu-share] frame {} cap={}x{}", n, bw, bh)); }
         Grab::Shared(SharedHandle { handle: shared.handle, w: bw, h: bh, epoch: EPOCH.load(Ordering::Relaxed) })
