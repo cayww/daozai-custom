@@ -2417,6 +2417,12 @@ impl App {
             // 是收起态、根本不抓屏，只在抓屏时检测会整段错过 —— 展开后仍用旧拓扑
             // 的底片，玻璃直接花掉。内部自带 ~100ms 降频，开销可忽略。
             crate::wgc::poll_topology();
+            // 换分辨率自动重启（实验开关，仅零拷贝）：延迟到桌面稳定后走标准重启
+            // 流程（保存窗口/拉新进程/释放单实例锁），同时重建 D3D11+D3D12 device，
+            // 绕开零拷贝独有的 device-lost 重建风暴。默认关，行为不变。
+            if crate::wgc::take_auto_restart_request() {
+                self.pending.push(Cmd::RestartApp);
+            }
             self.glass_tick = if self.glass_morph > 0.01
                 || self.ctl_down
                 || env.cursor.is_some_and(|p| win.contains(p))

@@ -284,6 +284,43 @@ const SETTLE_MS: u64 = 1000;
 /// `poll_topology` 里直接拿 WGC 锁 —— 调用它的 `grab` 可能正持着那把锁，会死锁。
 static NEED_RESET: AtomicBool = AtomicBool::new(false);
 
+/// 换分辨率自动重启（实验，默认关）：零拷贝模式下 D3D11 device 被 DWM 移除后，
+/// 会话内重建已在实测中反复失败（0x887A0005 重建风暴）。进程重启能同时重建
+/// D3D11 + wgpu D3D12 两侧 device，是更彻底的解法。
+/// 记录检测到拓扑变化的时刻（Instant 的 relapse 用 AtomicU64 存毫秒偏移不可行，
+/// 这里直接存一个"待重启"标志 + 目标时刻的 SystemTime 毫秒）。
+static AUTO_RESTART_PENDING: AtomicBool = AtomicBool::new(false);
+/// 待重启的实际时刻（Unix 毫秒，0=未设置）。拓扑变化后设 now + 延迟。
+static AUTO_RESTART_AT_MS: AtomicU64 = AtomicU64::new(0);
+/// 拓扑变化后延迟多久重启（毫秒），可用 DAOZAI_RESTART_DELAY_MS 覆盖，默认 2000。
+fn auto_restart_delay_ms() -> u64 {
+    std::env::var("DAOZAI_RESTART_DELAY_MS")
+        .ok().and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|v| v.clamp(500, 30_000)).unwrap_or(2000)
+}
+/// 自动重启总开关：DAOZAI_AUTO_RESTART_ON_RESOLUTION=1（默认关，行为不变）。
+fn auto_restart_enabled() -> bool {
+    std::env::var("DAOZAI_AUTO_RESTART_ON_RESOLUTION")
+        .is_ok_and(|v| v.trim() == "1")
+}
+
+/// App::frame 每帧调用：零拷贝 + 开关开启 + 拓扑变化已过延迟 → 返回 true 请求重启。
+/// 返回 true 会清掉待重启标志（只触发一次）。这里只做判定，重启由 Cmd::RestartApp
+/// 走已有的 spawn_replacement 流程（保存窗口、拉新进程、释放单实例锁）。
+pub fn take_auto_restart_request() -> bool {
+    if !auto_restart_enabled() || !gpu_share_enabled() { return false; }
+    if !AUTO_RESTART_PENDING.load(Ordering::Relaxed) { return false; }
+    let at = AUTO_RESTART_AT_MS.load(Ordering::Relaxed);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    if now >= at {
+        AUTO_RESTART_PENDING.store(false, Ordering::Relaxed);
+        AUTO_RESTART_AT_MS.store(0, Ordering::Relaxed);
+        log("wgc: 换分辨率后延迟已到，请求重启岛仔以重建 D3D11+D3D12 device");
+        true
+    } else { false }
+}
+
 fn log(msg: &str) {
     use std::io::Write;
     let dir = crate::model::config_dir().join("diagnostics");
@@ -410,6 +447,17 @@ pub fn poll_topology() -> bool {
         *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
             Some(now + std::time::Duration::from_millis(settle));
         log(&format!("desktop: 显示器拓扑变化，等待 {}ms 稳定后重抓底片", settle));
+        // 自动重启（实验开关）：零拷贝 + 开启时，登记"待重启"，延迟到桌面稳定后
+        // 由 take_auto_restart_request 触发 Cmd::RestartApp。防抖：只在 pending
+        // 未设置时登记，换分辨率过程中 sig 连变几次也只重启一次。
+        if auto_restart_enabled() && gpu_share_enabled()
+            && !AUTO_RESTART_PENDING.swap(true, Ordering::Relaxed) {
+            let delay = auto_restart_delay_ms();
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 + delay;
+            AUTO_RESTART_AT_MS.store(at, Ordering::Relaxed);
+            log(&format!("wgc: 零拷贝换分辨率，登记 {}ms 后自动重启（D3D11/D3D12 一起重建）", delay));
+        }
     }
     changed
 }

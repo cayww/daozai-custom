@@ -1133,6 +1133,8 @@ fn run() -> eframe::Result<()> {
     // 这里无条件设置是无害的：非液态皮肤没有 GlassCallback，不会有人读这个变量；
     // 液态皮肤 + glow 后端（无 wgpu）同样不注册回调，零副作用。
     std::env::set_var("DAOZAI_LIQUID_GPU_SHARE", if boot.liquid_gpu_share { "1" } else { "0" });
+    // 换分辨率自动重启开关（零拷贝专用），同样启动期快照给 wgc::auto_restart_enabled。
+    std::env::set_var("DAOZAI_AUTO_RESTART_ON_RESOLUTION", if boot.liquid_auto_restart { "1" } else { "0" });
     // 启动期快照：设置页用它与当前 settings 比较，判断"改了但未重启"以显示立即重启按钮。
     std::env::set_var("DAOZAI_LIQUID_PREFER_DGPU", if boot.liquid_prefer_dgpu { "1" } else { "0" });
     if boot.skin == daozai::model::Skin::Liquid && boot.liquid_prefer_dgpu {

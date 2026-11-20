@@ -4215,6 +4215,18 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                         if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
                                     });
                                 }
+                                // 换分辨率自动重启（零拷贝专用）：detector 在 wgc，走 Cmd::RestartApp。
+                                let before_restart=app.settings.liquid_auto_restart;
+                                setting_row(ui,"换分辨率后自动重启","零拷贝模式专属：切换分辨率约 2 秒后自动重启一次，避免玻璃卡住/闪烁；这不是闪退，重启后自动恢复",&mut app.settings.liquid_auto_restart);
+                                if before_restart!=app.settings.liquid_auto_restart {app.settings.save();}
+                                settings_hint(ui,"仅零拷贝开启时生效；重启后岛仔会短暂消失再出现，属于正常行为");
+                                let restart_boot=std::env::var("DAOZAI_AUTO_RESTART_ON_RESOLUTION").map(|v|v=="1").unwrap_or(app.settings.liquid_auto_restart);
+                                if app.settings.liquid_auto_restart!=restart_boot {
+                                    ui.horizontal(|ui|{
+                                        ui.label(egui::RichText::new("自动重启开关重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));
+                                        if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
+                                    });
+                                }
                                 ui.separator();
                                 settings_control_row(ui,"形变强度",56.0,|ui|{
                                     ui.horizontal(|ui|{
