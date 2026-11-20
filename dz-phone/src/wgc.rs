@@ -835,8 +835,9 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         // 关键诊断（零拷贝路径）：帧真实尺寸 vs 显示器几何 vs 请求框。
         let cs = frame.ContentSize().map(|c| format!("{}x{}", c.Width, c.Height)).unwrap_or("?".into());
         if FRAMES.load(Ordering::Relaxed) % 120 == 0 {
-            log(&format!("wgc: GEOM-SHARE frame={}x{} content={} rc={}x{} mon=({},{}) req=({},{}) {}x{} sx={} sy={}",
-                         real_w, real_h, cs, s.sw, s.sh, s.mon_x, s.mon_y, x, y, w, h, sx, sy));
+            // monitors= 列出 EnumDisplayMonitors 报告的所有屏，看复制模式到底几个屏、各自多大。
+            log(&format!("wgc: GEOM-SHARE frame={}x{} content={} rc={}x{} mon=({},{}) req=({},{}) {}x{} sx={} sy={} monitors={}",
+                         real_w, real_h, cs, s.sw, s.sh, s.mon_x, s.mon_y, x, y, w, h, sx, sy, monitor_rects_desc()));
         }
         let box_clamped = D3D11_BOX {
             left: sx as u32, top: sy as u32, front: 0,
