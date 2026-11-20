@@ -415,27 +415,6 @@ impl eframe::App for Shell {
             self.app.foreground_changed();
         }
         #[cfg(windows)]
-        // 诊断：egui ppp vs 窗口真实物理尺寸 vs 显示器 DPI，定位「复制模式玻璃放大」。
-        // 125% 屏正确 ppp 应为 1.25；若 GetWindowRect 物理/逻辑 == 1.25 但 ppp=1.5625
-        // 则是双重缩放（玻璃采样范围 1.25× 过大 → 壁纸放大）。
-        #[cfg(windows)]
-        {
-            static PPP_DIAG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-            let ppp_bits = ctx.pixels_per_point().to_bits();
-            if PPP_DIAG.swap(ppp_bits, std::sync::atomic::Ordering::Relaxed) != ppp_bits {
-                let phys = self.native.as_ref().and_then(|w| w.window_pixel_size());
-                {
-                    use std::io::Write;
-                    let dir = daozai::model::config_dir().join("diagnostics");
-                    let _ = std::fs::create_dir_all(&dir);
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("liquid-glass.log")) {
-                        let _ = writeln!(f, "ppp-check: egui_ppp={:.4} win_logical={:?} win_physical={:?} physical/logical={:?}",
-                            ctx.pixels_per_point(), [app::CANVAS_W, app::WIN_H], phys,
-                            phys.map(|[pw,ph]| [pw as f32/app::CANVAS_W, ph as f32/app::WIN_H]));
-                    }
-                }
-            }
-        }
         let offset=self.app.placement_offset();
         #[cfg(windows)]
         let shift=self.oled_shift;
@@ -1092,17 +1071,6 @@ mod open_path_tests {
 static MEMPROF_ALLOC: dhat::Alloc = dhat::Alloc;
 
 fn main() -> std::process::ExitCode {
-    // 进程级 Per-Monitor DPI-Aware V2：必须在创建任何窗口/HWND 之前调用。
-    // 混合分辨率/缩放的多屏下（尤其「复制这些显示器」），DPI-unaware 或 System-Aware
-    // 会让 GetWindowRect / EnumDisplayMonitors 返回被主屏缩放虚拟化的坐标，而 WGC
-    // 帧是物理像素 → 坐标系分叉、抓屏框错位 → 玻璃背景被放大/接不上（社区微软 Q&A、
-    // openscreen #346 同类问题）。用户实测：两屏分辨率调成一致即消失，正是此机制。
-    #[cfg(windows)]
-    {
-        use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-        // 失败无害：可能是构建自带 manifest 已声明，或系统版本不支持。
-        let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
-    }
     // 浏览器扩展桥宿主已拆成独立二进制 daozai-bridge.exe（见 src/bin/daozai-bridge），
     // 不再复用本 exe，这里直接进入主程序。
     diagnostics::install();

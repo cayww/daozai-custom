@@ -24,7 +24,7 @@ use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TY
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::{IDXGIDevice, IDXGIAdapter, IDXGIFactory1, CreateDXGIFactory1, IDXGIResource1, IDXGIKeyedMutex};
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
-use windows::Win32::Foundation::{LUID, GENERIC_ALL, HANDLE};
+use windows::Win32::Foundation::{LUID, GENERIC_ALL};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, HDC, HMONITOR, MONITORINFO,
     MONITOR_DEFAULTTONEAREST,
@@ -35,66 +35,6 @@ use windows::Win32::System::WinRT::Direct3D11::{
 };
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
-
-// ===== 共享 D3D12 fence：跨 API 的 GPU 同步（可选，DAOZAI_GPU_FENCE=1 启用）=====
-// fence 由 consumer(wgpu/D3D12) 创建并导出 NT handle；producer(D3D11) 打开它。
-// producer 每次拷完纹理 Signal(++value)，consumer 渲染前对同一条 D3D12 队列
-// Wait(value)。这样 GPU 自己保证读写顺序，CPU 不再轮询 event query（忙等）。
-use windows::Win32::Graphics::Direct3D12::{ID3D12Fence, ID3D12Device};
-
-/// consumer 侧持有的共享 fence 对象 + 句柄。保活 D3D12 fence（句柄有效性依赖它）。
-struct FencePair(ID3D12Fence, HANDLE);
-// COM fence 与内核句柄都是驱动管理的线程安全对象；与 SharedFrame 同理显式声明跨线程。
-unsafe impl Send for FencePair {}
-unsafe impl Sync for FencePair {}
-static SHARED_FENCE: Mutex<Option<FencePair>> = Mutex::new(None);
-/// fence 计数器：producer 每次 Signal 前 fetch_add，consumer Wait 到对应值。
-static FENCE_VALUE: AtomicU64 = AtomicU64::new(0);
-/// 是否启用共享 fence（DAOZAI_GPU_FENCE=1）。
-pub fn gpu_fence_enabled() -> bool { std::env::var("DAOZAI_GPU_FENCE").is_ok() }
-
-/// consumer(wgpu 侧)在拿到 D3D12 设备后调用：创建共享 fence、导出 NT handle。
-/// 只建一次；失败返回 false，调用方回退到旧的 1x1 copy barrier 方案。
-#[cfg(windows)]
-pub fn init_shared_fence(d3d12: &ID3D12Device) -> bool {
-    if !gpu_fence_enabled() { return false; }
-    let mut guard = SHARED_FENCE.lock().unwrap_or_else(|e| e.into_inner());
-    if guard.is_some() { return true; } // 已建过
-    unsafe {
-        use windows::Win32::Graphics::Direct3D12::D3D12_FENCE_FLAG_SHARED;
-        use windows::Win32::Foundation::GENERIC_ALL;
-        let fence: ID3D12Fence = match d3d12.CreateFence(0, D3D12_FENCE_FLAG_SHARED) {
-            Ok(f) => f,
-            Err(e) => { log(&format!("fence: CreateFence 失败 {:?}", e)); return false; }
-        };
-        let handle = match d3d12.CreateSharedHandle(&fence, None, GENERIC_ALL.0, windows::core::PCWSTR::null()) {
-            Ok(h) => h,
-            Err(e) => { log(&format!("fence: CreateSharedHandle 失败 {:?}", e)); return false; }
-        };
-        log("fence: 共享 D3D12 fence 已创建并导出");
-        *guard = Some(FencePair(fence, handle));
-        true
-    }
-}
-
-/// consumer(wgpu 侧)在渲染提交前调用：对同一条 D3D12 队列 Wait(fence, value)。
-/// 返回是否真的 Wait 了（false = fence 不可用，调用方走旧的 1x1 copy barrier）。
-#[cfg(windows)]
-pub fn consumer_wait_fence(queue: &windows::Win32::Graphics::Direct3D12::ID3D12CommandQueue, value: u64) -> bool {
-    if value == 0 { return false; }
-    let guard = SHARED_FENCE.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(FencePair(fence, _)) = guard.as_ref() else { return false; };
-    unsafe { queue.Wait(fence, value).is_ok() }
-}
-
-/// producer(D3D11 侧)每帧拷完纹理后调用：Signal(++value)，返回本次 signal 的值。
-/// 失败返回 None，调用方回退旧的 event query 等待。
-fn signal_fence(ctx4: Option<&ID3D11DeviceContext4>, d11fence: Option<&ID3D11Fence>) -> Option<u64> {
-    let (ctx4, f) = (ctx4?, d11fence?);
-    let value = FENCE_VALUE.fetch_add(1, Ordering::Relaxed) + 1;
-    unsafe { ctx4.Signal(f, value).ok()?; }
-    Some(value)
-}
 
 struct Wgc {
     _device: ID3D11Device,
@@ -115,23 +55,6 @@ struct Wgc {
     stage_h: u32,
 }
 
-/// 显式断开 WGC 的 WinRT 引用环。
-///
-/// `GraphicsCaptureSession` / `Direct3D11CaptureFramePool` / `GraphicsCaptureItem`
-/// 内部互相持有引用（session↔pool、item 被 session 持有）。仅靠 Rust drop 递减
-/// 引用计数无法归零——捕获线程和底层 DXGI 资源会一直存活。换分辨率 → device
-/// lost / 拓扑变化会走 `*guard = None` 重建会话，旧会话若只 drop 不 Close 就
-/// 泄漏一整套：实测快照 2055 个线程栈 + 70 个 32MB 私有块（2.24GB）。
-/// 微软 WGC 指引明确要求停捕获时显式 Close，否则捕获管线不会停止。
-impl Drop for Wgc {
-    fn drop(&mut self) {
-        // 顺序：先停 session（断开捕获 + 与 pool/item 的环），再关 pool。
-        let _ = self._session.Close();
-        let _ = self.pool.Close();
-        // 其余 COM 字段（device/context/item/shared 纹理/fence）由正常 drop 释放。
-    }
-}
-
 /// spike: producer 侧持有的共享纹理资源（D3D11 设备独占）。
 /// NT handle 由纹理导出，wgpu(D3D12) 侧凭它 OpenSharedHandle 导入同一块显存。
 pub struct SharedFrame {
@@ -141,12 +64,7 @@ pub struct SharedFrame {
     pub mutex: IDXGIKeyedMutex,
     /// GPU 完成查询：producer 写完 CopyResource 后 spin 等它 signal，
     /// 再 ReleaseSync，保证 consumer 读到的是完整帧（社区 scrying 的实证做法）。
-    /// 共享 fence 启用时不再依赖它（改由 Signal/Wait），但保留作 fallback。
     pub done: ID3D11Query,
-    /// 共享 fence 方案：producer 侧的 D3D11 fence/context4（从 wgpu 的 D3D12 fence 打开）。
-    /// 三者同时 Some 才走 fence 路径，否则回退 event query 忙等。
-    pub fence: Option<ID3D11Fence>,
-    pub ctx4: Option<ID3D11DeviceContext4>,
     pub w: u32,
     pub h: u32,
 }
@@ -164,9 +82,6 @@ pub struct SharedHandle {
     pub w: u32,
     pub h: u32,
     pub epoch: u64,
-    /// 共享 fence 方案：本帧 producer Signal 到的值。consumer 渲染前 Wait 到它。
-    /// 0 = 未启用 fence（走旧的 1x1 copy barrier）。
-    pub fence_value: u64,
 }
 
 // COM 接口与 HANDLE 在这个进程里只在持有 WGC 锁的单一线程上下文里使用，
@@ -391,44 +306,12 @@ pub fn epoch() -> u64 { EPOCH.load(Ordering::Relaxed) }
 /// 判断是否 D3D11 设备丢失（0x887A0005 DEVICE_REMOVED / 0x887A0006 DEVICE_RESET）。
 /// 换显示模式（尤其复制到不同分辨率）会让 DWM 重建合成器、驱动重置我们的 D3D11 设备，
 /// 此后所有 CreateTexture2D/Copy 都失败、会话永久卡死 —— 表现为背景定格在换屏前那张、
-/// 视口变了纹理没变 → 玻璃被拉伸放大。必须销毁整个 Wgc 会话重建 device。
+/// 视口变了纹理没变 → 玻璃被拉伸放大。按微软 WGC 指引，此时应在原 frame pool 上调
+/// `Recreate` 换新 device，保留 session/item，而不是销毁整个会话（后者反复
+/// StartCapture 会触发 DWM 合成抖动 + 捕获黄框闪烁）。
 fn is_device_lost(e: &windows::core::Error) -> bool {
     let code = e.code().0 as u32;
     code == 0x887A0005 || code == 0x887A0006 // DXGI_ERROR_DEVICE_REMOVED / DEVICE_RESET
-}
-
-/// 连续 device-lost 次数：用于重建退避，防止换分辨率后设备持续 lost 时
-/// 每帧 init→超时→销毁→init 的重建风暴（实测 54 次连续重建，每次 StartCapture
-/// 触发 DWM 合成 + 捕获黄框反复闪，鼠标指针跟着闪，且吃满 GPU）。
-static LOST_STREAK: AtomicU32 = AtomicU32::new(0);
-/// 连续成功出帧计数：必须连续成功 OK_STREAK_NEED 帧才认定设备真恢复。
-/// 只成功一帧就清退避会退化成「导入成功→清零→又 lost→从头 1s」的循环，
-/// 实测日志每轮都停在「连续 1 次、冷却 1000ms」，闪因此只变慢没消失。
-static OK_STREAK: AtomicU32 = AtomicU32::new(0);
-const OK_STREAK_NEED: u32 = 30; // 约 1 秒（30fps）持续成功才算稳定
-
-/// device-lost 后调用：递增退避并设置稳定期，期间 grab/grab_shared 直接返回
-/// NoFrame，不再 StartCapture。连续失败越多等得越久（1s→2s→4s→封顶 8s）。
-/// 任何一次 lost 都把成功计数清零——中断"连续成功"的累积。
-fn backoff_after_device_lost() {
-    OK_STREAK.store(0, Ordering::Relaxed);
-    let n = LOST_STREAK.fetch_add(1, Ordering::Relaxed).min(8);
-    let ms = 1000u64 << n.min(3); // 1,2,4,8 秒
-    *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(std::time::Instant::now() + std::time::Duration::from_millis(ms));
-    log(&format!("wgc: device-lost 连续 {} 次，冷却 {}ms 后重试（避免重建风暴/光标闪）", n + 1, ms));
-}
-
-/// 成功产出一帧就累加；只有连续成功 OK_STREAK_NEED 帧才清退避计数。
-/// 换分辨率期设备会「好一帧、坏一帧」，单帧成功不代表恢复。
-fn note_capture_ok() {
-    if LOST_STREAK.load(Ordering::Relaxed) == 0 { return; }
-    let ok = OK_STREAK.fetch_add(1, Ordering::Relaxed) + 1;
-    if ok >= OK_STREAK_NEED {
-        LOST_STREAK.store(0, Ordering::Relaxed);
-        OK_STREAK.store(0, Ordering::Relaxed);
-        log("wgc: 连续出帧稳定，清除 device-lost 退避");
-    }
 }
 
 /// 查询矩形中心点所在显示器的句柄与身份 (mon_x, mon_y, sw, sh)。用矩形中心而非
@@ -550,69 +433,6 @@ fn monitor_rects_desc() -> String {
         .join(" ")
 }
 
-/// 纯诊断：用 QueryDisplayConfig 打印真实拓扑与每块物理 target 的分辨率。
-/// EnumDisplayMonitors 在复制模式下只报一个合并桌面，看不到副屏 target；
-/// QueryDisplayConfig 能看到 source(桌面) → 多个 target(物理屏) 的映射，
-/// 这是判断「复制模式不同分辨率导致 DWM 镜像缩放」的关键证据。
-fn diag_display_config() {
-    use windows::Win32::Devices::Display::{
-        GetDisplayConfigBufferSizes, QueryDisplayConfig, DISPLAYCONFIG_MODE_INFO,
-        DISPLAYCONFIG_PATH_INFO, QDC_ONLY_ACTIVE_PATHS,
-        DISPLAYCONFIG_MODE_INFO_TYPE_TARGET, DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE,
-    };
-    use windows::Win32::Foundation::ERROR_SUCCESS;
-    unsafe {
-        let mut npath: u32 = 0;
-        let mut nmode: u32 = 0;
-        if GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut npath, &mut nmode) != ERROR_SUCCESS {
-            log("qdc: GetDisplayConfigBufferSizes 失败");
-            return;
-        }
-        let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); npath as usize];
-        let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); nmode as usize];
-        // currentTopologyId 只能在 QDC_DATABASE_CURRENT flag 下非 NULL；
-        // QDC_ONLY_ACTIVE_PATHS 必须传 None，否则 ERROR_INVALID_PARAMETER(87)。
-        let rc = QueryDisplayConfig(
-            QDC_ONLY_ACTIVE_PATHS,
-            &mut npath, paths.as_mut_ptr(),
-            &mut nmode, modes.as_mut_ptr(),
-            None,
-        );
-        if rc != ERROR_SUCCESS {
-            log(&format!("qdc: QueryDisplayConfig 失败 {:?}", rc));
-            return;
-        }
-        // 每个 target 的分辨率：从 path.targetInfo.modeInfoIdx 找对应 mode。
-        // 顺便按 source id 分组推断拓扑：同一 source 连多个 target = 复制(CLONE)。
-        let mut targets: Vec<String> = Vec::new();
-        let mut src_ids: Vec<u32> = Vec::new();
-        for p in paths.iter().take(npath as usize) {
-            let src_id = p.sourceInfo.id;
-            if !src_ids.contains(&src_id) { src_ids.push(src_id); }
-            let midx = (unsafe { p.targetInfo.Anonymous.modeInfoIdx } & 0xFFFF) as usize;
-            let mut size = String::from("?");
-            if midx < nmode as usize && modes[midx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE_TARGET {
-                let m = &modes[midx].Anonymous.targetMode.targetVideoSignalInfo.activeSize;
-                size = format!("{}x{}", m.cx, m.cy);
-            }
-            targets.push(format!("src{}:{}", src_id, size));
-        }
-        // source mode 尺寸（桌面分辨率）
-        let mut sources: Vec<String> = Vec::new();
-        for m in modes.iter().take(nmode as usize) {
-            if m.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE {
-                let s = &m.Anonymous.sourceMode;
-                sources.push(format!("{}x{}", s.width, s.height));
-            }
-        }
-        // 推断：一个 source 对多个 target → CLONE（复制）；多个 source → EXTEND（扩展）。
-        let max_targets_per_src = src_ids.iter().map(|s| targets.iter().filter(|t| t.starts_with(&format!("src{}:", s))).count()).max().unwrap_or(0);
-        let topo_name = if max_targets_per_src > 1 { "CLONE(推断)" } else if src_ids.len() > 1 { "EXTEND(推断)" } else { "SINGLE(推断)" };
-        log(&format!("qdc: topology={} sources={} targets=[{}] sources=[{}]",
-                     topo_name, src_ids.len(), targets.join(","), sources.join(",")));
-    }
-}
-
 /// 拓扑变化后的稳定期时长，固定 1000ms。可用 `DAOZAI_SETTLE_MS` 覆盖，方便实机调试。
 /// 原先的自学习（按上次稳定耗时 ×0.85 逐次收敛）已移除：学习值全局共享，快机器学出的
 /// 400ms 不够慢机器/复制模式的 DWM 重构动画用，反而导致抓到过渡帧铺不满。
@@ -636,6 +456,28 @@ pub fn settling() -> bool {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .is_some_and(|t| std::time::Instant::now() < t)
+}
+
+/// device lost 的连续次数：换分辨率期 DWM 会重置 D3D11 device，刚重建就立刻抓
+/// 会撞在设备仍被移除的窗口里（实测重建后下一帧又 0x887A0005）。用递增冷却等
+/// 系统彻底稳定，而不是 lost 当帧立即 Recreate/init。成功出帧后清零。
+static LOST_STREAK: AtomicU32 = AtomicU32::new(0);
+
+/// device 真 lost 时调用：设冷却期（2s→4s→8s 封顶），期间 settling() 挡住抓屏，
+/// 不再创建 device/Recreate。冷却结束后下一帧走正常 init 建全新会话。
+fn cooldown_after_device_lost() {
+    let n = LOST_STREAK.fetch_add(1, Ordering::Relaxed).min(3);
+    let ms = 2000u64 << n; // 2s, 4s, 8s, 8s
+    *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(ms));
+    log(&format!("wgc: device-lost 第 {} 次，冷却 {}ms（等设备稳定后再重建，不立即 Recreate）", n + 1, ms));
+}
+
+/// 成功产出一帧：清除 device-lost 计数（系统已稳定）。
+fn note_capture_ok() {
+    if LOST_STREAK.swap(0, Ordering::Relaxed) != 0 {
+        log("wgc: 抓屏恢复，清除 device-lost 计数");
+    }
 }
 
 fn staging(device: &ID3D11Device, w: u32, h: u32) -> windows::core::Result<ID3D11Texture2D> {    let desc = D3D11_TEXTURE2D_DESC {
@@ -671,23 +513,11 @@ fn adapter_by_luid(luid: LUID) -> Option<IDXGIAdapter> {
     None
 }
 
-// ===== spike: 共享纹理固定分配尺寸 =====
-// 展开动画里 capture 尺寸每帧微变（实测 629x122→631x122→632x122）。若按帧尺寸
-// 重建共享纹理，每帧都要跑 CreateTexture2D + CreateSharedHandle + CreateQuery +
-// OpenSharedFence 一串同步 COM 调用 —— 这就是展开变慢、与 fence/yield 都无关的
-// 共同瓶颈。改为固定分配 1280x512：每帧只把有效帧写进纹理左上角 (w,h)，
-// shader 按 scale=有效帧/分配尺寸 采样（见 gpu_glass::sample_px）。
-// 必须与 gpu_glass 的 TEX_W/TEX_H 一致。
-const SHARED_TEX_W: u32 = 1280;
-const SHARED_TEX_H: u32 = 512;
-
 /// spike: 创建一张可供 D3D12 OpenSharedHandle 的 D3D11 纹理。
 /// 用 NT handle + keyed mutex：NT handle 是 DX12 唯一支持的模型；keyed mutex
 /// 用于 producer(D3D11) 写之前的独占，consumer(D3D12) 侧无法 QI 它（见 gpu_glass）。
-/// 分配尺寸固定 SHARED_TEX_W×H，不再随帧尺寸变化——每帧只写左上角有效区。
-fn shared_texture(device: &ID3D11Device, context: &ID3D11DeviceContext) -> windows::core::Result<SharedFrame> {
+fn shared_texture(device: &ID3D11Device, w: u32, h: u32) -> windows::core::Result<SharedFrame> {
     unsafe {
-        let (w, h) = (SHARED_TEX_W, SHARED_TEX_H);
         let desc = D3D11_TEXTURE2D_DESC {
             Width: w, Height: h, MipLevels: 1, ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -710,29 +540,7 @@ fn shared_texture(device: &ID3D11Device, context: &ID3D11DeviceContext) -> windo
             Some(&mut done),
         )?;
         let done = done.ok_or_else(|| windows::core::Error::from(windows::core::HRESULT(0x8000_4005u32 as i32)))?;
-        // 共享 fence：从全局 NT handle 打开 D3D11 fence，并拿 Device5/Context4 用于 Signal。
-        // 任一失败就留 None，回退旧的 event query 忙等，不影响功能。
-        let (fence, ctx4) = if gpu_fence_enabled() {
-            let fence_handle = SHARED_FENCE.lock().unwrap_or_else(|e| e.into_inner())
-                .as_ref().map(|FencePair(_, h)| h.0);
-            match fence_handle {
-                Some(h) => unsafe {
-                    let dev5: Option<ID3D11Device5> = device.cast().ok();
-                    let c4: Option<ID3D11DeviceContext4> = context.cast().ok();
-                    let mut f: Option<ID3D11Fence> = None;
-                    let f_ok = dev5.as_ref().and_then(|d| d.OpenSharedFence::<HANDLE, ID3D11Fence>(HANDLE(h), &mut f).ok().map(|_| ())).is_some();
-                    if f_ok {
-                        log("fence: producer 已打开共享 D3D11 fence");
-                        (f, c4)
-                    } else {
-                        log("fence: producer 打开共享 fence 失败，回退 event query");
-                        (None, None)
-                    }
-                },
-                None => (None, None),
-            }
-        } else { (None, None) };
-        Ok(SharedFrame { tex, handle, mutex, done, fence, ctx4, w, h })
+        Ok(SharedFrame { tex, handle, mutex, done, w, h })
     }
 }
 
@@ -783,8 +591,6 @@ fn init(_x: i32, _y: i32, w: u32, h: u32,
         let item_size = item.Size()?;
         let (fw, fh) = (item_size.Width.max(1), item_size.Height.max(1));
         log(&format!("wgc: item.Size()={}x{} rcMonitor={}x{}", fw, fh, sw, sh));
-        // 纯诊断：打印 QueryDisplayConfig 的真实拓扑与各 target 分辨率（只读，不改渲染）。
-        diag_display_config();
         let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
             &d3d_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2,
             SizeInt32 { Width: fw, Height: fh },
@@ -801,8 +607,8 @@ fn init(_x: i32, _y: i32, w: u32, h: u32,
         let stage = staging(&device, w, h)?;
         // spike: 共享纹理按需创建（失败不致命，退回旧 staging 路径）。
         let shared = if gpu_share_enabled() {
-            match shared_texture(&device, &context) {
-                Ok(s) => { log(&format!("wgc: GPU 共享纹理已创建 {}x{}", SHARED_TEX_W, SHARED_TEX_H)); Some(s) }
+            match shared_texture(&device, w, h) {
+                Ok(s) => { log("wgc: GPU 共享纹理已创建"); Some(s) }
                 Err(e) => { log(&format!("wgc: 共享纹理创建失败，退回 staging 读回: {:?}", e)); None }
             }
         } else { None };
@@ -854,8 +660,7 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
             .map(|s| (s.mon_x, s.mon_y, s.sw, s.sh) != ident)
             .unwrap_or_else(|| bound.is_some_and(|b| b != ident));
         if changed {
-            // drop 旧 Wgc：Wgc::drop 会显式 Close session/pool 断开引用环、停止捕获线程，
-            // 再按 RAII 释放 device/context/纹理；只 drop 不 Close 会泄漏旧捕获管线。
+            // drop 旧 Wgc：session/pool/device 的 RAII 析构会自动停止旧屏捕获并释放 COM 资源。
             *guard = None;
             EPOCH.fetch_add(1, Ordering::Relaxed);
             log(&format!("wgc: 显示器变化 {:?} → {:?}，重建会话",
@@ -898,13 +703,13 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         }
     }
     if device_lost {
-        // 必须先释放 s（&mut Wgc 借用）才能置 None；drop(s) 对借用是 no-op，
-        // 真正释放靠 *guard = None 触发 Wgc::drop（显式 Close session/pool）。
+        // 微软 WGC 指引 + 实测：device removed 后不能当帧立即重建——刚建的新 device
+        // 会撞在 DWM 仍重置设备的窗口里（重建后下一帧又 0x887A0005）。销毁死会话 +
+        // 递增冷却，期间 settling() 挡住抓屏；冷却结束后走正常 init 建全新会话。
         *guard = None;
-        EPOCH.fetch_add(1, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
         TRIED.store(false, Ordering::Relaxed);
-        backoff_after_device_lost(); // 递增冷却，避免重建风暴/光标闪
+        cooldown_after_device_lost();
         return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
@@ -927,13 +732,6 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         src_tex.GetDesc(&mut desc);
         let (real_w, real_h) = (desc.Width as i32, desc.Height as i32);
-        // 关键诊断：帧真实尺寸 vs 本会话绑定的显示器几何 vs 请求框。
-        // 复制模式若帧是「整桌面」而 sw/sh 是单屏，box 会错位 → 背景放大。
-        let cs = frame.ContentSize().map(|c| format!("{}x{}", c.Width, c.Height)).unwrap_or("?".into());
-        if FRAMES.load(Ordering::Relaxed) % 120 == 0 {
-            log(&format!("wgc: GEOM frame={}x{} content={} rc={}x{} mon=({},{}) req=({},{}) {}x{} sx={} sy={}",
-                         real_w, real_h, cs, s.sw, s.sh, s.mon_x, s.mon_y, x, y, w, h, sx, sy));
-        }
         let src_box = D3D11_BOX {
             left: sx as u32, top: sy as u32, front: 0,
             right: (sx + w).min(real_w).max(sx + 1) as u32,
@@ -1015,32 +813,24 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
     let s = guard.as_mut().unwrap();
     // 会话没有共享纹理（创建失败或关闭开关）→ 回退让调用方走旧路径。
     if s.shared.is_none() { return Grab::Unavailable; }
-    // 有效帧必须放得进固定纹理左上角，否则写越界（极少见，超大 DPI/多屏拼接）。
-    // 此时回退 staging 路径（它有自己的 TEX_W×H 保护）。
-    if bw > SHARED_TEX_W || bh > SHARED_TEX_H { return Grab::Unavailable; }
-    // 共享纹理分配尺寸固定，不再随展开动画的帧尺寸微变而重建——重建时那串同步
-    // COM 调用（CreateTexture2D/SharedHandle/Query/OpenSharedFence）才是展开变慢
-    // 的真凶。每帧只把有效帧拷到左上角 (0,0)，尺寸变化由 uniform 的 tex 传给
-    // shader，它按 scale=tex/alloc 采样有效区。仅 device-lost 后会话重建才会新建。
+    // 展开动画里尺寸会变：共享纹理按新尺寸重建（wgpu 侧会据此重新导入）。
     let mut device_lost = false;
-    if s.shared.is_none() {
-        match shared_texture(&s._device, &s.context) {
+    if s.shared.as_ref().is_none_or(|t| t.w != bw || t.h != bh) {
+        match shared_texture(&s._device, bw, bh) {
             Ok(t) => s.shared = Some(t),
             Err(e) => {
-                log(&format!("wgc: [gpu-share] shared create FAILED {:?}", e));
+                log(&format!("wgc: [gpu-share] shared resize FAILED {:?}", e));
                 device_lost = is_device_lost(&e);
                 if !device_lost { return Grab::Unavailable; }
             }
         }
     }
     if device_lost {
-        // 必须先释放 s（&mut Wgc 借用）才能置 None；drop(s) 对借用是 no-op，
-        // 真正释放靠 *guard = None 触发 Wgc::drop（显式 Close session/pool）。
+        // 同 grab()：销毁死会话 + 冷却，不立即重建（避免新 device 又撞窗口期）。
         *guard = None;
-        EPOCH.fetch_add(1, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
         TRIED.store(false, Ordering::Relaxed);
-        backoff_after_device_lost(); // 递增冷却，避免重建风暴/光标闪
+        cooldown_after_device_lost();
         return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
@@ -1060,13 +850,6 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         src_tex.GetDesc(&mut desc);
         let (real_w, real_h) = (desc.Width as i32, desc.Height as i32);
-        // 关键诊断（零拷贝路径）：帧真实尺寸 vs 显示器几何 vs 请求框。
-        let cs = frame.ContentSize().map(|c| format!("{}x{}", c.Width, c.Height)).unwrap_or("?".into());
-        if FRAMES.load(Ordering::Relaxed) % 120 == 0 {
-            // monitors= 列出 EnumDisplayMonitors 报告的所有屏，看复制模式到底几个屏、各自多大。
-            log(&format!("wgc: GEOM-SHARE frame={}x{} content={} rc={}x{} mon=({},{}) req=({},{}) {}x{} sx={} sy={} monitors={}",
-                         real_w, real_h, cs, s.sw, s.sh, s.mon_x, s.mon_y, x, y, w, h, sx, sy, monitor_rects_desc()));
-        }
         let box_clamped = D3D11_BOX {
             left: sx as u32, top: sy as u32, front: 0,
             right: (sx + w).min(real_w).max(sx + 1) as u32,
@@ -1074,45 +857,31 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         };
 
         let shared = s.shared.as_ref().unwrap();
-        // 是否走共享 fence（GPU 自己同步，CPU 零等待）。
-        let use_fence = shared.fence.is_some() && shared.ctx4.is_some();
         // producer 独占：keyed mutex key=0，超时 500ms 放弃（避免卡住 UI 线程）。
         if shared.mutex.AcquireSync(0, 500).is_err() { drop(frame); return Grab::NoFrame; }
-        // D3D11_QUERY_EVENT 按微软文档 **Begin 是 disabled 的**：只能用 End 标记
-        // 一个 GPU 时间线事件点，再用 GetData 轮询 BOOL。此前错误地 Begin(query)
-        // 会让 query 状态机异常、GetData 永不 signal → 误判 device lost → 重建风暴。
-        // 社区实证（Chromium ANGLE/Dawn 的 finish/WaitForQueueSerial）都是只 End。
-        // 只需在 Copy 之后 End 一次；下一帧 End 前上一个 query 已被等到 signal。
+        // D3D11_QUERY_EVENT 按微软文档 Begin 是 disabled 的，只能用 End 标记
+        // GPU 时间线事件点 + GetData 轮询 BOOL（Chromium ANGLE/Dawn 均如此）。
+        // 此前错误地 Begin(EVENT query) 让 query 状态机异常、GetData 永不 signal
+        // → 误判 device lost → 触发 Recreate/整体重建 → 玻璃定格/闪。
         s.context.CopySubresourceRegion(&shared.tex, 0, 0, 0, 0, &src_tex, 0, Some(&box_clamped));
         s.context.End(&shared.done);
-        let fence_value = if use_fence {
-            // 共享 fence：拷完立刻 Signal(++value)，CPU 不等 GPU。
-            // consumer 在 D3D12 队列上 Wait(value)，顺序由 GPU 保证。
-            match signal_fence(shared.ctx4.as_ref(), shared.fence.as_ref()) {
-                Some(v) => v,
-                None => 0, // Signal 失败 → 本帧当无 fence，下面走 fallback 等待
-            }
-        } else { 0 };
-        let use_fence = fence_value != 0;
         s.context.Flush();
-        // fallback：fence 不可用时用 event query 等 GPU 完成（yield + device-lost 提前退出，
-        // 上限 20 万，不再 200 万次纯 spin 占死主线程）。
-        let mut signaled: i32 = if use_fence { 1 } else { 0 };
-        if !use_fence {
-            let mut spins = 0u32;
-            let mut lost_early = false;
-            while signaled == 0 && spins < 200_000 {
-                let _ = s.context.GetData(&shared.done, Some(&mut signaled as *mut _ as *mut core::ffi::c_void), 4, 0);
-                spins += 1;
-                if signaled != 0 { break; }
-                if spins % 256 == 0 && unsafe { s._device.GetDeviceRemovedReason().is_err() } {
-                    lost_early = true;
-                    break;
-                }
-                std::thread::yield_now();
+        // 等 GPU 写完：yield 让出 CPU（纯 spin 占死主线程 → 改分辨率后输入卡），
+        // 每 256 次查一次 device lost 提前退出，上限兜底防死锁。
+        let mut signaled: i32 = 0;
+        let mut spins = 0u32;
+        let mut lost_early = false;
+        while signaled == 0 && spins < 2_000_000 {
+            let _ = s.context.GetData(&shared.done, Some(&mut signaled as *mut _ as *mut core::ffi::c_void), 4, 0);
+            spins += 1;
+            if signaled != 0 { break; }
+            if spins % 256 == 0 && unsafe { s._device.GetDeviceRemovedReason().is_err() } {
+                lost_early = true;
+                break;
             }
-            if lost_early { signaled = 0; }
+            std::thread::yield_now();
         }
+        if lost_early { signaled = 0; }
         // 主题色小范围取样：按时间节流（≥500ms），从这张干净帧读采样框算亮度。
         // 用 Instant 而非帧计数：低帧率下主题滞后不放大，60fps 也不必每帧读回。
         // 失败静默、与共享纹理/keyed mutex 无关（副本在独立固定 staging 上读回）。
@@ -1136,26 +905,27 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         drop(frame);
         if signaled == 0 {
             // 超时常见原因是 device lost：device 被移除后 query 永不 signal。
-            // 检查一次，是则销毁会话重建；否则只是偶发丢帧。
-            let lost = unsafe { s._device.GetDeviceRemovedReason().is_err() };
-            log(&format!("wgc: [gpu-share] event query 超时，device_lost={}", lost));
+            // 诊断：把 GetDeviceRemovedReason 的实际 HRESULT 打出来，区分真 lost
+            // （0x887A0005/6）与误判（其它错误/恢复期），避免盲目 Recreate。
+            let reason = unsafe { s._device.GetDeviceRemovedReason() };
+            let code = reason.as_ref().err().map(|e| e.code().0 as u32).unwrap_or(0);
+            // 只有明确的 DEVICE_REMOVED/DEVICE_RESET 才算真 lost；其它错误码
+            // （含 S_OK 即 code=0）一律当偶发超时，不重建——避免误判把好会话搞坏。
+            let lost = code == 0x887A0005 || code == 0x887A0006;
+            log(&format!("wgc: [gpu-share] event query 超时 spins={}，device_lost={} reason=0x{:08X}", spins, lost, code));
             if lost {
-                // 同上：释放靠 *guard = None → Wgc::drop 显式 Close session/pool。
+                // 同前：销毁 + 冷却，不立即重建（这是日志里 0x887A0005 反复的来源）。
                 *guard = None;
-                EPOCH.fetch_add(1, Ordering::Relaxed);
                 FAILED.store(false, Ordering::Relaxed);
                 TRIED.store(false, Ordering::Relaxed);
-                // 这里就是 54 次重建风暴的源头：device 持续 lost 时每帧 init→超时→
-                // 销毁→init。递增冷却，期间 settling() 让抓屏直接返回 NoFrame，
-                // 不再 StartCapture，消除 DWM 合成/黄框反复触发导致的鼠标闪。
-                backoff_after_device_lost();
+                cooldown_after_device_lost();
             }
             return Grab::NoFrame;
         }
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
-        if n == 0 || n % 600 == 0 { log(&format!("wgc: [gpu-share] frame {} cap={}x{} fence={}", n, bw, bh, fence_value)); }
         note_capture_ok();
-        Grab::Shared(SharedHandle { handle: shared.handle, w: bw, h: bh, epoch: EPOCH.load(Ordering::Relaxed), fence_value })
+        if n == 0 || n % 600 == 0 { log(&format!("wgc: [gpu-share] frame {} cap={}x{}", n, bw, bh)); }
+        Grab::Shared(SharedHandle { handle: shared.handle, w: bw, h: bh, epoch: EPOCH.load(Ordering::Relaxed) })
     }
 }
 

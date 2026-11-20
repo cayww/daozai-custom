@@ -114,25 +114,25 @@ struct GlassGpu {
     texture: Option<wgpu::Texture>,
     bind_group: Option<wgpu::BindGroup>,
     size: (u32, u32),
-    /// spike: 从 D3D11 共享句柄导入的纹理 + 它的 bind_group + 抓屏源代次(epoch)。
+    /// spike: 从 D3D11 共享句柄导入的纹理 + 它的 bind_group + 尺寸 + 抓屏源代次(epoch)。
     /// 与旧的 `texture` 分开：GPU 共享路径用它绑定 shader 的 bg，绕过 CPU 上传。
-    /// 共享纹理分配尺寸固定 TEX_W×TEX_H，不再随帧尺寸变化，所以缓存键只有 epoch：
-    /// 换屏/拓扑变化会重建会话与共享纹理（新 NT handle）但帧尺寸常常不变，只比
-    /// 尺寸会继续采样旧纹理（背景放大 / 静止壁纸 / 没铺满 / 发黑）。
-    shared: Option<(wgpu::Texture, wgpu::BindGroup, u64)>,
+    /// epoch 必须进缓存键：换屏会重建会话/共享纹理但抓屏尺寸常常不变，只比尺寸
+    /// 会继续采样旧纹理（背景放大 / 静止壁纸 / 没铺满 / 发黑）。
+    shared: Option<(wgpu::Texture, wgpu::BindGroup, u32, u32, u64)>,
     /// spike: 一次性 1x1 copy 的 staging buffer，用于刷 D3D12 的状态屏障 / shader cache。
     scratch: Option<wgpu::Buffer>,
 }
 
 /// 缓存的共享纹理是否需要重新从 WGC 句柄导入。
 ///
-/// 共享纹理分配尺寸固定 TEX_W×TEX_H，展开动画里只有有效帧尺寸在变——那只是
-/// uniform 的 tex，采样靠 shader 的 scale=tex/alloc 映射，纹理本身无需重建。
-/// 唯一需要重新 OpenSharedHandle 的情形是代次变化（换屏/拓扑/device-lost 重建
-/// 了会话与共享纹理），此时旧 NT handle 已失效，继续采样旧纹理就是背景放大 /
-/// 定格壁纸 / 没铺满 / 发黑的根因。
-fn shared_needs_import(cached_epoch: Option<u64>, epoch: u64) -> bool {
-    cached_epoch != Some(epoch)
+/// `cached` 是 (宽, 高, 抓屏源代次)。尺寸变化（展开动画）或代次变化（换屏/拓扑
+/// 变化重建了会话与共享纹理）都必须重新 OpenSharedHandle：尺寸没变但句柄已换
+/// 时继续采样旧纹理，就是换屏后玻璃背景放大 / 定格壁纸 / 没铺满 / 发黑的根因。
+fn shared_needs_import(cached: Option<(u32, u32, u64)>, w: u32, h: u32, epoch: u64) -> bool {
+    match cached {
+        None => true,
+        Some((cw, ch, ce)) => cw != w || ch != h || ce != epoch,
+    }
 }
 
 static GPU: Mutex<Option<GlassGpu>> = Mutex::new(None);
@@ -720,9 +720,6 @@ fn make_gpu_inner(device: &wgpu::Device, format: wgpu::TextureFormat) -> GlassGp
             device.as_hal::<wgpu::hal::api::Dx12, _, _>(|hal| {
                 if let Some(d) = hal {
                     luid = Some(d.raw_d3d12_device().GetAdapterLuid());
-                    // 共享 fence：consumer 侧创建并导出，producer(D3D11) 稍后打开。
-                    // 只建一次；失败自动回退 1x1 copy barrier。
-                    crate::wgc::init_shared_fence(d.raw_d3d12_device());
                 }
             });
         }
@@ -1403,11 +1400,7 @@ fn import_shared_handle(
     }
     let resource = resource?;
     // 3) hal 纹理 → wgpu 纹理。格式与 WGC 帧一致（BGRA8），只做纹理采样。
-    // 关键：size 必须是共享纹理的**分配尺寸**（固定 TEX_W×TEX_H），与底层 D3D12
-    // resource 一致，不能用有效帧尺寸 shared.w/h——后者只是左上角有效区，shader
-    // 靠 u.extra 的 tex 与 scale=tex/alloc 映射到它。传错 size 会让 texture_from_raw
-    // 的描述与 resource 不符，采样错位/验证失败。
-    let size = wgpu::Extent3d { width: TEX_W, height: TEX_H, depth_or_array_layers: 1 };
+    let size = wgpu::Extent3d { width: shared.w, height: shared.h, depth_or_array_layers: 1 };
     let desc = wgpu::TextureDescriptor {
         label: Some("daozai-glass-shared"),
         size,
@@ -1458,16 +1451,7 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let tick = TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // 帧率探针：tick 每帧 +1，定期落盘就能算出实际 fps（日志里其它行只在
         // 抓到新帧时才写，静态背景根本测不出帧率）。
-        // 周期状态：一次看出走哪条路径、纹理是否有缓存，定位「移动背景不变」。
-        if tick % 600 == 0 {
-            let path = if crate::wgc::gpu_share_enabled() { "gpu-share" } else { "staging" };
-            diag(&format!("perf: tick={tick} path={path} failed={} shared={} texture={} settling={} share_env={:?}",
-                FAILED.load(std::sync::atomic::Ordering::Relaxed),
-                guard.as_ref().map(|g| g.shared.is_some()).unwrap_or(false),
-                guard.as_ref().map(|g| g.texture.is_some()).unwrap_or(false),
-                crate::wgc::settling(),
-                std::env::var("DAOZAI_LIQUID_GPU_SHARE").ok()));
-        }
+        if tick % 600 == 0 { diag(&format!("perf: tick={tick}")); }
         if FAILED.load(std::sync::atomic::Ordering::Relaxed) { return Vec::new(); }
         if guard.is_none() {
             match make_gpu(device, self.format) {
@@ -1511,27 +1495,15 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
             let shared = crate::wgc::grab_shared(f.capture[0] as i32, f.capture[1] as i32, cw, ch);
             // 把采样到的亮度同步到 BG_LUMA（未采样到时 theme_luma 返回上次值，无副作用）。
             BG_LUMA.store(crate::wgc::theme_luma().to_bits(), std::sync::atomic::Ordering::Relaxed);
-            if !matches!(shared, crate::wgc::Grab::Shared(_)) && tick % 600 == 0 {
-                let why = match shared {
-                    crate::wgc::Grab::NoFrame => "NoFrame",
-                    crate::wgc::Grab::Unavailable => "Unavailable",
-                    crate::wgc::Grab::Frame(..) => "Frame(意外)",
-                    crate::wgc::Grab::Shared(_) => "Shared",
-                };
-                diag(&format!("[gpu-share] 本帧无共享帧: {} settling={}", why, crate::wgc::settling()));
-            }
             if let crate::wgc::Grab::Shared(sh) = shared {
-                // 只按 epoch 判断：帧尺寸(展开动画)变化不再触发重新导入那一串 COM。
-                let need_import = shared_needs_import(gpu.shared.as_ref().map(|(_, _, e)| *e), sh.epoch);
+                let need_import = shared_needs_import(gpu.shared.as_ref().map(|(_, _, w, h, e)| (*w, *h, *e)), sh.w, sh.h, sh.epoch);
                 if need_import {
                     match import_shared_handle(device, &gpu.layout, &gpu.uniform, &gpu.sampler, &sh) {
                         Some((tex, bind)) => {
                             gpu.bind_group = Some(bind.clone());
-                            gpu.shared = Some((tex, bind, sh.epoch));
-                            // gpu.size 记有效帧尺寸（诊断用），不是纹理分配尺寸。
+                            gpu.shared = Some((tex, bind, sh.w, sh.h, sh.epoch));
                             gpu.size = (sh.w, sh.h);
-                            diag(&format!("[gpu-share] 导入共享纹理(alloc {}x{}) 有效帧 {}x{} epoch={}",
-                                          TEX_W, TEX_H, sh.w, sh.h, sh.epoch));
+                            diag(&format!("[gpu-share] 导入共享纹理 {}x{}", sh.w, sh.h));
                         }
                         None => {
                             // 换屏后旧句柄已失效；必须清掉缓存，否则下面 `gpu.shared.is_some()`
@@ -1544,52 +1516,29 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                     }
                 }
                 if gpu.shared.is_some() {
-                    // 共享 fence 方案：对同一条 D3D12 队列 Wait(producer signal 的值)，
-                    // GPU 自己保证拷完才采样，CPU 零等待、也不依赖驱动屏障 hack。
-                    // 失败（fence_value=0 / 队列不可用）回退旧 1x1 copy barrier。
-                    #[cfg(windows)]
-                    let waited = unsafe {
-                        let mut done = false;
-                        device.as_hal::<wgpu::hal::api::Dx12, _, _>(|hal| {
-                            if let Some(h) = hal {
-                                done = crate::wgc::consumer_wait_fence(h.raw_queue(), sh.fence_value);
-                            }
-                        });
-                        done
-                    };
-                    #[cfg(not(windows))]
-                    let waited = false;
-                    if !waited {
-                        // D3D12 从 keyed-mutex 句柄打开的资源无法 QI IDXGIKeyedMutex；
-                        // 一次性 1x1 copy 让 wgpu 插入状态转换屏障，刷掉可能陈旧的 shader view。
-                        if gpu.scratch.is_none() {
-                            gpu.scratch = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                                label: Some("daozai-gpu-share-scratch"),
-                                size: 256,
-                                usage: wgpu::BufferUsages::COPY_DST,
-                                mapped_at_creation: false,
-                            }));
-                        }
-                        let src = gpu.shared.as_ref().unwrap();
-                        encoder.copy_texture_to_buffer(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &src.0, mip_level: 0,
-                                origin: wgpu::Origin3d { x: sh.w.saturating_sub(1), y: sh.h.saturating_sub(1), z: 0 },
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            wgpu::TexelCopyBufferInfo {
-                                buffer: gpu.scratch.as_ref().unwrap(),
-                                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(1) },
-                            },
-                            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-                        );
+                    // D3D12 从 keyed-mutex 句柄打开的资源无法 QI IDXGIKeyedMutex；
+                    // 一次性 1x1 copy 让 wgpu 插入状态转换屏障，刷掉可能陈旧的 shader view。
+                    if gpu.scratch.is_none() {
+                        gpu.scratch = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("daozai-gpu-share-scratch"),
+                            size: 256,
+                            usage: wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        }));
                     }
-                    // 诊断：几何视口 vs 纹理真实尺寸 vs uniform tex，三者必须相等，
-                    // 不等就是放大/铺不满的直接来源（shader: p=uv*tex, scale=tex/alloc）。
-                    if tick % 600 == 0 {
-                        diag(&format!("[gpu-share] scale: geom(cw,ch)={}x{} tex(sh)={}x{} ppp={:.4}",
-                                      cw, ch, sh.w, sh.h, f.pixels_per_point));
-                    }
+                    let src = gpu.shared.as_ref().unwrap();
+                    encoder.copy_texture_to_buffer(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &src.0, mip_level: 0,
+                            origin: wgpu::Origin3d { x: sh.w.saturating_sub(1), y: sh.h.saturating_sub(1), z: 0 },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: gpu.scratch.as_ref().unwrap(),
+                            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(1) },
+                        },
+                        wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                    );
                     // 几何 uniform 用视口尺寸(cw,ch)，不用抓取尺寸(sh.w/h)：
                     // 二者正常相等，但换屏协商降级/异常帧时 sh 可能小于 cw——
                     // 用 sh 会让 p=uv*tex 的有效区缩水、玻璃只铺一部分。
@@ -1745,20 +1694,6 @@ pub fn frame_for(
         body.width() * ppp,
         body.height() * ppp,
     ];
-    // 诊断：记录缩放链路的所有量，用于定位换屏后「背景放大但不恢复」。
-    // 每 geometry 变一次打一行（tick 由外部节流），看 ppp/win/capture/origin 谁变了。
-    {
-        static DIAG: std::sync::Mutex<[f32; 4]> = std::sync::Mutex::new([0.0; 4]);
-        let sig = [ppp, cw as f32, ch as f32, origin.0];
-        let prev = *DIAG.lock().unwrap_or_else(|e| e.into_inner());
-        if sig[0] != prev[0] || sig[1] != prev[1] || sig[2] != prev[2] || sig[3] != prev[3] {
-            *DIAG.lock().unwrap_or_else(|e| e.into_inner()) = sig;
-            diag(&format!("geom: ppp={:.4} win=({:.0},{:.0}) cap_logical={:.1}x{:.1} cap_phys={}x{} origin=({:.1},{:.1}) bounds={:.1},{:.1},{:.1},{:.1}",
-                ppp, screen_px.0 as f32 / ppp, screen_px.1 as f32 / ppp,
-                capture.width(), capture.height(), cw, ch, origin.0, origin.1,
-                bounds[0], bounds[1], bounds[2], bounds[3]));
-        }
-    }
     // 控件矩形换算到「capture 内物理像素」，着色器里直接用。
     // 只接受完整落在抓屏矩形内的控件：越界时着色器会 clamp 到边缘像素，
     // 表现为一条被拉长的色带。
@@ -1879,21 +1814,21 @@ mod tests {
         assert_eq!(std::mem::size_of::<Uniforms>(), 9 * 16 + MAX_CTL * 32);
     }
 
-    /// 共享纹理分配尺寸固定，展开动画只有有效帧尺寸在变——那只是 uniform 的 tex，
-    /// shader 按 scale=tex/alloc 映射，纹理本身复用。只有换屏/拓扑/device-lost
-    /// 重建会话使 epoch +1 时才必须重新 OpenSharedHandle，否则继续采样旧纹理 →
-    /// 背景放大 / 静止壁纸 / 没铺满 / 发黑。
+    /// 换屏后抓屏尺寸常常不变，只按 (w,h) 判断复用会采样旧显示器纹理 →
+    /// 背景放大 / 静止壁纸 / 没铺满 / 发黑。代次(epoch)必须进缓存键。
     #[test]
-    fn shared_texture_reimports_only_on_epoch_change() {
+    fn shared_texture_reimports_on_epoch_change_even_when_size_is_same() {
         // 首次无缓存 → 必须导入。
-        assert!(shared_needs_import(None, 1));
-        // 同一代次 → 复用，即便有效帧尺寸在变（展开动画每帧微变，零拷贝的意义所在）。
-        assert!(!shared_needs_import(Some(1), 1));
-        // 换屏：WGC 会话重建使 epoch +1 → 必须重新导入。
-        assert!(shared_needs_import(Some(1), 2));
+        assert!(shared_needs_import(None, 957, 339, 1));
+        // 同一代次、尺寸不变 → 复用（正常每帧，零拷贝的意义所在）。
+        assert!(!shared_needs_import(Some((957, 339, 1)), 957, 339, 1));
+        // 换屏：尺寸完全一样，但 WGC 会话重建使 epoch +1 → 必须重新导入。
+        assert!(shared_needs_import(Some((957, 339, 1)), 957, 339, 2));
         // 仅2号屏→仅1号屏/扩展/复制三种切换都会让 wgc 的 EPOCH 递增，统一被这条覆盖。
-        assert!(shared_needs_import(Some(7), 8));
-        // device-lost 重建也会递增 epoch → 重新导入。
-        assert!(shared_needs_import(Some(99), 100));
+        assert!(shared_needs_import(Some((957, 339, 7)), 957, 339, 8));
+        // 展开动画：代次不变、尺寸变化 → 仍要重新导入（旧逻辑已覆盖，回归保护）。
+        assert!(shared_needs_import(Some((957, 339, 1)), 1157, 339, 1));
+        // 尺寸和代次同时变 → 重新导入。
+        assert!(shared_needs_import(Some((957, 339, 1)), 1157, 422, 2));
     }
 }
