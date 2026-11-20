@@ -1466,7 +1466,15 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let gpu = guard.as_mut().unwrap();
         let f = &self.frame;
         let (cw, ch) = (f.capture[2].max(1.0) as i32, f.capture[3].max(1.0) as i32);
-        let tex_size;
+        // 几何 uniform 必须与视口(capture 物理尺寸)同步，**每帧都写、与抓屏成败无关**。
+        // 之前只在抓屏成功时写：换屏/复制模式抓屏失败的那几帧，视口已按新 capture 重算，
+        // 而 u.extra.y/z(tex) 和 bounds 还是旧值，shader 就用旧几何画进新视口 ——
+        // 玻璃只铺一部分/拉伸/角落残留旧内容（egui #8280 / tetanes #315 同类问题）。
+        // 纹理内容即使沿用上一帧也只是背景旧一帧，几何绝不能旧。
+        let write_geom = |queue: &wgpu::Queue, f: &GlassFrame, gpu: &mut GlassGpu| {
+            let u = uniforms(f, (cw as u32, ch as u32));
+            queue.write_buffer(&gpu.uniform, 0, u.bytes());
+        };
 
         // ===== spike: 零拷贝 GPU 共享路径（DAOZAI_LIQUID_GPU_SHARE=1）=====
         // WGC 帧 → D3D11 共享纹理 → D3D12 OpenSharedHandle → wgpu 纹理 → shader 采样。
@@ -1531,8 +1539,10 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                         },
                         wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
                     );
-                    let u = uniforms(f, (sh.w, sh.h));
-                    queue.write_buffer(&gpu.uniform, 0, u.bytes());
+                    // 几何 uniform 用视口尺寸(cw,ch)，不用抓取尺寸(sh.w/h)：
+                    // 二者正常相等，但换屏协商降级/异常帧时 sh 可能小于 cw——
+                    // 用 sh 会让 p=uv*tex 的有效区缩水、玻璃只铺一部分。
+                    write_geom(queue, f, gpu);
                     return Vec::new();
                 }
             }
@@ -1547,7 +1557,11 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let every = capture_every();
         if every > 1 && tick % every as u64 != 0 {
             let same = *LAST_BOUNDS.lock().unwrap_or_else(|e| e.into_inner()) == f.bounds;
-            if same { return Vec::new(); }
+            if same {
+                // 纹理沿用上一帧，但几何(视口)可能已变（换屏/DPI），每帧刷新。
+                write_geom(queue, f, gpu);
+                return Vec::new();
+            }
         }
         *LAST_BOUNDS.lock().unwrap_or_else(|e| e.into_inner()) = f.bounds;
 
@@ -1556,6 +1570,8 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         {
             let Some((rgba, tw, th)) = capture(f.capture[0] as i32, f.capture[1] as i32, cw, ch, f.bounds, f.pixels_per_point) else {
                 if tick == 0 { diag("capture: GDI 抓屏失败"); }
+                // 抓屏失败沿用旧纹理，但视口几何每帧都要正确，否则旧 tex 画新视口=铺不满。
+                write_geom(queue, f, gpu);
                 return Vec::new();
             };
             if tick % 120 == 0 {
@@ -1605,7 +1621,10 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
             gpu.size = (tw, th);
             // wgpu 要求 bytes_per_row 是 256 的倍数；不对齐会触发 validation error
             // （纹理保持未初始化 → 整块黑），所以每行补 padding 再上传。
-            if tw > TEX_W || th > TEX_H { return Vec::new(); }
+            if tw > TEX_W || th > TEX_H {
+                write_geom(queue, f, gpu);
+                return Vec::new();
+            }
             let bpr = (tw * 4 + 255) / 256 * 256;
             let mut padded = vec![0u8; bpr as usize * th as usize];
             let row = (tw * 4) as usize;
@@ -1620,10 +1639,9 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                 wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(th) },
                 wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
             );
-            tex_size = (tw, th);
+            let _ = (tw, th); // staging 路径 tex 用视口尺寸(cw,ch)，见 write_geom
         }
-        let u = uniforms(f, tex_size);
-        queue.write_buffer(&gpu.uniform, 0, u.bytes());
+        write_geom(queue, f, gpu);
         Vec::new()
     }
 

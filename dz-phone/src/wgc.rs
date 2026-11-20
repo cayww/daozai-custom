@@ -552,9 +552,15 @@ fn init(_x: i32, _y: i32, w: u32, h: u32,
         let interop: IGraphicsCaptureItemInterop =
             factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
         let item: GraphicsCaptureItem = interop.CreateForMonitor(monitor)?;
+        // 用 item.Size() 当帧池尺寸，而不是显示器 rcMonitor —— 微软 WGC 官方指引。
+        // 复制模式会把两块屏协商到同一分辨率，item.Size() 可能小于 (sw,sh)；
+        // 用 rcMonitor 建池会拿到尺寸不符的帧，配合固定 src_box 就越界/半张图。
+        let item_size = item.Size()?;
+        let (fw, fh) = (item_size.Width.max(1), item_size.Height.max(1));
+        log(&format!("wgc: item.Size()={}x{} rcMonitor={}x{}", fw, fh, sw, sh));
         let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
             &d3d_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2,
-            SizeInt32 { Width: sw, Height: sh },
+            SizeInt32 { Width: fw, Height: fh },
         )?;
         let session = pool.CreateCaptureSession(&item)?;
         session.StartCapture()?;
@@ -659,10 +665,6 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
     if sx < 0 || sy < 0 || sx + w > s.sw || sy + h > s.sh { return Grab::Unavailable; }
-    let src_box = D3D11_BOX {
-        left: sx as u32, top: sy as u32, front: 0,
-        right: (sx + w) as u32, bottom: (sy + h) as u32, back: 1,
-    };
     unsafe {
         // 帧池是异步的，一次只取一帧会拿到滞后画面；连取到没有新帧为止，
         // 用最新的一帧（最多丢 4 个旧帧）。
@@ -674,19 +676,18 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         let surface = match frame.Surface() { Ok(v) => v, Err(_) => return Grab::NoFrame };
         let access: IDirect3DDxgiInterfaceAccess = match surface.cast() { Ok(v) => v, Err(_) => return Grab::Unavailable };
         let src_tex: ID3D11Texture2D = match access.GetInterface() { Ok(v) => v, Err(_) => return Grab::Unavailable };
-        // 关键：src_box 是按显示器几何 (s.sw/s.sh) 算的，但 WGC 实际帧尺寸未必一致——
-        // 「复制这些显示器」时克隆合成面常比单屏 rcMonitor 小。CopySubresourceRegion
-        // 会把超出的 box 静默裁剪到源纹理边界，staging 其余像素保持黑 → 玻璃背景铺不满。
-        // 用真实帧尺寸校验，覆盖不到整块就丢这帧（不产出半张图），让上层复用上一帧或走 GDI。
+        // src_box 按显示器几何 (sx..sx+w) 取框；帧池已按 item.Size() 建，正常
+        // item.Size()==rcMonitor。复制模式协商降级时真实帧更小，超出的 box 会被
+        // CopySubresourceRegion 静默裁剪 → staging 留黑。这里夹到真实帧内避免读到
+        // 未定义像素；返回值仍是请求的 w×h，缺失部分保持黑，交给上层按视口几何处理。
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         src_tex.GetDesc(&mut desc);
-        let real = (desc.Width, desc.Height);
-        if (sx + w) as u32 > real.0 || (sy + h) as u32 > real.1 {
-            log(&format!("wgc: 帧尺寸 {}x{} 小于抓屏框 ({}+{} , {}+{})，丢弃该帧（复制模式）",
-                         real.0, real.1, sx, w, sy, h));
-            drop(frame);
-            return Grab::NoFrame;
-        }
+        let (real_w, real_h) = (desc.Width as i32, desc.Height as i32);
+        let src_box = D3D11_BOX {
+            left: sx as u32, top: sy as u32, front: 0,
+            right: (sx + w).min(real_w).max(sx + 1) as u32,
+            bottom: (sy + h).min(real_h).max(sy + 1) as u32, back: 1,
+        };
         s.context.CopySubresourceRegion(&s.staging, 0, 0, 0, 0, &src_tex, 0, Some(&src_box));
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         if s.context.Map(&s.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).is_err() { return Grab::Unavailable; }
@@ -771,10 +772,6 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
     if sx < 0 || sy < 0 || sx + w > s.sw || sy + h > s.sh { return Grab::Unavailable; }
-    let src_box = D3D11_BOX {
-        left: sx as u32, top: sy as u32, front: 0,
-        right: (sx + w) as u32, bottom: (sy + h) as u32, back: 1,
-    };
     unsafe {
         // 帧池异步：连取到没有新帧为止，用最新一帧（最多丢 4 帧），与 grab 一致。
         let mut frame = s.pool.TryGetNextFrame().ok();
@@ -785,23 +782,23 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         let surface = match frame.Surface() { Ok(v) => v, Err(_) => return Grab::NoFrame };
         let access: IDirect3DDxgiInterfaceAccess = match surface.cast() { Ok(v) => v, Err(_) => return Grab::Unavailable };
         let src_tex: ID3D11Texture2D = match access.GetInterface() { Ok(v) => v, Err(_) => return Grab::Unavailable };
-        // 同 grab()：复制模式下真实帧可能比显示器几何小，超出的 box 会被裁剪成半张图。
+        // 同 grab()：复制模式下真实帧可能比显示器几何小，box 夹到真实帧内，
+        // 不丢帧（丢帧会让零拷贝纹理永久停在换屏前那张 → 背景定格/铺不满）。
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         src_tex.GetDesc(&mut desc);
-        let real = (desc.Width, desc.Height);
-        if (sx + w) as u32 > real.0 || (sy + h) as u32 > real.1 {
-            log(&format!("wgc: [gpu-share] 帧尺寸 {}x{} 小于抓屏框 ({}+{} , {}+{})，丢弃该帧（复制模式）",
-                         real.0, real.1, sx, w, sy, h));
-            drop(frame);
-            return Grab::NoFrame;
-        }
+        let (real_w, real_h) = (desc.Width as i32, desc.Height as i32);
+        let box_clamped = D3D11_BOX {
+            left: sx as u32, top: sy as u32, front: 0,
+            right: (sx + w).min(real_w).max(sx + 1) as u32,
+            bottom: (sy + h).min(real_h).max(sy + 1) as u32, back: 1,
+        };
 
         let shared = s.shared.as_ref().unwrap();
         // producer 独占：keyed mutex key=0，超时 500ms 放弃（避免卡住 UI 线程）。
         if shared.mutex.AcquireSync(0, 500).is_err() { drop(frame); return Grab::NoFrame; }
         // event query：标记这一批 GPU 写的结束点。
         s.context.Begin(&shared.done);
-        s.context.CopySubresourceRegion(&shared.tex, 0, 0, 0, 0, &src_tex, 0, Some(&src_box));
+        s.context.CopySubresourceRegion(&shared.tex, 0, 0, 0, 0, &src_tex, 0, Some(&box_clamped));
         s.context.End(&shared.done);
         s.context.Flush();
         // spin 等 GPU 真正写完。event query 返回 BOOL(4 bytes)；加次数上限兜底防死锁。
