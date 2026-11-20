@@ -115,6 +115,23 @@ struct Wgc {
     stage_h: u32,
 }
 
+/// 显式断开 WGC 的 WinRT 引用环。
+///
+/// `GraphicsCaptureSession` / `Direct3D11CaptureFramePool` / `GraphicsCaptureItem`
+/// 内部互相持有引用（session↔pool、item 被 session 持有）。仅靠 Rust drop 递减
+/// 引用计数无法归零——捕获线程和底层 DXGI 资源会一直存活。换分辨率 → device
+/// lost / 拓扑变化会走 `*guard = None` 重建会话，旧会话若只 drop 不 Close 就
+/// 泄漏一整套：实测快照 2055 个线程栈 + 70 个 32MB 私有块（2.24GB）。
+/// 微软 WGC 指引明确要求停捕获时显式 Close，否则捕获管线不会停止。
+impl Drop for Wgc {
+    fn drop(&mut self) {
+        // 顺序：先停 session（断开捕获 + 与 pool/item 的环），再关 pool。
+        let _ = self._session.Close();
+        let _ = self.pool.Close();
+        // 其余 COM 字段（device/context/item/shared 纹理/fence）由正常 drop 释放。
+    }
+}
+
 /// spike: producer 侧持有的共享纹理资源（D3D11 设备独占）。
 /// NT handle 由纹理导出，wgpu(D3D12) 侧凭它 OpenSharedHandle 导入同一块显存。
 pub struct SharedFrame {
@@ -803,7 +820,8 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
             .map(|s| (s.mon_x, s.mon_y, s.sw, s.sh) != ident)
             .unwrap_or_else(|| bound.is_some_and(|b| b != ident));
         if changed {
-            // drop 旧 Wgc：session/pool/device 的 RAII 析构会自动停止旧屏捕获并释放 COM 资源。
+            // drop 旧 Wgc：Wgc::drop 会显式 Close session/pool 断开引用环、停止捕获线程，
+            // 再按 RAII 释放 device/context/纹理；只 drop 不 Close 会泄漏旧捕获管线。
             *guard = None;
             EPOCH.fetch_add(1, Ordering::Relaxed);
             log(&format!("wgc: 显示器变化 {:?} → {:?}，重建会话",
@@ -846,7 +864,8 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         }
     }
     if device_lost {
-        drop(s);
+        // 必须先释放 s（&mut Wgc 借用）才能置 None；drop(s) 对借用是 no-op，
+        // 真正释放靠 *guard = None 触发 Wgc::drop（显式 Close session/pool）。
         *guard = None;
         EPOCH.fetch_add(1, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
@@ -980,7 +999,8 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         }
     }
     if device_lost {
-        drop(s);
+        // 必须先释放 s（&mut Wgc 借用）才能置 None；drop(s) 对借用是 no-op，
+        // 真正释放靠 *guard = None 触发 Wgc::drop（显式 Close session/pool）。
         *guard = None;
         EPOCH.fetch_add(1, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
@@ -1082,7 +1102,7 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
             let lost = unsafe { s._device.GetDeviceRemovedReason().is_err() };
             log(&format!("wgc: [gpu-share] event query 超时，device_lost={}", lost));
             if lost {
-                drop(s);
+                // 同上：释放靠 *guard = None → Wgc::drop 显式 Close session/pool。
                 *guard = None;
                 EPOCH.fetch_add(1, Ordering::Relaxed);
                 FAILED.store(false, Ordering::Relaxed);
