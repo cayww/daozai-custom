@@ -306,7 +306,9 @@ pub fn epoch() -> u64 { EPOCH.load(Ordering::Relaxed) }
 /// 判断是否 D3D11 设备丢失（0x887A0005 DEVICE_REMOVED / 0x887A0006 DEVICE_RESET）。
 /// 换显示模式（尤其复制到不同分辨率）会让 DWM 重建合成器、驱动重置我们的 D3D11 设备，
 /// 此后所有 CreateTexture2D/Copy 都失败、会话永久卡死 —— 表现为背景定格在换屏前那张、
-/// 视口变了纹理没变 → 玻璃被拉伸放大。必须销毁整个 Wgc 会话重建 device。
+/// 视口变了纹理没变 → 玻璃被拉伸放大。按微软 WGC 指引，此时应在原 frame pool 上调
+/// `Recreate` 换新 device，保留 session/item，而不是销毁整个会话（后者反复
+/// StartCapture 会触发 DWM 合成抖动 + 捕获黄框闪烁）。
 fn is_device_lost(e: &windows::core::Error) -> bool {
     let code = e.code().0 as u32;
     code == 0x887A0005 || code == 0x887A0006 // DXGI_ERROR_DEVICE_REMOVED / DEVICE_RESET
@@ -595,6 +597,68 @@ fn init(_x: i32, _y: i32, w: u32, h: u32,
     }
 }
 
+/// device lost 后原地恢复抓屏（微软 WGC 官方指引）。
+///
+/// 关键：在**原 frame pool 对象**上调 `Recreate` 换新的 D3D11 device，保留
+/// session / item / pool 本身，不重新 `StartCapture`。此前做法是 `*guard = None`
+/// 销毁整个 Wgc 再 init —— 每轮重建都 StartCapture + DWM 重合成 + 捕获黄框重启，
+/// 换分辨率期设备反复 lost 时形成重建风暴（实测 54 次），表现为鼠标/岛体持续闪。
+///
+/// `Recreate` 只换 device/pool 内部纹理，session 仍绑在原 pool 上继续工作。
+/// device 换掉后，staging 与共享纹理都绑在旧 device 上、必须一并重建。
+/// 返回 Err 表示恢复失败（调用方按 Unavailable 回退，下一帧再试）。
+fn recreate_after_device_lost(s: &mut Wgc, w: u32, h: u32) -> windows::core::Result<()> {
+    unsafe {
+        // 1) 新建 D3D11 device/context，仍绑定 wgpu 同卡 adapter。
+        let luid = *WGPU_LUID.lock().unwrap_or_else(|e| e.into_inner());
+        let adapter = luid.and_then(adapter_by_luid);
+        let (adapter, driver_type) = match adapter {
+            Some(a) => (Some(a), D3D_DRIVER_TYPE_UNKNOWN),
+            None => (None, D3D_DRIVER_TYPE_HARDWARE),
+        };
+        let mut device: Option<ID3D11Device> = None;
+        let mut context: Option<ID3D11DeviceContext> = None;
+        D3D11CreateDevice(
+            adapter.as_ref(), driver_type, windows::Win32::Foundation::HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, None, D3D11_SDK_VERSION,
+            Some(&mut device), None, Some(&mut context),
+        )?;
+        let device = device.ok_or_else(|| windows::core::Error::from(windows::core::HRESULT(0x8000_4005u32 as i32)))?;
+        let context = context.ok_or_else(|| windows::core::Error::from(windows::core::HRESULT(0x8000_4005u32 as i32)))?;
+
+        // 2) 包装成 WinRT IDirect3DDevice，在原 pool 上 Recreate。
+        let dxgi: IDXGIDevice = device.cast()?;
+        let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi)?;
+        let d3d_device: IDirect3DDevice = inspectable.cast()?;
+        // 用 item.Size() 的最新尺寸（换分辨率后可能已变），与 init 一致。
+        let item_size = s._item.Size()?;
+        let size = SizeInt32 {
+            Width: item_size.Width.max(1), Height: item_size.Height.max(1),
+        };
+        s.pool.Recreate(&d3d_device, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size)?;
+        log(&format!("wgc: device-lost 恢复——pool.Recreate {}x{}（保留 session，未重新 StartCapture）", size.Width, size.Height));
+
+        // 3) 重建绑在旧 device 上的 staging 与共享纹理。
+        let stage = staging(&device, w, h)?;
+        let shared = if gpu_share_enabled() {
+            match shared_texture(&device, w, h) {
+                Ok(t) => Some(t),
+                Err(e) => { log(&format!("wgc: 恢复时共享纹理创建失败，回退 staging: {:?}", e)); None }
+            }
+        } else { None };
+
+        s._device = device;
+        s.context = context;
+        s.staging = stage;
+        s.stage_w = w;
+        s.stage_h = h;
+        s.shared = shared;
+        // 新共享纹理 = 新 NT handle，递增代次让 wgpu 侧重新 OpenSharedHandle。
+        EPOCH.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
+
 /// 抓屏结果。必须区分「没有新帧」和「WGC 不可用」：
 /// 前者应当复用上一帧纹理，后者才回退 GDI —— 否则会 GDI/WGC 交替导致闪烁。
 pub enum Grab {
@@ -679,12 +743,15 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         }
     }
     if device_lost {
-        drop(s);
-        *guard = None;
-        EPOCH.fetch_add(1, Ordering::Relaxed);
-        FAILED.store(false, Ordering::Relaxed);
-        TRIED.store(false, Ordering::Relaxed);
-        log("wgc: device lost，已销毁会话，下一帧重建 device");
+        // 微软 WGC 指引：在原 pool 上 Recreate 新 device，保留 session/item，
+        // 不销毁整个会话（避免 StartCapture 风暴导致换分辨率后持续闪）。
+        if recreate_after_device_lost(s, bw, bh).is_err() {
+            // Recreate 失败兜底：整体重建，下一帧重新 init。
+            *guard = None;
+            FAILED.store(false, Ordering::Relaxed);
+            TRIED.store(false, Ordering::Relaxed);
+            log("wgc: device lost，Recreate 失败，回退整体重建会话");
+        }
         return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
@@ -800,12 +867,14 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         }
     }
     if device_lost {
-        drop(s);
-        *guard = None;
-        EPOCH.fetch_add(1, Ordering::Relaxed);
-        FAILED.store(false, Ordering::Relaxed);
-        TRIED.store(false, Ordering::Relaxed);
-        log("wgc: [gpu-share] device lost，已销毁会话，下一帧重建 device");
+        // 同 grab()：原 pool 上 Recreate 恢复，保留 session 避免 StartCapture 风暴。
+        // 注意共享纹理尺寸用 bw/bh（有效帧），与当前缓存键一致。
+        if recreate_after_device_lost(s, bw, bh).is_err() {
+            *guard = None;
+            FAILED.store(false, Ordering::Relaxed);
+            TRIED.store(false, Ordering::Relaxed);
+            log("wgc: [gpu-share] device lost，Recreate 失败，回退整体重建会话");
+        }
         return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
@@ -874,11 +943,12 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
             let lost = unsafe { s._device.GetDeviceRemovedReason().is_err() };
             log(&format!("wgc: [gpu-share] event query 超时，device_lost={}", lost));
             if lost {
-                drop(s);
-                *guard = None;
-                EPOCH.fetch_add(1, Ordering::Relaxed);
-                FAILED.store(false, Ordering::Relaxed);
-                TRIED.store(false, Ordering::Relaxed);
+                // 同前：原 pool Recreate 恢复，避免每次超时都整体重建 → StartCapture 风暴。
+                if recreate_after_device_lost(s, bw, bh).is_err() {
+                    *guard = None;
+                    FAILED.store(false, Ordering::Relaxed);
+                    TRIED.store(false, Ordering::Relaxed);
+                }
             }
             return Grab::NoFrame;
         }
