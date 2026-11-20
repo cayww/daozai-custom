@@ -1357,3 +1357,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 编译通过（仅既有 warning，无 error）；全量测试**未跑**（用户明确要求）。新 exe `0454bd5acde67031c9e7914c`（22,401,536 B）/ bridge `d8996c660642bb5962c5`。
 - 已备份预览旧 exe 为 `Daozai-液态玻璃预览\daozai.exe.prev-before-texreuse`（`b20f9ce771048cc8a`），新 exe 已部署到预览目录、清空 `data/diagnostics/liquid-glass.log` 待验证。**待用户实机验证**：零拷贝已开（预览 data `settings.txt liquid_gpu_share=1`），悬停展开动画应不再逐帧"导入共享纹理"、展开不再变慢；验证方法见下。
 - main HEAD=`87c39e6`（ahead origin 1，未 push）。
+
+### 7.0zz 换分辨率内存持续上涨根治——WGC session/pool 显式 Close（2026-11-20 21:05–21:15，提交 `815932b`）
+- **用户实测**：换分辨率后内存持续上涨（上一个修复 87c39e6 只解决展开变慢，与内存无关）。用户抓 VMMap 快照 `C:\Users\cay\Desktop\daozai.mmp`（PID 40132，exe=预览版）供分析。
+- **快照实证**（只读解析 .mmp XML）：Commit **3,859MB** / PrivateBytes **3,352MB**（历史基线独显 257MB、memprof 622MB，严重异常）；`Private Data` 中 **70 个 32MB 块=2,240MB** + 1 个 783MB 块；**Thread Stack 2,074 块 / 2,055 个唯一线程 ID**（正常进程几十个）。这是会话反复重建却没释放干净的典型指纹。
+- **根因**：`Wgc` 持有 `GraphicsCaptureSession`/`Direct3D11CaptureFramePool`/`GraphicsCaptureItem`，WinRT 对象内部有引用环（session↔pool、item 被 session 持有），仅靠 Rust drop 递减引用计数无法归零——捕获线程与底层 DXGI 资源一直存活。换分辨率 → device lost / 拓扑变化走 `*guard = None` 重建会话，旧会话只 drop 不 Close 就泄漏整套捕获管线。原 806 行注释误以为"RAII 析构会自动停止旧屏捕获"，是错的。微软 WGC 指引明确要求停捕获时显式 Close。
+- **修法**（815932b）：`impl Drop for Wgc` 显式 `session.Close()` + `pool.Close()` 断开引用环；清理三处对 `&mut Wgc` 无效的 `drop(s)` no-op（真正释放靠 `*guard = None` 触发 Drop，NLL 已验证借用合法）。
+- 编译通过（无 error）；全量测试**未跑**（用户要求）。新 exe `ca8923b6e02d3043` / bridge `6afcdde3c358bdf3`，已备份上一版为 `daozai.exe.prev-before-wgc-close` 并部署到预览目录。**待用户实机验证**：反复换分辨率后内存不再持续上涨（线程数、32MB 块不再累积）。
+- main HEAD=`815932b`（ahead origin 3，未 push）。
