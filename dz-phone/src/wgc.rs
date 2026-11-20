@@ -397,6 +397,29 @@ fn is_device_lost(e: &windows::core::Error) -> bool {
     code == 0x887A0005 || code == 0x887A0006 // DXGI_ERROR_DEVICE_REMOVED / DEVICE_RESET
 }
 
+/// 连续 device-lost 次数：用于重建退避，防止换分辨率后设备持续 lost 时
+/// 每帧 init→超时→销毁→init 的重建风暴（实测 54 次连续重建，每次 StartCapture
+/// 触发 DWM 合成 + 捕获黄框反复闪，鼠标指针跟着闪，且吃满 GPU）。
+static LOST_STREAK: AtomicU32 = AtomicU32::new(0);
+
+/// device-lost 后调用：递增退避并设置稳定期，期间 grab/grab_shared 直接返回
+/// NoFrame，不再 StartCapture。连续失败越多等得越久（1s→2s→4s→封顶 8s），
+/// 设备恢复后成功出帧会由 `note_capture_ok` 清零。
+fn backoff_after_device_lost() {
+    let n = LOST_STREAK.fetch_add(1, Ordering::Relaxed).min(8);
+    let ms = 1000u64 << n.min(3); // 1,2,4,8 秒
+    *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(ms));
+    log(&format!("wgc: device-lost 连续 {} 次，冷却 {}ms 后重试（避免重建风暴/光标闪）", n + 1, ms));
+}
+
+/// 成功产出/捕获一次帧后清零退避计数。
+fn note_capture_ok() {
+    if LOST_STREAK.swap(0, Ordering::Relaxed) != 0 {
+        log("wgc: 抓屏恢复，清除 device-lost 退避");
+    }
+}
+
 /// 查询矩形中心点所在显示器的句柄与身份 (mon_x, mon_y, sw, sh)。用矩形中心而非
 /// 左上角，避免岛体落在两屏交界时左上角被判给隔壁屏。
 fn monitor_for_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(HMONITOR, (i32, i32, i32, i32))> {
@@ -870,7 +893,7 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         EPOCH.fetch_add(1, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
         TRIED.store(false, Ordering::Relaxed);
-        log("wgc: device lost，已销毁会话，下一帧重建 device");
+        backoff_after_device_lost(); // 递增冷却，避免重建风暴/光标闪
         return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
@@ -926,6 +949,7 @@ pub fn grab(x: i32, y: i32, w: i32, h: i32) -> Grab {
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 || n % 600 == 0 { log(&format!("wgc: frame {} cap={}x{}", n, bw, bh)); }
         if mapped.pData.is_null() { return Grab::NoFrame; }
+        note_capture_ok();
         Grab::Frame(rgba, bw, bh)
     }
 }
@@ -1005,7 +1029,7 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         EPOCH.fetch_add(1, Ordering::Relaxed);
         FAILED.store(false, Ordering::Relaxed);
         TRIED.store(false, Ordering::Relaxed);
-        log("wgc: [gpu-share] device lost，已销毁会话，下一帧重建 device");
+        backoff_after_device_lost(); // 递增冷却，避免重建风暴/光标闪
         return Grab::Unavailable;
     }
     let (sx, sy) = (x - s.mon_x, y - s.mon_y);
@@ -1107,11 +1131,16 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
                 EPOCH.fetch_add(1, Ordering::Relaxed);
                 FAILED.store(false, Ordering::Relaxed);
                 TRIED.store(false, Ordering::Relaxed);
+                // 这里就是 54 次重建风暴的源头：device 持续 lost 时每帧 init→超时→
+                // 销毁→init。递增冷却，期间 settling() 让抓屏直接返回 NoFrame，
+                // 不再 StartCapture，消除 DWM 合成/黄框反复触发导致的鼠标闪。
+                backoff_after_device_lost();
             }
             return Grab::NoFrame;
         }
         let n = FRAMES.fetch_add(1, Ordering::Relaxed);
         if n == 0 || n % 600 == 0 { log(&format!("wgc: [gpu-share] frame {} cap={}x{} fence={}", n, bw, bh, fence_value)); }
+        note_capture_ok();
         Grab::Shared(SharedHandle { handle: shared.handle, w: bw, h: bh, epoch: EPOCH.load(Ordering::Relaxed), fence_value })
     }
 }
