@@ -165,3 +165,51 @@ ProcessFrame → catch IsDeviceLost → needsReset=true, recreateDevice=true
 - OBS Studio `libobs-d3d11/d3d11-subsystem.cpp`：2016  commit "Rebuild device and assets if device removed/reset"（生产验证多年）
 - 微软 `windows-uwp` ScreenCapturePlayer：`ResetFramePool` 的 `do...while(_canvasDevice == null)` 重试
 - gist `tor4kichi/cd76923d4b58bd4105d31aca0bf2d4d6`：同一模式的可运行示例
+
+---
+
+## 十七、逐行读 OBS 抓屏实现——结构性差异（新分支 research/obs-capture-study）
+
+用户要求回退到 OBS 研究起点(4f764e8)、逐行翻阅 OBS 如何抓取。用 GitHub API 读完整
+`libobs-winrt/winrt-capture.cpp`。**发现此前完全忽略的结构性差异**：
+
+### OBS 的抓屏根本不用跨 API 共享机制
+`on_frame_arrived` 全部逻辑：
+```
+frame = TryGetNextFrame()
+frame_surface = GetDXGIInterfaceFromObject(frame.Surface())
+frame_surface->GetDesc(&desc)   // 注释: ContentSize 不可靠，用 GetDesc
+obs_enter_graphics()
+if desc.Format == 期望:
+  建/复用 OBS 自己的 gs_texture (gs_texture_create)
+  context->CopyResource(gs_texture的obj, frame_surface)   // 直接 Copy，无同步原语
+  texture_written = true
+  if 尺寸变了: frame_pool.Recreate(device, format, 2, frame_content_size)
+obs_leave_graphics()
+```
+`winrt_capture_render`: 直接用这个 gs_texture 画 (gs_effect + gs_draw_sprite)。
+
+**OBS 没有：event query、keyed mutex、CPU spin、NT handle 跨进程共享、
+D3D12 OpenSharedHandle、1x1 copy barrier。这些全是我们自己引入的复杂度。**
+
+### OBS 用单一 graphics device
+`d3d_device = gs_get_device_obj()` —— WGC 抓屏的 D3D11 device **就是 OBS 渲染器自己的
+device**。所以：
+- 没有"两个 device 同步"问题
+- device-lost 时 graphics subsystem 统一重建 device + loss callback 通知 capture 重建
+- 抓屏纹理和渲染纹理在同一个 device 上，CopyResource 直接可用，无需跨 API
+
+### 对比我们的架构
+我们：单独建 D3D11 device 给 WGC → 共享纹理(NT handle) → keyed mutex 同步 →
+event query 等 GPU → wgpu D3D12 OpenSharedHandle → 1x1 copy barrier 刷 cache。
+**这整套机制是 device-lost 的根源**——每个环节都可能在不同渲染后端/驱动下失配。
+
+### 意义（待验证，不下结论）
+我们一直在修这套共享机制(query/keyed mutex/poll/fence)，但 OBS 证明存在一条更简单的路：
+让液态玻璃的抓屏也走"渲染器自己的 device"，消除跨 API 共享。但我们的渲染器是
+egui-wgpu(D3D12)，WGC 只给 D3D11 texture——要统一到 D3D12 需要 WGC→D3D12 直接
+路径(微软较新 API)或让 egui 走 D3D11 后端(影响大)。这是架构级决策。
+
+另一个更轻的可能：OBS 的 CopyResource 后**完全不等 GPU**——它靠 gs_texture 的
+渲染器内部同步(下一帧 render 时 GPU 自然串行)。我们可否也去掉所有显式同步，
+靠 wgpu 的 queue 串行？这值得作为一个实验。
