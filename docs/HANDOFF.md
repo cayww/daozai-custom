@@ -1440,4 +1440,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - **flamingo 项目 2026-10-05 实测**：Win10 2004+ 下 `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` 后用 BitBlt 抓屏，窗口区域抓到背后窗口（黑 0.000），分层窗口同样——推翻本项目 `wgc.rs:3` "GDI 下 WDA 只会变黑"的旧注释（可能基于旧 Windows/时序）。
   - **Electron-Liquid-Glass**：走 DXGI Desktop Duplication + D3D11（不用 WGC），有成熟 device-lost 流程。
 - **修法**（176f3a8）：加实验开关 `DAOZAI_LIQUID_GDI_CAPTURE=1`——跳过零拷贝/WGC，`capture()` 直接用 `grab_raw`(GDI BitBlt)，保留 WDA 排除。默认关闭。
-- 预览目录加 `start-gdi-test.bat`（设 GDI_CAPTURE=1 + GPU_SHARE=0 双保险）。新 exe `e0f4b7ddb7858c71`，已部署、清日志。**待用户验证**：GDI 模式下玻璃是否干净（无自抓条纹）、换分辨率是否不闪/不失效。
+- 预览目录加 `start-gdi-test.bat`（设 GDI_CAPTURE=1 + GPU_SHARE=0 双保险）。新 exe `e0f4b7ddb7858c71`，已部署、清日志。
+
+##### ✅ 7.0zze 实测成功——十几轮折腾后第一个真正根治的方案（2026-11-20 23:16）
+- 用户用 `start-gdi-test.bat` 跑，肉眼确认正常，让我读日志判断。日志在**预览目录** `data\diagnostics\liquid-glass.log`（脚本设了 DAOZAI_DATA_DIR，不是 %APPDATA%）。
+- **确证走 GDI**：全文无 `wgc:`/`init OK`/`导入共享纹理`/`device_lost`/`0x887A0005`（WGC 整条路径没运行）；有持续 `tick=... cap=... mean_r=... tex=...`（capture 正常出帧）；`exclude: 重设 0 个`（WDA 排除稳定）；无"黑岛/条纹/丢弃"诊断。
+- **换分辨率扛住了**：日志有 `sig=2b2bd67f...(2560x1440) → sig=33ac4e7f...(1920x1080)` + `显示器拓扑变化，等待 500ms 稳定后重抓底片`；换后**异常关键词 0 条**，出帧 `tick=13080→15000` 完全连续无中断，`mean_r` 稳定 160-180，`plate: new` 持续更新。
+- **结论**：换分辨率时是 WGC 的 D3D11 device 被 DWM 移除（0x887A0005），与液态玻璃 shader 无关；GDI 不碰 D3D11，问题从源头消失。项目 `wgc.rs:3` "GDI 下 WDA 只会变黑"的旧注释在新 Windows 上不成立。
+- **待用户决策**：是否转正（做 `liquid_capture=gdi|wgc` 设置项、默认仍 WGC）；是否做性能优化（GDI BitBlt 搬后台线程 + unchanged-frame detection，参考 glass-backdrop-rs，当前在主线程每帧抓可能有开销）。
