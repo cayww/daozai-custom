@@ -1373,3 +1373,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修法**（e32b343）：`cursor_far` 改按 `hit.expand(24)` + 未读徽章判定；通知/吐司已有独立挡因不重复。诊断坐标日志保留。
 - 新 exe `0fcbf892ab7f1c46c`，已部署预览目录、清空 pill-sleep.log。编译通过，全量测试未跑（用户要求）。**待用户验证**：鼠标移离岛仔后 20 秒回收触发（WS 275MB→~30MB），挡因不再有 cursor。
 - main HEAD=`e32b343`（ahead origin 5，未 push）。
+
+### 7.0zzb device-lost 重建风暴加退避——根治换分辨率后光标持续闪（2026-11-20 21:33–21:50，提交 `415ffe9`/`7c53175`）
+- 用户实测：内存/泄漏/20 秒回收三项都已修好，但换分辨率后**鼠标指针持续闪、岛反复展开收起**（分辨率稳定、鼠标不动也闪）。
+- **定位**（诊断 `afdf877`/`415ffe9` + 日志实证）：
+  - pill-sleep.log：`blocked=cursor` 已消失，回收修复生效；区域日志显示 `expanded` 随鼠标 y 变化（正常 hover），非自激。
+  - **真凶**：`liquid-glass.log` 连续 **54 次** `event query 超时 device_lost=true → init OK → 又超时` 循环；`qdc: topology=SINGLE targets=[src0:2560x1440] sources=[1920x1080]`（换分辨率期 source/target 不一致，device 反复 lost）。每轮 init 都 StartCapture + DWM 合成 + 捕获黄框重启 → 可见闪烁 + GPU 空转。
+- **修法**（7c53175）：`wgc.rs` 加 `LOST_STREAK` 递增退避（1s→2s→4s→8s），device-lost 后设 `SETTLE_UNTIL`，期间 `settling()` 让 grab/grab_shared 直接 NoFrame、不再 StartCapture；成功出帧 `note_capture_ok()` 清零。三处 device-lost 分支统一接入。从 54 次风暴降到等设备稳定后 1-2 次重建。
+- 新 exe `1a8ad6fba96c790d`，已部署预览目录、清空 liquid-glass.log/glass-diagnostics.txt。编译通过，全量测试未跑（用户要求）。**待用户验证**：换分辨率后光标不再持续闪；日志里"device-lost"行只有个位数而非几十次。
+- main HEAD=`7c53175`（ahead origin 8，未 push）。
