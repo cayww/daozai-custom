@@ -104,3 +104,64 @@ Rive Flutter runtime（GitHub issue，2026-03）：D3D11 fence 路径在 sleep/w
 - wgpu-scry design_docs/2026-05-07_platform_ceilings.md（explicit D3D12 fence shipped；每帧 fresh resource + fence_value；with_dx12_fence_synchronizer）
 - wgpu-scry design_docs/2026-05-11_windows_webview2_target.md（capture_metrics、stale/dim-match guard、ScaleFactorChanged、--scale-test；无 device-loss 细节）
 - Rive Flutter runtime issue #86（fence 在 device-lost 时返回 0x887A0005，VERIFY_OK abort 的教训）
+
+---
+
+## 六、追加调研：社区成功案例（回答"有没有人用新建 device + 重建成功过"）
+
+**答案：有，而且是生产级——OBS Studio（数百万用户的直播软件）。** 我上一节"没有银弹"的结论过于悲观，需要更正：确实有成熟项目用这套方案稳定运行多年。
+
+### 6.1 OBS Studio 的 device-lost 恢复（已验证成功，生产环境）
+
+OBS 的 `libobs-winrt/winrt-capture.cpp` + `libobs-d3d11/d3d11-subsystem.cpp` 就是"新建 device + 重建所有资源 + 重建 frame pool"的完整实现，而且是**官方主线代码、用了多年**（最早 2016 年为 NVIDIA Win10 Anniversary Update 的 device removed 加的，见 git commit "libobs-d3d11: Rebuild device and assets if device removed/reset"）。
+
+**关键架构**（这是它成功、我们失败的根本原因）：
+
+1. **它有一个统一的 D3D device 所有者**：OBS 的 graphics subsystem（`gs_get_device_obj()`）持有唯一的 D3D11 device。device lost 时，**子系统统一重建 device**，然后遍历所有注册了 `gs_register_loss_callbacks` 的对象（包括 WGC capture），逐个回调重建。
+   - 我们的项目：**wgpu(D3D12) 和 WGC(D3D11) 各有各的 device，没有统一所有者**。这正是进程内恢复失败的核心——device lost 时只重建了 WGC 的 D3D11，wgpu 的 D3D12 那侧没同步重建，共享纹理/fence 句柄两边对不上。
+
+2. **回调两段式**：`device_loss_release`（撤销事件、Close frame_pool/session、清空所有 COM 引用）→ 子系统重建 device → `device_loss_rebuild`（用新 device 重建整条链）。
+
+3. **rebuild 时重新创建 `GraphicsCaptureItem`**（不是复用）：通过保存的 `window`/`monitor` 调 `CreateForWindow`/`CreateForMonitor` 重新创建 item → 新 device 创建 IDirect3DDevice → `Direct3D11CaptureFramePool::Create` → `CreateCaptureSession` → 重新注册 FrameArrived → `StartCapture()`。
+   - 这正是我之前推测但没确认的点：**item 在 device lost 后要重建**。我们的 Recreate 方案保留了旧 item，可能是帧不到达的原因之一。
+
+4. **失败处理**：`StartCapture()` 用 try/catch 包住，失败则 `active` 保持 FALSE，靠下一轮重试；重建里有 `do...while(_canvasDevice == null)` 式重试（微软 ScreenCapturePlayer 示例），直到拿到可用 device。
+
+5. **每帧 size 变化时调 `frame_pool.Recreate(device, format, 2, frame_content_size)`**（注意用的是 `frame.ContentSize`，且代码注释 `need GetDesc because ContentSize is not reliable`——实际用 `GetDesc` 拿的 desc.Width/Height 更可靠）。
+
+### 6.2 微软官方 ScreenCapturePlayer 示例（也是这套）
+
+微软 `windows-uwp` 仓库的 ScreenCapturePlayer：
+```
+ProcessFrame → catch IsDeviceLost → needsReset=true, recreateDevice=true
+  → ResetFramePool(size, recreateDevice):
+      do {
+        if recreateDevice: _canvasDevice = new CanvasDevice()
+        _framePool.Recreate(_canvasDevice, B8G8R8A8UIntNormalized, 2, size)
+      } catch IsDeviceLost: _canvasDevice = null; recreateDevice = true
+      while (_canvasDevice == null)
+```
+`do...while` **循环重试直到拿到可用 device**——不是重建一次就放弃。
+
+### 6.3 为什么我们的实现失败了（逐条对照）
+
+| OBS/微软成功要素 | 我们的实现 | 结果 |
+|---|---|---|
+| 统一 device 所有者，两侧一起重建 | wgpu D3D12 与 WGC D3D11 各自独立 | D3D11 重建了、D3D12 没跟上 → 共享纹理句柄失效（我一直怀疑的双 device 问题，被 OBS 架构佐证） |
+| device lost 时**重建 GraphicsCaptureItem** | Recreate 保留旧 item | 旧 item 在 device lost 后可能失效 → 帧不到达 |
+| `Release` 彻底 Close 旧 pool/session + 撤销事件 | 直接 drop，无显式 Close | COM 引用可能残留 |
+| `do...while` 重试直到拿到可用 device | 重建一次失败就冷却/放弃 | 撞在 device 仍 removed 的窗口就永久卡住 |
+| 新 device 用 try/catch 验证可用才 `active=TRUE` | 无验证 | 用着坏 device 继续失败 |
+
+### 6.4 对项目的启示
+
+1. **进程重启 workaround 之所以最可靠，本质就是"强制统一重建两侧 device"**——OBS 用架构做到了，我们用重启做到了。方向是对的。
+2. **如果要在进程内做对**，需要模仿 OBS：让 wgpu 侧在检测到 D3D11 device lost 时也重建自己的 D3D12 device + 重新导入共享纹理 + 重建 item。这是很大的架构改动（wgpu device/queue/pipeline 全部要重建），风险高。
+3. **低风险改进**（可考虑）：在现有自动重启前，先尝试一次 OBS 式的完整会话重建（Close 旧 pool/session → 重建 item → 新 device → Create pool → StartCapture），带 `do...while` 重试；失败再重启进程。这样多数情况下不用重启，只在真失败时重启。
+4. 单纯 `frame_pool.Recreate(pool, 新device)` 而**保留旧 item/session**——社区成功案例里都不是这么用的（OBS 重建 item + 重建整个 pool/session；微软示例 Recreate 但配合 do-while 重试 + CanvasDevice 重建）。我们最初的 Recreate 方案只做了半套。
+
+### 新增参考
+- OBS Studio `libobs-winrt/winrt-capture.cpp`：`winrt_capture_device_loss_release` / `winrt_capture_device_loss_rebuild` / `gs_register_loss_callbacks` / `gs_get_device_obj`
+- OBS Studio `libobs-d3d11/d3d11-subsystem.cpp`：2016  commit "Rebuild device and assets if device removed/reset"（生产验证多年）
+- 微软 `windows-uwp` ScreenCapturePlayer：`ResetFramePool` 的 `do...while(_canvasDevice == null)` 重试
+- gist `tor4kichi/cd76923d4b58bd4105d31aca0bf2d4d6`：同一模式的可运行示例
