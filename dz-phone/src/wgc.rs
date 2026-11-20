@@ -958,9 +958,14 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         drop(frame);
         if signaled == 0 {
             // 超时常见原因是 device lost：device 被移除后 query 永不 signal。
-            // 检查一次，是则销毁会话重建；否则只是偶发丢帧。
-            let lost = unsafe { s._device.GetDeviceRemovedReason().is_err() };
-            log(&format!("wgc: [gpu-share] event query 超时，device_lost={}", lost));
+            // 诊断：把 GetDeviceRemovedReason 的实际 HRESULT 打出来，区分真 lost
+            // （0x887A0005/6）与误判（其它错误/恢复期），避免盲目 Recreate。
+            let reason = unsafe { s._device.GetDeviceRemovedReason() };
+            let code = reason.as_ref().err().map(|e| e.code().0 as u32).unwrap_or(0);
+            // 只有明确的 DEVICE_REMOVED/DEVICE_RESET 才算真 lost；其它错误码
+            // （含 S_OK 即 code=0）一律当偶发超时，不重建——避免误判把好会话搞坏。
+            let lost = code == 0x887A0005 || code == 0x887A0006;
+            log(&format!("wgc: [gpu-share] event query 超时 spins={}，device_lost={} reason=0x{:08X}", spins, lost, code));
             if lost {
                 // 同前：原 pool Recreate 恢复，避免每次超时都整体重建 → StartCapture 风暴。
                 if recreate_after_device_lost(s, bw, bh).is_err() {
