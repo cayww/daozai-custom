@@ -1425,3 +1425,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **怀疑**：`GetDeviceRemovedReason().is_err()` 判定过宽——任何 Err 都被当成真 lost，可能设备其实没真 removed。
 - **修法**（e702e6e）：只有明确 `0x887A0005`(DEVICE_REMOVED)/`0x887A0006`(DEVICE_RESET) 才算真 lost 触发 Recreate；其它码当偶发超时丢帧、保住会话。日志加 `reason=0x{:08X}` + spins 数。
 - 新 exe `aa9159853347292b`，已部署。**这次日志会给出决定性数据**：换分辨率超时时 reason 是 0（判决过宽，本次修复即生效）还是 0x887A0005（真 lost，需从 device 重建源头解决）。待用户实测并附日志。
+
+#### 7.0zzd.4 决定性数据：真 device removed + 冷却后重建（提交 `7ddd492`/`a29934d`）
+- 用户日志：`event query 超时 spins=256，device_lost=true reason=0x887A0005` —— **真 device removed**（非误判），且 spins=256 就检出（我加的早退生效），说明**每次重建后下一帧立刻又 lost**：重建撞在 DWM 仍重置设备的窗口里。Recreate+StartCapture 也救不回帧。
+- 社区权威（microsoft/Windows.UI.Composition-Win32-Samples #139 + 微软 Screen capture 文档）：device removed 需新建 device+重建资源+Recreate pool；微软也承认 WGC 内部在时机不对时不冒泡错误。
+- **修法**（7ddd492）：device-lost 不再当帧立即 Recreate/init，而是**销毁死会话 + 递增冷却 2s→4s→8s**（`cooldown_after_device_lost`），期间 `settling()` 挡住抓屏；冷却结束后走正常 init 建全新会话，让 DWM/显卡彻底稳定。成功出帧 `note_capture_ok` 清计数。删除不再用的 `recreate_after_device_lost` 函数。
+- 新 exe `756504f8f4e4355d`（Deployed & 校验一致）。注意：a29934d 修正了 7ddd492 误把 wgc.rs 换行改 CRLF 的问题（逻辑 diff 仅 32+/85-）。编译通过，测试未跑。**待用户验证**：换分辨率后等几秒玻璃恢复动态、不闪、日志无反复 0x887A0005。
