@@ -1407,3 +1407,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 分支 `fix/wgc-recreate` HEAD=`8683321`；main 仍 `9d23e4e`（本地 ahead 12，未 push）。
 
 > ⚠️ 后续 agent：当前工作分支是 `fix/wgc-recreate`，不是 main。验证通过后需决定是否把它合回 main / 或继续在此分支迭代。旧链在 tag `backup/before-recreate-rework-20261120` 可查。
+
+#### 7.0zzd.1 首轮验证：重建风暴根治，但 Recreate 后帧不到达（提交 `e2e8c7a`）
+- 用户实测日志（`%APPDATA%\Daozai\diagnostics\liquid-glass.log`）：换分辨率 device-lost **从 54 次降到 1 次**，`pool.Recreate` 成功、之后 `perf tick` 稳定运行无再 lost —— **重建风暴/闪烁根治**。
+- **但**：Recreate 之后**0 次"导入共享纹理"/出帧**，玻璃定格。原因：微软 Screen capture 文档 + sekin.in/macmyths 明确 Recreate 会丢弃池内所有旧帧，之后必须 "resume the session" 才会重新驱动帧到达；我们只 Recreate 没重启 session。
+- **修法**（`e2e8c7a`）：`recreate_after_device_lost` 在 `pool.Recreate` 后加 `session.StartCapture()`（session/item 对象保留，只在新 pool 上激活，非整体重建），错误做容错（幂等，避免误触发整体重建风暴）。
+- 新 exe `4b90a59c4ffe8163`，已部署（部署前先 taskkill 停进程——exe 被占用）。**待用户验证**：换分辨率后玻璃是否恢复更新（日志 Recreate 后应有"导入共享纹理"/frame）、是否不闪。
