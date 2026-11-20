@@ -1451,7 +1451,16 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
         let tick = TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // 帧率探针：tick 每帧 +1，定期落盘就能算出实际 fps（日志里其它行只在
         // 抓到新帧时才写，静态背景根本测不出帧率）。
-        if tick % 600 == 0 { diag(&format!("perf: tick={tick}")); }
+        // 周期状态：一次看出走哪条路径、纹理是否有缓存，定位「移动背景不变」。
+        if tick % 600 == 0 {
+            let path = if crate::wgc::gpu_share_enabled() { "gpu-share" } else { "staging" };
+            diag(&format!("perf: tick={tick} path={path} failed={} shared={} texture={} settling={} share_env={:?}",
+                FAILED.load(std::sync::atomic::Ordering::Relaxed),
+                guard.as_ref().map(|g| g.shared.is_some()).unwrap_or(false),
+                guard.as_ref().map(|g| g.texture.is_some()).unwrap_or(false),
+                crate::wgc::settling(),
+                std::env::var("DAOZAI_LIQUID_GPU_SHARE").ok()));
+        }
         if FAILED.load(std::sync::atomic::Ordering::Relaxed) { return Vec::new(); }
         if guard.is_none() {
             match make_gpu(device, self.format) {
@@ -1495,6 +1504,15 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
             let shared = crate::wgc::grab_shared(f.capture[0] as i32, f.capture[1] as i32, cw, ch);
             // 把采样到的亮度同步到 BG_LUMA（未采样到时 theme_luma 返回上次值，无副作用）。
             BG_LUMA.store(crate::wgc::theme_luma().to_bits(), std::sync::atomic::Ordering::Relaxed);
+            if !matches!(shared, crate::wgc::Grab::Shared(_)) && tick % 600 == 0 {
+                let why = match shared {
+                    crate::wgc::Grab::NoFrame => "NoFrame",
+                    crate::wgc::Grab::Unavailable => "Unavailable",
+                    crate::wgc::Grab::Frame(..) => "Frame(意外)",
+                    crate::wgc::Grab::Shared(_) => "Shared",
+                };
+                diag(&format!("[gpu-share] 本帧无共享帧: {} settling={}", why, crate::wgc::settling()));
+            }
             if let crate::wgc::Grab::Shared(sh) = shared {
                 let need_import = shared_needs_import(gpu.shared.as_ref().map(|(_, _, w, h, e)| (*w, *h, *e)), sh.w, sh.h, sh.epoch);
                 if need_import {
