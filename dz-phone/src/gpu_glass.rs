@@ -114,25 +114,25 @@ struct GlassGpu {
     texture: Option<wgpu::Texture>,
     bind_group: Option<wgpu::BindGroup>,
     size: (u32, u32),
-    /// spike: 从 D3D11 共享句柄导入的纹理 + 它的 bind_group + 尺寸 + 抓屏源代次(epoch)。
+    /// spike: 从 D3D11 共享句柄导入的纹理 + 它的 bind_group + 抓屏源代次(epoch)。
     /// 与旧的 `texture` 分开：GPU 共享路径用它绑定 shader 的 bg，绕过 CPU 上传。
-    /// epoch 必须进缓存键：换屏会重建会话/共享纹理但抓屏尺寸常常不变，只比尺寸
-    /// 会继续采样旧纹理（背景放大 / 静止壁纸 / 没铺满 / 发黑）。
-    shared: Option<(wgpu::Texture, wgpu::BindGroup, u32, u32, u64)>,
+    /// 共享纹理分配尺寸固定 TEX_W×TEX_H，不再随帧尺寸变化，所以缓存键只有 epoch：
+    /// 换屏/拓扑变化会重建会话与共享纹理（新 NT handle）但帧尺寸常常不变，只比
+    /// 尺寸会继续采样旧纹理（背景放大 / 静止壁纸 / 没铺满 / 发黑）。
+    shared: Option<(wgpu::Texture, wgpu::BindGroup, u64)>,
     /// spike: 一次性 1x1 copy 的 staging buffer，用于刷 D3D12 的状态屏障 / shader cache。
     scratch: Option<wgpu::Buffer>,
 }
 
 /// 缓存的共享纹理是否需要重新从 WGC 句柄导入。
 ///
-/// `cached` 是 (宽, 高, 抓屏源代次)。尺寸变化（展开动画）或代次变化（换屏/拓扑
-/// 变化重建了会话与共享纹理）都必须重新 OpenSharedHandle：尺寸没变但句柄已换
-/// 时继续采样旧纹理，就是换屏后玻璃背景放大 / 定格壁纸 / 没铺满 / 发黑的根因。
-fn shared_needs_import(cached: Option<(u32, u32, u64)>, w: u32, h: u32, epoch: u64) -> bool {
-    match cached {
-        None => true,
-        Some((cw, ch, ce)) => cw != w || ch != h || ce != epoch,
-    }
+/// 共享纹理分配尺寸固定 TEX_W×TEX_H，展开动画里只有有效帧尺寸在变——那只是
+/// uniform 的 tex，采样靠 shader 的 scale=tex/alloc 映射，纹理本身无需重建。
+/// 唯一需要重新 OpenSharedHandle 的情形是代次变化（换屏/拓扑/device-lost 重建
+/// 了会话与共享纹理），此时旧 NT handle 已失效，继续采样旧纹理就是背景放大 /
+/// 定格壁纸 / 没铺满 / 发黑的根因。
+fn shared_needs_import(cached_epoch: Option<u64>, epoch: u64) -> bool {
+    cached_epoch != Some(epoch)
 }
 
 static GPU: Mutex<Option<GlassGpu>> = Mutex::new(None);
@@ -1403,7 +1403,11 @@ fn import_shared_handle(
     }
     let resource = resource?;
     // 3) hal 纹理 → wgpu 纹理。格式与 WGC 帧一致（BGRA8），只做纹理采样。
-    let size = wgpu::Extent3d { width: shared.w, height: shared.h, depth_or_array_layers: 1 };
+    // 关键：size 必须是共享纹理的**分配尺寸**（固定 TEX_W×TEX_H），与底层 D3D12
+    // resource 一致，不能用有效帧尺寸 shared.w/h——后者只是左上角有效区，shader
+    // 靠 u.extra 的 tex 与 scale=tex/alloc 映射到它。传错 size 会让 texture_from_raw
+    // 的描述与 resource 不符，采样错位/验证失败。
+    let size = wgpu::Extent3d { width: TEX_W, height: TEX_H, depth_or_array_layers: 1 };
     let desc = wgpu::TextureDescriptor {
         label: Some("daozai-glass-shared"),
         size,
@@ -1517,14 +1521,17 @@ impl egui_wgpu::CallbackTrait for GlassCallback {
                 diag(&format!("[gpu-share] 本帧无共享帧: {} settling={}", why, crate::wgc::settling()));
             }
             if let crate::wgc::Grab::Shared(sh) = shared {
-                let need_import = shared_needs_import(gpu.shared.as_ref().map(|(_, _, w, h, e)| (*w, *h, *e)), sh.w, sh.h, sh.epoch);
+                // 只按 epoch 判断：帧尺寸(展开动画)变化不再触发重新导入那一串 COM。
+                let need_import = shared_needs_import(gpu.shared.as_ref().map(|(_, _, e)| *e), sh.epoch);
                 if need_import {
                     match import_shared_handle(device, &gpu.layout, &gpu.uniform, &gpu.sampler, &sh) {
                         Some((tex, bind)) => {
                             gpu.bind_group = Some(bind.clone());
-                            gpu.shared = Some((tex, bind, sh.w, sh.h, sh.epoch));
+                            gpu.shared = Some((tex, bind, sh.epoch));
+                            // gpu.size 记有效帧尺寸（诊断用），不是纹理分配尺寸。
                             gpu.size = (sh.w, sh.h);
-                            diag(&format!("[gpu-share] 导入共享纹理 {}x{}", sh.w, sh.h));
+                            diag(&format!("[gpu-share] 导入共享纹理(alloc {}x{}) 有效帧 {}x{} epoch={}",
+                                          TEX_W, TEX_H, sh.w, sh.h, sh.epoch));
                         }
                         None => {
                             // 换屏后旧句柄已失效；必须清掉缓存，否则下面 `gpu.shared.is_some()`
@@ -1872,21 +1879,21 @@ mod tests {
         assert_eq!(std::mem::size_of::<Uniforms>(), 9 * 16 + MAX_CTL * 32);
     }
 
-    /// 换屏后抓屏尺寸常常不变，只按 (w,h) 判断复用会采样旧显示器纹理 →
-    /// 背景放大 / 静止壁纸 / 没铺满 / 发黑。代次(epoch)必须进缓存键。
+    /// 共享纹理分配尺寸固定，展开动画只有有效帧尺寸在变——那只是 uniform 的 tex，
+    /// shader 按 scale=tex/alloc 映射，纹理本身复用。只有换屏/拓扑/device-lost
+    /// 重建会话使 epoch +1 时才必须重新 OpenSharedHandle，否则继续采样旧纹理 →
+    /// 背景放大 / 静止壁纸 / 没铺满 / 发黑。
     #[test]
-    fn shared_texture_reimports_on_epoch_change_even_when_size_is_same() {
+    fn shared_texture_reimports_only_on_epoch_change() {
         // 首次无缓存 → 必须导入。
-        assert!(shared_needs_import(None, 957, 339, 1));
-        // 同一代次、尺寸不变 → 复用（正常每帧，零拷贝的意义所在）。
-        assert!(!shared_needs_import(Some((957, 339, 1)), 957, 339, 1));
-        // 换屏：尺寸完全一样，但 WGC 会话重建使 epoch +1 → 必须重新导入。
-        assert!(shared_needs_import(Some((957, 339, 1)), 957, 339, 2));
+        assert!(shared_needs_import(None, 1));
+        // 同一代次 → 复用，即便有效帧尺寸在变（展开动画每帧微变，零拷贝的意义所在）。
+        assert!(!shared_needs_import(Some(1), 1));
+        // 换屏：WGC 会话重建使 epoch +1 → 必须重新导入。
+        assert!(shared_needs_import(Some(1), 2));
         // 仅2号屏→仅1号屏/扩展/复制三种切换都会让 wgc 的 EPOCH 递增，统一被这条覆盖。
-        assert!(shared_needs_import(Some((957, 339, 7)), 957, 339, 8));
-        // 展开动画：代次不变、尺寸变化 → 仍要重新导入（旧逻辑已覆盖，回归保护）。
-        assert!(shared_needs_import(Some((957, 339, 1)), 1157, 339, 1));
-        // 尺寸和代次同时变 → 重新导入。
-        assert!(shared_needs_import(Some((957, 339, 1)), 1157, 422, 2));
+        assert!(shared_needs_import(Some(7), 8));
+        // device-lost 重建也会递增 epoch → 重新导入。
+        assert!(shared_needs_import(Some(99), 100));
     }
 }

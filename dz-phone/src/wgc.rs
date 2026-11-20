@@ -620,11 +620,23 @@ fn adapter_by_luid(luid: LUID) -> Option<IDXGIAdapter> {
     None
 }
 
+// ===== spike: 共享纹理固定分配尺寸 =====
+// 展开动画里 capture 尺寸每帧微变（实测 629x122→631x122→632x122）。若按帧尺寸
+// 重建共享纹理，每帧都要跑 CreateTexture2D + CreateSharedHandle + CreateQuery +
+// OpenSharedFence 一串同步 COM 调用 —— 这就是展开变慢、与 fence/yield 都无关的
+// 共同瓶颈。改为固定分配 1280x512：每帧只把有效帧写进纹理左上角 (w,h)，
+// shader 按 scale=有效帧/分配尺寸 采样（见 gpu_glass::sample_px）。
+// 必须与 gpu_glass 的 TEX_W/TEX_H 一致。
+const SHARED_TEX_W: u32 = 1280;
+const SHARED_TEX_H: u32 = 512;
+
 /// spike: 创建一张可供 D3D12 OpenSharedHandle 的 D3D11 纹理。
 /// 用 NT handle + keyed mutex：NT handle 是 DX12 唯一支持的模型；keyed mutex
 /// 用于 producer(D3D11) 写之前的独占，consumer(D3D12) 侧无法 QI 它（见 gpu_glass）。
-fn shared_texture(device: &ID3D11Device, context: &ID3D11DeviceContext, w: u32, h: u32) -> windows::core::Result<SharedFrame> {
+/// 分配尺寸固定 SHARED_TEX_W×H，不再随帧尺寸变化——每帧只写左上角有效区。
+fn shared_texture(device: &ID3D11Device, context: &ID3D11DeviceContext) -> windows::core::Result<SharedFrame> {
     unsafe {
+        let (w, h) = (SHARED_TEX_W, SHARED_TEX_H);
         let desc = D3D11_TEXTURE2D_DESC {
             Width: w, Height: h, MipLevels: 1, ArraySize: 1,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -738,8 +750,8 @@ fn init(_x: i32, _y: i32, w: u32, h: u32,
         let stage = staging(&device, w, h)?;
         // spike: 共享纹理按需创建（失败不致命，退回旧 staging 路径）。
         let shared = if gpu_share_enabled() {
-            match shared_texture(&device, &context, w, h) {
-                Ok(s) => { log("wgc: GPU 共享纹理已创建"); Some(s) }
+            match shared_texture(&device, &context) {
+                Ok(s) => { log(&format!("wgc: GPU 共享纹理已创建 {}x{}", SHARED_TEX_W, SHARED_TEX_H)); Some(s) }
                 Err(e) => { log(&format!("wgc: 共享纹理创建失败，退回 staging 读回: {:?}", e)); None }
             }
         } else { None };
@@ -949,13 +961,19 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
     let s = guard.as_mut().unwrap();
     // 会话没有共享纹理（创建失败或关闭开关）→ 回退让调用方走旧路径。
     if s.shared.is_none() { return Grab::Unavailable; }
-    // 展开动画里尺寸会变：共享纹理按新尺寸重建（wgpu 侧会据此重新导入）。
+    // 有效帧必须放得进固定纹理左上角，否则写越界（极少见，超大 DPI/多屏拼接）。
+    // 此时回退 staging 路径（它有自己的 TEX_W×H 保护）。
+    if bw > SHARED_TEX_W || bh > SHARED_TEX_H { return Grab::Unavailable; }
+    // 共享纹理分配尺寸固定，不再随展开动画的帧尺寸微变而重建——重建时那串同步
+    // COM 调用（CreateTexture2D/SharedHandle/Query/OpenSharedFence）才是展开变慢
+    // 的真凶。每帧只把有效帧拷到左上角 (0,0)，尺寸变化由 uniform 的 tex 传给
+    // shader，它按 scale=tex/alloc 采样有效区。仅 device-lost 后会话重建才会新建。
     let mut device_lost = false;
-    if s.shared.as_ref().is_none_or(|t| t.w != bw || t.h != bh) {
-        match shared_texture(&s._device, &s.context, bw, bh) {
+    if s.shared.is_none() {
+        match shared_texture(&s._device, &s.context) {
             Ok(t) => s.shared = Some(t),
             Err(e) => {
-                log(&format!("wgc: [gpu-share] shared resize FAILED {:?}", e));
+                log(&format!("wgc: [gpu-share] shared create FAILED {:?}", e));
                 device_lost = is_device_lost(&e);
                 if !device_lost { return Grab::Unavailable; }
             }
