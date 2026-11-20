@@ -1146,3 +1146,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 问题1：非0拷贝「仅2号屏→复制」铺不满。根因 = grab() 的 src_box 按显示器几何算，复制模式 WGC 真实帧更小，CopySubresourceRegion 静默裁剪→staging 留黑。修法：GetDesc 取真实帧尺寸，框超出就丢帧；grab()/grab_shared() 都加（60b4eed）。
 - 问题2：移除 settle-learned 全套（LEARNED_SETTLE_MS/TOPO_CHANGED_AT/note_plate_ready/落盘），稳定期固定 SETTLE_MS=1000，保留 DAOZAI_SETTLE_MS 覆盖。
 - 本轮按要求未跑全量测试；本地包 exe `2890bfb86a80f167` / zip `e495d16d0626360b`，**未上传 release**。main push 到 60b4eed。待用户验证。
+
+
+### 7.0zw v1.1.4：铺不满根治——几何 uniform 每帧同步视口（2026-11-20，详版见桌面权威副本 §7.0zw）
+- 用户要求社区调研：egui #8280 / tetanes #315 / 微软 WGC 指引均印证「stale viewport state」= 换屏后旧几何画进新视口 → 铺不满。
+- v1.1.3 的 GetDesc 丢帧让复制模式持续 NoFrame、纹理永久停在换屏前，属加剧因素。
+- 修法（61daa50）：gpu_glass 抽 write_geom，所有返回路径按视口(cw,ch)写几何 uniform；wgc.init 帧池用 item.Size()；src_box 夹到真实帧、去掉丢帧逻辑。
+- 未跑全量、未上传 release。本地包 exe `556ffdf54b2eaa53` / zip `c2cc450086392e86`。main push 到 61daa50。待用户验证。
