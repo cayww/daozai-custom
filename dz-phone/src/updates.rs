@@ -639,7 +639,7 @@ mod tests {
         let path=std::env::temp_dir().join(format!("daozai-update-check-{}.json",std::process::id()));
         let _=std::fs::remove_file(&path);
         for (automatic, version, expected) in [(true, "v0.6.65", true), (true, "v0.6.65", false),
-            (true, "v0.6.66", true), (false, "v0.6.66", true)] {
+            (true, "v1.1.0", true), (false, "v1.1.0", true)] {
             let mut state=State::load(path.clone());
             if path.exists() { assert!(!state.should_check(Instant::now()+Duration::from_secs(3600))); }
             state.automatic_check = automatic;
