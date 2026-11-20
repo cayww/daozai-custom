@@ -1328,6 +1328,9 @@ impl App {
         body: String,
         unread: Option<crate::app::Unread>,
     ) {
+        // 手机连接的通知从这里进来（WinRT 监听器直连此路径，不经过 notify_phone），
+        // 先做 App 名单自动登记，再照常显示。非手机通道是 no-op。
+        self.maybe_register_phone_app(&id, &body);
         if !self.settings.read_notifications
             || id.is_empty()
             || !crate::messenger::NotificationFilter::for_settings(&self.settings).allows(&id)
@@ -1427,6 +1430,21 @@ impl App {
         self.notification_bell_at = self.t;
         self.notification_bell_until = self.t + 4.5;
     }
+    /// 手机通知自动登记：名单里没有的新 App 加进 phone-apps.json、默认开启。
+    /// 两条通知入口都要调：notify_phone（旧路径）和 receive_notification_from
+    /// （WinRT 监听器的实际路径，手机消息从这里进来）。只登记、不改显示逻辑。
+    pub(crate) fn maybe_register_phone_app(&mut self, id: &str, body: &str) {
+        if !crate::system::phone_channel(id) { return; }
+        self.phone_apps.reload_if_changed();
+        let head = body.split('·').next().unwrap_or("").trim().to_string();
+        if let Some(new_app) = crate::system::phone_new_app(&head, body, &self.phone_apps) {
+            if self.phone_apps.add_if_missing(&new_app) {
+                self.phone_apps.save();
+                log_notice(&format!("AUTO-ADD 手机 App 名单 + {new_app}"));
+            }
+        }
+    }
+
     pub(crate) fn notify_phone(&mut self, app: String, id: String, body: String) {
         let phone = crate::system::phone_channel(&id);
         // 手机 App 名单是外部 JSON，改完约 1 秒内生效，不用重启岛仔。
@@ -1448,15 +1466,7 @@ impl App {
         // 真实手机连接通知只报主 AUMID，改由正文识别来源；
         // 明确命中黑名单的静默，识别不出的按「连接」放行，避免漏掉来电等重要通知。
         let phone_info: Option<(String, bool)> = if phone {
-            // 检测到名单里没有的新 App → 自动登记（默认开启）并写回 phone-apps.json；
-            // 之后设置页只保留勾选列表，不再手动输入 App 名。
-            let head=body.split('·').next().unwrap_or("").trim().to_string();
-            if let Some(new_app)=crate::system::phone_new_app(&head,&body,&self.phone_apps) {
-                if self.phone_apps.add_if_missing(&new_app) {
-                    self.phone_apps.save();
-                    log_notice(&format!("AUTO-ADD 手机 App 名单 + {new_app}"));
-                }
-            }
+            self.maybe_register_phone_app(&id, &body);
             Some(
                 crate::system::phone_app(&body, &self.phone_apps)
                     .unwrap_or(("连接".to_string(), true)),

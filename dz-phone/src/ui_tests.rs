@@ -9314,3 +9314,33 @@ fn liquid_ink_follows_material_for_legibility(){
     assert_eq!(q.ink,[22,22,26],"浅背景用深墨字");
     assert_ne!(p.ink,q.ink,"两种材质必须给出不同的 ink");
 }
+
+
+#[test]
+fn 手机通知走receive路径也会自动登记App(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();h.frame(vec![]);
+    h.app.settings.read_notifications=true;
+    h.app.settings.notifications=true;
+    let before=h.app.phone_apps.items.len();
+    // WinRT 监听器实际走的是 receive_notification_from（不经过 notify_phone）
+    h.app.receive_notification_from(
+        "手机连接".into(),
+        "Microsoft.YourPhone_8wekyb3d8bbwe!App".into(),
+        "小红书 · 有人回复了你".into(),
+        None,
+    );
+    assert_eq!(h.app.phone_apps.items.len(),before+1,"手机通知必须自动登记新App到名单");
+    assert_eq!(h.app.phone_apps.items.last().unwrap().0,"小红书");
+    // 同一 App 再来一条不重复登记
+    h.app.receive_notification_from(
+        "手机连接".into(),
+        "Microsoft.YourPhone_8wekyb3d8bbwe!App".into(),
+        "小红书 · 又一条".into(),
+        None,
+    );
+    assert_eq!(h.app.phone_apps.items.len(),before+1,"同一App不能重复登记");
+    // 非手机通道不登记
+    h.app.receive_notification_from("QQ".into(),"QQ".into(),"新App名 · 消息".into(),None);
+    assert_eq!(h.app.phone_apps.items.len(),before+1,"非手机通道不应登记到手机名单");
+}
