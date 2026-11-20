@@ -1430,4 +1430,6 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 用户日志：`event query 超时 spins=256，device_lost=true reason=0x887A0005` —— **真 device removed**（非误判），且 spins=256 就检出（我加的早退生效），说明**每次重建后下一帧立刻又 lost**：重建撞在 DWM 仍重置设备的窗口里。Recreate+StartCapture 也救不回帧。
 - 社区权威（microsoft/Windows.UI.Composition-Win32-Samples #139 + 微软 Screen capture 文档）：device removed 需新建 device+重建资源+Recreate pool；微软也承认 WGC 内部在时机不对时不冒泡错误。
 - **修法**（7ddd492）：device-lost 不再当帧立即 Recreate/init，而是**销毁死会话 + 递增冷却 2s→4s→8s**（`cooldown_after_device_lost`），期间 `settling()` 挡住抓屏；冷却结束后走正常 init 建全新会话，让 DWM/显卡彻底稳定。成功出帧 `note_capture_ok` 清计数。删除不再用的 `recreate_after_device_lost` 函数。
-- 新 exe `756504f8f4e4355d`（Deployed & 校验一致）。注意：a29934d 修正了 7ddd492 误把 wgc.rs 换行改 CRLF 的问题（逻辑 diff 仅 32+/85-）。编译通过，测试未跑。**待用户验证**：换分辨率后等几秒玻璃恢复动态、不闪、日志无反复 0x887A0005。
+- 新 exe `756504f8f4e4355d`（Deployed & 校验一致）。注意：a29934d 修正了 7ddd492 误把 wgc.rs 换行改 CRLF 的问题（逻辑 diff 仅 32+/85-）。编译通过，测试未跑。
+- **实测失败**：用户反馈液态玻璃回退、岛仔仍闪。日志是固定 2 秒循环：`init OK → "抓屏恢复清计数" → 立刻 0x887A0005 → 冷却 2000ms → init OK → ...`（32 次超时/33 次冷却/17 次导入）。**我重犯了污染链踩过的坑**：`note_capture_ok()` 在恢复第一帧就清 LOST_STREAK，冷却永远停在"第 1 次=2s"升不到 4s/8s；且冷却期似乎没真正挡住 init。
+- **⛔ 停止打补丁**：这条线已连续十几轮"改一个机制试一次"、且反复重犯同类错误（退避清零、CRLF）。继续下去对用户不负责。**待用户决策**（见下）。
