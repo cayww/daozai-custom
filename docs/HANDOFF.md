@@ -1392,3 +1392,18 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修法**（1d03311）：① 去掉 `s.context.Begin(&shared.done)`（EVENT query 非法调用，疑为 GetData 永不 signal、误判 device lost 的元凶）；② `note_capture_ok` 改为连续成功 30 帧(~1s)才清退避，任何 lost 清零成功计数——解决"好一帧坏一帧"时每轮从头 1s 的问题。
 - 新 exe `587b86b71a490633a`，已部署预览目录、清空日志。编译通过，全量测试未跑。**待用户验证**：换分辨率后 device-lost 行是否归零、玻璃是否恢复、是否不再闪。
 - main HEAD=`1d03311`（ahead origin 10，未 push）。
+
+### 7.0zzd 【方向重置】回退到 de4da1a + FramePool.Recreate 官方方案（2026-11-20 22:00–22:15，分支 `fix/wgc-recreate`）
+- **用户决定**：§7.0zy~7.0zzc 这一串（展开变慢/内存/回收/光标闪）越修越乱、"污染太严重"，**全部回退**，从干净点用微软官方 `FramePool.Recreate` 方案重做。
+- **回退操作**：
+  - 当前 HEAD `9d23e4e` 已用 tag **`backup/before-recreate-rework-20261120`** 完整备份（随时可恢复）。
+  - 从 `de4da1a`（§7.0zx，版本 1.1.1，"放弃修复复制模式放大"锚点，用户确认）新建分支 `fix/wgc-recreate`，丢弃那 12 个本地提交（均未 push，origin/main 停在 `8b6c0e3`）。**main 分支仍停在 9d23e4e 未动**，新方案在 `fix/wgc-recreate` 上。
+- **新方案**（提交 `8683321`，对齐微软 Screen capture 文档）：
+  - 根因：device lost 时 `*guard=None` 销毁整个 Wgc → 每轮 StartCapture + DWM 重合成 + 黄框重启，换分辨率期反复 lost 形成 54 次重建风暴 → 闪 + 玻璃消失。
+  - `recreate_after_device_lost()`：新建 D3D11 device/context → IDirect3DDevice → **在原 pool 上 `Recreate(新device, item.Size())`**，保留 session/item、不重新 StartCapture；重建 staging + 共享纹理，递增 EPOCH。失败兜底整体重建。
+  - grab/grab_shared 三处 device-lost 分支统一改用。
+- **注意**：此分支基于 de4da1a，**不含** fence(8b6c0e3)/固定纹理尺寸(87c39e6)/WGC Close/cursor_far/退避等后续修复——那些症状若本是重建风暴的连锁反应， hopefully 自然消失；若复现再针对性处理。
+- 新 exe `e552a5b908d37f3b`（22,401,536 B 级），已部署预览目录（备份 `daozai.exe.prev-before-recreate`），清空日志。编译通过，全量测试未跑。**待用户验证**：换分辨率后不闪、玻璃正常。
+- 分支 `fix/wgc-recreate` HEAD=`8683321`；main 仍 `9d23e4e`（本地 ahead 12，未 push）。
+
+> ⚠️ 后续 agent：当前工作分支是 `fix/wgc-recreate`，不是 main。验证通过后需决定是否把它合回 main / 或继续在此分支迭代。旧链在 tag `backup/before-recreate-rework-20261120` 可查。
