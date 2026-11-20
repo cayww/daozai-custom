@@ -1159,3 +1159,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - v1.1.4 实测铺满已好但复制模式背景放大。日志定位：满屏 HRESULT(0x887A0005)「GPU 设备实例已暂停」= DXGI_ERROR_DEVICE_REMOVED，device lost 后会话卡死、纹理定格旧尺寸、视口每帧变 → 放大。
 - 修法（409e9c0）：is_device_lost() 识别 0x887A0005/6，resize 失败/query 超时判 device lost 时销毁整个 Wgc 会话重建 device。
 - 用户指示版本号改回 1.1.1（de4da1a），保留修复；exe `5092bcda9aa28da1`。本地包 exe `84e3e7680b7a014b`/zip `b7d881b327208dd2`，未上传 release、未跑全量。待用户验证。
+
+
+### 7.0zy 背景放大诊断日志（2026-11-20，提交 bc6bb9e）
+- v1.1.5(device-lost 重建)后用户实测仍放大。用户补充关键症状：放大方向正确、**切回单屏仍放大不恢复**、零拷贝/staging 都一样。
+- 日志确认 device-lost 修复生效（有多次 init 重建），item.Size()==rcMonitor 相等；两条路径共用 frame_for/uniform，放大系数必在缩放链路(ppp/capture/origin)。
+- 加 `geom:` 诊断行：geometry 变化时打印 ppp/win/cap_logical/cap_phys/origin/bounds。**待用户实测一次并回传 liquid-glass.log 定位**。版本仍 1.1.1、未上传 release、未跑全量。exe `c68dda06b42c9d74`。
