@@ -1447,6 +1447,8 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **确证走 GDI**：全文无 `wgc:`/`init OK`/`导入共享纹理`/`device_lost`/`0x887A0005`（WGC 整条路径没运行）；有持续 `tick=... cap=... mean_r=... tex=...`（capture 正常出帧）；`exclude: 重设 0 个`（WDA 排除稳定）；无"黑岛/条纹/丢弃"诊断。
 - **换分辨率扛住了**：日志有 `sig=2b2bd67f...(2560x1440) → sig=33ac4e7f...(1920x1080)` + `显示器拓扑变化，等待 500ms 稳定后重抓底片`；换后**异常关键词 0 条**，出帧 `tick=13080→15000` 完全连续无中断，`mean_r` 稳定 160-180，`plate: new` 持续更新。
 - **结论**：换分辨率时是 WGC 的 D3D11 device 被 DWM 移除（0x887A0005），与液态玻璃 shader 无关；GDI 不碰 D3D11，问题从源头消失。项目 `wgc.rs:3` "GDI 下 WDA 只会变黑"的旧注释在新 Windows 上不成立。
+- **⚠️ 23:35 用户实测更正（重要）**：**非零拷贝（staging，`liquid_gpu_share=0`）换分辨率也没问题**。即风暴是**零拷贝独有的 event query 超时误判**导致（会话重建后 query 未 signal 就超时→判 lost→再重建），不是所有 WGC 路径都中招。staging 的 device-lost 只在纹理 resize 失败时检测（`wgc.rs:695`），普通换分辨率不触发。之前 §7.0zx 的 "staging resize FAILED" 是**复制模式**（真重置 device），与普通换分辨率不同场景，我错误地推广了。
+- **简化结论**：关掉零拷贝（`liquid_gpu_share=0`）本身就是换分辨率问题的现成解法，根本不需要 GDI 开关。GDI 只是"绕开 D3D11"的更彻底备选。详见桌面 `岛仔-抓屏与透明架构梳理.md`。
 - **待用户决策**：是否转正（做 `liquid_capture=gdi|wgc` 设置项、默认仍 WGC）；是否做性能优化（GDI BitBlt 搬后台线程 + unchanged-frame detection，参考 glass-backdrop-rs，当前在主线程每帧抓可能有开销）。
 
 ##### 7.0zze.1 GDI 缺鼠标投影/边缘彩边——补画光标（提交 `9c5327f`）
