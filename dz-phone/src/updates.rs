@@ -290,9 +290,6 @@ impl State {
                                     });
                             });
                         ui.add_space(4.0);
-                        if crate::CUSTOM_BUILD {
-                            ui.label(egui::RichText::new("当前是自定义构建：安装官方版会覆盖手机电量、更新开关等本地修改，建议先运行 reapply.ps1。").color(egui::Color32::from_rgb(240,180,90)).size(11.5));
-                        }
                         ui.label(egui::RichText::new(if self.message.is_empty(){"更新后自动重启，设置和记录会保留。"}else{&self.message}).color(theme::DIM).size(11.5));
                         if self.cancel.is_some() {
                             ui.add(egui::ProgressBar::new(self.progress).fill(theme::BLUE).desired_height(8.0));

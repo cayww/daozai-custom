@@ -5,9 +5,6 @@
 //! - `model` / `lyrics` / `smtc` / `icons`：数据、歌词、系统媒体、文件图标
 //! - `native` / `tray`：仅 Windows 的窗口区域、命中穿透与托盘
 
-/// 自定义构建标记：官方安装包会覆盖本地修改，更新弹窗据此提示。
-pub const CUSTOM_BUILD: bool = true;
-
 pub mod display_layout;
 pub mod diagnostics_tool;
 pub mod rtl_text;
