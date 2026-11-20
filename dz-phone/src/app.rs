@@ -2938,7 +2938,15 @@ impl App {
         // 静止档（3=静止刷新率）：无任何动画/环境动效/歌词滚动时降到设置项
         // liquid_idle_fps（默认 15fps），有动静回升 30fps。
         if self.glass_tick==3 && (animating||ambient||lyric_scrolling) {self.glass_tick=2;}
-        let cursor_far=!env.cursor.is_some_and(|p|win.expand(24.0).contains(p));
+        // 鼠标是否远离岛仔：必须按**岛仔实际命中区**判定，不能用整个透明画布 win(640×270)。
+        // win 远大于岛仔本体（收起命中条约 300×50），换分辨率后窗口变大/移位，鼠标明明
+        // 离开岛仔、只要还在画布里就算「近」，blocked=cursor 恒真 → 20 秒工作集回收永不
+        // 触发（实测 cursor=(625,168) 落在 win=(0,0,640,270) 内但远离岛仔）。
+        // 未读徽章也算可交互区；通知/吐司另有独立挡因，不在这里重复。
+        let cursor_far=!env.cursor.is_some_and(|p|
+            hit.expand(24.0).contains(p)
+            || self.messenger_badge_rect(win,self.island_rect(win,self.w.pos,self.h.pos))
+                .is_some_and(|r|r.expand(24.0).contains(p)));
         // 收起深度休眠（设置项可关）：收起 + 无动画 + 鼠标不在岛上（留 24px 余量）
         // + 无通知/吐司 + 无媒体播放，持续 2 分钟 → 整条管线降到 1Hz
         // （抓屏/玻璃/时钟文字都够用）。实测它只省电不省内存——内存大头在
