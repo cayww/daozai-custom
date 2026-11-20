@@ -438,7 +438,7 @@ fn monitor_rects_desc() -> String {
 fn diag_display_config() {
     use windows::Win32::Devices::Display::{
         GetDisplayConfigBufferSizes, QueryDisplayConfig, DISPLAYCONFIG_MODE_INFO,
-        DISPLAYCONFIG_PATH_INFO, DISPLAYCONFIG_TOPOLOGY_ID, QDC_ONLY_ACTIVE_PATHS,
+        DISPLAYCONFIG_PATH_INFO, QDC_ONLY_ACTIVE_PATHS,
         DISPLAYCONFIG_MODE_INFO_TYPE_TARGET, DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE,
     };
     use windows::Win32::Foundation::ERROR_SUCCESS;
@@ -451,34 +451,31 @@ fn diag_display_config() {
         }
         let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); npath as usize];
         let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); nmode as usize];
-        let mut topo = DISPLAYCONFIG_TOPOLOGY_ID(0);
+        // currentTopologyId 只能在 QDC_DATABASE_CURRENT flag 下非 NULL；
+        // QDC_ONLY_ACTIVE_PATHS 必须传 None，否则 ERROR_INVALID_PARAMETER(87)。
         let rc = QueryDisplayConfig(
             QDC_ONLY_ACTIVE_PATHS,
             &mut npath, paths.as_mut_ptr(),
             &mut nmode, modes.as_mut_ptr(),
-            Some(&mut topo),
+            None,
         );
         if rc != ERROR_SUCCESS {
             log(&format!("qdc: QueryDisplayConfig 失败 {:?}", rc));
             return;
         }
-        // 拓扑名
-        let topo_name = match topo.0 {
-            1 => "INTERNAL", 2 => "CLONE", 4 => "EXTEND", 8 => "EXTERNAL", _ => "UNKNOWN",
-        };
         // 每个 target 的分辨率：从 path.targetInfo.modeInfoIdx 找对应 mode。
-        // cloneGroupId / targetId 在 _bitfield 里，这里只打印 source id 和分辨率，
-        // 足以判断是否有多个不同分辨率的 target。
+        // 顺便按 source id 分组推断拓扑：同一 source 连多个 target = 复制(CLONE)。
         let mut targets: Vec<String> = Vec::new();
+        let mut src_ids: Vec<u32> = Vec::new();
         for p in paths.iter().take(npath as usize) {
             let src_id = p.sourceInfo.id;
+            if !src_ids.contains(&src_id) { src_ids.push(src_id); }
             let midx = (unsafe { p.targetInfo.Anonymous.modeInfoIdx } & 0xFFFF) as usize;
             let mut size = String::from("?");
             if midx < nmode as usize && modes[midx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE_TARGET {
                 let m = &modes[midx].Anonymous.targetMode.targetVideoSignalInfo.activeSize;
                 size = format!("{}x{}", m.cx, m.cy);
             }
-            // 同 source 的 clone group：source id 相同即同一桌面被镜像到多屏
             targets.push(format!("src{}:{}", src_id, size));
         }
         // source mode 尺寸（桌面分辨率）
@@ -489,8 +486,11 @@ fn diag_display_config() {
                 sources.push(format!("{}x{}", s.width, s.height));
             }
         }
-        log(&format!("qdc: topology={}({}) paths={} sources=[{}] targets=[{}]",
-                     topo.0, topo_name, npath, sources.join(","), targets.join(",")));
+        // 推断：一个 source 对多个 target → CLONE（复制）；多个 source → EXTEND（扩展）。
+        let max_targets_per_src = src_ids.iter().map(|s| targets.iter().filter(|t| t.starts_with(&format!("src{}:", s))).count()).max().unwrap_or(0);
+        let topo_name = if max_targets_per_src > 1 { "CLONE(推断)" } else if src_ids.len() > 1 { "EXTEND(推断)" } else { "SINGLE(推断)" };
+        log(&format!("qdc: topology={} sources={} targets=[{}] sources=[{}]",
+                     topo_name, src_ids.len(), targets.join(","), sources.join(",")));
     }
 }
 
