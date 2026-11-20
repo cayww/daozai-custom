@@ -4514,29 +4514,23 @@ pub(crate) fn settings_label(ui: &mut egui::Ui, text: &str) {
     );
     ui.add_space(4.0);
 }
-/// 关于上游：本构建基于上游定制，给出原仓库地址与简短介绍。不含任何捐赠入口。
+/// 关于岛仔：本项目介绍（独立定制版本线）+ 作者与仓库地址。不含任何捐赠入口。
 fn about_upstream(ui: &mut egui::Ui) {
-    ui.label(
-        egui::RichText::new("岛仔 Daozai · 原上游项目")
-            .size(15.0)
-            .strong(),
-    );
+    ui.label(egui::RichText::new("岛仔 Daozai · 自定义版").size(15.0).strong());
     ui.add_space(4.0);
     ui.label(
-        egui::RichText::new("本版本基于小唐维护的岛仔定制而来，保留全部本地功能。上游项目地址：")
+        egui::RichText::new("本项目由 cayww 基于小唐维护的岛仔深度定制而来，保留并扩展了本地功能。项目地址：")
             .size(12.0),
     );
     ui.add_space(3.0);
-    ui.hyperlink_to(
-        "github.com/Renly1994/xiaotang-daozai",
-        "https://github.com/Renly1994/xiaotang-daozai",
-    );
+    ui.hyperlink_to("github.com/cayww/daozai-custom", "https://github.com/cayww/daozai-custom");
     ui.add_space(6.0);
     ui.label(
-        egui::RichText::new("检查更新与发布包来自本仓库的 releases；上游地址仅供查看原始项目。")
+        egui::RichText::new("检查更新与发布包来自本项目仓库的 releases；原上游地址仅供查看。")
             .size(11.0)
             .color(ui.visuals().weak_text_color()),
     );
+    ui.hyperlink_to("github.com/Renly1994/xiaotang-daozai", "https://github.com/Renly1994/xiaotang-daozai");
 }
 pub(crate) fn settings_control_row(
     ui: &mut egui::Ui,
@@ -6273,7 +6267,7 @@ impl App {
                                 ui.hyperlink_to("CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/");
                             });
                         });
-                        settings_label(ui,"关于上游");
+                        settings_label(ui,"关于岛仔");
                         settings_card(ui,about_upstream);
                     }
                     }

@@ -15,6 +15,24 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(3600);
 const MANUAL_INTERVAL: Duration = Duration::from_secs(30);
 
+/// 把一行 Markdown 里的 `**粗体**` 拆成 (文本, 是否粗体) 段；没有星号时返回单段。
+/// 只处理 release notes 用到的 ** 粗体，不引入完整 markdown 依赖。
+fn rich_segments(line: &str) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find("**") {
+        if let Some(end) = rest[start + 2..].find("**") {
+            let end = start + 2 + end;
+            if start > 0 { out.push((rest[..start].to_owned(), false)); }
+            out.push((rest[start + 2..end].to_owned(), true));
+            rest = &rest[end + 2..];
+        } else { break; }
+    }
+    if !rest.is_empty() { out.push((rest.to_owned(), false)); }
+    if out.is_empty() { out.push((line.to_owned(), false)); }
+    out
+}
+
 #[derive(Clone, Debug)]
 struct Release { version: String, notes: String, page: String, package: Option<Package> }
 #[derive(Clone, Debug)]
@@ -241,10 +259,33 @@ impl State {
                                             let line = line.trim();
                                             if line.is_empty() { ui.add_space(3.0); continue; }
                                             let heading = line.starts_with('#');
-                                            let text = if heading { line.trim_start_matches('#').trim().to_owned() }
-                                                else if let Some(item) = line.strip_prefix("- ").or_else(||line.strip_prefix("* ")) { format!("•  {item}") }
-                                                else { line.to_owned() };
-                                            ui.label(egui::RichText::new(text).font(theme::font(13.0,if heading{W::Semibold}else{W::Regular})).color(egui::Color32::from_gray(225)));
+                                            let body = if heading { line.trim_start_matches('#').trim() }
+                                                else if let Some(item) = line.strip_prefix("- ").or_else(||line.strip_prefix("* ")) {
+                                                    // 列表项保留 • 前缀，后面的 **粗体** 仍要解析
+                                                    let mut job = egui::text::LayoutJob::default();
+                                                    let color = egui::Color32::from_gray(225);
+                                                    job.append("•  ", 0.0, egui::text::TextFormat {
+                                                        font_id: theme::font(13.0, W::Regular), color, ..Default::default()
+                                                    });
+                                                    for (seg, bold) in rich_segments(item) {
+                                                        job.append(&seg, 0.0, egui::text::TextFormat {
+                                                            font_id: theme::font(13.0, if bold { W::Bold } else { W::Regular }),
+                                                            color, ..Default::default()
+                                                        });
+                                                    }
+                                                    ui.label(job);
+                                                    continue;
+                                                } else { line };
+                                            // 普通行 / 标题：同样解析 **粗体**
+                                            let mut job = egui::text::LayoutJob::default();
+                                            let color = egui::Color32::from_gray(225);
+                                            for (seg, bold) in rich_segments(body) {
+                                                job.append(&seg, 0.0, egui::text::TextFormat {
+                                                    font_id: theme::font(13.0, if heading { W::Semibold } else if bold { W::Bold } else { W::Regular }),
+                                                    color, ..Default::default()
+                                                });
+                                            }
+                                            ui.label(job);
                                         } }
                                     });
                             });
@@ -553,6 +594,15 @@ mod install_size_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn release_notes_bold_is_parsed(){
+        assert_eq!(rich_segments("**液态玻璃**"),vec![("液态玻璃".into(),true)]);
+        assert_eq!(rich_segments("普通一行"),vec![("普通一行".into(),false)]);
+        assert_eq!(rich_segments("边缘画质：消除**白边**与锯齿"),
+            vec![("边缘画质：消除".into(),false),("白边".into(),true),("与锯齿".into(),false)]);
+        // 未闭合的 ** 不当粗体，原样保留
+        assert_eq!(rich_segments("开头 **没闭合"),vec![("开头 **没闭合".into(),false)]);
+    }
     #[test]
     fn automatic_check_waits_for_startup_and_idle_state() {
         let mut state = State::default();
