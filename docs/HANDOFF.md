@@ -1469,3 +1469,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 坑：只覆盖 wgc.rs 不够——main 的 gpu_glass.rs/main.rs 引用 fence API（`init_shared_fence` 等）而 fix 的 wgc.rs 没有 → 编译失败。必须整个 src 一起覆盖。
 - **打包**：NSIS `makensis /INPUTCHARSET UTF8 /DPROJECT_DIR=...\dz-phone /DAPP_ID=DaozaiLiquidTest /DAPP_VERSION=1.1.1 /DSOURCE_EXE=...\daozai.exe /DOUTPUT_FILE=...\daozai-liquid-setup-62.exe installer\setup.nsi`。产物 9,295,747 B，包 sha `ddc1516892d83117`，内含 exe `91424b6863533eca`/bridge `859a91518af04c91`。已同步为桌面 `daozai-liquid-setup.exe`。
 - **未做**：未 push（main ahead origin 33）、未部署正式目录、未跑全量测试（用户一贯要求）。指纹表 `_archive/README.md` + HANDOFF 速览区已更新。
+
+### 7.0zzf 换分辨率自动重启选项（提交 `29bb757`，2026-11-21 00:10–00:17）
+- 用户提议：零拷贝换分辨率时延迟重启岛仔。思路正确——进程内重建 D3D11 device 反复失败（0x887A0005），但进程重启能**同时重建 D3D11 + wgpu D3D12 两侧 device**，更彻底。
+- 用户要求：做成设置页选项放零拷贝下方 + 文案提示用户（不是闪退、会自动恢复）。
+- **实现**（默认关闭，行为不变）：
+  - wgc.rs：poll_topology 检测拓扑变化时登记待重启（仅零拷贝 + 开关开），延迟 2s（环境变量 `DAOZAI_RESTART_DELAY_MS` 可覆盖 500–30000ms），`take_auto_restart_request()` 到点返回 true；防抖（sig 连变只重启一次）。
+  - app.rs：App::frame 查询，true → `pending.push(Cmd::RestartApp)`，走已有的 spawn_replacement（保存窗口/拉新进程/等单实例锁释放）。
+  - model.rs：`liquid_auto_restart` 设置项（默认 false）+ load/save；main.rs 启动时写 `DAOZAI_AUTO_RESTART_ON_RESOLUTION` 快照。
+  - extras.rs：零拷贝开关下方加选项，文案"零拷贝模式专属：切换分辨率约2秒后自动重启一次，避免玻璃卡住/闪烁；这不是闪退，重启后自动恢复"；改后有"立即重启"按钮。
+- **测试流程**：开零拷贝 + 开此选项 → 立即重启 → 切分辨率 → 约2s 后岛仔消失再出现（正常）。
+- 新 exe `a6a899fd54e35898`，已部署预览目录。编译通过、全量测试未跑。**待用户验证**：换分辨率自动重启是否生效、玻璃是否恢复动态。未重新打包（仍是 -62 包，本改动只在预览目录 exe）。
