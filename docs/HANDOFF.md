@@ -1448,3 +1448,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **换分辨率扛住了**：日志有 `sig=2b2bd67f...(2560x1440) → sig=33ac4e7f...(1920x1080)` + `显示器拓扑变化，等待 500ms 稳定后重抓底片`；换后**异常关键词 0 条**，出帧 `tick=13080→15000` 完全连续无中断，`mean_r` 稳定 160-180，`plate: new` 持续更新。
 - **结论**：换分辨率时是 WGC 的 D3D11 device 被 DWM 移除（0x887A0005），与液态玻璃 shader 无关；GDI 不碰 D3D11，问题从源头消失。项目 `wgc.rs:3` "GDI 下 WDA 只会变黑"的旧注释在新 Windows 上不成立。
 - **待用户决策**：是否转正（做 `liquid_capture=gdi|wgc` 设置项、默认仍 WGC）；是否做性能优化（GDI BitBlt 搬后台线程 + unchanged-frame detection，参考 glass-backdrop-rs，当前在主线程每帧抓可能有开销）。
+
+##### 7.0zze.1 GDI 缺鼠标投影/边缘彩边——补画光标（提交 `9c5327f`）
+- 用户实测 GDI 稳定，但对比 WGC 少两个效果：玻璃里无鼠标投影、鼠标靠近边缘无逐渐扩大的彩虹带。
+- **根因**：GDI BitBlt 抓桌面 DC **不含鼠标光标**（WGC 帧含）；shader 色散 `tap5` 采 R/B 偏移，靠指针高对比像素才明显，没指针就弱到看不见。两者同源。
+- **修法**（9c5327f）：`grab_raw` 加 `draw_cursor` 参数，GDI 早退传 true——BitBlt 后用 `GetCursorInfo` + `DrawIconEx` 把系统光标画进抓屏 buffer（相对矩形坐标）；底片构建传 false（干净壁纸不烙光标）、WGC 兜底传 false。光标不是窗口、不受 WDA 排除影响。
+- 新 exe `e2ee484e3374e58d`，已部署（编译前停了用户正在用的进程）。**待用户验证**：鼠标投影+边缘彩边是否恢复、GDI 稳定性是否不受影响。
