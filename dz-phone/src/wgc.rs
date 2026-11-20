@@ -401,11 +401,17 @@ fn is_device_lost(e: &windows::core::Error) -> bool {
 /// 每帧 init→超时→销毁→init 的重建风暴（实测 54 次连续重建，每次 StartCapture
 /// 触发 DWM 合成 + 捕获黄框反复闪，鼠标指针跟着闪，且吃满 GPU）。
 static LOST_STREAK: AtomicU32 = AtomicU32::new(0);
+/// 连续成功出帧计数：必须连续成功 OK_STREAK_NEED 帧才认定设备真恢复。
+/// 只成功一帧就清退避会退化成「导入成功→清零→又 lost→从头 1s」的循环，
+/// 实测日志每轮都停在「连续 1 次、冷却 1000ms」，闪因此只变慢没消失。
+static OK_STREAK: AtomicU32 = AtomicU32::new(0);
+const OK_STREAK_NEED: u32 = 30; // 约 1 秒（30fps）持续成功才算稳定
 
 /// device-lost 后调用：递增退避并设置稳定期，期间 grab/grab_shared 直接返回
-/// NoFrame，不再 StartCapture。连续失败越多等得越久（1s→2s→4s→封顶 8s），
-/// 设备恢复后成功出帧会由 `note_capture_ok` 清零。
+/// NoFrame，不再 StartCapture。连续失败越多等得越久（1s→2s→4s→封顶 8s）。
+/// 任何一次 lost 都把成功计数清零——中断"连续成功"的累积。
 fn backoff_after_device_lost() {
+    OK_STREAK.store(0, Ordering::Relaxed);
     let n = LOST_STREAK.fetch_add(1, Ordering::Relaxed).min(8);
     let ms = 1000u64 << n.min(3); // 1,2,4,8 秒
     *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -413,10 +419,15 @@ fn backoff_after_device_lost() {
     log(&format!("wgc: device-lost 连续 {} 次，冷却 {}ms 后重试（避免重建风暴/光标闪）", n + 1, ms));
 }
 
-/// 成功产出/捕获一次帧后清零退避计数。
+/// 成功产出一帧就累加；只有连续成功 OK_STREAK_NEED 帧才清退避计数。
+/// 换分辨率期设备会「好一帧、坏一帧」，单帧成功不代表恢复。
 fn note_capture_ok() {
-    if LOST_STREAK.swap(0, Ordering::Relaxed) != 0 {
-        log("wgc: 抓屏恢复，清除 device-lost 退避");
+    if LOST_STREAK.load(Ordering::Relaxed) == 0 { return; }
+    let ok = OK_STREAK.fetch_add(1, Ordering::Relaxed) + 1;
+    if ok >= OK_STREAK_NEED {
+        LOST_STREAK.store(0, Ordering::Relaxed);
+        OK_STREAK.store(0, Ordering::Relaxed);
+        log("wgc: 连续出帧稳定，清除 device-lost 退避");
     }
 }
 
@@ -1067,8 +1078,11 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         let use_fence = shared.fence.is_some() && shared.ctx4.is_some();
         // producer 独占：keyed mutex key=0，超时 500ms 放弃（避免卡住 UI 线程）。
         if shared.mutex.AcquireSync(0, 500).is_err() { drop(frame); return Grab::NoFrame; }
-        // event query 始终 Begin/End（状态机平衡、开销极小），但只在 fallback 时等它。
-        s.context.Begin(&shared.done);
+        // D3D11_QUERY_EVENT 按微软文档 **Begin 是 disabled 的**：只能用 End 标记
+        // 一个 GPU 时间线事件点，再用 GetData 轮询 BOOL。此前错误地 Begin(query)
+        // 会让 query 状态机异常、GetData 永不 signal → 误判 device lost → 重建风暴。
+        // 社区实证（Chromium ANGLE/Dawn 的 finish/WaitForQueueSerial）都是只 End。
+        // 只需在 Copy 之后 End 一次；下一帧 End 前上一个 query 已被等到 signal。
         s.context.CopySubresourceRegion(&shared.tex, 0, 0, 0, 0, &src_tex, 0, Some(&box_clamped));
         s.context.End(&shared.done);
         let fence_value = if use_fence {
