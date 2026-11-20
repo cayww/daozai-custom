@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-20 14:10
+> **最后更新**：2026-11-21 00:02
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -14,7 +14,7 @@
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-134 已打包、未部署（最新，2026-11-19）**：`installer\daozai-setup-custom-134.exe`（11,109,904 B，包 sha `1f2f9df72d88b08d`，0.6.66，内含 exe `2ebc1313b2241ad6` + bridge `9832e44f133f5ac0`，构建自 main `912d636`= 在 950433b 基础上仅更新版本号；1373 passed；静默安装验证通过，详见 §7.0ad）。**custom-133**：`installer\daozai-setup-custom-133.exe`（11,241,513 B，包 sha `a9455e0ad655bb9f`，内含 exe `02786373d87ba563` + bridge `f1ae28626c9db18e`，构建自 main 工作树（告警清理 `2ea229a` + 液态玻璃按钮缩小 + 关配置弹窗收起 + INSTALL-NOTES 反馈日志说明，提交 `14bb37f`）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
 | **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。|
-| 预览版（液态玻璃试验） | 桌面预览目录 `daozai-liquid-setup.exe` = `liquid-test-61-yi-lyrics`（包 sha `97a615f06917c561`，11,005,199 B；内含 exe `7b1e8d804011cce0`；安装到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，独立数据目录），**已打包部署、待用户实机验证**。本轮：加 Microsoft Yi Baiti（msyi.ttf）字体回退支持彝语歌词；此前 -60（配置按钮夹进皮肤卡/「岛体交互」标题）、-59（配置归位/修按钮/预览形态切换）、-58 已移入 `_archive`。此前 -57 起 DirectComposition 透明交换链替代上游分层读回：DX12 下窗口无 GDI 表面 + DComp visual 交换链 + 强制预乘 alpha，桌面真实透出；不再套 `SetWindowRgn`，经典皮肤圆角与 OpenGL 一样平滑，实机四态验证正常 |
+| 预览版（液态玻璃试验） | 桌面预览目录 `daozai-liquid-setup.exe` = **`liquid-test-62-two-modes`（包 sha `ddc1516892d83117`，9,295,747 B；内含 exe `91424b6863533eca` + bridge `859a91518af04c91`；安装到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，独立数据目录）**，**2026-11-21 00:02 打包，待实机验证**。构建自 main `7200ee7`（`fix/wgc-recreate` 合并）：取消 GDI 实验、只保留零拷贝/非零拷贝两模式（`liquid_gpu_share` 控制）、去掉 EVENT query 非法 Begin、device-lost 冷却退避。换分辨率问题实测用非零拷贝（`liquid_gpu_share=0`）解决；零拷贝独有的 event query 风暴保留此前修复。编译通过、全量测试未跑（用户要求）。此前 -61（彝语字体）、-60 等见 `_archive/README.md` 指纹表 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
 | 测试 | 主线 1176 passed；最近 **1351 passed / 0 failed / 131 ignored**（2026-11-18 13:25，按钮缩小改动后全量串行 `cargo test --locked --release --lib -- --test-threads=1`）；**必须 `--test-threads=1`** |
@@ -1463,3 +1463,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **最终模式**：只有零拷贝（`liquid_gpu_share=1`）/ 非零拷贝（`=0`），由原配置控制。换分辨率问题用非零拷贝解决；零拷贝 device-lost 风暴保留此前修复。
 - **耦合点解耦评估**：7 个耦合点逐个评估后决定不解耦（6 个设计必需/系统限制，1 个触发场景极窄）。避免重蹈十几轮越改越乱的覆辙。
 - 新 exe `f7b93b47366235fa`，已部署。编译通过、全量测试未跑。分支 `fix/wgc-recreate` HEAD=3e349a6。
+
+### 7.0zze.3 合并 fix 分支到 main + 打预览包 -62（2026-11-20 23:57 – 11-21 00:02）
+- **合并**：`fix/wgc-recreate` → `main`，merge commit `7200ee7`。冲突只在 `wgc.rs`（main 污染链 vs fix 干净线），按约定**整个 `dz-phone/src/` 取 fix 分支**（用户确认可用的线），docs 保留 main（含最新 HANDOFF）。合并后源码与 fix 分支逐字节一致，编译通过。合并前备份 tag：`backup/main-before-merge-20261120` / `backup/fix-recreate-before-merge-20261120`。
+  - 坑：只覆盖 wgc.rs 不够——main 的 gpu_glass.rs/main.rs 引用 fence API（`init_shared_fence` 等）而 fix 的 wgc.rs 没有 → 编译失败。必须整个 src 一起覆盖。
+- **打包**：NSIS `makensis /INPUTCHARSET UTF8 /DPROJECT_DIR=...\dz-phone /DAPP_ID=DaozaiLiquidTest /DAPP_VERSION=1.1.1 /DSOURCE_EXE=...\daozai.exe /DOUTPUT_FILE=...\daozai-liquid-setup-62.exe installer\setup.nsi`。产物 9,295,747 B，包 sha `ddc1516892d83117`，内含 exe `91424b6863533eca`/bridge `859a91518af04c91`。已同步为桌面 `daozai-liquid-setup.exe`。
+- **未做**：未 push（main ahead origin 33）、未部署正式目录、未跑全量测试（用户一贯要求）。指纹表 `_archive/README.md` + HANDOFF 速览区已更新。
