@@ -1153,3 +1153,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - v1.1.3 的 GetDesc 丢帧让复制模式持续 NoFrame、纹理永久停在换屏前，属加剧因素。
 - 修法（61daa50）：gpu_glass 抽 write_geom，所有返回路径按视口(cw,ch)写几何 uniform；wgc.init 帧池用 item.Size()；src_box 夹到真实帧、去掉丢帧逻辑。
 - 未跑全量、未上传 release。本地包 exe `556ffdf54b2eaa53` / zip `c2cc450086392e86`。main push 到 61daa50。待用户验证。
+
+
+### 7.0zx 背景放大真正根因：D3D11 device-lost + 版本回 1.1.1（2026-11-20，详版见桌面权威副本 §7.0zx）
+- v1.1.4 实测铺满已好但复制模式背景放大。日志定位：满屏 HRESULT(0x887A0005)「GPU 设备实例已暂停」= DXGI_ERROR_DEVICE_REMOVED，device lost 后会话卡死、纹理定格旧尺寸、视口每帧变 → 放大。
+- 修法（409e9c0）：is_device_lost() 识别 0x887A0005/6，resize 失败/query 超时判 device lost 时销毁整个 Wgc 会话重建 device。
+- 用户指示版本号改回 1.1.1（de4da1a），保留修复；exe `5092bcda9aa28da1`。本地包 exe `84e3e7680b7a014b`/zip `b7d881b327208dd2`，未上传 release、未跑全量。待用户验证。
