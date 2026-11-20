@@ -4217,9 +4217,9 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 }
                                 // 换分辨率自动重启（零拷贝专用）：detector 在 wgc，走 Cmd::RestartApp。
                                 let before_restart=app.settings.liquid_auto_restart;
-                                setting_row(ui,"换分辨率后自动重启","零拷贝模式专属：切换分辨率约 2 秒后自动重启一次，避免玻璃卡住/闪烁；这不是闪退，重启后自动恢复",&mut app.settings.liquid_auto_restart);
+                                setting_row(ui,"切换分辨率/显示器模式后自动重启","零拷贝专属：切换分辨率或显示器模式（复制/扩展/仅单屏）约 2 秒后自动重启一次，避免玻璃卡住、闪烁、背景定格；这不是闪退，重启后自动恢复",&mut app.settings.liquid_auto_restart);
                                 if before_restart!=app.settings.liquid_auto_restart {app.settings.save();}
-                                settings_hint(ui,"仅零拷贝开启时生效；重启后岛仔会短暂消失再出现，属于正常行为");
+                                settings_hint(ui,"建议零拷贝用户开启：不开时切换分辨率可能导致玻璃卡住/背景不更新（需手动重启岛仔）；仅零拷贝生效，重启时岛仔短暂消失属正常");
                                 let restart_boot=std::env::var("DAOZAI_AUTO_RESTART_ON_RESOLUTION").map(|v|v=="1").unwrap_or(app.settings.liquid_auto_restart);
                                 if app.settings.liquid_auto_restart!=restart_boot {
                                     ui.horizontal(|ui|{
