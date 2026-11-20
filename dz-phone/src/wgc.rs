@@ -120,6 +120,8 @@ fn theme_sample_due(now_ms: u64, last_ms: Option<u64>, interval_ms: u64) -> bool
 pub fn set_theme_rect(rect:Option<(i32,i32,i32,i32)>){if let Ok(mut g)=THEME_RECT.lock(){*g=rect;}}
 /// 取最近一次采样到的背景亮度（f32 bits）。无采样时返回默认值，不影响调用方。
 pub fn theme_luma()->f32{f32::from_bits(THEME_LUMA.load(Ordering::Relaxed))}
+/// 用壁纸文件亮度播种主题锚值（启动时调用，开机第一帧就不依赖抓屏）。
+pub fn seed_theme_luma(v: f32){ THEME_LUMA.store(v.clamp(0.0,1.0).to_bits(),Ordering::Relaxed); }
 
 /// 纯边界计算：把主题采样框 rect（相对抓屏缓冲坐标）换算成源 box（相对显示器帧）
 /// 与读回尺寸 (left,top,right,bottom,rw,rh)。任何退化/越界/溢出都返回 None，
@@ -148,8 +150,14 @@ fn theme_sample_box(
 /// 主题亮度要不要落盘：大幅「浅→深」突变要求连续两次采样都低才采纳。
 /// 开机/切屏早期抓到过渡暗帧，若立即采纳会把液态玻璃判成深色（黑底）且不易恢复；
 /// 真·深色壁纸是持续的，第二次采样仍低就会采纳。平滑变化/变亮立即采纳。
+/// `anchor` 是壁纸文件亮度（Some 时）：抓屏值与它差 >0.25 视为开机过渡帧/污染帧，
+/// 直接拒绝——这是比"连续两次"更直接的判据，因为壁纸文件是稳定的真值来源。
 /// 返回 (要写入的新亮度, 更新后的待确认标记)。
-pub(crate) fn theme_luma_commit(prev: f32, luma: f32, pending: bool) -> (Option<f32>, bool) {
+pub(crate) fn theme_luma_commit(prev: f32, luma: f32, pending: bool, anchor: Option<f32>) -> (Option<f32>, bool) {
+    // 壁纸锚点校验：抓屏与壁纸亮度严重不符 → 采到的是过渡帧/抓到自身，不采纳。
+    if anchor.is_some_and(|a| (luma - a).abs() > 0.25) {
+        return (None, false);
+    }
     if prev - luma > 0.30 {
         if pending { (Some(luma), false) } else { (None, true) }
     } else {
@@ -213,7 +221,8 @@ fn sample_theme_luma(
                     // （真·深色壁纸是持续的，过渡帧是短暂的）。浅→深平滑变化不受影响。
                     let prev=f32::from_bits(THEME_LUMA.load(Ordering::Relaxed));
                     let pending=THEME_DARK_PENDING.load(Ordering::Relaxed);
-                    let (commit,new_pending)=theme_luma_commit(prev,luma,pending);
+                    let anchor=crate::wallpaper::luma();
+                    let (commit,new_pending)=theme_luma_commit(prev,luma,pending,anchor);
                     if let Some(v)=commit { THEME_LUMA.store(v.to_bits(),Ordering::Relaxed); }
                     THEME_DARK_PENDING.store(new_pending,Ordering::Relaxed);
                 }
@@ -857,16 +866,26 @@ mod theme_sample_tests {
 
     #[test]
     fn 开机过渡暗帧不立即采纳(){
-        // 浅背景(0.85)→过渡暗帧(0.2)：突变不采纳，标记待确认
-        assert_eq!(theme_luma_commit(0.85,0.2,false),(None,true));
-        // 紧接着又采到低值(真深色壁纸)→采纳
-        assert_eq!(theme_luma_commit(0.85,0.2,true),(Some(0.2),false));
-        // 渐变(0.85→0.7)立即采纳，不标记
-        assert_eq!(theme_luma_commit(0.85,0.7,false),(Some(0.7),false));
-        // 变亮(0.2→0.8)立即采纳
-        assert_eq!(theme_luma_commit(0.2,0.8,false),(Some(0.8),false));
-        // 过渡帧后恢复浅色→采纳浅色并清标记
-        assert_eq!(theme_luma_commit(0.85,0.83,true),(Some(0.83),false));
+        // 没有壁纸锚点时走连续两次确认
+        assert_eq!(theme_luma_commit(0.85,0.2,false,None),(None,true));
+        assert_eq!(theme_luma_commit(0.85,0.2,true,None),(Some(0.2),false));
+        assert_eq!(theme_luma_commit(0.85,0.7,false,None),(Some(0.7),false));
+        assert_eq!(theme_luma_commit(0.2,0.8,false,None),(Some(0.8),false));
+        assert_eq!(theme_luma_commit(0.85,0.83,true,None),(Some(0.83),false));
+    }
+    #[test]
+    fn 壁纸锚点挡掉过渡暗帧(){
+        // 壁纸是浅色 0.9，抓屏采到 0.2（开机过渡帧）→ 直接拒绝，不进待确认
+        assert_eq!(theme_luma_commit(0.85,0.2,false,Some(0.9)),(None,false));
+        // 差 0.04（正常采样区间差异）→ 采纳
+        assert_eq!(theme_luma_commit(0.85,0.86,false,Some(0.9)),(Some(0.86),false));
+        // 真深色壁纸 0.15，抓屏采到 0.18 → 锚点一致；prev 已接近(0.17)，平滑采纳
+        assert_eq!(theme_luma_commit(0.17,0.18,false,Some(0.15)),(Some(0.18),false));
+        // prev 仍是旧浅色时，深色壁纸也要连续两次确认（防过渡帧）
+        assert_eq!(theme_luma_commit(0.85,0.18,false,Some(0.15)),(None,true));
+        assert_eq!(theme_luma_commit(0.85,0.18,true,Some(0.15)),(Some(0.18),false));
+        // 恰好 0.25 边界 → 采纳（严格大于才拒绝）
+        assert_eq!(theme_luma_commit(0.85,0.65,false,Some(0.9)),(Some(0.65),false));
     }
 
     // 按时间节流的纯判断：从未采过立即采；未到间隔不采；到间隔采。

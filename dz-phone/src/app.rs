@@ -1245,6 +1245,13 @@ pub struct App {
 
 impl App {
     pub fn new(ctx: &egui::Context, opts: Options) -> Self {
+        // 液态玻璃的深/浅材质跟壁纸走。开机抓屏尚未就绪时会采到过渡暗帧、
+        // 把玻璃判成黑色且不易恢复；用壁纸文件亮度播种锚值，第一帧就正确。
+        // 壁纸读不到时保持默认 0.85（浅色），不影响非液态皮肤。
+        if let Some(v) = crate::wallpaper::luma() {
+            crate::gpu_glass::seed_theme_luma(v);
+            crate::wgc::seed_theme_luma(v);
+        }
         theme::load_fonts(ctx);
         egui_extras::install_image_loaders(ctx);
         ctx.set_theme(egui::ThemePreference::Dark);

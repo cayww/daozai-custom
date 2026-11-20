@@ -152,6 +152,11 @@ pub fn background_luma() -> f32 {
 
 
 /// GPU 通道已经成功跑起来：此时兜底底色可以几乎透明，让折射层自己说话。
+/// 用壁纸文件亮度播种兜底材质判据（启动时调用，避免开机抓屏未就绪时判成深色）。
+pub fn seed_theme_luma(v: f32) {
+    BG_LUMA.store(v.clamp(0.0, 1.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn gpu_ready() -> bool {
     !FAILED.load(std::sync::atomic::Ordering::Relaxed)
         && TICK.load(std::sync::atomic::Ordering::Relaxed) > 0
@@ -1318,7 +1323,8 @@ fn capture(x: i32, y: i32, w: i32, h: i32, body: [f32; 4], ppp: f32) -> Option<(
         // 材质且不易恢复（开机变黑、重启才好）。大幅「浅→深」突变要求连续两次
         // 采样都低才采纳：真深色壁纸是持续的，过渡帧是短暂的；平滑变化不受影响。
         let pending = BG_DARK_PENDING.load(std::sync::atomic::Ordering::Relaxed);
-        let (commit, new_pending) = crate::wgc::theme_luma_commit(prev, luma, pending);
+        let anchor = crate::wallpaper::luma();
+        let (commit, new_pending) = crate::wgc::theme_luma_commit(prev, luma, pending, anchor);
         if let Some(v) = commit { BG_LUMA.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed); }
         BG_DARK_PENDING.store(new_pending, std::sync::atomic::Ordering::Relaxed);
     }
