@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-18 19:50
+> **最后更新**：2026-11-20 14:10
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -1116,52 +1116,244 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 验证：`cargo check --all-targets` + 全量 **1372 passed / 0 failed**。diff 仅 3 文件 / 10 行插入 / 3 行删除。提交 700e4d4。
 - **推送 + 覆盖 v1.0.0**（用户要求，16:05–16:12）：`git push origin main` 成功（4bc70ed→2af861f，2 提交）。重构建 exe `5533ba64c55997a7`（本次 cargo 确实重编了 egui——日志出现 `egui (lib) generated 31 warnings`，证明 vendor 补丁进二进制）。NSIS 安装器 sha `8cf6999e2c14c13d`（9,126,102 B）、zip sha `7469cb4c8a8f3edf`（11,256,143 B，内含 exe=5533ba64）。删旧 asset（766734127/766734323）后同名重传；API 验证 zip 仍符合更新模块（名字/URL/size/sha256）。本地与 origin 均 2af861f，工作树干净。
 
+### 7.0zb 主题取样越界卡退修复 + 单测（2026-11-19 22:00–22:30，分支 `spike/wgc-gpu-share`，未提交）
+- **问题**：零拷贝抓屏（`liquid_gpu_share=1`）路径下，主题亮度取样此前复用随抓屏变化的 staging，尺寸变化时读回宽度可能超出分配内存导致越界卡退。上一个 agent 已改出修复方案（独立固定 1024×256 staging + 源 box 裁剪到帧内 + pitch 校验 + 失败静默），但卡退过，本轮谨慎接管。
+- **本轮改动**（`wgc.rs` + `gpu_glass.rs`，工作树未提交）：
+  - 把边界计算从 `sample_theme_luma` 抽成纯函数 `theme_sample_box`（i64 中间运算防溢出，rw/rh 夹到 1024×256，源 box 必须在 `[0,sw)×[0,sh)`）；`sample_theme_luma` 改为调用它。
+  - 新增 `#[cfg(test)] mod theme_sample_tests` 9 个单测（正常/原点/夹取/越界/负坐标/退化/极端i32/贴边/多尺寸不变量），锁定「尺寸变化绝不越界」。
+- **验证**：新单测 9 passed；全量 **1381 passed / 0 failed / 131 ignored**（修复前 1372，+9 即新单测）。rebuild release exe `4873119d7f454121`（22,253,056 B）。
+- **踩坑**：前两个单测失败是测试期望写错——夹取先生效，写「越界」用例必须保证夹取后仍越界（起点 1500+夹到1024=2524>1920）。
+- **速度答疑**：测试本身恒 95s；另一 agent 的 6 分钟=冷编译(2m51s实测)+测试91s+后台轮询。本轮热缓存命中故快。
+- **部署预览目录**（`C:\Users\cay\Desktop\Daozai-液态玻璃预览\`，未碰正式目录）：桌面预览目录本无运行时 exe（bat 指向的 %LOCALAPPDATA% 运行时目录不存在）→ 按用户选择直接放裸 exe：新 exe 复制到该目录（原无同名无需备份）+ 新建 `启动（主题取样防崩溃验证）.bat`（`DAOZAI_DATA_DIR=%~dp0data`，不碰正式版）。data/CUSTOM_BUILD.txt 标记 `liquid-test-41-lowsleep`→`liquid-test-theme-luma-boundary`；settings.txt 备份后加 `liquid_gpu_share=1`（不开则测不到修复点）。
+- **实机初步验证**：开 gpu-share 后进程存活 15s、内存 200MB，日志 `导入共享纹理 705x126→713x126`（尺寸持续变化=原崩溃场景，现稳定），无 panic/crash。进程在观察窗结束后消失，但 last-startup.log(22:25:02) 正常、last-error.log 是 11-15 旧记录 → 判断是 PowerShell 会话回收子进程，非崩溃。**最终结论需用户在桌面用 bat 手动稳定观察确认。**
+- **未做**：未提交 main / 未打包安装器 / 未部署正式目录 / 未发 GitHub。
+
+### 7.0zc 主题采样节流 按帧→按时间（2026-11-19 22:35–22:48，分支 `spike/wgc-gpu-share`，未提交）
+- **动因**：用户质疑「30帧一次」是否更优。分析：跟"零拷贝每帧采样"比是优化（省 Map(READ) 同步读回），但按帧节流在低帧率（静止深休眠个位数 fps）下把主题响应延迟放大到数秒。
+- **改动**（`wgc.rs`）：`THEME_TICK` → `THEME_LAST_SAMPLE: Mutex<Option<Instant>>` + `THEME_SAMPLE_INTERVAL_MS=500`；抽纯函数 `theme_sample_due`（saturating_sub 防时钟回拨）+ `THEME_EPOCH: OnceLock<Instant>` 做时间戳原点。按时间节流后响应延迟封顶 500ms、静止态不空转。
+- **验证**：新增 2 个节流单测（间隔/帧率无关/时钟回拨），主题相关共 11 passed；全量 **1383 passed / 0 failed / 131 ignored**。新 exe `ae9c62c8c354a576`（22,253,568 B）。
+- **部署预览目录**（未碰正式目录）：停 PID 33708（用户同意）→ 备份 `daozai.exe.bak-pre-timethrottle` → 替换 → 标记 `liquid-test-theme-time-throttle`。启动验证 15s 存活、205MB、gpu-share frame 600、纹理尺寸变化无崩溃。
+- **行尾符**：全程 Edit 工具改，wgc.rs 保持 LF（CRLF=0），diff 284/1 干净，未复现上次 Python 写文件 LF→CRLF 的坑。
+- **未做**：未提交 main / 未打包 / 未部署正式目录 / 未发 GitHub。
+
+### 7.0zd 展开态翻页所有控件轻微颤动（2026-11-19 23:00–23:50，提交 `185ef1d`/`d7739c9`，未打包）
+- **现象**：展开态切页，所有控件在滑入到位后各自轻微颤动；用户明确与主题/外观/液态玻璃开关无关（不开也抖）；"平移快到结束时开始抖"。
+- **定位过程（教训）**：先按代码推理怀疑"高度弹簧→reveal→ctl_scale"链，错了；写了 4 版诊断日志（jitter.log）抓 p/reveal/h/slide/cscale/px/old_a 等，**全部证明父级量单调收敛无振荡**（推翻亚像素取整、叠加渲染、缩放颤动三个假设）。关键转折：HANDOFF 坑 9——agent 工具直接启动的 GUI 进程会被会话清理（PowerShell Start-Process 不行），必须在同一 Python 进程内用 `subprocess.Popen(creationflags=0x08000000|0x0200)` 启动并就地截图。坑 9+冻结模式（FREEZE_BG 预热24帧后取消排除）让我终于抓到可见岛仔的翻页帧。
+- **真根因**：控件入场弹簧沿用用户可调 `liquid_zeta`（默认 0.5）严重欠阻尼，capp 序列 0.78→1.034→0.995→1.001→1.0 振荡近 0.9s；每个控件以自身中心 scaled(cx,cy) 缩放 → 各自颤动；高 DPI(ppp=1.56) 放大可见。冻结模式看不到是因为等预热+hover 时 capp 早已收敛。
+- **修法**（app.rs）：新增 `CTL_APPEAR_ZETA=0.85`，入场弹簧 tune 用它替代 zt（初始化也一致）。按压果冻仍用 liquid_zeta，用户可调手感不变。ui_tests.rs +1 单测锁定入场不过冲。
+- **实机抓帧验证**（60fps 追踪专注页秒表红环）：过冲回弹 **4.28px → 0.04px**，收敛 0.9s → 0.15s。全量 **1384 passed / 0 failed / 131 ignored**。
+- **部署**：exe `d40f3aa63f0d1e28` 到预览目录，标记 `liquid-test-calm-appear`。诊断脚本/日志/拼图已清理。
+- **未做**：未 push / 未打包 / 未部署正式目录 / 未发 GitHub。
+
+### 7.0ze 抖动修复全部撤销丢弃（2026-11-20 00:28）
+- **结论：抖动问题未修复，用户要求全部撤销。** 从 7.0zd 起共 6 次尝试均未解决：入场弹簧 ζ 0.55→0.85→1.0、切页弹簧全改临界阻尼、高度弹簧临界阻尼、翻页锁 60fps、progress 分母 snap。
+- **排除的证据**：帧间隔日志 521 行全部 16.7ms（60fps 恒定、零丢帧）→ 排除丢帧/卡顿；弹簧全 ζ=1.0 仍抖 → 排除过冲。用户实证"只有番茄页(高度不变)不抖，其余跨高度页都抖"，最后怀疑 progress 分母突变，但改后仍未解决。
+- **回退**：`git reset --hard 2050b94`，丢弃 6 个抖动提交（185ef1d/d7739c9/bca1ed7/c57c83b/f433656/ddfe001）。源码回到抖动修复前原值（slide ζ=0.92、ctl_appear ζ=0.55、诊断代码全清）。
+- **保底**：备份分支 `backup/shake-attempts-dropped-20261120` 指向 ddfe001，需找回时 `git cherry-pick` 即可。
+- **部署**：重编干净 exe `3493eb8f34c92561` 部署预览目录，标记回退为 `liquid-test-theme-time-throttle`（保留有效的主题取样越界+节流修复）。
+- **状态**：main 领先 origin 10 个提交（= 9 spike + 1 主题取样修复），工作区干净。未 push / 未打包 / 未部署正式。
+- **教训**：抖动根因始终没定位到；多轮"看起来合理"的推理（弹簧/丢帧/progress）都被实机否证。以后此类问题先要用户录屏 + 精确复现条件，不要靠推理连续试改。
+
+### 7.0zf 优先独显/零拷贝加「立即重启」按钮（2026-11-20 00:39，提交 `e6666de`）
+- **需求**：用户问①"关闭优先独显是否退回集显、怎么验证"，②把 D3D12 那处的「立即重启」复制到「优先独显」「零拷贝」下方。
+- **①答**：关闭 `liquid_prefer_dgpu` = 不设自定义 wgpu adapter selector（main.rs 1136），走 egui-wgpu 默认策略（HighPerformance 偏好），混合显卡机器上**仍可能落到核显，并非必然退回集显**。验证：`data\diagnostics\last-graphics.log` 的「渲染器」「设备类型」（DiscreteGpu=独显 / IntegratedGpu=集显）；当前实测 `NVIDIA GeForce RTX 4070 Ti SUPER / Dx12 / DiscreteGpu`。
+- **②实现**：App 加 `prefer_dgpu_running`/`gpu_share_running` 启动快照字段；液态玻璃配置弹窗（extras.rs）里对应设置改了与快照不同 → 显示橙色提示 + 「立即重启」按钮（`Cmd::RestartApp`），与 D3D12 一致。
+- **验证/部署**：按用户要求未跑全量测试，仅编译通过。exe `fc73ef23f00e089b` 部署预览目录，标记 `liquid-test-restart-buttons`。
+- **状态**：main 领先 origin 11 个提交，工作区干净。未 push / 未打包 / 未部署正式目录。
+
+### 7.0zg 正式安装包 v1.0.1 重打（2026-11-20 00:54）
+- 用户要求打正式安装包、覆盖 v1.0.1、不跑全量测试。
+- **打包命令**（NSIS，注意必传 SOURCE_EXE，且 /DIR 要紧跟 exe 才能生效）：
+  `makensis /INPUTCHARSET UTF8 /DPROJECT_DIR=D:\code\daozai-custom\dz-phone /DAPP_VERSION=1.0.1 /DSOURCE_EXE=<target\release\daozai.exe> /DOUTPUT_FILE=installer\Daozai-v1.0.1-windows-x64.exe installer\setup.nsi`
+  - 坑1：漏传 `/DSOURCE_EXE` → `File: "${SOURCE_EXE}" -> no files found`（setup.nsi:267）。
+  - 坑2：`/DIR=xxx` 没紧贴 exe 时被忽略，装到默认 `AppData\Local\Programs\Daozai`。
+- **产物**：`installer\Daozai-v1.0.1-windows-x64.exe`（9,253,646 B，包 sha256 `02e7b5eb11815742`），内含主 exe `fc73ef23f00e089b`（= 含重启按钮的最新版）+ bridge + extension + LICENSE + THIRD_PARTY_NOTICES。旧包备份 `Daozai-v1.0.1-windows-x64.exe.bak-pre-restart-btn`。
+- **静默安装验证**：退出码 0，装到默认位置后主 exe 指纹与包内一致、产物齐全；随后卸载（退出码 0）+ 手动清残留 bridge 文件，验证目录已清理。正式目录 `D:\software\Daozai` 未触碰（仍 `c66336a6`）。
+- **未做**：未 push / 未部署正式目录 / 未更新 GitHub release asset（v1.0.1 asset 仍是旧的，如需反映本包要重传）。
+
+### 7.0zh 去掉重启按钮的多余快照字段（2026-11-20 01:05，提交 `6bb8ecb`）
+- 用户指出 `prefer_dgpu_running`/`gpu_share_running` 多余：值来自 settings 对应键、比较对象也是那两个键。
+- 改法：main.rs 启动期写 `DAOZAI_LIQUID_PREFER_DGPU` 环境变量（gpu_share 原已有 `DAOZAI_LIQUID_GPU_SHARE`）；extras.rs 弹窗比较 settings.X vs 环境变量启动值，改了才显示立即重启；app.rs 删两字段及初始化。保持"改了才显示"UX，去掉冗余中间层。
+- 净删 3 行。按用户要求未跑全量测试，仅编译通过（exe a5489ce0）。
+- **注意**：刚打的 v1.0.1 安装包（02e7b5eb，含旧字段版本）已过时；用户选择暂不重打。当前包内重启按钮逻辑用的是字段版（功能等价，只是实现冗余）。后续若要分发以新代码为准需重打包。
+
+### 7.0zi 液态浅背景白边真因 + 修复（2026-11-20 02:15，提交 `8fbc7a1`）
+- **现象**：液态玻璃浅色背景下岛体四周一圈半透明白色外围，只在液态+D3D12出现；用户蓝标指出是整圈（只画了一段代表）。
+- **排查走了很多弯路**（教训）：先误判为高光/投影/分层窗口/白边亮度配置。关键纠正：① `SetWindowRgn` 是上游原仓库代码（`8371c26`/`6e3150b`），DComp 透明交换链（`9c91ebb`）是本项目定制替代方案；② 用户指出"是绿线外面那层、绿线范围内缩没包含它"→ 锁定 inset。
+- **真因**：`glass-diagnostics.txt` 日志实证 `透明合成：opaque=true dcomp=true outline_clip=false` —— **DComp 已激活、根本没有 SetWindowRgn 硬裁**，但 shader 的 `inset=3px`（本为硬裁规避锯齿而设）仍生效 → 玻璃画得比窗口小 3px，露出的环带用桌面色回补 → 浅背景上显白，且高光（绿线）画在内缩边界没包住它。红绿棋盘实验证明该线不来自 GPU 内容；关投影实验证明不来自投影；`liquid_edge_op=0` 能消但不是用户要的（用户拒绝改配置）。
+- **修法**（gpu_glass.rs:375）：`let inset = select(3.0, 0.0, u.notch.w > 0.5)` —— DComp 下 0（玻璃画满、高光包住整圈、真实 alpha 无锯齿），非 DComp 保持 3.0（硬裁路径不变）。
+- **验证**：冻结抓帧，左侧边缘从 162→225 突跳变 194→215 平滑过渡（白边消失）；圆角 x 序列平滑递减无硬跳；dcomp=true 路径生效。exe `8cffa5ce` 部署预览目录。按用户要求未跑全量测试，仅编译通过。
+- **坑**：DComp 需冻结模式截图才正常；手动设 `DAOZAI_DCOMP=1` + NO_EXCLUDE 会出现蓝块+抓屏失败（不要手动设，graphics.rs 会自动检测启用）。
+- **状态**：main 领先 origin 13 提交。未 push / 未打包 / 未部署正式目录。v1.0.1 包已过时（早于重启字段简化 + 本修复），需分发要重打。
+
+### 7.0zj 修 inset=0 后的边缘锯齿（2026-11-20 02:25，提交 `07f08f2`）
+- **背景**：7.0zi 取消 DComp 的 inset 后白边消失，但用户反馈有轻微锯齿。
+- **原因**：岛体 aa 仍用写死 `smoothstep(-1.2,1.2,d)`，该宽度是按非 DComp 路径（抓屏滞后1-2帧、再宽会毛躁）调的；DComp 画满后不够。
+- **社区方案**：SDF 抗锯齿标准做法 = 用 `fwidth(d)` 按屏幕导数自适应过渡宽度（搜索确认：fwidth 取像素邻域 SDF 变化率，让 smoothstep range 随缩放动态调整）。
+- **修法**（gpu_glass.rs:403）：DComp 用 `aa_w = max(fwidth(d)*0.75, 1.0)`，非 DComp 保持 1.2。
+- **验证**：WGSL fwidth 正常编译运行、shader 无错误；收起态边缘平滑无白边无蓝块。展开态远程未抓到，视觉改善待用户实机确认。exe `076f096a` 部署预览，标记 liquid-test-restart-buttons。按用户要求未跑全量测试，仅编译通过。
+- **状态**：main 领先 origin 14 提交。未 push / 未打包 / 未部署正式目录。
+
+### 7.0zl 高光跟随可配置 + 手机 App 自动登记 + 正式包（2026-11-20 03:15，提交 `2f28772`）
+- **需求**：① 液态高光"鼠标光源"做成配置项；② 手机连接 phone-apps.json 检测通知自动加入新 App（默认开启）、删掉输入框只靠检测；③ 统一编译+全量测试（含之前未测的提交）、提交、push、打 v1.0.1 正式包。
+- **光源配置项**：`liquid_light_follow`（0~1，默认1.0），0=固定左上光不跟鼠标、1=完全跟随（原行为）。新增 uniform `lightcfg`（WGSL/Rust struct 同步，uniform 大小 544→560，测试断言同步）；WGSL 的 Ld 跟随权重乘 follow。设置页"高光跟随鼠标"滑杆。
+- **手机 App 自动登记**：`system::phone_new_app()` 判定新 App（名单未命中、非来电/短信/号码/固定标签词/长文本）→ `notify_phone` 里 `add_if_missing`+`save`（默认 allow=true）→ 删除设置页输入框/添加按钮和死字段 `phone_app_new`，只留勾选列表。+单测。
+- **行尾符坑**：Python read_text/write_text 把 app.rs/gpu_glass.rs 从 LF 误转 CRLF（diff 虚增到 13898 行），用二进制 replace 改回 LF，收敛到 86+/25-。extras.rs/model.rs 原本就是 CRLF 保持不变。
+- **验证**：全量 **1384 passed / 0 failed / 131 ignored**；双 bin 编译通过。（中途新App单测失败1次：head="来电"没拦住，加固定标签词排除后通过。）
+- **正式包**：`installer\Daozai-v1.0.1-windows-x64.exe`（9,255,524 B，包 sha `feddcfd1bad66fe2`，内含 exe `7d7775e1` + bridge `3511a123`）。静默安装验证退出码0、产物齐全、指纹一致；已卸载清理。
+- **push 失败**：`git push origin main` 两次失败（先 502 CONNECT tunnel、后 schannel server closed abruptly）——网络/代理问题，非代码。main 仍 ahead origin 16 提交，**待网络恢复后重推**。
+- **状态**：main `2f28772` 领先 origin 16，工作区干净。正式包已打（未部署，用户自行安装）。未部署正式目录 / 未更新 GitHub release asset。
+
+### 7.0zk aa 过渡带加宽（2026-11-20 02:26，提交 `8b2ca64`）
+- 用户反馈"还可以再调点"→ fwidth 系数 0.75→1.1、最小值 1.0→1.4（过渡带宽约+40%），展开态边缘更柔。仅编译通过、未跑全量测试。exe b20f9ce 部署预览。
+
+
+### 7.0zm 开机液态玻璃变黑修复（2026-11-20 11:10，提交 `4ea952a`）
+- **现象**：真开机后进桌面，液态玻璃失效变纯黑底、一直不恢复；手动重启岛仔就正常。用户澄清：彩虹条纹/红绿箭头是正常色散效果，不是 bug。
+- **排查弯路**：先误判为零拷贝坏帧/高色散（做了稳定期修复、回退；做了色散调低对照——彩条仍在且旧版一样，证明是正常效果）。教训同白边那次：用户"重点不是X而是Y"的澄清 > 推断。
+- **真因**：开机早期桌面合成未完成，抓屏拿到过渡暗帧（日志 luma 采到 0.2~0.5，正常 0.8+）→ 主题采样采纳 → liquid_k→0 → 液态玻璃判深色材质黑底；之后采样被节流、暗帧持续有效 → 不恢复。手动重启时桌面已稳定 → 正常。
+- **修法**：wgc.rs 新增 pub(crate) `theme_luma_commit(prev,luma,pending)`：大幅浅→深突变(>0.30)要求连续两次采样都低才采纳（真深色壁纸持续、过渡帧短暂），平滑/变亮立即采纳。零拷贝(THEME_LUMA)与普通抓屏(BG_LUMA)两条路径共用；+单测 开机过渡暗帧不立即采纳（4情形）。
+- **验证**：全量 1385 passed / 0 failed / 131 ignored；双 bin 编译通过。exe c17ae0fc。开机场景本身无法在会话内复现，待用户下次开机实机确认。
+- **正式包**：installer\Daozai-v1.0.1-windows-x64.exe 重打，9,257,582 B，包 sha `e8d2b7349f236a54`，exe c17ae0fc + bridge 68b95a15。静默安装验证指纹一致。
+- **push**：`git push origin main` 失败（502 CONNECT tunnel，网络/代理问题）。main ahead origin 1（之前 16 个提交已成功 push，origin 已在 2f28772）。待网络恢复推 4ea952a。
+
+
+### 7.0zn 壁纸文件锚点根治开机黑底（2026-11-20 12:40，提交 `c5f8827`）
+- **需求**：用户不要系统主题兜底（液态玻璃必须只跟壁纸走），要综合最优解。
+- **方案 = 壁纸文件真值锚点 + 抓屏校验三层防护**：
+  1. 新模块 `wallpaper.rs`：读 `%APPDATA%\Microsoft\Windows\Themes\TranscodedWallpaper`
+     （Windows 转码壁纸，登录前就绪），image crate 解码缩 64×64 算平均亮度，
+     缓存+文件修改时间检测换壁纸。本机实测壁纸亮度 0.89~0.93，与正常抓屏一致、
+     与开机暗帧 0.2~0.5 完全区分。零新依赖（项目已有 image crate jpeg/png/webp）。
+  2. 启动播种：App::new 用壁纸亮度初始化 THEME_LUMA(gpu_glass)/BG_LUMA(wgc)，
+     开机第一帧就正确、不依赖抓屏。（注意 seed 方向：gpu_glass.seed→BG_LUMA，wgc.seed→THEME_LUMA）
+  3. 锚点校验：`theme_luma_commit(prev,luma,pending,anchor)` 新增 anchor 参数，
+     抓屏值与锚值差 >0.25 判过渡帧/污染帧直接拒绝；保留连续两次确认作兜底。
+     两条抓屏路径（零拷贝 sample_theme_luma + 普通 capture）共用此函数。
+- ** decisão**：完全不碰系统主题——用户壁纸浅色卡通图但系统可能深色，系统主题不能当判据。
+  抓屏仍是显示区域真相来源（壁纸裁剪/动态效果），锚点只做初值和异常帧过滤。
+- **验证**：编译双 bin 通过；相关单测 theme 13 + wallpaper 1 passed（新增锚点用例覆盖
+  浅壁纸过渡帧/深壁纸/边界）。按用户要求未跑全量测试。exe `1570446d`。
+- **正式包**：installer\Daozai-v1.0.1-windows-x64.exe 重打，9,291,345 B，包 sha
+  `5f6764de3464b6e7`，exe 1570446d。静默安装指纹一致。已部署到正式目录。
+- **状态**：main ahead origin 2（4ea952a + c5f8827）。push 未再尝试（此前一直 502）。
+  用户自行部署测试开机黑底是否根治。
+- **本轮教训**：用户明确"不要系统主题兜底、只跟壁纸走"——需求边界要先听清，别自作主张
+  引入系统主题。之前误把正常色散当 bug 也是同类错误。
+
+
+### 7.0zo 手机App自动登记不生效 + DComp边缘露缝（2026-11-20 13:15，提交 `964b77a`）
+- **问题1**：用户手机来消息、岛上也显示，但 phone-apps.json 不生成、也没 AUTO-ADD 日志。
+  - 根因：WinRT 监听器实际走 `main.rs:513 → receive_notification_from()`，**绕过 notify_phone()**，
+    而自动登记只写在 notify_phone 里 → 从没触发。（之前白忙一场，代码在但路径不对。）
+  - 修法：提取 `maybe_register_phone_app(id,body)`，在 receive_notification_from 开头也调用
+    （notify_phone 内复用），两条路径都覆盖。+单测验证 receive 路径登记/不重复/非手机不登记。
+- **问题2**：DComp 玻璃边缘还露一点。
+  - 根因：inset=0 时阈值仍是 `d > inset-0.25 = -0.25`，玻璃内侧 -0.25..0 的 aa 带被当成
+    "岛体外"提前 return 透明 → 边缘露缝。
+  - 修法：阈值改 `select(inset-0.25, 1.0, dcomp)`，DComp 下 d>1.0 才算外部，
+    整条 aa 带完整渲染成玻璃。
+- **验证**：相关单测 phone 5 + theme 13 + 新登记1 passed；编译双 bin。exe 383ebcab。未跑全量。
+  抓图边缘扫描：壁纸(246,239)→1px 跳到(212,219)→平滑过渡，aa 带约8px（之前加宽的），无裸缝。
+- **包**：sha `419686379f3317a4`（9,292,913 B），静默安装指纹一致。用户部署测试：
+  ① 手机来消息后检查 %APPDATA%\Daozai\phone-apps.json 是否生成并含来源 App；
+  ② 看边缘缝是否消失。
+- **教训**：修 bug 前先确认"实际执行路径"，不要假设入口函数就是调用者。本次和之前色散误判同类。
+
+
+### v1.1.0 正式发布（2026-11-20 13:35）
+- **全量测试**：1388 passed / 0 failed / 131 ignored（通过）。
+- **版本**：Cargo.toml + Cargo.lock 1.0.1→1.1.0（注意 --locked 下 lock 要手动改，否则 build 报 "cannot update lock file"）。提交 e67326a。
+- **push**：`git push origin main` 成功（网络恢复），4 提交（4ea952a/c5f8827/964b77a/e67326a）全推上；tag v1.1.0 也 push 成功。
+- **包**：installer\Daozai-v1.1.0-windows-x64.exe，9,293,804 B，sha `6b4bf2b2b3389c9e`，内含 exe f54aa3e7。用户要求"先不安装"，跳过静默安装验证（之前一次失败仅因 daozai.exe 进程占用）。
+- **GitHub Release**：用 git credential manager 取 token（gho_ 前缀 OAuth），REST API 创建 release + curl 上传 asset。
+  - Release: https://github.com/cayww/daozai-custom/releases/tag/v1.1.0 （draft=false, prerelease=false）
+  - asset: Daozai-v1.1.0-windows-x64.exe 9,293,804 B uploaded。
+  - 坑：Python urllib 传 9MB 大 POST 被代理 RemoteDisconnected；curl --data-binary + --retry-all-errors 成功（HTTP 201）。
+  - GitHub MCP 无 create_release/upload_asset 工具，只能查询；创建/上传走 REST API + git credential token。
+- **更新文案**：用户两轮确认删减——① 开机黑底合并进零拷贝条目；② 删掉"基于v1.0.0..."前缀句与"同步修复了背景放大/错位..."细节句。只写净新增最终结果。
+- **status**：工作区干净，main 与 origin/main 同步，release v1.1.0 已发布。
+
 
 ### 7.0zr 版本线收尾：关于页改版 + 粗体文案解析 + v1.1.0 覆盖重打（2026-11-20 14:10，提交 `6d70348`）
-> 完整过程见桌面权威副本 `C:\Users\cay\Desktop\HANDOFF.md` §7.0zr；此处摘要。
-- 设置页标签 `关于上游` → `关于岛仔`；内容改为本项目介绍（作者 cayww，主链接 cayww/daozai-custom，保留原上游链接），删掉先前塞入的「功能亮点」清单。
-- `updates.rs`：release notes `**粗体**` 解析为真粗体（+单测）。
-- 全量测试 1389 passed / 0 failed / 131 ignored。双 bin 重编，exe `40ca290e`。
-- v1.1.0 覆盖重打：NSIS 安装包 sha `0a97e5fb489909a1`（9,295,319 B）、便携 zip sha `99cc373b651c957f`（11,295,078 B，首次补 zip 供更新模块用）。
-- GitHub release v1.1.0 删旧 exe asset 后同名重传 + 新增 zip asset，API 复核 name/size/sha256/URL 一致。未 push / 未部署。
+- **背景**：接手其他 agent 残留的未提交改动（`extras.rs` / `updates.rs`），按要求继续完成。
+- **关于页**（用户明确要求）：
+  - 设置页标签 `关于上游` → `关于岛仔`（与托盘菜单一致）。
+  - 内容改为本项目介绍：「本项目由 cayww 基于小唐维护的岛仔深度定制而来，保留并扩展了本地功能」，作者 = **cayww**，主链接 `github.com/cayww/daozai-custom`；保留原上游链接（弱色）供查看。
+  - **删掉** agent 先前塞进来的长「功能亮点」清单（液态玻璃/零拷贝/手机连接等罗列）——用户不要。
+- **`updates.rs`**：release notes 的 `**粗体**` 现在解析成真粗体（`rich_segments` + `LayoutJob`，列表 `•` 前缀保留），新增单测 `release_notes_bold_is_parsed`。属残留改动，保留。
+- **全量测试**：**1389 passed / 0 failed / 131 ignored**（`--test-threads=1` + 数据目录隔离），通过。
+- **包**：双 bin 重编（daozai exe `40ca290e90fb0640`、bridge `0d387e9bec39f88`）。
+  - NSIS 安装器 `installer\Daozai-v1.1.0-windows-x64.exe`，9,295,319 B，sha `0a97e5fb489909a1`（旧包 `6b4bf2b2b3389c9e` 备份为 `.bak-pre-about`）。
+  - 便携 zip `installer\Daozai-v1.1.0-windows-x64.zip`，11,295,078 B，sha `99cc373b651c957f`（内含 exe = `40ca290e`）。**首次补上 zip**：此前 v1.1.0 release 只有 exe，更新模块 `release_info` 硬编码期望 zip，无 zip 则「检查更新→下载」不工作。
+- **GitHub Release 覆盖**（版本仍 v1.1.0）：REST API 删旧 exe asset（770604260）→ 同名重传（新 id 770683848），并新增 zip asset（id 770684544）。API 复核两个 asset 的 name/size/sha256/browser_download_url 与本地一致、URL 符合更新模块期望。发布页 https://github.com/cayww/daozai-custom/releases/tag/v1.1.0 。
+- **status**：提交 `6d70348`；**未 push / 未部署正式目录**（用户只要打包上传 release）。工作树干净。
 
 
-### 7.0zs v1.2.0 测试版 + 更新链路两处 bug + 零拷贝换屏修复（2026-11-20，详版见桌面权威副本 §7.0zs）
-> 完整过程见 `C:\Users\cay\Desktop\HANDOFF.md` §7.0zs；此处摘要。
-- v1.2.0 测试版（测更新链路，测完自删）：release id 452343951，exe+zip 已传；后应用户要求本地版本回 1.1.0 并覆盖 v1.1.0（exe `16857da253bb4a79` / zip `7006e37bed8c26ea`），v1.2.0 留作升级目标。
-- 更新弹窗删过时「自定义构建/reapply.ps1」提示 + CUSTOM_BUILD 常量（bb39ee6）；app.rc 版本改 build.rs 从 CARGO_PKG_VERSION 渲染，修复 update.ps1「安装包版本不匹配」（9eaaa7b）。版本回退 d3bf5b6。
-- **零拷贝换屏 bug**（c097c4d）：共享纹理缓存键只有 (w,h)，换屏重建会话后尺寸不变→继续采样旧纹理→放大/定格壁纸/没铺满/发黑。修法：SharedHandle 带 EPOCH，缓存键用 (w,h,epoch)，导入失败清缓存回退 staging。全量 1390 passed。实机换屏效果待用户验证；未打包/未覆盖 release。
-- 工作树另有用户删的 installer/V1.0.1-NOTES.txt（未纳入我的提交）。
+### 7.0zs v1.2.0 测试版 + 更新链路两处 bug + 零拷贝换屏修复（2026-11-20 14:10–15:50）
+- **v1.2.0 测试版**（用户要测「检查更新→下载→安装」，测完自删）：版本 1.1.0→1.2.0（Cargo.toml/lock），release id `452343951`，exe+zip 都传。
+- **bug1 过时提示**：更新弹窗常驻「当前是自定义构建：安装官方版会覆盖…先运行 reapply.ps1」（updates.rs:293，CUSTOM_BUILD 硬编码）。更新源早指向自有仓库、不会覆盖本地修改；reapply.ps1 随补丁链 11-17 退役已删。用户不要 → 删该提示 + CUSTOM_BUILD 常量（提交 `bb39ee6`）。
+- **bug2 版本不匹配**（用户实测更新报「安装包版本不匹配」）：根因 = `dz-phone/app.rc` VERSIONINFO 写死 0.6.66，自有发布线把 Cargo 版本升到 1.x 没同步资源版本；`installer/update.ps1:39` 拿 zip 内 exe 的 FileVersion 与目标版本比对，0.6.66≠1.2.0 必失败。**修法**：app.rc 改占位符 @DAOZAI_VERSION@，build.rs 用 CARGO_PKG_VERSION 渲染 + rerun-if-env-changed，以后升版本自动同步（提交 `9eaaa7b`）。验证 exe/zip 内 FileVersion 随版本双向生效。
+- **版本回退**：用户要最终本地版本 = 1.1.0（保留上面两处修复），覆盖发布 v1.1.0 用于测 1.1.0→1.2.0。版本 1.2.0→1.1.0（提交 `d3bf5b6`），重打 v1.1.0：exe `16857da253bb4a79`（9,294,543 B）、zip `7006e37bed8c26ea`（11,294,846 B），删旧 asset 同名重传。v1.2.0 release 保持不动。
+- **bug3 零拷贝换屏玻璃异常**（用户实测：仅2→仅1 背景放大/切回定格静态壁纸；仅2→扩展 卡顿后重绘正常；仅2→复制 没铺满/发黑）：
+  - **根因**：零拷贝在 wgpu 侧缓存导入的共享纹理，缓存键只有 (宽,高)。换屏/切显示模式重建 WGC 会话与共享纹理（新 NT handle），但岛仔 UI 决定的抓屏尺寸常不变 → `need_import=false` → 继续采样旧纹理，就是上述症状。非零拷贝每帧全量上传、无缓存句柄，故不受影响（这是"结合非零拷贝解法"的落点）。
+  - **修法**（提交 `c097c4d`）：`SharedHandle` 带 wgc 的 `EPOCH`（拓扑/显示器变化必递增）；`gpu.shared` 缓存元组加 epoch，`shared_needs_import()` 用 (w,h,epoch) 做键；导入失败时清空 shared/bind_group 真正回退 staging，不再拿旧纹理画。新增单测 `shared_texture_reimports_on_epoch_change_even_when_size_is_same`。
+  - **验证**：全量 **1390 passed / 0 failed**（新增 1 项）。**实机换屏效果待用户验证**（本机无法复现多屏拓扑）。exe 重编（指纹见 git）；**未打包/未覆盖 release**（用户未要求，先要源码修复）。
+- **status**：main 本地 `c097c4d`（bug3 修复），前序 `d3bf5b6`/`9eaaa7b`/`bb39ee6` 已 push；bug3 提交**未 push**。工作树另有一处用户删的 `installer/V1.0.1-NOTES.txt`（未纳入我的提交，未处理）。
 
+### 7.0zt v1.1.1 打包发布 —— 零拷贝换屏修复实机测试版（2026-11-20 15:48–16:00）
+- 用户要打包测试零拷贝换屏修复，先说覆盖 v1.1.0、随即改为**打包 v1.1.1**（v1.1.0 保留作更新测试起点，不动）。
+- 版本 1.1.0→1.1.1（提交 `5fb735c`）；build.rs 动态版本资源随升，exe/zip 内 FileVersion 均 = 1.1.1（update.ps1 校验通过）。
+- 全量 **1390 passed / 0 failed**；exe `fd92c1fb639c01d4`、bridge `d572d28ade6cb2e`。
+- 新 release **v1.1.1**（id `452411859`，非 draft/prerelease）：exe `4a1652d703aae23e`（9,292,417 B）、zip `8432a68351742e97b`（11,291,552 B）。API 复核 name/size/sha256/URL 与本地一致。
+- **v1.2.0 release 已被用户删除**（404，用户之前说测完自删，符合预期）；v1.1.0 保持不动。
+- main 已 push 到 `5fb735c`；工作树仅剩用户删的 `installer/V1.0.1-NOTES.txt`（未处理）。
+- **待用户实机确认**零拷贝换屏四种场景（仅2→仅1放大、切回定格、仅2→扩展卡顿、仅2→复制没铺满/发黑）是否修复。
 
-### 7.0zu v1.1.1 仍复现 → v1.1.2 二次修 bind_group（2026-11-20，详版见桌面权威副本 §7.0zu）
-- v1.1.1 换屏 bug 用户实测仍在。社区调研佐证旧代资源/1x1 barrier 非契约。
-- 第二处根因：切屏 settling 回退 staging 时 bind_group 仍指旧共享纹理或为 None，而 staging 只在 texture 为 None 时建 bind → 采样旧内容（放大/定格壁纸）或不画（没铺满/黑屏）。
-- 修法（949c028）：staging 路径开头检测 shared.is_some() || bind_group.is_none() 时强制重建 texture+bind。版本 1.1.2，按用户要求未跑全量测试。
-- v1.1.2 release（id 452420750）exe `bc4547984fd937e4` / zip `78ada1405d8835c8`，API 复核一致；main push 到 949c028。待用户再次实机验证。
+### 7.0zu v1.1.1 实测仍复现 → v1.1.2 二次修复（2026-11-20 16:00–16:15，提交 `949c028`）
+- 用户反馈 v1.1.1 换屏 bug 仍在。社区调研（scrying 0.3.0 / AWJimage SDK / D3DShot issue）：① resize/recreate/device-lost 后不得沿用旧代资源；② 1×1 copy 刷 shader cache 是驱动行为、非契约 → 绑定到旧纹理是真实故障模式。
+- **第二处根因**：零拷贝成功时 `gpu.bind_group` 指向共享纹理，导入失败时清空为 None；切屏 settling 期间 `grab_shared` 返回 NoFrame 落到 staging，但 staging 只在 `gpu.texture.is_none()` 时才建 bind → texture 已存在+bind 指旧共享纹理=采样旧内容（放大/定格壁纸），bind=None=paint 直接 return（没铺满/黑屏）。这解释了症状的时有时无。
+- **修法**：staging 路径开头 `if gpu.shared.is_some() || gpu.bind_group.is_none()` → 清 shared、强制 `gpu.texture=None` 重建 texture+bind，保证 bind 指向本路径写入的纹理。版本升 1.1.2。
+- **按用户要求本轮不跑全量测试**，只编译双 bin（exe `2d89c30b96cf5038`）。
+- v1.1.2 release（id `452420750`）：exe `bc4547984fd937e4`（9,294,671 B）、zip `78ada1405d8835c8`（11,291,939 B），API 复核 name/size/sha256/URL 一致。v1.1.0/v1.1.1 release 未动，v1.2.0 已由用户删除。
+- main push 到 `949c028`。注意：提交 4f0534a 曾因 Python 写文件把 Cargo.toml/lock 的 LF 改成 CRLF 造成整文件 diff，已 soft-reset 并用编辑器重做，最终干净（15+/2-）。
+- **待用户再次实机验证**；仍未改好之前用户要求继续不跑全量测试、继续打包。
 
+### 7.0zv v1.1.3：非0拷贝复制模式铺不满 + 移除 settle 自学习（2026-11-20 16:21–16:40，提交 `60b4eed`）
+- 用户两个问题：① 非0拷贝下「仅2号屏 → 复制这些显示器」铺不满（之前修复没覆盖）；② settle-learned 学习代码不需要，固定 1s。并明确 **16:26 起不要往 release 上传**，只本地打包。
+- **问题1 根因**：`wgc.rs::grab()` 的 `src_box` 按显示器几何 `(s.sw,s.sh)`（GetMonitorInfoW 的 rcMonitor）算，但 WGC 实际帧尺寸在复制模式下常小于 rcMonitor（克隆合成面尺寸不同）。`CopySubresourceRegion` 会把超出的 box **静默裁剪**到源纹理边界，staging 其余像素保持 0/黑 → shader 采样黑区 = 铺不满。之前所有修复都集中在零拷贝缓存/bind_group，判断"非0拷贝每帧全量上传不受影响"，**漏掉了 staging 路径这一层**。
+  - 修法：拿到 `src_tex` 后用 `GetDesc(&mut D3D11_TEXTURE2D_DESC::default())` 取真实宽高（注意 windows 0.58 的 GetDesc 是 out-param、返回 `()`，不是 Result），抓屏框超出真实帧就 `drop(frame); return Grab::NoFrame`（不产出半张图）。`grab()` 和 `grab_shared()` 两条路径都加。
+- **问题2**：删除 `LEARNED_SETTLE_MS` / `TOPO_CHANGED_AT` / `note_plate_ready()` / `learned_settle_path` / load/save，poll_topology 不再写 TOPO_CHANGED_AT，gpu_glass 删 note_plate_ready 调用。稳定期固定 `SETTLE_MS=1000`，保留 `DAOZAI_SETTLE_MS` 环境变量覆盖。理由：学习值全局共享，快机器学出的 400ms 不够慢机器/复制模式用。
+- **按用户要求本轮不跑全量测试**，只编译双 bin（exe `1afc09b1dc21f48`、FileVersion 1.1.3）。
+- **本地包，未上传 release**：`installer\Daozai-v1.1.3-windows-x64.exe` sha `2890bfb86a80f167`（9,294,050 B）、zip `e495d16d0626360b`（11,294,491 B）。v1.1.0/1.1.1/1.1.2 release 均保持原样未动。
+- main push 到 `60b4eed`。注意：用户之前删的 `installer/V1.0.1-NOTES.txt` 本次已被 staged 并随提交删除（用户本就有意删，工作树现干净）。
+- **待用户本地验证**两个问题；改好前继续不跑全量。
 
-### 7.0zv v1.1.3：非0拷贝复制模式铺不满 + settle 固定 1s（2026-11-20，详版见桌面权威副本 §7.0zv）
-> 用户明确 16:26 起不上传 release，只本地打包。
-- 问题1：非0拷贝「仅2号屏→复制」铺不满。根因 = grab() 的 src_box 按显示器几何算，复制模式 WGC 真实帧更小，CopySubresourceRegion 静默裁剪→staging 留黑。修法：GetDesc 取真实帧尺寸，框超出就丢帧；grab()/grab_shared() 都加（60b4eed）。
-- 问题2：移除 settle-learned 全套（LEARNED_SETTLE_MS/TOPO_CHANGED_AT/note_plate_ready/落盘），稳定期固定 SETTLE_MS=1000，保留 DAOZAI_SETTLE_MS 覆盖。
-- 本轮按要求未跑全量测试；本地包 exe `2890bfb86a80f167` / zip `e495d16d0626360b`，**未上传 release**。main push 到 60b4eed。待用户验证。
+### 7.0zw v1.1.4：铺不满根治——几何 uniform 每帧同步视口（2026-11-20 16:43–17:15，提交 `61daa50`）
+- v1.1.3 用户实测铺不满仍在，**零拷贝/非0拷贝都中招** → 说明根因不在抓屏纹理层，而在两条路径共用的几何/uniform。
+- **社区调研**（用户要求）高度吻合：egui PR #8280「Stretched content during fullscreen, **stale content in bottom left**」根因=「first presented frame uses **stale surface/viewport state**」；tetanes PR #315 surface 尺寸没跟上布局→拉伸，修法=每帧把布局尺寸传进 paint；Microsoft WGC 指引「**Use item's Size as frame size**, recreate pool when item size changes」。
+- **真正根因**：`gpu_glass.prepare()` 只在抓屏成功时写几何 uniform（`uniforms(f,tex)`→u.extra.y/z=bounds 尺寸）。换屏/复制模式抓屏失败的那几帧，viewport 已按新 capture 每帧重算，uniform 却停在旧值 → shader `p=uv*tex` 用旧几何画进新视口 = 铺不满/拉伸/角落残留。**而 v1.1.3 的 `GetDesc 丢帧` 让复制模式持续 NoFrame，反而把纹理永久停在换屏前**，加剧问题。
+- **修法**：① 抽 `write_geom`（按视口 cw/ch 写 uniform），所有返回路径（节流/抓屏失败/超限/共享成功）都调用，与抓屏成败解耦；② wgc.init() 帧池改用 `item.Size()`（微软指引），不再硬用 rcMonitor；③ grab()/grab_shared() 的 src_box 夹到真实帧内，**删掉 v1.1.3 的丢帧逻辑**（避免永久旧纹理）。
+- 全量测试**未跑**（用户要求）；编译通过，exe `0ef6e9e1f9764e9`。
+- 本地包未上传 release：`installer\Daozai-v1.1.4-windows-x64.exe` sha `556ffdf54b2eaa53`（9,295,752 B）、zip `c2cc450086392e86`（11,294,298 B）。main push 到 61daa50。
+- **待用户验证**；若仍铺不满，下一步需用户提供实测 `liquid-glass.log`（看 item.Size vs rcMonitor、是否有持续 NoFrame）再定点。
 
+### 7.0zx 背景放大真正根因：D3D11 device-lost + 版本回 1.1.1（2026-11-20 17:24–17:40，提交 `409e9c0`/`de4da1a`）
+- v1.1.4 用户实测：铺满已好，但复制模式下玻璃背景**被放大**。用户要求看社区/继续修、仍不上传 release。
+- **实测日志定位**（`%APPDATA%\Daozai\diagnostics\liquid-glass.log`）：满屏 `wgc: staging/shared resize FAILED Error { code: HRESULT(0x887A0005), message: "GPU 设备实例已经暂停" }` + `[gpu-share] event query 超时`。`item.Size()=2560x1440 rcMonitor=2560x1440`（相等，非尺寸问题）。
+- **根因**：换屏到复制模式导致 D3D11 **device lost（DXGI_ERROR_DEVICE_REMOVED 0x887A0005）**，此后所有纹理 resize/Copy 永久失败、event query 永不 signal，会话卡在死 device 上：纹理定格在换屏前尺寸，视口几何每帧变 → 旧纹理画进新视口 = 背景被拉伸放大。之前所有修复都没处理 device lost。
+- **修法**（409e9c0）：加 `is_device_lost()` 识别 0x887A0005/0x887A0006；grab()/grab_shared() 的纹理 resize 失败或 event query 超时若判 device lost，销毁整个 Wgc 会话（RAII 释放死 device/pool/session）+ 清 TRIED，下一帧重 init 新 device。
+- **用户明确指示不要再自增版本号，改回 1.1.1**（de4da1a）：版本 1.1.5→1.1.1，保留全部修复代码。exe FileVersion=1.1.1，新 exe `5092bcda9aa28da1`（与 GitHub release 上旧 v1.1.1 的 `1ce60bc7` 不同——那些 release asset 是修复前代码，用户只本地测试、不动 release）。
+- 本地包（**未上传 release**，覆盖本地 v1.1.1 文件，旧文件已备份后清理）：`installer\Daozai-v1.1.1-windows-x64.exe` sha `84e3e7680b7a014b`（9,293,180 B）、zip `b7d881b327208dd2`（11,291,643 B）。
+- 全量测试**未跑**（用户要求）。main push 到 de4da1a，工作树干净。**待用户本地验证**放大是否消失。
 
-### 7.0zw v1.1.4：铺不满根治——几何 uniform 每帧同步视口（2026-11-20，详版见桌面权威副本 §7.0zw）
-- 用户要求社区调研：egui #8280 / tetanes #315 / 微软 WGC 指引均印证「stale viewport state」= 换屏后旧几何画进新视口 → 铺不满。
-- v1.1.3 的 GetDesc 丢帧让复制模式持续 NoFrame、纹理永久停在换屏前，属加剧因素。
-- 修法（61daa50）：gpu_glass 抽 write_geom，所有返回路径按视口(cw,ch)写几何 uniform；wgc.init 帧池用 item.Size()；src_box 夹到真实帧、去掉丢帧逻辑。
-- 未跑全量、未上传 release。本地包 exe `556ffdf54b2eaa53` / zip `c2cc450086392e86`。main push 到 61daa50。待用户验证。
-
-
-### 7.0zx 背景放大真正根因：D3D11 device-lost + 版本回 1.1.1（2026-11-20，详版见桌面权威副本 §7.0zx）
-- v1.1.4 实测铺满已好但复制模式背景放大。日志定位：满屏 HRESULT(0x887A0005)「GPU 设备实例已暂停」= DXGI_ERROR_DEVICE_REMOVED，device lost 后会话卡死、纹理定格旧尺寸、视口每帧变 → 放大。
-- 修法（409e9c0）：is_device_lost() 识别 0x887A0005/6，resize 失败/query 超时判 device lost 时销毁整个 Wgc 会话重建 device。
-- 用户指示版本号改回 1.1.1（de4da1a），保留修复；exe `5092bcda9aa28da1`。本地包 exe `84e3e7680b7a014b`/zip `b7d881b327208dd2`，未上传 release、未跑全量。待用户验证。
-
-
-### 7.0zy 背景放大诊断日志（2026-11-20，提交 bc6bb9e）
-- v1.1.5(device-lost 重建)后用户实测仍放大。用户补充关键症状：放大方向正确、**切回单屏仍放大不恢复**、零拷贝/staging 都一样。
-- 日志确认 device-lost 修复生效（有多次 init 重建），item.Size()==rcMonitor 相等；两条路径共用 frame_for/uniform，放大系数必在缩放链路(ppp/capture/origin)。
-- 加 `geom:` 诊断行：geometry 变化时打印 ppp/win/cap_logical/cap_phys/origin/bounds。**待用户实测一次并回传 liquid-glass.log 定位**。版本仍 1.1.1、未上传 release、未跑全量。exe `c68dda06b42c9d74`。
+### 7.0zy 展开动画变慢根治：共享纹理固定尺寸复用（2026-11-20 20:45–21:00，提交 `87c39e6`）
+- **背景**：§7.0zx 之后又有两个未进文档的提交：`4603803` 消除 GPU 等待忙自旋（修改分辨率后键盘变慢/悬停不展开）、`8b6c0e3` 共享 D3D12 fence 跨 API 同步（`DAOZAI_GPU_FENCE=1` 开关）。用户实测：主题色采样仍在跑、**fence 和 yield 两版展开都会变慢** → 锁定一个与 fence/yield 都无关的共同瓶颈。
+- **排查结论**（上一个 agent 的推理，已确认）：① `AcquireSync(0,500)` 不是元凶——D3D12 侧从 keyed-mutex 句柄打开的资源无法 QI `IDXGIKeyedMutex`，consumer 从不 ReleaseSync，producer 自己 Acquire→Release(0)，正常立即返回；② 主题色同步 Map 已按时间节流（≥500ms）+ 独立 1024×256 staging，非主因。**真凶**：展开动画 capture 尺寸每帧微变（日志 `629x122→631x122→632x122`，导入 4 次），零拷贝路径按帧尺寸重建共享纹理 → 每帧 `CreateTexture2D+CreateSharedHandle+CreateQuery+OpenSharedFence` 一串同步 COM，wgpu 侧每帧 `OpenSharedHandle` 重新导入。
+- **修法**（87c39e6，对齐旧 staging 路径 dd57451 已验证的"固定纹理+左上角有效区"设计）：
+  - `wgc.rs`：共享纹理分配固定 `SHARED_TEX_W/H=1280×512`，不再随帧微变重建；仅 device-lost 会话重建才新建；加有效帧超尺寸保护（>分配尺寸回退 staging）。
+  - `gpu_glass.rs`：`shared_needs_import` 缓存键去掉 (w,h) 只留 epoch（帧尺寸变化只是 uniform 的 tex，shader 靠 `scale=tex/alloc` 映射有效区）；`import_shared_handle` 的 size 改用固定分配尺寸（必须与 D3D12 resource 一致，不能传有效帧尺寸）；回归单测改 `shared_texture_reimports_only_on_epoch_change`。
+  - **未动** AcquireSync/主题色 Map/fence（排查已排除，最小改动原则）。
+- 编译通过（仅既有 warning，无 error）；全量测试**未跑**（用户明确要求）。新 exe `0454bd5acde67031c9e7914c`（22,401,536 B）/ bridge `d8996c660642bb5962c5`。
+- 已备份预览旧 exe 为 `Daozai-液态玻璃预览\daozai.exe.prev-before-texreuse`（`b20f9ce771048cc8a`），新 exe 已部署到预览目录、清空 `data/diagnostics/liquid-glass.log` 待验证。**待用户实机验证**：零拷贝已开（预览 data `settings.txt liquid_gpu_share=1`），悬停展开动画应不再逐帧"导入共享纹理"、展开不再变慢；验证方法见下。
+- main HEAD=`87c39e6`（ahead origin 1，未 push）。
