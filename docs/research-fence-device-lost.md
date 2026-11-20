@@ -243,3 +243,22 @@ A. 让液态玻璃渲染改用 D3D11 后端（与 WGC 同 device）——需换�
 B. WGC 之后先 Copy 到 CPU staging，再 upload 给 wgpu（放弃零拷贝，回退 staging）——稳定但慢。
 C. 升级/定制 wgpu（vendor wgpu-hal，暴露 queue）实现真 fence——工程量大。
 D. 接受"换分辨率=进程自动重启"——main 现有方案，最可靠。
+
+---
+
+## 十九、【重要】A 方案（液态玻璃走 D3D11 后端）技术上不可行
+
+用户选 A：让液态玻璃走 D3D11 后端与 WGC 同 device。动手前核查渲染栈，发现硬障碍：
+
+1. **eframe 0.31 只支持 glow(OpenGL) 和 wgpu 两个后端**（Cargo.toml features 确认），
+   没有 D3D11 渲染后端。
+2. **wgpu 24 不支持 D3D11 后端**——它的后端是 DX12/Vulkan/Metal/GL（D3D12 是 Windows
+   上的 DX12 实现）。`wgpu` crate 里没有也没法加 D3D11 backend。
+3. 液态玻璃 `GlassCallback` 是 `egui_wgpu::CallbackTrait`，在 wgpu render pass 里画，
+   依赖 wgpu 管线/纹理/bind_group。要改走 D3D11 等于重写整个玻璃渲染器 + 替换 eframe
+   后端——后者 eframe 根本不提供。
+4. 退一步用 glow(OpenGL) 后端与 D3D11 WGC 共享纹理需 WGL_NV_DX_interop（NVIDIA 专有），
+   不通用且同样跨 API 同步问题。
+
+**结论：A 方案在当前 eframe/wgpu 技术栈下不存在，无法实施。** 这不是工作量问题，
+是后端根本不支持。已向用户说明并请求重新选择方向。
