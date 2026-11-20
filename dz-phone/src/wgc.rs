@@ -918,14 +918,29 @@ pub fn grab_shared(x: i32, y: i32, w: i32, h: i32) -> Grab {
         s.context.CopySubresourceRegion(&shared.tex, 0, 0, 0, 0, &src_tex, 0, Some(&box_clamped));
         s.context.End(&shared.done);
         s.context.Flush();
-        // spin 等 GPU 真正写完。event query 返回 BOOL(4 bytes)；加次数上限兜底防死锁。
+        // 等 GPU 真正写完。event query 返回 BOOL(4 bytes)。
+        // 【关键修复】原来这里是 200 万次纯 spin_loop 忙等，跑在 UI 主线程上：
+        // 更改分辨率 → DWM 重建 → device lost → query 永不 signal → 每次都跑满
+        // 200 万次，主线程被占死，表现为键盘输入变慢、鼠标悬停放上去没反应。
+        // 改法：① 每轮 yield_now 让出 CPU；② 每 256 次查一次 device lost，
+        // 设备没了立刻跳出；③ 上限从 200 万降到 20 万（配 yield 后足够）。
         let mut signaled: i32 = 0;
         let mut spins = 0u32;
-        while signaled == 0 && spins < 2_000_000 {
+        let mut lost_early = false;
+        while signaled == 0 && spins < 200_000 {
             let _ = s.context.GetData(&shared.done, Some(&mut signaled as *mut _ as *mut core::ffi::c_void), 4, 0);
             spins += 1;
-            if signaled == 0 { std::hint::spin_loop(); }
+            if signaled != 0 { break; }
+            // device lost 时 query 永远不 signal，早查早退出，别空转。
+            if spins % 256 == 0 && unsafe { s._device.GetDeviceRemovedReason().is_err() } {
+                lost_early = true;
+                break;
+            }
+            // 让出时间片：GPU 通常几个 tick 内完成，yield 几乎无延迟，
+            // 但不会像 spin_loop 那样独占整个 CPU 核、拖慢键盘/悬停输入。
+            std::thread::yield_now();
         }
+        if lost_early { signaled = 0; }
         // 主题色小范围取样：按时间节流（≥500ms），从这张干净帧读采样框算亮度。
         // 用 Instant 而非帧计数：低帧率下主题滞后不放大，60fps 也不必每帧读回。
         // 失败静默、与共享纹理/keyed mutex 无关（副本在独立固定 staging 上读回）。
