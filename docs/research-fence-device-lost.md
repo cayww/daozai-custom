@@ -213,3 +213,33 @@ egui-wgpu(D3D12)，WGC 只给 D3D11 texture——要统一到 D3D12 需要 WGC�
 另一个更轻的可能：OBS 的 CopyResource 后**完全不等 GPU**——它靠 gs_texture 的
 渲染器内部同步(下一帧 render 时 GPU 自然串行)。我们可否也去掉所有显式同步，
 靠 wgpu 的 queue 串行？这值得作为一个实验。
+
+---
+
+## 十八、OBS 方案能否移植——技术死结分析
+
+逐行读完 OBS 后，核心问题：OBS 用**单一 D3D11 device**（gs_get_device_obj），
+CopyResource 和 render 在同一 context、靠命令按序执行，无需任何跨 API 同步。
+我们是 wgpu D3D12 渲染 + WGC D3D11 抓屏（两个 device），必须跨 API 共享。
+
+### 三种跨 API 同步方案的可行性核查
+1. **explicit D3D12 fence**（scrying shipped）：需要 wgpu 的 ID3D12CommandQueue 来
+   `Queue::Wait(fence, n)`。**死结**：wgpu 24 的 `Queue.inner` 是 pub(crate)，
+   `Queue` 无 `as_hal()`，wgpu-core 无 `queue_as_hal`，`Device::as_hal()` 只能拿 device
+   不能拿 queue。污染链 fence 版失败的真正原因在此。
+2. **keyed mutex**：D3D12 通过 OpenSharedHandle 打开的纹理**无法 QI IDXGIKeyedMutex**
+   （scrying 明确说明）。D3D11 侧 Acquire/Release 对 D3D12 侧无效。
+3. **CPU 等 GPU**（我们现状 event query spin）：等价方案是 fence + SetEventOnCompletion +
+   WaitForSingleObject，但仍是 CPU 阻塞，且我们已证明 query 方式在此机器上失败。
+
+### 结论性判断
+OBS 的简单性来自"同 device"，而我们是"跨 device + wgpu 拿不到 queue"。
+在这套架构下，跨 API 同步没有可靠的标准途径——这是 wgpu 24 抽象层的限制，
+不是我们的代码 bug。这解释了为什么十几种改法（Recreate/冷却/OBS恢复/poll/query修复/
+fence）都失败：都在试图用错误层的 API 解决。
+
+### 可能的架构级出路（需用户决策）
+A. 让液态玻璃渲染改用 D3D11 后端（与 WGC 同 device）——需换掉 egui-wgpu 的 backend，影响极大。
+B. WGC 之后先 Copy 到 CPU staging，再 upload 给 wgpu（放弃零拷贝，回退 staging）——稳定但慢。
+C. 升级/定制 wgpu（vendor wgpu-hal，暴露 queue）实现真 fence——工程量大。
+D. 接受"换分辨率=进程自动重启"——main 现有方案，最可靠。
