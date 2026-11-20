@@ -262,3 +262,32 @@ D. 接受"换分辨率=进程自动重启"——main 现有方案，最可靠。
 
 **结论：A 方案在当前 eframe/wgpu 技术栈下不存在，无法实施。** 这不是工作量问题，
 是后端根本不支持。已向用户说明并请求重新选择方向。
+
+---
+
+## 二十、社区 D3D11 渲染实现调研（用户要求，02:49）
+
+用户要求先看社区有没有实现 D3D11 渲染的 egui 后端。**有，而且是活跃的**：
+
+### 候选库
+1. **egui-directx11**（nekomaru-pku/egui-directx11，活跃维护）
+   - 最新版 0.13.0+egui-0.35（2026-07），MIT/Apache
+   - **版本 0.7.0（2025-03）正好对应 egui 0.31.0**（我们是 egui 0.31 ✓）+ windows 0.60（我们 0.58，差一个小版本）
+   - 0.5.0 对应 windows 0.58 + egui 0.28.1
+   - 从 0.10.0 起 GA、无已知问题；支持 user texture（把 D3D11 纹理作为 egui 图片显示）
+   - **但它是纯渲染器**：只渲染 egui 输出，window/device/swapchain/事件循环全部由调用方负责
+2. egui-d3d11（jac3km4，已停止维护，egui 0.17/0.19，WIP）——不推荐
+
+### 关键约束
+- egui-directx11 只替换"渲染器"这一层，**不含 eframe 的 app hosting**。
+  我们的项目用 eframe（窗口/事件循环/输入/渲染全包），要改走 D3D11 渲染器必须：
+  1. 弃用 eframe，改用 winit + 自己搭事件循环（或保留 eframe 但替换其内部渲染——eframe 不开放这个）
+  2. 把 GlassCallback 从 egui_wgpu::CallbackTrait 改写成 D3D11 渲染路径
+  3. 把液态玻璃的 WGSL shader 全部改写成 HLSL（工程量巨大）
+  4. windows crate 0.58→0.60 可能引发连锁 API 变更
+- **WGSL→HLSL 重写**是最大障碍：整个液态玻璃的光学效果（Snell 折射、色散、Fresnel）都要重写。
+
+### 结论
+社区有 egui 0.31 的 D3D11 渲染器（egui-directx11 0.7.0），技术上"存在"，但要真正
+替换 eframe + 重写玻璃 shader，工程量和风险都极大（相当于重写渲染栈）。
+这不是"救活零拷贝"的轻量方案，是架构级重写。需用户权衡。
