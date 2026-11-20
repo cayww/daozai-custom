@@ -1124,3 +1124,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 全量测试 1389 passed / 0 failed / 131 ignored。双 bin 重编，exe `40ca290e`。
 - v1.1.0 覆盖重打：NSIS 安装包 sha `0a97e5fb489909a1`（9,295,319 B）、便携 zip sha `99cc373b651c957f`（11,295,078 B，首次补 zip 供更新模块用）。
 - GitHub release v1.1.0 删旧 exe asset 后同名重传 + 新增 zip asset，API 复核 name/size/sha256/URL 一致。未 push / 未部署。
+
+
+### 7.0zs v1.2.0 测试版 + 更新链路两处 bug + 零拷贝换屏修复（2026-11-20，详版见桌面权威副本 §7.0zs）
+> 完整过程见 `C:\Users\cay\Desktop\HANDOFF.md` §7.0zs；此处摘要。
+- v1.2.0 测试版（测更新链路，测完自删）：release id 452343951，exe+zip 已传；后应用户要求本地版本回 1.1.0 并覆盖 v1.1.0（exe `16857da253bb4a79` / zip `7006e37bed8c26ea`），v1.2.0 留作升级目标。
+- 更新弹窗删过时「自定义构建/reapply.ps1」提示 + CUSTOM_BUILD 常量（bb39ee6）；app.rc 版本改 build.rs 从 CARGO_PKG_VERSION 渲染，修复 update.ps1「安装包版本不匹配」（9eaaa7b）。版本回退 d3bf5b6。
+- **零拷贝换屏 bug**（c097c4d）：共享纹理缓存键只有 (w,h)，换屏重建会话后尺寸不变→继续采样旧纹理→放大/定格壁纸/没铺满/发黑。修法：SharedHandle 带 EPOCH，缓存键用 (w,h,epoch)，导入失败清缓存回退 staging。全量 1390 passed。实机换屏效果待用户验证；未打包/未覆盖 release。
+- 工作树另有用户删的 installer/V1.0.1-NOTES.txt（未纳入我的提交）。
