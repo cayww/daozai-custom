@@ -727,7 +727,9 @@ impl Window {
                 unsafe {
                     let rgn = CreateRectRgn(r.0, r.1, r.2, r.3);
                     if SetWindowRgn(self.hwnd, rgn, true) != 0 {
-                        glass_diagnostic(&format!("区域：整块矩形 dcomp={} oc={} r={:?}",eframe::egui_wgpu::winit::direct_composition_active(),outline_clip,r));
+                        glass_diagnostic(&format!("区域：整块矩形 dcomp={} oc={} r={:?} expanded={} ppp={:.2} rgn={:?} hit={:?} cursor={:?}",
+                            eframe::egui_wgpu::winit::direct_composition_active(),outline_clip,r,
+                            expanded,ppp,(region.0,region.1,region.2,region.3),(hit_rect.0,hit_rect.1,hit_rect.2,hit_rect.3),cursor));
                         self.region = r;
                         self.glass=None;
                         let _ = windows::Win32::Graphics::Dwm::DwmFlush();
