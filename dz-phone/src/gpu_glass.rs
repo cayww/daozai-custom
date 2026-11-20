@@ -1694,6 +1694,20 @@ pub fn frame_for(
         body.width() * ppp,
         body.height() * ppp,
     ];
+    // 诊断：记录缩放链路的所有量，用于定位换屏后「背景放大但不恢复」。
+    // 每 geometry 变一次打一行（tick 由外部节流），看 ppp/win/capture/origin 谁变了。
+    {
+        static DIAG: std::sync::Mutex<[f32; 4]> = std::sync::Mutex::new([0.0; 4]);
+        let sig = [ppp, cw as f32, ch as f32, origin.0];
+        let prev = *DIAG.lock().unwrap_or_else(|e| e.into_inner());
+        if sig[0] != prev[0] || sig[1] != prev[1] || sig[2] != prev[2] || sig[3] != prev[3] {
+            *DIAG.lock().unwrap_or_else(|e| e.into_inner()) = sig;
+            diag(&format!("geom: ppp={:.4} win=({:.0},{:.0}) cap_logical={:.1}x{:.1} cap_phys={}x{} origin=({:.1},{:.1}) bounds={:.1},{:.1},{:.1},{:.1}",
+                ppp, screen_px.0 as f32 / ppp, screen_px.1 as f32 / ppp,
+                capture.width(), capture.height(), cw, ch, origin.0, origin.1,
+                bounds[0], bounds[1], bounds[2], bounds[3]));
+        }
+    }
     // 控件矩形换算到「capture 内物理像素」，着色器里直接用。
     // 只接受完整落在抓屏矩形内的控件：越界时着色器会 clamp 到边缘像素，
     // 表现为一条被拉长的色带。
