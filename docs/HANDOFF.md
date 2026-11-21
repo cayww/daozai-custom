@@ -1518,3 +1518,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 用户"继续"。写 `examples/ui_api_probe.rs` 把 app.rs/main.rs 全部关键 egui API 在 0.35 编译，5 轮编辑后全过，**仅 3 类破坏性变更**：①`i.raw_scroll_delta`→`i.smooth_scroll_delta`（app.rs 2 处）②`ColorImage::new([w,h],Color32)`→`Vec<Color32>`（1 处）③`ctx.fonts(|f|f.layout_job())`→`fonts_mut`（0.35 fonts() 给 `&FontsView`；排版处较多但纯机械）。其余全兼容（含 `send_viewport_cmd`/`StrokeKind`/`Ui::input`）。**UI 迁移=机械替换非重写**。
 - glass_spike 换岛仔风格 UI（通知胶囊+居中大时间+fonts_mut 状态行），`glass_ui_crop.png` 实机显示"3 条未读"胶囊/`10:54`/状态行/玻璃折射，中文方块=默认字体无中文字形（岛仔 vendor 字体有）。提交 egui-directx11 `053466e`。
 - 剩余：`Shell::update` 500 行+`app.rs` 5107 行按 3 类规则替换、vendor 字体/纹理迁移、1100+ 测试回归——**大但确定**，无架构未知。`ui_api_probe.rs` 是迁移检查清单。详见 docs/research-fence-device-lost.md §26。
+
+
+### 7.0zzg.8 迁移工具落地：egui 0.35 自动替换脚本（2026-11-21 10:56–11:05）
+- 用户"继续完成"。精确扫描：`app.rs` 共 10 处变更、`main.rs` 0 处。`raw_scroll_delta` 3 处（L2631读/L2675 input_mut/L3149读）；`ColorImage::new([TEX_W,TEX_H],Color32)` 1 处（L3715）；`fonts(|f|layout_job)`→`fonts_mut` 6 处。**关键例外**：main.rs:387 `fonts(|f|num_galleys_in_cache())` 是只读，0.35 fonts() 仍可用，不改（脚本只重写闭包含 layout_job 的 `.fonts(`）。
+- 工具 `egui-directx11/tools/migrate_egui035.py`（commit `dcb7a0a`/`fde5f17`）：dry-run 打印 before/after，`--apply`/`--out` 写；input_mut 特殊处理（删 raw 保留 smooth）。验证：10 处精确命中、副本重跑 0 变更（幂等）、行数不变、无残留 0.31 API。探针补验 input_mut 写 smooth 与只读 fonts 在 0.35 可编译。
+- 剩余：高版本分支 `--apply` → vendor 0.31→0.35 全套升级 → eframe Frame 替换 → 1100+ 测试回归。脚本+探针已把最易错的 API 变更固化为可重复步骤。详见 docs/research-fence-device-lost.md §27。

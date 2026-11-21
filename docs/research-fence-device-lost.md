@@ -445,3 +445,25 @@ glass_spike.rs 换成岛仔风格 UI：通知胶囊（`rect_filled`+`rect_stroke
 - egui 0.35 对岛仔 UI 源码兼容性好（3 类机械改动），DComp 透明栈 + 玻璃 + WGC 已全部跑通。
 - 剩余真正工作量：把 `Shell::update` 500 行 + `app.rs` 5107 行按上述 3 类规则替换、eframe Frame 依赖替换（viewport cmd 部分已验证可用）、vendor 字体/纹理迁移、1100+ UI 测试回归。属**大但确定**的工程，无架构未知。
 - main 不动；独立工程 egui-directx11 commit `053466e` 为参考实现，`ui_api_probe.rs` 是迁移检查清单。
+
+---
+
+## 二十七、迁移工具落地：egui 0.35 自动替换脚本（2026-11-21 10:56–11:05）
+
+用户"继续完成"——把 §26 的 3 类 API 变更精确落到岛仔代码上，做成可执行工具。
+
+### 精确扫描结果
+`app.rs` 共 **10 处**变更，`main.rs` **0 处**：
+- `raw_scroll_delta` 3 处：L2631（读）、L2675（`input_mut` 同时清 raw+smooth）、L3149（读）。
+- `ColorImage::new([TEX_W,TEX_H],Color32::TRANSPARENT)` 1 处：L3715（paint_fluid_pill）。
+- `ctx.fonts(|fonts| fonts.layout_job(..))` → `fonts_mut` 6 处：L2235/2243/4973/4977/4985/4999。
+- **关键例外**：`main.rs:387` 的 `ctx.fonts(|f| f.num_galleys_in_cache())` 是只读方法，0.35 的 `fonts()` 仍可用，**不改**——探针已验证。若脚本全局替换 `fonts→fonts_mut` 会误改此处。
+
+### 工具（egui-directx11 commit `dcb7a0a` / `fde5f17`）
+`tools/migrate_egui035.py`：dry-run 默认打印每处 before/after；`--apply` 原地写、`--out DIR` 写副本。**只重写闭包含 `layout_job` 的 `.fonts(`**，`input_mut` 那行特殊处理（去掉 raw 赋值、保留 smooth）。验证：
+- dry-run 精确 10 处；`--out` 生成副本后重跑 **0 变更**（幂等）；行数不变（纯替换）。
+- 迁移后副本无残留 0.31-only API；main.rs 因 0 变更不生成副本（正确）。
+- 探针 `ui_api_probe.rs` 补验 `input_mut` 写 smooth 与只读 `fonts().num_galleys_in_cache()` 在 0.35 均可编译。
+
+### 剩余
+真正迁移执行：在高版本分支/副本 `--apply` 本脚本 → vendor egui/eframe/egui-winit/egui-wgpu 0.31→0.35 全套升级 → eframe Frame 依赖替换 → 1100+ 测试回归。属确定工程，脚本+探针已把最易出错的 API 变更固化为可重复、可验证的步骤。main 不动。
