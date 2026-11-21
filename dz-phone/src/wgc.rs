@@ -129,6 +129,29 @@ pub fn theme_luma()->f32{f32::from_bits(THEME_LUMA.load(Ordering::Relaxed))}
 /// 用壁纸文件亮度播种主题锚值（启动时调用，开机第一帧就不依赖抓屏）。
 pub fn seed_theme_luma(v: f32){ THEME_LUMA.store(v.clamp(0.0,1.0).to_bits(),Ordering::Relaxed); }
 
+/// 新 D3D11 液态玻璃栈用：从抓屏纹理采样玻璃背后亮度，按时间节流（500ms）。
+/// 与旧零拷贝路径共用同一套 staging/过滤/commit 状态，避免两套亮度判定。
+/// sx/sy = 抓屏缓冲在全屏帧里的原点；sw/sh = 全屏帧尺寸。失败/未到期静默返回。
+#[cfg(windows)]
+pub fn sample_theme_luma_d3d11(
+    device: &ID3D11Device, context: &ID3D11DeviceContext,
+    src_tex: &ID3D11Texture2D, sx: i32, sy: i32, sw: i32, sh: i32,
+) {
+    let now = Instant::now();
+    let due = match THEME_LAST_SAMPLE.lock() {
+        Ok(mut guard) => {
+            let epoch = theme_epoch();
+            let now_ms = now.duration_since(epoch).as_millis() as u64;
+            let last_ms = (*guard).map(|t| t.duration_since(epoch).as_millis() as u64);
+            if theme_sample_due(now_ms, last_ms, THEME_SAMPLE_INTERVAL_MS) {
+                *guard = Some(now); true
+            } else { false }
+        }
+        Err(_) => false,
+    };
+    if due { sample_theme_luma(device, context, src_tex, sx, sy, sw, sh); }
+}
+
 /// 纯边界计算：把主题采样框 rect（相对抓屏缓冲坐标）换算成源 box（相对显示器帧）
 /// 与读回尺寸 (left,top,right,bottom,rw,rh)。任何退化/越界/溢出都返回 None，
 /// 调用方据此静默跳过。抽成不依赖 COM 的纯函数，专门单测「尺寸剧烈变化时绝不越界」。

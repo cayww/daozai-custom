@@ -40,17 +40,20 @@ pub struct GlassCallback {
 
 pub const NEUTRAL_TINT: [f32; 3] = [0.62, 0.66, 0.74];
 
-/// 背景亮度：由 app 启动时从壁纸文件播种（seed_theme_luma），供 liquid_k 决定深/浅材质。
-/// 迁移期不再从 wgpu 抓屏帧读；新 D3D11 栈后续可在此接入 WGC 帧亮度。
-static BG_LUMA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f000000); // 0.5
+/// 背景亮度：供 liquid_k 决定深/浅材质（深材质压暗+冷蓝，浅材质通透）。
+/// 优先读 wgc::THEME_LUMA——D3D11 渲染循环每 500ms 从玻璃背后的真实桌面帧采样，
+/// 与旧 wgpu 栈同机制（theme_luma_commit 过滤过渡帧）；未采样到时用启动时壁纸锚值兜底。
+/// 迁移初期这里只读静态壁纸平均值，把 material 钉在半深不浅 → 玻璃偏蓝不透，已修。
 pub fn background_luma() -> f32 {
     if let Some(v) = std::env::var("DAOZAI_LIQUID_FORCE_LUMA").ok().and_then(|s| s.parse::<f32>().ok()) {
         return v.clamp(0.0, 1.0);
     }
-    f32::from_bits(BG_LUMA.load(std::sync::atomic::Ordering::Relaxed))
+    // wgc::theme_luma() 启动时被壁纸锚值 seed，之后由 D3D11 采样实时更新。
+    crate::wgc::theme_luma()
 }
 pub fn seed_theme_luma(v: f32) {
-    BG_LUMA.store(v.clamp(0.0, 1.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+    // 播种到 wgc 的实时亮度（app::new 里也直接调 wgc::seed_theme_luma，幂等）。
+    crate::wgc::seed_theme_luma(v);
 }
 pub fn gpu_ready() -> bool { true }
 pub fn set_morph_scale(v: f32) {

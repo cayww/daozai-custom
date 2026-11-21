@@ -297,13 +297,36 @@ impl D3d11Runtime {
         if std::env::var("DAOZAI_GLASS_DIAG").is_ok() && self.frames == 3 {
             let sz = window.inner_size();
             let sf = window.scale_factor();
-            eprintln!("[diag] monitor_bg={}x{} win_inner={}x{} scale_factor={} origin=({},{}) extra(tex)={:?} bounds={:?} misc={:?}",
+            eprintln!("[diag] monitor_bg={}x{} win_inner={}x{} scale_factor={} origin=({},{}) extra(tex)={:?} bounds={:?} misc={:?} material={} tint={:?}",
                 self.glass.bg_w, self.glass.bg_h, sz.width, sz.height, sf,
-                origin.0, origin.1, params.extra, params.bounds, params.misc);
+                origin.0, origin.1, params.extra, params.bounds, params.misc,
+                params.params[3], params.tint);
         }
         // WGC 抓屏（GPU 侧 CopyResource）
         if let Some(wgc) = self.wgc.as_ref() {
             if wgc.grab_into(&self.ctx, &self.glass.bg_tex) { self.wgc_ever_frame = true; }
+        }
+        // 主题亮度：从刚抓到的全屏帧里取「玻璃背后那块桌面」的实时亮度，
+        // 500ms 节流读回。旧 wgpu 栈每帧抓屏时算，迁移后 D3D11 栈需在这里接上，
+        // 否则 material 会被钉死在启动时的壁纸平均值（偏蓝、不透）。
+        // params.bounds 是窗口内物理像素(y 从底)，换算成屏幕顶原点坐标作为采样框。
+        if self.wgc_ever_frame && params.bounds[2] > 4.0 && params.bounds[3] > 4.0 {
+            let win_h = window.inner_size().height as f32;
+            let bx = origin.0 + params.bounds[0];
+            let by = origin.1 + (win_h - params.bounds[1] - params.bounds[3]);
+            let bw = params.bounds[2];
+            let bh = params.bounds[3];
+            // 采样框比玻璃略窄、贴玻璃上缘（与旧栈 theme_rect 的「上缘锚定」一致），
+            // 全部夹在全屏帧内；旧栈内部有 theme_luma_commit 过滤过渡帧。
+            let sx = (bx + bw * 0.05) as i32;
+            let sy = by.max(0.0) as i32;
+            let ex = (bx + bw * 0.95) as i32;
+            let ey = (by + bh.max(8.0)) as i32;
+            crate::wgc::set_theme_rect(Some((sx, sy, ex.max(sx + 1), ey.max(sy + 1))));
+            crate::wgc::sample_theme_luma_d3d11(
+                &self.device, &self.ctx, &self.glass.bg_tex,
+                0, 0, self.glass.bg_w as i32, self.glass.bg_h as i32,
+            );
         }
         // HLSL uniform：补上窗口原点与 flipY（WGC top-down）
         let mut u = *params;
