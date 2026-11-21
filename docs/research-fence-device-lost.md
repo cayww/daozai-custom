@@ -548,3 +548,27 @@ glass_spike.rs 换成岛仔风格 UI：通知胶囊（`rect_filled`+`rect_stroke
 - **issue #7776**：不可见窗口 repaint 要节流到 100ms。
 - eframe 的官方解法：维护 `windows_next_repaint_times`/`redraw_deadline`，用 `event_loop_context`（thread_local 存 ActiveEventLoop）让 `show_viewport_immediate` 回调能建原生窗口；不可见窗口在 `check_redraw_requests` 里直接跑 UI pass 而非等 `RedrawRequested`。
 - 本轮实现了 `event_loop_context` + repaint proxy + 首版调度，但在 draw 上下文 create_window 仍使事件循环卡在第二帧；为保稳定回退内嵌。**后续路径**：完整移植 eframe 的 `new_events`/`check_redraw_requests`/`PassMode` 调度（非 draw 上下文建窗），即可开多窗口。
+
+
+---
+
+## 三十一、高 DPI 背景放大修复：HLSL uniform 补 ppp 换算（2026-11-21 15:20–16:00，接手续做）
+
+### 现象与定位
+- 用户报"液态玻璃里的背景被放大大概一倍多"。新栈 WGC 抓整屏 2560×1440，shader 采样本应 1:1。
+- 一次性数值诊断（`DAOZAI_GLASS_DIAG`，runtime.rs::render 首帧）实测：本机 `scale_factor=1.25`，D3D11 物理渲染目标 `win_inner=1200×338`，但传给 shader 的 `extra(tex)=[radius,960,270]`（egui 逻辑画布尺寸）。
+- 数学：`p = i.uv * tex` 铺满物理 RT 时，若 tex=960 而 RT=1200，shader 采到的桌面横向区域只有真实的 960/1200=0.8 → 拉伸显示 → 背景放大 1.25 倍。root cause 明确。
+
+### 根因
+- 移植 egui-directx11（独立 spike，ppp=1）回岛仔主项目时，`winit_runner::build_glass_params` 直接把 app/egui 的**逻辑点 / CSS px**（body_rect、radius、pointer、chroma、refract、blur…）塞进 shader uniform；而 shader 全屏三角形铺的是**物理像素** RT（=逻辑×ppp）。
+- 旧 wgpu 栈 `gpu_glass::build_uniform` 对每个像素单位都 `* ppp`（`body.width()*ppp`、`capture.width()*ppp`、`chroma*ppp`、`look` 前三 px 值乘 ppp），迁移时整段丢失。低 DPI（ppp=1）不显症，高 DPI 屏必现。
+
+### 修法（commit `6ca92e0`）
+- `build_glass_params(ppp)`：`ppp = egui_ctx.pixels_per_point()`。
+- 画布物理尺寸 `cw=CANVAS_W*ppp`、`h=WIN_H*ppp`；body_rect 四项、radius、pointer x/y 乘 ppp；光学里 chroma/refract/blur/band/edge_w 乘 ppp（CSS px）；morph/material/edge_op 无量纲保持。
+- y 翻转仍在物理域做：`bounds.y = h - by - bh`、`misc.y = h - pointer.y*ppp`。
+
+### 实证
+- release 编译通过（仅既有 dead_code warning）；按用户要求未跑全量测试。
+- 诊断复测：`extra(tex) 960×270 → 1200×337.5`（=物理 RT 1200×338）、`bounds.h 24.5→37.5`（逻辑30×1.25）、`refract 48→60`（48×1.25）。坐标系与物理 RT 对齐，放大消除。
+- main 不动；研究分支未部署。
