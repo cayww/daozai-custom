@@ -82,8 +82,10 @@ float3 sample_px(float2 px) {
     // WGC frames are top-down; D3D11 SRV samples top-left origin -> flip Y.
     // quad.x is the flip flag (set when the live WGC path is active).
     if (quad.x > 0.5) uv.y = 1.0 - uv.y;
-    // Background texture is B8G8R8A8 (WGC frame format); swap R/B to get RGB.
-    return bg.SampleLevel(samp, uv, 0.0).bgr;
+    // 采样 BGRA 背景纹理：D3D11 SRV 已把 B8G8R8A8 映射成正确的 RGBA 语义（.r=红），
+    // 直接取 .rgb 即可。切勿照搬独立工程的 .bgr 交换——那套 pipeline 手动上传 BGRA
+    // 字节才需要交换；WGC CopyResource 路径再交换会把 RGB 翻一次，暖色壁纸变青蓝。
+    return bg.SampleLevel(samp, uv, 0.0).rgb;
 }
 
 // Per-channel 5-point cross average: R samples +ca side, B samples -ca side.

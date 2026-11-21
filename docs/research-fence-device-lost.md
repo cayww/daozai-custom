@@ -599,3 +599,26 @@ glass_spike.rs 换成岛仔风格 UI：通知胶囊（`rect_filled`+`rect_stroke
 ### 实证
 - material 0.74 → 1.0（纯浅材质 matdark=0，不压暗，通透）；release 编译通过。
 - 按用户要求未跑全量测试；研究分支未部署，main 不动。
+
+---
+
+## 三十三、严重偏色修复：WGC 纹理采样通道 .bgr → .rgb（2026-11-21 16:16–16:26）
+
+### 现象
+- 用户实拍 4 张照片：展开态玻璃音乐面板整体偏青蓝，暖米黄壁纸在玻璃内变冷蓝；收起态小胶囊正常。
+
+### 排查（依次排除）
+1. 采样坐标 / ppp：玻璃内能看到壁纸的金色罗盘挂饰，位置与壁纸对应一致 → 坐标没错位。
+2. shader bin 过期：fxc 重编译当前 hlsl，哈希与已有 glass_ps.bin 一致 → bin 是最新的。
+3. 材质层：实时亮度已接通（material=1.0 浅材质），matfog/scrim/Beer-Lambert 常数与旧 wgpu 栈逐行一致 → 不是材质染色。
+
+### 根因
+- `glass.hlsl::sample_px` 用 `.bgr` 交换 R/B。这是从独立工程 egui-directx11 照搬的——那套 pipeline 手动把 RGB 图写成 BGRA 字节上传，采样需交换。
+- 新栈 bg_tex 来自 **WGC CopyResource**（DirectXPixelFormat::B8G8R8A8UIntNormalized → D3D11 BGRA 纹理）。D3D11 SRV 采样 BGRA 时硬件已做 BGRA→RGBA 语义映射，`.r` 就是红色。再 `.bgr` 交换等于翻两次 → 暖色变青蓝。
+
+### 修法与实证
+- `.bgr` → `.rgb`。shader 重编译 `glass_ps.bin` sha `a4fc18b5d7c74809`。
+- A/B 实测（用户实机）：改后"这下正常了"。main 不动，未跑全量测试（用户要求），未部署。
+
+### 教训
+- 采样 swizzle 取决于纹理来源 pipeline（手动上传 BGRA 字节 vs CopyResource 原生 BGRA），移植 shader 时不能照抄通道交换。

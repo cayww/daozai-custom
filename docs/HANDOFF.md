@@ -1567,3 +1567,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 根因：shader 常数与旧栈逐行一致，差异在 material 来源。旧 wgpu 栈 background_luma 每帧从 WGC 帧玻璃背后实时采样(theme_rect+theme_luma_commit 过滤过渡帧)；新 D3D11 栈迁移时 stub 只读启动时静态壁纸平均值(0.74)，注释留的"后续接入 WGC 帧亮度"没做，material 被钉死。
 - 修复 `6dec689`：①wgc.rs 暴露 sample_theme_luma_d3d11()(复用 staging/500ms 节流/commit 状态)；②d3d11/runtime.rs 抓屏后按玻璃矩形换算采样框(屏幕上缘锚定)读回亮度；③stub background_luma() 改读 wgc::theme_luma() 实时值，seed 转发 wgc；保留 FORCE_LUMA 覆盖。
 - 实证：material 0.74→1.0(纯浅材质，matdark=0 不压暗，通透)。release 编译通过，未跑全量测试(用户要求)，未部署。main 不动。
+
+
+### 7.0zzg.15 修液态玻璃严重偏色：shader 采样通道 .bgr→.rgb（2026-11-21 16:16–16:26，用户照片"偏色很严重"）
+- 用户实拍 4 张照片：展开态音乐面板整体偏青蓝（暖米黄壁纸在玻璃里变冷蓝），收起态小胶囊正常。
+- 排查排除项：①采样坐标/ppp（已修，位置对应一致——玻璃里能看到壁纸的金色罗盘）；②shader bin 过期（fxc 重编译哈希与 .bin 一致）；③材质层（实时亮度已接通，material=1.0 浅材质，常数与旧栈逐行一致）。
+- **根因**：`glass.hlsl::sample_px` 的 `.bgr` 交换错误。照搬独立工程 egui-directx11 的写法（那套 pipeline 手动上传 BGRA 字节，需交换）；新栈 bg_tex 来自 WGC CopyResource，D3D11 SRV 采样 B8G8R8A8 已映射成正确 RGBA 语义（.r=红），再交换就把 RGB 翻一次 → 暖色(R高B低)变青蓝(B高R低)。
+- 修法：`.bgr` → `.rgb`（commit 待填）。A/B 实证：改后用户确认"这下正常了"。shader 重编译 bin sha `a4fc18b5d7c74809`，release exe sha 见速览。
+- 教训：移植 shader 时，采样通道语义取决于纹理来源 pipeline（手动上传 vs CopyResource），不能照抄 swizzle。
