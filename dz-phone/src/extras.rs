@@ -2662,7 +2662,7 @@ impl App {
                 );
             }
         } else if nc.live && track.hovered() {
-            let dy = nc.ui.ctx().input(|i| i.smooth_scroll_delta.y);
+            let dy = crate::app::raw_scroll_y(nc.ui.ctx());
             if dy.abs() > 0.5 {
                 want = Some(((v as f32 + (dy / 120.0) * 4.0).clamp(0.0, 100.0)).round() as u32);
             }
@@ -2814,24 +2814,21 @@ mod tests {
             vec![button(end, false)],
         ];
         for (i, events) in frames.into_iter().enumerate() {
-            let _ = ctx.run(
-                egui::RawInput {
+            let _ = ctx.run_ui(egui::RawInput {
                     events,
                     screen_rect: Some(Rect::from_min_size(
                         egui::Pos2::ZERO,
                         egui::vec2(320.0, 80.0),
                     )),
                     ..Default::default()
-                },
-                |ctx| {
+                }, |ui|{
                     egui::CentralPanel::default()
                         .frame(egui::Frame::new().inner_margin(20))
-                        .show(ctx, |ui| {
+                        .show(ui, |ui| {
                             ui.spacing_mut().slider_width = 180.0;
                             island_size_slider(ui, &mut value);
                         });
-                },
-            );
+                });
             if i < 4 {
                 assert_eq!(value, 100);
             } else {
@@ -2877,10 +2874,10 @@ mod tests {
                     events,
                     ..Default::default()
                 };
-                let _ = ctx.run(raw, |ctx| {
+                let _ = ctx.run_ui(raw, |ui|{
                     egui::CentralPanel::default()
                         .frame(egui::Frame::new().inner_margin(20))
-                        .show(ctx, |ui| {
+                        .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 number_stepper(ui, &mut value, 0, 10, "", step, 76.0);
                             });
@@ -2901,10 +2898,10 @@ mod tests {
             )),
             ..Default::default()
         };
-        let _ = ctx.run(raw, |ctx| {
+        let _ = ctx.run_ui(raw, |ui|{
             egui::CentralPanel::default()
                 .frame(egui::Frame::new())
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     ui.spacing_mut().button_padding = egui::vec2(10.0, 6.0);
                     for mut value in [0u32, 25, 180] {
                         let row = ui.horizontal(|ui| {
@@ -2957,7 +2954,7 @@ mod tests {
             include_bytes!("../assets/device-icons/bluetooth-linear.svg"),
         ];
         for bytes in icons {
-            let image = egui_extras::image::load_svg_bytes(bytes).unwrap();
+            let image = egui_extras::image::load_svg_bytes(bytes, &Default::default()).unwrap();
             assert!(image.pixels.iter().any(|p| p.a() > 0));
         }
     }
@@ -5220,12 +5217,17 @@ impl App {
             let restored=opening && self.window_layout().restore(ctx);
             if !restored{self.window_layout().observe(ctx);}
             let dark=self.settings.settings_theme.dark(crate::settings_theme::system_dark(ctx));
-            let original_style=ctx.style_of(egui::Theme::Dark);
+            let egui_ctx=ctx.ctx().clone();
+            let original_theme=egui_ctx.theme();
+            let theme=if dark{egui::Theme::Dark}else{egui::Theme::Light};
+            let original_style=egui_ctx.style_of(theme);
             let mut style=(*original_style).clone();
             style.visuals=if dark{egui::Visuals::dark()}else{egui::Visuals::light()};
             // 侧栏与正文之间的竖线、弹窗里的分隔线都用这条淡线；浅色模式不再是一条深灰粗线。
             // 侧栏边框已去掉，这里是唯一的一条：浅色模式一条淡线，深色模式不画线，靠两块底色区分。
             style.visuals.widgets.noninteractive.bg_stroke=if dark{egui::Stroke::NONE}else{egui::Stroke::new(1.0,Color32::from_rgb(226,229,234))};
+            egui_ctx.set_style_of(theme,style.clone());
+            egui_ctx.set_theme(if dark{egui::ThemePreference::Dark}else{egui::ThemePreference::Light});
             ctx.set_style(style);
             ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(if dark{egui::SystemTheme::Dark}else{egui::SystemTheme::Light}));
             if self.settings.settings_theme==crate::settings_theme::SettingsTheme::System {
@@ -6293,6 +6295,7 @@ impl App {
             self.avoidance.dialog(ctx,&mut self.settings);
             if before!=format!("{:?}",self.settings){self.settings.save();}
             ctx.set_style(original_style);
+            egui_ctx.set_theme(original_theme);
         });
         if !self.settings_open {
             self.window_layout().close();

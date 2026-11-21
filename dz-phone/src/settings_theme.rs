@@ -29,5 +29,5 @@ pub fn system_dark(ctx:&egui::Context)->bool {
 }
 
 pub fn color(ctx:&egui::Context,dark:Color32,light:Color32)->Color32 {
-    if ctx.style_of(egui::Theme::Dark).visuals.dark_mode {dark}else{light}
+    if ctx.theme()==egui::Theme::Dark {dark}else{light}
 }

@@ -721,16 +721,17 @@ impl App {
         use crate::extras::{settings_control_row,settings_hint};
         let popup=egui::Id::new("weather-city-options");
         let mut enter=false;
+        let mut open_cmd:Option<egui::SetOpenCommand>=None;
         let response=settings_control_row(ui,"城市名称",80.0,|ui|{
             ui.horizontal(|ui|{
                 let input=ui.add_sized([ui.available_width()-38.0,32.0],egui::TextEdit::singleline(&mut self.weather.city_input)
                     .id_salt("weather-city-input").vertical_align(egui::Align::Center).margin(egui::vec2(10.0,7.0)).hint_text("输入城市名称搜索"));
                 let arrow=ui.add_sized([30.0,32.0],egui::Button::new("").corner_radius(7.0)).on_hover_text("选择具体地区");
                 let center=arrow.rect.center();ui.painter().add(egui::Shape::line(vec![center+egui::vec2(-4.0,-2.0),center+egui::vec2(0.0,2.0),center+egui::vec2(4.0,-2.0)],egui::Stroke::new(1.5_f32,ui.visuals().text_color())));
-                if input.changed() || input.clicked() {{ let _ = &popup; };}
-                if arrow.clicked() {{ let _ = &popup; };}
+                if input.changed() || input.clicked() {open_cmd=Some(egui::SetOpenCommand::Bool(true));};
+                if arrow.clicked() {open_cmd=Some(egui::SetOpenCommand::Toggle);};
                 enter=input.lost_focus() && ui.input(|i|i.key_pressed(egui::Key::Enter));
-                if enter && self.weather.draft_city().is_none() {{ let _ = &popup; };}
+                if enter && self.weather.draft_city().is_none() {open_cmd=Some(egui::SetOpenCommand::Bool(true));};
                 input.union(arrow)
             }).inner
         });
@@ -738,7 +739,7 @@ impl App {
         if self.weather.cities.pending() && self.weather.city_input.trim().chars().count()>=2 {ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));}
         let mut selected=None;
         let saved=self.settings.weather_saved.clone();
-        egui::Popup::from_toggle_button_response(&response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui|{
+        egui::Popup::from_response(&response).id(popup).open_memory(open_cmd).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui|{
             ui.spacing_mut().item_spacing.y=2.0;
             let weak=ui.visuals().weak_text_color();
             let note=|ui:&mut egui::Ui,text:&str|{ui.add_space(6.0);ui.label(egui::RichText::new(text).size(12.0).color(weak));ui.add_space(6.0);};
@@ -759,7 +760,7 @@ impl App {
         });
         if let Some(position)=selected {
             self.weather.city_input=position.label.clone();self.weather.selected_city=Some(position);
-            {};
+            egui::Popup::close_id(ui.ctx(), popup);
         }
         if let Some(position)=self.weather.picked_city(){settings_hint(ui,&format!("已选择：{} · {}",position.label,position.region));}
         else {settings_hint(ui,"输入中英文城市名，从下拉列表选择具体地区，再点「添加」。");}

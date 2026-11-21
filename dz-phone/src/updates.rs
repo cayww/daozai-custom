@@ -667,8 +667,8 @@ mod tests {
             state.poll(&ctx);
             assert!(!state.begin_check(&ctx, false, || Ok(None)));
             assert!(state.result.is_some() && state.rx.is_none());
-            let page = ctx.run(Default::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| state.ui(ui, true));
+            let page = ctx.run_ui(Default::default(), |ui|{
+                egui::CentralPanel::default().show(ui, |ui| state.ui(ui, true));
             });
             assert!(page.shapes.iter().any(|shape| matches!(&shape.shape,
                 egui::Shape::Text(t) if t.galley.text().contains("秒后可重新检查"))));
@@ -816,9 +816,9 @@ mod tests {
             let mut state = State::default(); state.rx = Some(rx);
             state.automatic_check = true;
             let before = Instant::now();
-            let _ = ctx.run(Default::default(), |ctx| {
-                state.poll(ctx);
-                egui::CentralPanel::default().show(ctx, |ui| state.ui(ui, true));
+            let _ = ctx.run_ui(Default::default(), |ui|{
+                state.poll(ui.ctx());
+                egui::CentralPanel::default().show(ui, |ui| state.ui(ui, true));
             });
             assert!(state.rx.is_none());
             assert!(!state.automatic_check);
@@ -894,7 +894,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(520.0, 416.0))),
                 ..Default::default()
             };
-            *capture.lock().unwrap() = Some(ctx.run(raw, |ctx| (viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap() = Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
         let mut raster = crate::preview_raster::Raster::new(520, 416);
         for (name, progress, message) in [
@@ -907,7 +907,7 @@ mod tests {
         app.updates.progress = progress.unwrap_or_default();
         app.updates.message = message.into();
         for frame in 0..5 {
-            let root = ctx.run(Default::default(), |ctx| app.settings_ui(ctx, false));
+            let root = ctx.run_ui(Default::default(), |ui| app.settings_ui(ui.ctx(), false));
             raster.update_textures(&root.textures_delta);
             let child = output.lock().unwrap().take().unwrap();
             raster.update_textures(&child.textures_delta);

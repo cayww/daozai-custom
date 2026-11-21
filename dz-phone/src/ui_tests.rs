@@ -17,6 +17,67 @@ use std::sync::Mutex;
 
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+/// egui 0.35 会把一段 RichText 拆成多个 Text shape（如 "25 分钟" -> "25" + " 分钟"）。
+/// 先精确匹配；否则把同一行（y 相近）的片段按 x 排序拼回整行再匹配，返回组合包围盒。
+fn find_text_bounds(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<Rect> {
+    if let Some(r) = shapes.iter().find_map(|s| match &s.shape {
+        egui::Shape::Text(t) if t.galley.text() == text => Some(t.visual_bounding_rect()),
+        _ => None,
+    }) { return Some(r); }
+    let mut y_groups: Vec<(f32, Vec<(f32, Rect, &str)>)> = Vec::new();
+    for s in shapes {
+        if let egui::Shape::Text(t) = &s.shape {
+            let r = t.visual_bounding_rect();
+            if let Some(g) = y_groups.iter_mut().find(|(y, _)| (y - r.center().y).abs() < 1.5) {
+                g.1.push((r.center().x, r, t.galley.text()));
+            } else {
+                y_groups.push((r.center().y, vec![(r.center().x, r, t.galley.text())]));
+            }
+        }
+    }
+    for (_, mut items) in y_groups {
+        items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let joined: String = items.iter().map(|(_, _, s)| *s).collect();
+        if joined.contains(text) {
+            return items.iter().map(|(_, r, _)| *r).reduce(|a, b| a.union(b));
+        }
+    }
+    None
+}
+
+/// 点击用：返回文字所在行的精确中心（egui 0.35 会把 RichText 拆成多个 Text shape）。
+fn find_text_click_point(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<Pos2> {
+    if let Some(p) = shapes.iter().find_map(|s| match &s.shape {
+        egui::Shape::Text(t) if t.galley.text() == text && t.opacity_factor > 0.9 => Some(t.visual_bounding_rect().center()),
+        _ => None,
+    }) { return Some(p); }
+    let items: Vec<(f32, Rect, &str)> = shapes.iter().filter_map(|s| match &s.shape {
+        egui::Shape::Text(t) => Some((t.visual_bounding_rect().center().y, t.visual_bounding_rect(), t.galley.text())),
+        _ => None,
+    }).collect();
+    let mut seen_y: Vec<f32> = Vec::new();
+    for (y, _, _) in &items {
+        if seen_y.iter().any(|v| (v - y).abs() < 1.5) { continue; }
+        seen_y.push(*y);
+        let mut row: Vec<_> = items.iter().filter(|(y2, _, _)| (y2 - y).abs() < 1.5).cloned().collect();
+        row.sort_by(|a, b| a.1.center().x.partial_cmp(&b.1.center().x).unwrap());
+        // 滑动窗口：找连续片段拼起来恰好等于 text，返回这几段的 union 中心
+        for i in 0..row.len() {
+            let mut joined = String::new();
+            for j in i..row.len() {
+                joined.push_str(row[j].2);
+                if joined == text || joined.trim_start() == text {
+                    return row[i..=j].iter().map(|(_, r, _)| *r).reduce(|a, b| a.union(b)).map(|r| r.center());
+                }
+                if joined.len() > text.len() + 2 { break; }
+            }
+        }
+    }
+    None
+}
+
+
+
 #[test]
 fn gemini_connect_form_opens_default_browser_without_claiming_connection(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
@@ -25,7 +86,7 @@ fn gemini_connect_form_opens_default_browser_without_claiming_connection(){
         h.app.settings_open=true;h.app.quota.provider=crate::quota::Provider::Gemini;h.app.quota.connect_open=true;
         let mut raster=crate::preview_raster::Raster::new(640,760);
         for _ in 0..4{
-            let out=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(640.0,760.0))),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));});
+            let out=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(640.0,760.0))),..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});
             raster.update_textures(&out.textures_delta);h.shapes=out.shapes;
         }
         let texts=h.shapes.iter().filter_map(|s|if let egui::Shape::Text(t)=&s.shape{Some(t.galley.text())}else{None}).collect::<Vec<_>>();
@@ -38,7 +99,7 @@ fn gemini_connect_form_opens_default_browser_without_claiming_connection(){
         let original=h.app.quota.config.clone();
         let point=h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()=="打开默认浏览器登录"=>Some(t.visual_bounding_rect().center()),_=>None}).unwrap();
         for pressed in [true,false]{
-            let _=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(640.0,760.0))),events:vec![egui::Event::PointerMoved(point),egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}],..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));});
+            let _=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(640.0,760.0))),events:vec![egui::Event::PointerMoved(point),egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}],..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});
         }
         assert!(h.app.pending.contains(&crate::app::Cmd::OpenUrl("https://gemini.google.com/usage".into())));
         assert!(h.app.quota.gemini_connecting.is_none());assert_eq!(h.app.quota.config,original);
@@ -151,7 +212,7 @@ fn weather_side_bar_shows_a_clickable_temperature_on_both_edges(){
             let env=Env{t:h.t,clock:"09:41:00".into(),cursor:Some(click),..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(500.0,600.0))),time:Some(h.t),focused:true,
                 events:vec![egui::Event::PointerButton{pos:click,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}],..Default::default()};
-            let _=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{h.app.frame(ui,ui.max_rect(),&env);});});
+            let _=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,ui.max_rect(),&env);});
         }
         assert_eq!(h.app.page(),8,"{dock:?} 点击侧边温度应进入天气页");
         assert!(!h.app.weather.solar_open);
@@ -178,9 +239,9 @@ fn weather_solar_view_preserves_readable_times_across_skins_and_scales(){
             let env=Env{t:h.t,clock:now.format("%H:%M:%S").to_string(),today:now.format("%Y-%m-%d").to_string(),date:now.format("%m月%d日").to_string(),cursor:Some(cursor),bt_ready:true,..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(h.t),focused:true,
                 events:vec![egui::Event::PointerMoved(cursor)],..Default::default()};
-            h.shapes=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{
+            h.shapes=h.ctx.run_ui(raw, |ui|{
                 h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);
-            });}).shapes;
+            }).shapes;
         }
         for phrase in ["返回天气","距离日落","07:40","白昼中点","12:06","06:52","17:21","白昼 10小时29分"] {
             assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains(phrase))),"{skin:?} / {scale} 日照视图缺少 {phrase}");
@@ -233,9 +294,9 @@ fn weather_foundation_preview(){
             let events=vec![egui::Event::PointerMoved(cursor.unwrap())];
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(w,hgt))),time:Some(h.t),focused:true,
                 events,viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{
+            let output=h.ctx.run_ui(raw, |ui|{
                 h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(if dock==Dock::Top{WIN_W}else{w},hgt)),&env);
-            });});
+            });
             raster.update_textures(&output.textures_delta);
             if frame==frames-1 {
                 raster.buf.fill([0.20,0.24,0.32,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
@@ -276,9 +337,9 @@ fn weather_solar_entry_preview(){
         if frame==60||frame==61 {events.push(egui::Event::PointerButton{pos:click,button:egui::PointerButton::Primary,pressed:frame==60,modifiers:Default::default()});}
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(w,hgt))),time:Some(h.t),focused:true,events,
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{
+        let output=h.ctx.run_ui(raw, |ui|{
             h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,hgt)),&env);
-        });});
+        });
         raster.update_textures(&output.textures_delta);
         if let Some((_,name))=shots.iter().find(|(at,_)|*at==frame) {
             raster.buf.fill([0.20,0.24,0.32,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
@@ -407,10 +468,10 @@ fn weather_city_dropdown_selects_the_region_without_applying_the_draft(){
     fn draw(h:&mut H,events:Vec<egui::Event>){
         h.t+=1.0/60.0;h.app.t=h.t;
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(560.0,380.0))),time:Some(h.t),events,..Default::default()};
-        h.shapes=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().show(ctx,|ui|{h.app.weather_city_picker(ui);});}).shapes;
+        h.shapes=h.ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.weather_city_picker(ui);});}).shapes;
     }
     for _ in 0..3 {draw(&mut h,vec![]);}
-    { /* 0.35: popup state via Popup::open_bool */ };
+    egui::Popup::open_id(&h.ctx, egui::Id::new("weather-city-options"));
     for _ in 0..3 {draw(&mut h,vec![]);}
     let point=h.shapes.iter().find_map(|s|match &s.shape {egui::Shape::Text(text) if text.galley.text()=="佛山市"=>Some(text.visual_bounding_rect().center()),_=>None}).expect("下拉框必须显示完整城市名");
     assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()=="广东 · 中国")),"下拉框必须显示省份");
@@ -418,7 +479,7 @@ fn weather_city_dropdown_selects_the_region_without_applying_the_draft(){
     draw(&mut h,vec![egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
     assert_eq!(h.app.weather.selected_city.as_ref(),Some(&correct));assert_eq!(h.app.weather.draft_city(),Some("佛山市"));
     assert_eq!(h.app.settings.weather_city,"杭州","选择候选后仍需应用确认");assert!(!h.app.weather.loading);
-    assert!(!false);
+    assert!(!egui::Popup::is_id_open(&h.ctx, egui::Id::new("weather-city-options")));
     h.app.settings.weather_city="佛山市".into();h.app.settings.weather_position=Some(correct.clone());h.app.settings.save();
     let saved=crate::model::Settings::load();assert_eq!(saved.weather_position,Some(correct));
     h.app.weather.city_input="伦敦".into();assert_eq!(h.app.weather.draft_city(),None,"改写输入后必须重新选择地区");
@@ -455,14 +516,14 @@ fn resized_font_atlases_stop_reuploading_and_release_unused_sizes(){
         let id=viewport.ids.this;
         let input=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(640.0,270.0))),max_texture_side:Some(2048),
             viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()};
-        capture.lock().unwrap().push(ctx.run(input,|ctx|(viewport.viewport_ui_cb)(ctx)));
+        capture.lock().unwrap().push(ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui)));
     });
     let frame=|ppp:f32,settings:bool|{
         let mut viewports=std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect::<egui::ViewportIdMap<_>>();
         if settings{viewports.insert(child,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()});}
         let input=egui::RawInput{viewports,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(640.0,270.0))),max_texture_side:Some(2048),..Default::default()};
-        let draw=|ctx:&egui::Context|{egui::CentralPanel::default().show(ctx,|ui|{ui.label("专注时间 25:00 · 休息 · 音乐与歌词");});};
-        let root=ctx.run(input,|ctx|{draw(ctx);if settings{ctx.show_viewport_immediate(child,Default::default(),|ctx,_|draw(ctx));}});
+        let draw=|ui:&mut egui::Ui|{egui::CentralPanel::default().show(ui,|ui|{ui.label("专注时间 25:00 · 休息 · 音乐与歌词");});};
+        let root=ctx.run_ui(input, |ui|{draw(ui);if settings{ui.ctx().show_viewport_immediate(child,Default::default(),|ui,_|draw(ui));}});
         let mut outputs=std::mem::take(&mut *children.lock().unwrap());outputs.push(root);
         outputs
     };
@@ -521,7 +582,7 @@ fn enlarged_island_preserves_font_resolution_with_a_separate_settings_window(){
         let id=viewport.ids.this;
         let input=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(690.0,560.0))),
             viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()};
-        *capture.lock().unwrap()=Some(ctx.run(input,|ctx|(viewport.viewport_ui_cb)(ctx)));
+        *capture.lock().unwrap()=Some(ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui)));
     });
     let mut raster=crate::preview_raster::Raster::new(WIN_W as usize,WIN_H as usize);
     raster.update_textures(&egui::TexturesDelta{set:vec![(egui::TextureId::default(),egui::epaint::ImageDelta::full(h.ctx.fonts(|fonts|fonts.image()),egui::TextureOptions::LINEAR))],..Default::default()});
@@ -531,12 +592,10 @@ fn enlarged_island_preserves_font_resolution_with_a_separate_settings_window(){
             h.t+=1.0/60.0;
             let input=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),
                 time:Some(h.t),events:vec![egui::Event::PointerMoved(H::local(70.0,40.0))],viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(scale),..Default::default()})).collect(),..Default::default()};
-            let root=h.ctx.run(input,|ctx|{
-                egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
-                    let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));
-                    h.app.frame(ui,win,&Env{t:h.t,cursor:Some(H::local(70.0,40.0)),clock:"09:41:00".into(),..Default::default()});
-                });
-                h.app.settings_ui(ctx,false);
+            let root=h.ctx.run_ui(input, |ui|{
+                let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));
+                h.app.frame(ui,win,&Env{t:h.t,cursor:Some(H::local(70.0,40.0)),clock:"09:41:00".into(),..Default::default()});
+                h.app.settings_ui(ui.ctx(),false);
             });
             let child=captured.lock().unwrap().take().unwrap();
             assert_eq!(child.pixels_per_point,1.0,"设置窗口不跟随岛体变大");
@@ -566,8 +625,8 @@ fn opaque_surface_gets_a_contour_with_every_skin_and_dock(){
         let size=if dock.is_side(){Vec2::new(crate::side_dock::SIDE_W,crate::side_dock::SIDE_H)}else{Vec2::new(WIN_W,WIN_H)};
         let mut outlined=false;
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),..Default::default()};
-        let _=h.ctx.run(raw,|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|{
+        let _=h.ctx.run_ui(raw, |ui|{
+            egui::CentralPanel::default().show(ui,|ui|{
                 let win=Rect::from_min_size(ui.max_rect().min,size);
                 let out=h.app.frame(ui,win,&Env{opaque_surface,..Default::default()});
                 outlined=out.glass.is_some_and(|shapes|!shapes.is_empty());
@@ -620,9 +679,9 @@ fn top_bar_settings_switch_modes_and_respect_the_master_switch(){
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
             let raw=egui::RawInput{viewport_id:id,time:Some(time),focused:true,events:events.clone(),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1800.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
-        let root=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));raster.update_textures(&root.textures_delta);
+        let root=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));raster.update_textures(&root.textures_delta);
         let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);child
     }
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
@@ -696,10 +755,10 @@ fn settings_notification_tab_shows_meeting_quiet_and_history() {
             let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,450.0))),
                 viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.25),focused:Some(true),..Default::default()})).collect(),
                 focused:true,events:Vec::new(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
         let raw=egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.25),..Default::default()})).collect(),..Default::default()};
-        let _=h.ctx.run(raw,|ctx|h.app.settings_ui(ctx,false));
+        let _=h.ctx.run_ui(raw, |ui| h.app.settings_ui(ui.ctx(),false));
         let shapes=output.lock().unwrap().take().unwrap().shapes;
         shapes
     }
@@ -1021,8 +1080,8 @@ fn settings_keep_dark_buttons_when_system_theme_changes() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let h=H::new();
     for theme in [egui::Theme::Light,egui::Theme::Dark,egui::Theme::Light] {
-        let _=h.ctx.run(egui::RawInput{system_theme:Some(theme),..Default::default()},|ctx| {
-            assert!(ctx.style_of(egui::Theme::Dark).visuals.widgets.inactive.weak_bg_fill.r()<100,"系统浅色模式不能把深色设置里的按钮变成白底");
+        let _=h.ctx.run_ui(egui::RawInput{system_theme:Some(theme),..Default::default()}, |ui|{
+            assert!(ui.ctx().style_of(egui::Theme::Dark).visuals.widgets.inactive.weak_bg_fill.r()<100,"系统浅色模式不能把深色设置里的按钮变成白底");
         });
     }
 }
@@ -1249,12 +1308,10 @@ impl H {
         let animating=&mut self.animating;
         let app = &mut self.app;
         let file_drop_zone=&mut self.file_drop_zone;
-        let output = self.ctx.run(raw, |ctx| {
-            egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |ui| {
+        let output = self.ctx.run_ui(raw, |ui|{
                 let win = Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));
                 let frame=app.frame(ui, win, &env);*region=frame.region;*hit=frame.hit;*animating=frame.animating;*file_drop_zone=frame.file_drop_zone;cmds.extend(frame.cmds);
             });
-        });
         self.shapes=output.shapes;
     }
     fn hover(&mut self, p: Pos2, secs: f64) {
@@ -1272,12 +1329,12 @@ impl H {
     }
     fn click_text(&mut self,label:&str){
         if !self.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()==label))&&self.app.notice.is_some(){self.click_notice_badge();}
-        let point=self.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==label&&t.opacity_factor>0.9&&s.clip_rect.contains(t.visual_bounding_rect().center())=>Some(t.visual_bounding_rect().center()),_=>None}).unwrap_or_else(||panic!("未找到可点击文字：{label}"));
+        let point=find_text_click_point(&self.shapes,label).unwrap_or_else(||panic!("未找到可点击文字：{label}"));
         self.click(point);
     }
     fn click_notice_badge(&mut self){if self.app.compact_notices(){self.click(Pos2::new(WIN_W/2.0+(self.app.current_width()-44.0)/2.0+26.0,15.0));}}
     fn wheel(&mut self,delta:f32) {
-        self.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,delta),modifiers:Default::default()}]);
+        self.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,delta),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
     }
     fn picker_frame(&mut self,events:Vec<egui::Event>){
         self.frame(events);
@@ -1341,9 +1398,9 @@ fn island_drag_frame(h:&mut H,bounds:crate::display_layout::Bounds,ppp:f32,point
     let env=Env{t:h.t,clock:"09:41:00".into(),today:"2026-10-28".into(),date:"10月28日 周三".into(),cursor,screen:Some(screen),bt_ready:true,..Default::default()};
     let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W.max(width),height))),time:Some(h.t),events,focused:true,
         viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
-    let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{
+    let output=h.ctx.run_ui(raw, |ui|{
         let out=h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(width,height)),&env);h.region=out.region;h.hit=out.hit;h.cmds.extend(out.cmds);
-    });});
+    });
     h.shapes=output.shapes;
     screen
 }
@@ -1611,12 +1668,12 @@ fn settings_opening_restores_focus_once_without_becoming_topmost() {
             let id=viewport.ids.this;
             let mut raw=egui::RawInput{viewport_id:id,focused,system_theme:Some(egui::Theme::Light),..Default::default()};
             raw.viewports.insert(id,egui::ViewportInfo{focused:Some(focused),minimized:Some(!focused),..Default::default()});
-            let _=ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx));
+            let _=ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui));
         });
         let id=egui::ViewportId::from_hash_of("daozai-settings");
         let mut raw=egui::RawInput::default();
         raw.viewports.insert(id,egui::ViewportInfo{focused:Some(focused),..Default::default()});
-        let mut output=h.ctx.run(raw,|ctx|h.app.settings_ui(ctx,false));
+        let mut output=h.ctx.run_ui(raw, |ui| h.app.settings_ui(ui.ctx(),false));
         let viewport=output.viewport_output.remove(&id).unwrap();
         assert!(viewport.commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark))),"浅色系统下窗口标题栏和边框也应使用深色");
         (viewport.builder,viewport.commands)
@@ -1646,7 +1703,7 @@ fn settings_opening_restores_focus_once_without_becoming_topmost() {
     assert!(commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::Minimized(false))));
     assert!(commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::Focus)),"设置已打开时仍应响应再次唤起");
     h.app.settings_open=false;
-    let _=h.ctx.run(egui::RawInput::default(),|ctx|h.app.settings_ui(ctx,false));
+    let _=h.ctx.run_ui(egui::RawInput::default(), |ui| h.app.settings_ui(ui.ctx(),false));
     h.app.open_settings();
     let (builder,commands)=frame(&mut h,false);
     assert_eq!(builder.visible,Some(false),"关闭后重新创建也应隐藏到首帧完成");
@@ -1876,7 +1933,7 @@ fn music_volume_wheel_and_player_switch_keep_system_volume_untouched(){
 fn music_uses_system_artwork_and_clears_it_when_the_next_song_has_none(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let mut h=H::new();
-    let image=std::sync::Arc::new(egui::ColorImage::new([32,32],egui::Color32::BLUE));
+    let image=std::sync::Arc::new(egui::ColorImage::filled([32,32], egui::Color32::BLUE));
     h.media=crate::smtc::NowPlaying{title:"First".into(),artist:"Artist".into(),artwork:Some(image.clone()),..Default::default()};
     h.hover(Pos2::new(WIN_W/2.0,12.0),1.0);
     let (cached,texture)=h.app.music_artwork.as_ref().expect("播放页应使用系统封面");
@@ -2113,15 +2170,13 @@ fn music_lyric_timing_controls_match_focus_save_and_fit_the_small_settings_windo
             let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,450.0))),
                 viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.25),focused:Some(true),..Default::default()})).collect(),
                 focused:true,events:events.clone(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
         let raw=egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.25),..Default::default()})).collect(),..Default::default()};
-        let _=h.ctx.run(raw,|ctx|h.app.settings_ui(ctx,false));
+        let _=h.ctx.run_ui(raw, |ui| h.app.settings_ui(ui.ctx(),false));
         let child=output.lock().unwrap().take().unwrap();child.shapes
     }
-    let text_rect=|shapes:&[egui::epaint::ClippedShape],text:&str|shapes.iter().find_map(|shape|match &shape.shape{
-        egui::Shape::Text(t)if t.galley.text()==text=>Some(t.visual_bounding_rect()),_=>None,
-    }).unwrap_or_else(||panic!("设置中缺少 {text}"));
+    let text_rect=|shapes:&[egui::epaint::ClippedShape],text:&str|find_text_bounds(shapes,text).unwrap_or_else(||panic!("设置中缺少 {text}"));
     for _ in 0..3{frame(&mut h,vec![]);}
     let music=frame(&mut h,vec![]);
     text_rect(&music,"0.35 秒");
@@ -2292,7 +2347,7 @@ fn island_lyrics_keep_title_fallback_and_intro_and_gaps(){
 fn island_lyrics_title_fallback_shows_cover_and_elides_long_names(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let mut h=H::new();h.app.settings.minimal=true;h.app.settings.island_lyrics=true;
-    h.media=crate::smtc::NowPlaying{title:"没有歌词的钢琴曲".repeat(20),artist:"示例演奏者".into(),playing:true,artwork:Some(std::sync::Arc::new(egui::ColorImage::new([8,8],egui::Color32::BLUE))),..Default::default()};
+    h.media=crate::smtc::NowPlaying{title:"没有歌词的钢琴曲".repeat(20),artist:"示例演奏者".into(),playing:true,artwork:Some(std::sync::Arc::new(egui::ColorImage::filled([8,8], egui::Color32::BLUE))),..Default::default()};
     for _ in 0..90 {h.frame(vec![]);}
     let text=h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==h.media.title=>Some(t),_=>None}).expect("无歌词时应绘制当前歌名");
     assert_eq!(text.galley.rows.len(),1,"长歌名只显示一行");
@@ -2337,7 +2392,7 @@ fn island_lyrics_layout_gallery(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let dest=std::path::PathBuf::from(std::env::var_os("DAOZAI_LYRIC_PREVIEW_DIR").expect("需指定预览目录"));
     std::fs::create_dir_all(&dest).unwrap();
-    let mut cover=egui::ColorImage::new([64,64],egui::Color32::BLACK);
+    let mut cover=egui::ColorImage::filled([64,64], egui::Color32::BLACK);
     for y in 0..64 {for x in 0..64 {
         let moon=(x as i32-44).pow(2)+(y as i32-18).pow(2)<64;
         cover[(x,y)]=if moon {egui::Color32::from_rgb(255,226,174)}
@@ -2365,9 +2420,7 @@ fn island_lyrics_layout_gallery(){
             let env=Env{t,clock:"09:41:00".into(),today:"2026-11-06".into(),date:"11月6日 周五".into(),media:h.media.clone(),..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H))),time:Some(t),
                 viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{
-                egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
-            });
+            let output=h.ctx.run_ui(raw, |ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
             raster.update_textures(&output.textures_delta);
             if frame==89 {
                 raster.buf.fill([0.95,0.96,0.98,1.0]);
@@ -2746,7 +2799,7 @@ fn resident_layout_gallery(){
         let env=Env{t,clock:"09:41:00".into(),today:"2026-10-31".into(),date:"10月31日 周六".into(),battery:h.power.0,charging:h.power.1,media:h.media.clone(),bt_ready:true,..Default::default()};
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H))),time:Some(t),
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});});
+        let output=h.ctx.run_ui(raw, |ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
         raster.update_textures(&output.textures_delta);let mut rgba=Vec::new();
         if draw {raster.buf.fill([0.09,0.11,0.18,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);raster.to_rgba8(&mut rgba);}
         raster.free_textures(&output.textures_delta);rgba
@@ -2900,7 +2953,7 @@ fn kiro_logo_and_point_details_fit_the_card(){
         let env=Env{t,clock:"09:41:00".into(),today:"2026-10-31".into(),date:"10月31日 周六".into(),battery:h.power.0,charging:h.power.1,media:h.media.clone(),bt_ready:true,..Default::default()};
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H))),time:Some(t),
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});});
+        let output=h.ctx.run_ui(raw, |ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
         raster.update_textures(&output.textures_delta);
         raster.buf.fill([0.09,0.11,0.18,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
         let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);
@@ -2944,9 +2997,9 @@ fn kiro_credit_pools_gallery(){
         if pools{
             h.app.settings.settings_theme=if name=="light"{crate::settings_theme::SettingsTheme::Light}else{crate::settings_theme::SettingsTheme::Dark};h.app.settings_tab=11;h.app.open_settings();h.ctx.set_embed_viewports(false);
             let size=egui::vec2(650.0,650.0);let ppp=1.5;let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
-            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};*capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));});
+            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};*capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));});
             let mut raster=crate::preview_raster::Raster::new(975,975);
-            for frame in 0..6{let root=h.ctx.run(egui::RawInput::default(),|ctx|h.app.settings_ui(ctx,false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
+            for frame in 0..6{let root=h.ctx.run_ui(egui::RawInput::default(), |ui| h.app.settings_ui(ui.ctx(),false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
                 if frame==5{raster.buf.fill([0.1,0.1,0.1,1.0]);raster.draw(&h.ctx.tessellate(child.shapes,child.pixels_per_point),child.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(format!("kiro-{name}-settings.png")),&rgba,975,975,image::ColorType::Rgba8).unwrap();}raster.free_textures(&root.textures_delta);raster.free_textures(&child.textures_delta);
             }
         }
@@ -2969,7 +3022,7 @@ fn kiro_resident_bar_preview(){
     for frame in 0..90{
         let t=frame as f64/60.0;let env=Env{t,clock:"12:17:00".into(),battery:Some(80),charging:true,..Default::default()};
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(640.0,190.0))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,ui.max_rect(),&env);});});
+        let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,ui.max_rect(),&env);});
         raster.update_textures(&output.textures_delta);
         if frame==89{
             raster.buf.fill([0.09,0.11,0.18,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);
@@ -3026,10 +3079,10 @@ fn kiro_simulated_states_gallery(){
                     let(mut connect,tx)=crate::quota::kiro::Connect::pending(None);if scene=="cancelled"{connect.cancel();}h.app.quota.kiro_connecting=Some(connect);Some(tx)
                 }else{None};
                 let size=egui::vec2(690.0,620.0);let ppp=1.5;let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
-                egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};*capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));});
+                egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};*capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));});
                 let mut raster=crate::preview_raster::Raster::new(1035,930);
                 for frame in 0..8{
-                    let root=h.ctx.run(egui::RawInput::default(),|ctx|h.app.settings_ui(ctx,false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
+                    let root=h.ctx.run_ui(egui::RawInput::default(), |ui| h.app.settings_ui(ui.ctx(),false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
                     if frame==7{
                         if scene=="identity"{let count=child.shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)=>Some(t.galley.text().matches("月度额度").count()),_=>None}).sum::<usize>();assert_eq!(count,1,"普通套餐只显示一行月度额度");}
                         raster.buf.fill([0.20,0.24,0.32,1.0]);raster.draw(&h.ctx.tessellate(child.shapes,child.pixels_per_point),child.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(format!("{theme}-{scene}.png")),&rgba,1035,930,image::ColorType::Rgba8).unwrap();}
@@ -3041,7 +3094,7 @@ fn kiro_simulated_states_gallery(){
                     h.t+=1.0/60.0;let cursor=Some(H::local(300.0,60.0));
                     let env=Env{t:h.t,clock:"09:41:00".into(),today:"2026-11-11".into(),date:"11月11日 周三".into(),cursor,bt_ready:true,..Default::default()};
                     let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(h.t),events:vec![egui::Event::PointerMoved(cursor.unwrap())],viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-                    let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);});});raster.update_textures(&output.textures_delta);
+                    let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);});raster.update_textures(&output.textures_delta);
                     if frame==74{
                         let texts=output.shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)=>Some(t.galley.text()),_=>None}).collect::<Vec<_>>().join(" ");
                         if scene=="small"{assert!(texts.contains("0.01"));}if scene=="loading"{assert!(texts.contains("正在更新"));}if scene=="expired"{assert!(texts.contains("登录已过期"));}
@@ -3072,7 +3125,7 @@ fn kiro_resident_states_gallery(){
         for frame in 0..90{
             let t=frame as f64/60.0;let env=Env{t,clock:"12:17:00".into(),today:"2026-11-11".into(),date:"11月11日 周三".into(),battery:Some(80),charging:true,..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(640.0,190.0))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,ui.max_rect(),&env);});});raster.update_textures(&output.textures_delta);
+            let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,ui.max_rect(),&env);});raster.update_textures(&output.textures_delta);
             if frame==89{
                 assert_eq!(h.app.quota_bar_indices().len(),if mixed{3}else{1});
                 assert!(output.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="904")),"常驻栏应显示剩余点数");
@@ -3163,7 +3216,7 @@ fn claude_local_quota_shows_the_record_time_and_does_not_invent_resets(){
     for _ in 0..90{
         h.t+=1.0/60.0;let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(h.t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
         let env=Env{t:h.t,clock:"20:30:00".into(),date:"11月6日 周五".into(),today:"2026-11-06".into(),cursor:Some(Pos2::new(WIN_W/2.0,12.0)),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);});});raster.update_textures(&output.textures_delta);shapes=output.shapes;raster.free_textures(&output.textures_delta);
+        let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);});raster.update_textures(&output.textures_delta);shapes=output.shapes;raster.free_textures(&output.textures_delta);
     }
     let texts:Vec<_>=shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)=>Some(t),_=>None}).collect();
     let label=texts.iter().find(|t|t.galley.text()=="Claude · 本地记录").expect("应明确标注本地来源");
@@ -3268,7 +3321,7 @@ fn page_visibility_skips_hidden_pages_in_every_navigation_control() {
     assert_eq!(h.app.page,5);
     h.frame(vec![egui::Event::Key{key:egui::Key::ArrowRight,physical_key:None,pressed:false,repeat:false,modifiers:Default::default()}]);
     h.hover(H::local(300.0,60.0),0.7);
-    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,40.0),modifiers:Default::default()}]);
+    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,40.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
     assert_eq!(h.app.page,2,"滚轮应跳过隐藏页面");
     h.click(H::local(21.0,68.0));
     assert_eq!(h.app.page,0);
@@ -3669,7 +3722,7 @@ fn mascot_and_album_share_the_single_line_lyric_island(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.app.settings.pet=true;h.app.settings.island_lyrics=true;
     h.media=crate::smtc::NowPlaying{title:"Track".into(),artist:"Artist".into(),playing:true,position:7.0,duration:120.0,
-        artwork:Some(std::sync::Arc::new(egui::ColorImage::new([32,32],egui::Color32::from_rgb(70,120,220)))),..Default::default()};
+        artwork:Some(std::sync::Arc::new(egui::ColorImage::filled([32,32], egui::Color32::from_rgb(70,120,220)))),..Default::default()};
     h.app.set_lyrics("Track","Artist",120.0,crate::lyrics::parse_lrc("[00:05]晚风吹过了山岗\n[00:15]下一句"));
     for _ in 0..120 {h.frame(vec![]);}
     assert!((h.app.current_width()-348.0).abs()<0.1,"专辑、岛仔与原有歌词宽度一起保留");
@@ -3853,11 +3906,9 @@ fn mascot_expression_gallery(){
             let env=Env{t,clock:"09:41:00".into(),today:"2026-10-31".into(),date:"10月31日 周六".into(),..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H))),time:Some(t),
                 viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{
-                egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{
+            let output=h.ctx.run_ui(raw, |ui|{
                     let win=ui.max_rect();h.app.frame(ui,win,&env);
                 });
-            });
             raster.update_textures(&output.textures_delta);
             if frame==last {
                 raster.buf.fill([0.09,0.11,0.18,1.0]);
@@ -3916,9 +3967,9 @@ fn mascot_integrated_expression_gallery(){
                 let env=Env{t,clock:"09:41:00".into(),today:"2026-11-06".into(),date:"11月6日 周五".into(),idle_seconds:Some(0.0),..Default::default()};
                 let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H))),time:Some(t),
                     viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-                let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
+                let output=h.ctx.run_ui(raw, |ui|{
                     let win=ui.max_rect();h.app.frame(ui,win,&env);
-                });});
+                });
                 raster.update_textures(&output.textures_delta);
                 if frame>0 {
                     raster.buf.fill([0.95,0.96,0.98,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
@@ -3982,9 +4033,7 @@ fn preview_wechat_call_ringing(){
             let env=Env{t,clock:"09:41:00".into(),today:"2026-10-31".into(),date:"10月31日 周六".into(),..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H))),time:Some(t),
                 viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{
-                egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
-            });
+            let output=h.ctx.run_ui(raw, |ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
             raster.update_textures(&output.textures_delta);
             if frame%60==0 {
                 raster.buf.fill([0.09,0.11,0.18,1.0]);
@@ -4221,7 +4270,7 @@ fn starting_timer_keeps_lyrics_album_and_mascot_with_a_compact_countdown(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.app.settings.island_lyrics=true;h.app.settings.pet=true;
     h.media=crate::smtc::NowPlaying{title:"Track".into(),artist:"Artist".into(),playing:true,position:7.0,duration:120.0,
-        artwork:Some(std::sync::Arc::new(egui::ColorImage::new([32,32],egui::Color32::from_rgb(70,120,220)))),..Default::default()};
+        artwork:Some(std::sync::Arc::new(egui::ColorImage::filled([32,32], egui::Color32::from_rgb(70,120,220)))),..Default::default()};
     h.app.set_lyrics("Track","Artist",120.0,crate::lyrics::parse_lrc("[00:05]晚风吹过了山岗\n[00:15]下一句"));
     for _ in 0..120 {h.frame(vec![]);}
     for phase in [crate::app::Phase::Focus,crate::app::Phase::Rest] {
@@ -4512,9 +4561,9 @@ fn display_choice_saves_and_keeps_disconnected_selection(){
         let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
-            *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui)));
         });
-        let root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));let child=output.lock().unwrap().take().unwrap();
+        let root=h.ctx.run_ui(egui::RawInput{time:Some(time),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));let child=output.lock().unwrap().take().unwrap();
         raster.update_textures(&root.textures_delta);raster.update_textures(&child.textures_delta);h.shapes=child.shapes;
     }
     // 设置页内容超过一屏时先向下滚动，直到目标完整出现在窗口内。
@@ -4522,7 +4571,7 @@ fn display_choice_saves_and_keeps_disconnected_selection(){
         let find=|h:&H|h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==label=>Some(t.visual_bounding_rect()),_=>None}).filter(|r|r.bottom()<550.0);
         for _ in 0..20 {
             if let Some(r)=find(h){return Some(r);}
-            frame(h,raster,vec![egui::Event::PointerMoved(Pos2::new(450.0,300.0)),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,-60.0),modifiers:Default::default()}]);
+            frame(h,raster,vec![egui::Event::PointerMoved(Pos2::new(450.0,300.0)),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,-60.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
             for _ in 0..6{frame(h,raster,vec![]);}
         }
         find(h)
@@ -4626,7 +4675,7 @@ fn lyric_app_notification_gallery(){
             let t=frame as f64/60.0;
             let env=Env{t,clock:"09:41:00".into(),media:h.media.clone(),..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.5),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});});
+            let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
             raster.update_textures(&output.textures_delta);
             if frame==89{
                 raster.buf.fill([0.94,0.95,0.97,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
@@ -4678,7 +4727,7 @@ fn notice_mode_layout_gallery(){
             let t=frame as f64/60.0;if frame==30{h.app.alert("大写锁定","已开启",5,false);}
             let env=Env{t,clock:"09:41:00".into(),today:"2026-11-01".into(),date:"11月1日 周日".into(),media:h.media.clone(),..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.5),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});});
+            let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
             raster.update_textures(&output.textures_delta);
             if frame==119{
                 raster.buf.fill([0.94,0.95,0.97,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
@@ -4705,7 +4754,7 @@ fn lyric_caps_lock_notice_keeps_one_glass_outline(){
             let env=Env{t:h.t,clock:"09:41:00".into(),media:h.media.clone(),backdrop:Some([0.94,0.95,0.97]),glass_blur:true,..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(h.t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
             let mut glass=None;
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{glass=h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env).glass;});});
+            let output=h.ctx.run_ui(raw, |ui|{glass=h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env).glass;});
             let contours=glass.unwrap();
             assert_eq!(contours.len(),1,"{skin:?} {shape:?} 倍率 {ppp} 第 {frame} 帧：提示与原岛应共用外轮廓，避免拼接处出现内圈");
             if shape==crate::model::IslandShape::Pill{
@@ -4773,7 +4822,7 @@ fn right_notice_preview(){
         if frame==240{h.app.alert("蓝牙设备","OpenMove by Shokz · 电量 80%",5,false);}
         let env=Env{t,clock:"09:41:00".into(),today:"2026-11-01".into(),date:"11月1日 周日".into(),media:h.media.clone(),..Default::default()};
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.5),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});});
+        let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
         raster.update_textures(&output.textures_delta);raster.buf.fill([0.94,0.95,0.97,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
         let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);pipe.write_all(&rgba).unwrap();
         if let Some(name)=match frame{60=>Some("原岛"),125=>Some("大小写提示"),270=>Some("蓝牙提示"),390=>Some("恢复原岛"),_=>None}{let image=image::RgbaImage::from_raw(1920,405,rgba).unwrap();image::imageops::crop_imm(&image,105,0,1440,210).to_image().save(dest.join(format!("{name}.png"))).unwrap();}
@@ -5055,7 +5104,7 @@ fn calendar_layout_gallery() {
             let t=f as f64/60.0;
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(WIN_W,WIN_H))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
             let env=Env{t,today:"2026-11-02".into(),date:"11月2日 周一".into(),clock:"14:15:00".into(),battery:Some(76),charging:true,cursor:Some(H::local(300.0,40.0)),..Default::default()};
-            let out=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});});
+            let out=h.ctx.run_ui(raw, |ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
             raster.update_textures(&out.textures_delta);
             if f==89 {
                 if mode=="local-all-day" {
@@ -5300,7 +5349,7 @@ fn scrolling_mail_details_keeps_the_current_message_open() {
     h.app.mail.open_uid=Some(("work@qq.com".into(),42));h.app.show_page(5);h.hover(H::local(270.0,150.0),1.0);
     let body_clip=h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text().starts_with("需要滚动阅读")=>Some(s.clip_rect),_=>None}).expect("正文应显示");
     assert!(body_clip.height()>=80.0,"详情正文应有足够阅读空间，而不是仅能容纳一行");
-    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-120.0),modifiers:Default::default()}]);
+    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-120.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
     assert_eq!(h.app.page(),5,"邮件正文滚动不能切换功能页");
     assert_eq!(h.app.mail.open_uid,Some(("work@qq.com".into(),42)));
 }
@@ -5393,11 +5442,11 @@ fn full_mail_reader_keeps_the_entire_body_and_scrolls_independently(){
     h.app.mail.recent.clear();
     let render=|h:&mut H,events|{
         h.ctx.set_embed_viewports(true);h.t+=1.0/60.0;
-        let out=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(700.0,620.0))),time:Some(h.t),events,focused:true,..Default::default()},|ctx|h.app.mail_reader_ui(ctx));h.shapes=out.shapes;
+        let out=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(700.0,620.0))),time:Some(h.t),events,focused:true,..Default::default()}, |ui| h.app.mail_reader_ui(ui.ctx()));h.shapes=out.shapes;
     };
     // 正文按块渲染：视口外的块不生成文字形状，所以「末尾可见」只能滚动到底再断言。
     let text_top=|h:&H,needle:&str|h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==needle=>Some(t.visual_bounding_rect().top()),_=>None});
-    let wheel=|dy:f32|vec![egui::Event::PointerMoved(egui::pos2(350.0,300.0)),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,dy),modifiers:Default::default()}];
+    let wheel=|dy:f32|vec![egui::Event::PointerMoved(egui::pos2(350.0,300.0)),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,dy),phase:egui::TouchPhase::Move,modifiers:Default::default()}];
     render(&mut h,vec![]);render(&mut h,vec![]);
     let first=text_top(&h,"开头：这是第一段。").expect("首屏应显示正文开头");
     assert!(text_top(&h,"最后一段：全文结束").is_none(),"长邮件末尾应在首屏之外");
@@ -5439,7 +5488,7 @@ fn mail_reader_rich_html_gallery(){
     let mut raster=crate::preview_raster::Raster::new((w as f32*ppp)as usize,(height as f32*ppp)as usize);
     for f in 0..=8{
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(w as f32,height as f32))),time:Some(f as f64/60.0),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
-        let out=h.ctx.run(raw,|ctx|h.app.mail_reader_ui(ctx));raster.update_textures(&out.textures_delta);
+        let out=h.ctx.run_ui(raw, |ui| h.app.mail_reader_ui(ui.ctx()));raster.update_textures(&out.textures_delta);
         if f==8{raster.buf.fill([0.0,0.0,0.0,1.0]);raster.draw(&h.ctx.tessellate(out.shapes,out.pixels_per_point),out.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join("mail-reader-rich.png"),&rgba,(w as f32*ppp)as u32,(height as f32*ppp)as u32,image::ColorType::Rgba8).unwrap();}
         raster.free_textures(&out.textures_delta);
     }
@@ -5449,8 +5498,8 @@ fn mail_reader_rich_html_gallery(){
 fn mail_plain_text_keeps_literal_stars_in_the_reader(){
     let h=H::new();h.ctx.set_embed_viewports(true);
     let lines=crate::mail_format::lines("","保留 ** 原始字符");
-    let out=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(700.0,620.0))),..Default::default()},|ctx|{
-        egui::CentralPanel::default().show(ctx,|ui|crate::mail_reader::body_ui(ui,&lines,14.0));
+    let out=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(700.0,620.0))),..Default::default()}, |ui|{
+        egui::CentralPanel::default().show(ui,|ui|crate::mail_reader::body_ui(ui,&lines,14.0));
     });
     assert!(out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()=="保留 ** 原始字符")));
 }
@@ -5470,8 +5519,8 @@ fn mail_detail_and_reader_keep_their_own_cached_body(){
 fn mail_html_headings_scale_with_the_body_font(){
     let h=H::new();let lines=crate::mail_format::lines("<h1>缩放标题</h1>","");
     for (base,expected) in [(14.0,18.0),(28.0,36.0)]{
-        let out=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(700.0,620.0))),..Default::default()},|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|crate::mail_reader::body_ui(ui,&lines,base));
+        let out=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(700.0,620.0))),..Default::default()}, |ui|{
+            egui::CentralPanel::default().show(ui,|ui|crate::mail_reader::body_ui(ui,&lines,base));
         });
         let size=out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()=="缩放标题"=>Some(t.galley.job.sections[0].format.font_id.size),_=>None}).unwrap();
         assert_eq!(size,expected,"正文缩放时标题应保持相同的字号比例");
@@ -5487,9 +5536,9 @@ fn mail_microsoft_settings_only_explains_unsupported_access(){
     egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
         let id=viewport.ids.this;
         let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1300.0))),viewports:std::iter::once((id,egui::ViewportInfo::default())).collect(),..Default::default()};
-        *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+        *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
     });
-    for _ in 0..3{let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));}
+    for _ in 0..3{let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));}
     let child=output.lock().unwrap().take().unwrap();
     let texts=child.shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)=>Some(t.galley.text()),_=>None}).collect::<Vec<_>>();
     assert!(texts.iter().any(|t|t.contains("OAuth")&&t.contains("暂不支持")),"应明确说明微软邮箱的支持状态");
@@ -5511,19 +5560,19 @@ fn mail_microsoft_custom_host_and_address_disable_password_actions(){
         let raw=egui::RawInput{viewport_id:id,focused:true,events:std::mem::take(&mut *input.lock().unwrap()),
             screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1300.0))),
             viewports:std::iter::once((id,egui::ViewportInfo::default())).collect(),..Default::default()};
-        *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+        *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
     });
     for (provider,email,host) in [(crate::mail::Provider::Custom,"student@example.edu","outlook.office365.com"),(crate::mail::Provider::Qq,"user@hotmail.com","")]{
         h.app.mail.form.provider=provider;h.app.mail.form.email=email.into();h.app.mail.form.custom.host=host.into();h.app.mail.form.open=true;
         h.app.mail.form.password.clear();h.app.mail.note.clear();
-        for _ in 0..3{let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));}
+        for _ in 0..3{let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));}
         let child=output.lock().unwrap().take().unwrap();
         assert!(child.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()==crate::mail::MICROSOFT_UNSUPPORTED)));
         for label in ["测试连接","保存并开始监控"]{
             let point=child.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==label=>Some(t.visual_bounding_rect().center()),_=>None}).unwrap();
             for pressed in [true,false]{
                 *events.lock().unwrap()=vec![egui::Event::PointerMoved(point),egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed,modifiers:Default::default()}];
-                let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+                let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
             }
             assert!(h.app.mail.note.is_empty(),"微软云连接的按钮应停用，点击不应再提示填写授权码");
         }
@@ -5546,11 +5595,11 @@ fn mail_microsoft_settings_gallery(){
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1300.0))),
                 viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.5),..Default::default()})).collect(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
         let mut raster=crate::preview_raster::Raster::new(1035,1950);
         for frame in 0..4{
-            let root=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));raster.update_textures(&root.textures_delta);
+            let root=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));raster.update_textures(&root.textures_delta);
             let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
             if frame==3{
                 raster.buf.fill([0.08,0.08,0.09,1.0]);raster.draw(&h.ctx.tessellate(child.shapes,child.pixels_per_point),child.pixels_per_point);
@@ -5575,10 +5624,10 @@ fn reminder_and_reader_layout_gallery(){
         let last=if picker{89}else{7};
         for f in 0..=last{
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(w as f32,height as f32))),time:Some(f as f64/60.0),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
-            let out=h.ctx.run(raw,|ctx|if picker{
+            let out=h.ctx.run_ui(raw, |ui| if picker{
                 let env=Env{t:f as f64/60.0,clock:"09:41:00".into(),today:chrono::Local::now().date_naive().to_string(),date:"周日".into(),..Default::default()};
-                egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
-            }else{h.app.mail_reader_ui(ctx)});raster.update_textures(&out.textures_delta);
+                egui::CentralPanel::default().frame(egui::Frame::new()).show(ui,|ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});
+            }else{h.app.mail_reader_ui(ui.ctx())});raster.update_textures(&out.textures_delta);
             if f==last{raster.buf.fill(if picker{[0.07,0.09,0.13,1.0]}else{[0.0,0.0,0.0,1.0]});raster.draw(&h.ctx.tessellate(out.shapes,out.pixels_per_point),out.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(if picker{"reminder-picker.png"}else{"mail-reader.png"}),&rgba,(w as f32*ppp)as u32,(height as f32*ppp)as u32,image::ColorType::Rgba8).unwrap();}
             raster.free_textures(&out.textures_delta);
         }
@@ -5645,7 +5694,7 @@ fn ui_alignment_layout_gallery(){
         for f in 0..90{
             let t=f as f64/60.0;let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(WIN_W,WIN_H))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
             let env=Env{t,clock:"09:41:00".into(),today:"2026-11-01".into(),date:"11月1日 周日".into(),cursor:if collapsed.contains(&name){None}else{Some(H::local(150.0,40.0))},media:h.media.clone(),battery:h.power.0,bt_ready:true,..Default::default()};
-            let out=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});});raster.update_textures(&out.textures_delta);
+            let out=h.ctx.run_ui(raw, |ui|{let win=ui.max_rect();h.app.frame(ui,win,&env);});raster.update_textures(&out.textures_delta);
             if f==89{raster.buf.fill([0.07,0.09,0.13,1.0]);raster.draw(&h.ctx.tessellate(out.shapes,out.pixels_per_point),out.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(format!("{name}-{}.png",(ppp*100.0)as u32)),&rgba,width,height,image::ColorType::Rgba8).unwrap();}
             raster.free_textures(&out.textures_delta);
         }
@@ -5654,9 +5703,9 @@ fn ui_alignment_layout_gallery(){
         let mut h=fixture();h.app.settings_tab=tab;h.app.open_settings();h.ctx.set_embed_viewports(false);
         let size=egui::vec2(width,if width==600.0{450.0}else{560.0});let ppp=1.25;
         let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
-        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),focused:Some(true),..Default::default()})).collect(),focused:true,..Default::default()};*capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));});
+        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),focused:Some(true),..Default::default()})).collect(),focused:true,..Default::default()};*capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));});
         let (w,height)=((size.x*ppp)as u32,(size.y*ppp)as u32);let mut raster=crate::preview_raster::Raster::new(w as usize,height as usize);
-        for f in 0..5{let root=h.ctx.run(egui::RawInput::default(),|ctx|h.app.settings_ui(ctx,false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
+        for f in 0..5{let root=h.ctx.run_ui(egui::RawInput::default(), |ui| h.app.settings_ui(ui.ctx(),false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
             if f==4{raster.buf.fill([0.0,0.0,0.0,1.0]);raster.draw(&h.ctx.tessellate(child.shapes,child.pixels_per_point),child.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(format!("settings-{tab}-{}.png",width as u32)),&rgba,w,height,image::ColorType::Rgba8).unwrap();}
             raster.free_textures(&root.textures_delta);raster.free_textures(&child.textures_delta);
         }
@@ -5762,7 +5811,7 @@ fn resident_components_can_be_dragged_saved_and_reset(){
     fn draw(h:&mut H,events:Vec<egui::Event>,slot:usize)->[Pos2;2]{
         let mut points=[Pos2::ZERO;2];
         h.t+=0.02;
-        let out=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,300.0))),time:Some(h.t),events,..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|{h.app.resident_order_settings(ui);for (index,slot) in [slot,BATTERY].into_iter().enumerate(){points[index]=ui.ctx().read_response(ui.id().with(("resident-icon",slot))).expect("暂未显示的组件也应可以独立拖动").rect.center();}});});
+        let out=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,300.0))),time:Some(h.t),events,..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.resident_order_settings(ui);for (index,slot) in [slot,BATTERY].into_iter().enumerate(){points[index]=ui.ctx().read_response(ui.id().with(("resident-icon",slot))).expect("暂未显示的组件也应可以独立拖动").rect.center();}});});
         h.shapes=out.shapes;points
     }
     fn point(h:&H,label:&str)->Pos2{h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==label=>Some(t.visual_bounding_rect().center()),_=>None}).unwrap()}
@@ -5810,9 +5859,9 @@ fn weather_status_switch_controls_the_badge_and_keeps_the_page_available(){
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
             let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1000.0))),time:Some(time),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo::default())).collect(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
-        let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+        let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
         h.shapes=output.lock().unwrap().take().unwrap().shapes;
     }
     for theme in [crate::settings_theme::SettingsTheme::Dark,crate::settings_theme::SettingsTheme::Light] {
@@ -5840,7 +5889,7 @@ fn mailbox_scroll_reaches_older_mail_without_changing_pages() {
     h.app.mail.recent=(1..=8).map(|uid|crate::mail::Item {received_unix: None, account:"test@qq.com".into(),from:format!("来源 {uid}"),subject:format!("邮件 {uid}"),time:"11-03 09:41".into(),code:Some(format!("{uid:06}")),html: String::new().into(), summary:String::new().into(),links:vec![],meeting:None,uid}).collect();
     for item in h.app.mail.recent.clone(){h.app.mail.privacy.observe(&item,true,h.app.t,chrono::Utc::now().timestamp());}
     h.app.show_page(5);h.hover(H::local(200.0,90.0),1.0);
-    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-900.0),modifiers:Default::default()}]);
+    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-900.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
     h.hover(H::local(200.0,90.0),0.6);
     assert_eq!(h.app.page(),5,"滚动邮箱列表不能切换页面");
     let row=h.ctx.read_response(egui::Id::new(("card",true,("mail-row",8u32,"test@qq.com")))).expect("第八封邮件应可访问");
@@ -5879,7 +5928,7 @@ fn mailbox_readability_gallery(){
         for frame in 0..100 {
             let t=frame as f64/60.0;let env=Env{t,clock:"09:41:00".into(),cursor:Some(H::local(if variant==1{350.0}else{200.0},64.0)),..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(crate::app::CANVAS_W,WIN_H))),time:Some(t),events:vec![egui::Event::PointerMoved(H::local(if variant==1{350.0}else{200.0},64.0))],viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
-            let out=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,egui::vec2(WIN_W,WIN_H)),&env);});});
+            let out=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,egui::vec2(WIN_W,WIN_H)),&env);});
             raster.update_textures(&out.textures_delta);
             if frame==99 {raster.buf.fill([0.05,0.07,0.10,1.0]);raster.draw(&h.ctx.tessellate(out.shapes,out.pixels_per_point),out.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);let image=image::RgbaImage::from_raw((crate::app::CANVAS_W*ppp)as u32,(WIN_H*ppp)as u32,rgba).unwrap();image::imageops::crop_imm(&image,((WIN_W-PW)/2.0*ppp-10.0)as u32,0,(PW*ppp+20.0)as u32,if detail{370}else{225}).to_image().save(dest.join(if detail{"邮件详情.png"}else if variant==3{"回收站.png"}else if variant==4{"验证码分栏.png"}else if multiple{"悬停操作.png"}else{"邮箱列表.png"})).unwrap();}
             raster.free_textures(&out.textures_delta);
@@ -6037,9 +6086,9 @@ fn page_order_drag_applies_on_release_and_saves() {
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
             let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1000.0))),time:Some(time),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo::default())).collect(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
-        let _=h.ctx.run(egui::RawInput::default(),|ctx|h.app.settings_ui(ctx,false));
+        let _=h.ctx.run_ui(egui::RawInput::default(), |ui| h.app.settings_ui(ui.ctx(),false));
         let child=output.lock().unwrap().take().unwrap();h.shapes=child.shapes;
     }
     for _ in 0..3 {draw(&mut h,vec![]);}
@@ -6076,7 +6125,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
             let id=viewport.ids.this;
             let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,2000.0))),
                 viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
         for tab in 0..12 {
             h.app.settings_tab=tab;
@@ -6084,7 +6133,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
             h.app.quota.connect_open=tab==11;
             for frame in 0..3 {
                 h.ctx.data_mut(|d|d.insert_temp(egui::Id::new("settings-system-theme"),(std::time::Instant::now(),system)));
-                let root=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+                let root=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
                 assert!(h.ctx.style_of(egui::Theme::Dark).visuals.dark_mode,"设置页主题不能泄漏到岛体");
                 let commands=&root.viewport_output[&egui::ViewportId::from_hash_of("daozai-settings")].commands;
                 assert!(commands.iter().any(|c|matches!(c,egui::ViewportCommand::SetTheme(t) if *t==if dark{egui::SystemTheme::Dark}else{egui::SystemTheme::Light})),"原生边框必须与页面一致");
@@ -6101,7 +6150,21 @@ fn settings_theme_follows_system_and_preserves_island_style() {
                         _=>&[],
                     };
                     for (label,value) in pairs {
-                        let centers=|needle:&str|child.shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==needle=>Some(t.visual_bounding_rect().center().y),_=>None}).collect::<Vec<_>>();
+                        // egui 0.35 会把一段 RichText 拆成多个 Text shape（如 "0.35"+" 秒"），
+                        // 按 y 分组再按 x 拼回整行匹配，避免因渲染分片找不到文字。
+                        let texts:Vec<(&str,f32,f32)>=child.shapes.iter().filter_map(|s|if let egui::Shape::Text(t)=&s.shape{let c=t.visual_bounding_rect().center();Some((t.galley.text(),c.y,c.x))}else{None}).collect();
+                        let centers=|needle:&str|->Vec<f32>{
+                            let mut ys:Vec<f32>=Vec::new();
+                            for (txt,y,x) in &texts {
+                                if *txt==needle {ys.push(*y);continue;}
+                                // 同一行（y 相近）所有片段按 x 升序拼成整行后比较
+                                let mut same:Vec<_>=texts.iter().filter(|(_,y2,_)|(y2-y).abs()<1.5).collect::<Vec<_>>();
+                                same.sort_by(|a,b|a.2.partial_cmp(&b.2).unwrap());
+                                let joined:String=same.iter().map(|(s,_,_)|*s).collect();
+                                if joined.contains(needle) {ys.push(*y);}
+                            }
+                            ys.sort_by(|a,b|a.partial_cmp(b).unwrap());ys.dedup_by(|a,b|(*a-*b).abs()<0.5);ys
+                        };
                         let distance=centers(label).iter().flat_map(|a|centers(value).into_iter().map(move|b|(a-b).abs())).fold(f32::INFINITY,f32::min);
                         // 标签用 Body(14) 、选项用小一号字，字形包围盒中心天然差 1px 级，
                         // 阈值放到 1.5px；视觉上仍在同一水平线。
@@ -6144,15 +6207,15 @@ fn mail_report_open_settings_matrix() {
             egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
                 let id=viewport.ids.this;
                 let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(scale),..Default::default()})).collect(),..Default::default()};
-                let _=ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx));
+                let _=ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui));
             });
             for count in [0,1,6] {
                 h.app.mail.accounts=crate::mail::Provider::ALL.into_iter().take(count).enumerate().map(|(i,provider)|crate::mail::Account {custom: None, email:format!("probe{i}@example.invalid"),provider,enabled:false}).collect();
                 for provider in crate::mail::Provider::ALL {
                     h.app.mail.form.provider=provider;h.app.open_mail_settings();
-                    for _ in 0..3 {let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));}
+                    for _ in 0..3 {let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));}
                     assert!(h.app.settings_open);assert_eq!(h.app.settings_tab,7);
-                    h.app.settings_open=false;let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+                    h.app.settings_open=false;let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
                 }
             }
         }
@@ -6179,9 +6242,9 @@ fn mail_report_save_and_failure_paths() {
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
             let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(900.0,1800.0))),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo::default())).collect(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
-        let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+        let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
         h.shapes=output.lock().unwrap().take().unwrap().shapes;
     }
     fn click(h:&mut H,label:&str){
@@ -6236,9 +6299,7 @@ fn hover_tooltips_fit_native_region_and_release_it_after_leaving(){
         h.hover(pointer,0.4);
         let hit_before_tooltip=h.hit;
         h.hover(pointer,1.1);
-        let bounds=h.shapes.iter().find_map(|s|match &s.shape {
-            egui::Shape::Text(t) if t.galley.text()==label=>Some(t.visual_bounding_rect()),_=>None,
-        }).expect("悬停后应显示完整提示");
+        let bounds=find_text_bounds(&h.shapes,&label).expect("悬停后应显示完整提示");
         assert!(h.region.contains_rect(bounds),"悬停提示不能被原生窗口裁掉：{bounds:?} / {:?}",h.region);
         assert_eq!(h.hit,hit_before_tooltip,"提示不应扩大岛体交互区域");
         h.hover(Pos2::new(900.0,250.0),3.0);
@@ -6302,9 +6363,9 @@ fn clock_residency_switch_in_page_management_saves(){
         let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();h.t+=0.02;let time=h.t;
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
-            *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,1400.0))),time:Some(time),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo::default())).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,1400.0))),time:Some(time),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo::default())).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui)));
         });
-        let root=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));let child=output.lock().unwrap().take().unwrap();
+        let root=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));let child=output.lock().unwrap().take().unwrap();
         raster.update_textures(&root.textures_delta);raster.update_textures(&child.textures_delta);h.shapes=child.shapes;
     }
     for dark in [true,false] {
@@ -6350,7 +6411,7 @@ fn clock_seconds_keep_resident_spacing_and_digit_width(){
             let layout=h.app.resident.current();
             assert!((layout.x[CLOCK].unwrap()-layout.x[WEATHER].unwrap()).abs()>(layout.widths[CLOCK]+layout.widths[WEATHER])/2.0,"排列反转后仍需预留秒数宽度");
         }
-        let _=h.ctx.run(Default::default(),|ctx|{egui::CentralPanel::default().show(ctx,|ui|{
+        let _=h.ctx.run_ui(Default::default(), |ui|{egui::CentralPanel::default().show(ui,|ui|{
             let c=crate::paint::Card::new(ui,Pos2::ZERO,ui.max_rect());
             let widths:Vec<_>=(0..60).map(|second|crate::paint::clock_width(&c,&h.app.settings.clock_text(&format!("09:41:{second:02}")),crate::theme::size::PILL_CLOCK)).collect();
             assert!(widths.iter().all(|w|(w-widths[0]).abs()<0.01),"秒数变化不应改变时钟占位");
@@ -6376,9 +6437,9 @@ fn clock_seconds_setting_toggles_and_saves(){
         let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
-            *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,1800.0))),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,1800.0))),events:events.clone(),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui)));
         });
-        let root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));let child=output.lock().unwrap().take().unwrap();
+        let root=h.ctx.run_ui(egui::RawInput{time:Some(time),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));let child=output.lock().unwrap().take().unwrap();
         raster.update_textures(&root.textures_delta);raster.update_textures(&child.textures_delta);h.shapes=child.shapes;
     }
     for _ in 0..3{frame(&mut h,&mut raster,vec![]);}
@@ -6459,8 +6520,8 @@ fn clock_period_visually_centers_with_digits() {
     let h=H::new();
     let mut raster=crate::preview_raster::Raster::new(420,230);
     for scale in [1.0,1.25,1.5,2.0] {
-        let output=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(420.0,230.0))),..Default::default()},|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|{
+        let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(420.0,230.0))),..Default::default()}, |ui|{
+            egui::CentralPanel::default().show(ui,|ui|{
                 let mut c=crate::paint::Card::new(ui,Pos2::ZERO,ui.max_rect());c.s=scale;
                 for (i,period) in ["凌晨","上午","中午","下午","傍晚","晚上"].iter().enumerate() {
                     for (j,size) in [12.5,15.5].iter().enumerate() {
@@ -6498,12 +6559,12 @@ fn avoidance_picker_add_remove_and_save() {
     ];
     fn draw(h:&mut H,events:Vec<egui::Event>)->egui::FullOutput {
         h.t+=1.0/60.0;
-        h.ctx.run(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,560.0))),events,..Default::default()},|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|{
+        h.ctx.run_ui(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,560.0))),events,..Default::default()}, |ui|{
+            egui::CentralPanel::default().show(ui,|ui|{
                 ui.heading("常规");
                 h.app.avoidance.settings(ui,&mut h.app.settings);
             });
-            h.app.avoidance.dialog(ctx,&mut h.app.settings);
+            h.app.avoidance.dialog(ui.ctx(),&mut h.app.settings);
         })
     }
     fn click(h:&mut H,point:Pos2){
@@ -6562,8 +6623,8 @@ fn avoidance_icon_area_stays_one_row_and_scrolls() {
     h.ctx.set_visuals(egui::Visuals::dark());h.app.settings.browser_minimal=true;
     fn draw(h:&mut H,events:Vec<egui::Event>)->egui::FullOutput {
         h.t+=1.0/60.0;
-        h.ctx.run(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(420.0,560.0))),events,..Default::default()},|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|{h.app.avoidance.settings(ui,&mut h.app.settings);});
+        h.ctx.run_ui(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(420.0,560.0))),events,..Default::default()}, |ui|{
+            egui::CentralPanel::default().show(ui,|ui|{h.app.avoidance.settings(ui,&mut h.app.settings);});
         })
     }
     fn text(out:&egui::FullOutput,label:&str)->Rect {
@@ -6578,7 +6639,7 @@ fn avoidance_icon_area_stays_one_row_and_scrolls() {
     draw(&mut h,vec![]);let many=draw(&mut h,vec![]);
     assert!((text(&many,footer).top()-baseline).abs()<1.0,"应用增多时始终保持单行高度");
     let first=text(&many,"A");let pointer=first.center();
-    draw(&mut h,vec![egui::Event::PointerMoved(pointer),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-150.0),modifiers:Default::default()}]);
+    draw(&mut h,vec![egui::Event::PointerMoved(pointer),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-150.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
     let mut scrolled=draw(&mut h,vec![]);for _ in 0..30{scrolled=draw(&mut h,vec![]);}
     assert!((text(&scrolled,footer).top()-text(&many,footer).top()).abs()<1.0,"滚动图标不能移动区域下方内容");
     assert!(scrolled.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="A" && t.visual_bounding_rect().left()<first.left()-10.0)) || !scrolled.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="A")),"应能滚动查看后续应用");
@@ -6599,9 +6660,7 @@ fn compact_canvas_preserves_panel_and_notice_pixels(){
             let click=(notice && (frame==90 || frame==91)).then(||Pos2::new(WIN_W/2.0+(h.app.current_width()-44.0)/2.0+26.0,15.0));
             let t=frame as f64/60.0;
             let env=Env{t,clock:"09:41:00".into(),today:"2026-10-28".into(),date:"10月28日 周三".into(),media:media.clone(),cursor:click.or_else(||page.map(|_|H::local(300.0,40.0))),..Default::default()};
-            let output=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(width,WIN_H))),time:Some(t),events:click.map(|pos|vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:frame==90,modifiers:Default::default()}]).unwrap_or_default(),..Default::default()},|ctx|{
-                egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
-            });
+            let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(width,WIN_H))),time:Some(t),events:click.map(|pos|vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:frame==90,modifiers:Default::default()}]).unwrap_or_default(),..Default::default()}, |ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
             raster.update_textures(&output.textures_delta);
             if [30,65,95,179].contains(&frame){
                 raster.buf.fill([0.0;4]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
@@ -6693,9 +6752,7 @@ fn compact_font_atlas_preserves_panel_and_notice_pixels(){
             let click=(notice && (frame==90 || frame==91)).then(||Pos2::new(WIN_W/2.0+(h.app.current_width()-44.0)/2.0+26.0,15.0));
             let t=frame as f64/60.0;
             let env=Env{t,clock:"09:41:00".into(),today:"2026-10-28".into(),date:"10月28日 周三".into(),media:media.clone(),cursor:click.or_else(||page.map(|_|H::local(300.0,40.0))),..Default::default()};
-            let output=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(960.0,WIN_H))),max_texture_side:Some(texture_side),time:Some(t),events:click.map(|pos|vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:frame==90,modifiers:Default::default()}]).unwrap_or_default(),..Default::default()},|ctx|{
-                egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
-            });
+            let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(960.0,WIN_H))),max_texture_side:Some(texture_side),time:Some(t),events:click.map(|pos|vec![egui::Event::PointerMoved(pos),egui::Event::PointerButton{pos,button:egui::PointerButton::Primary,pressed:frame==90,modifiers:Default::default()}]).unwrap_or_default(),..Default::default()}, |ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
             raster.update_textures(&output.textures_delta);
             if [30,65,95,179].contains(&frame){
                 raster.buf.fill([0.0;4]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
@@ -6728,12 +6785,12 @@ fn compact_font_atlas_preserves_settings_pixels_at_multiple_scales(){
             let id=viewport.ids.this;
             let raw=egui::RawInput{viewport_id:id,max_texture_side:Some(limit),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),
                 viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(scale),..Default::default()})).collect(),..Default::default()};
-            *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
         let mut raster=crate::preview_raster::Raster::new((690.0*scale)as usize,(560.0*scale)as usize);let mut result=Vec::new();
         for tab in 0..12 {h.app.settings_tab=tab;
             for frame in 0..3 {
-                let root=h.ctx.run(egui::RawInput{max_texture_side:Some(limit),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(scale),..Default::default()})).collect(),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+                let root=h.ctx.run_ui(egui::RawInput{max_texture_side:Some(limit),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(scale),..Default::default()})).collect(),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));
                 let mut child=output.lock().unwrap().take().unwrap();
                 raster.update_textures(&root.textures_delta);raster.update_textures(&child.textures_delta);
                 if frame==2 {
@@ -6836,9 +6893,7 @@ fn skin_gallery(){
                 let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(t),
                     viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
                 let mut glass=None;
-                let output=h.ctx.run(raw,|ctx|{
-                    egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));glass=h.app.frame(ui,win,&env).glass;});
-                });
+                let output=h.ctx.run_ui(raw, |ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));glass=h.app.frame(ui,win,&env).glass;});
                 raster.update_textures(&output.textures_delta);
                 if open && frame==100 {h.app.show_page(1);}
                 if open && frame==104 && shape==crate::model::IslandShape::Notch {
@@ -6896,7 +6951,7 @@ fn skin_gallery_resident(){
                 let env=Env{t,clock:"21:54:00".into(),today:"2026-11-04".into(),date:"11月4日 周三".into(),backdrop:Some([0.55,0.68,0.75]),glass_blur:true,..Default::default()};
                 let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(t),
                     viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-                let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));h.app.frame(ui,win,&env);});});
+                let output=h.ctx.run_ui(raw, |ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));h.app.frame(ui,win,&env);});
                 raster.update_textures(&output.textures_delta);
                 if frame==89 {
                     raster.buf.fill([0.62,0.72,0.78,1.0]);
@@ -6912,7 +6967,7 @@ fn skin_gallery_resident(){
             for frame in 0..3 {
                 let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(600.0,150.0))),time:Some(frame as f64),
                     viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-                let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().show(ctx,|ui|{h.app.resident_order_settings(ui);});});
+                let output=h.ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.resident_order_settings(ui);});});
                 raster.update_textures(&output.textures_delta);
                 if frame==2 {
                     raster.buf.fill([0.13,0.13,0.15,1.0]);
@@ -6948,7 +7003,7 @@ fn skin_gallery_pages(){
                 let env=Env{t,clock:"22:46:00".into(),today:"2026-11-04".into(),date:"11月4日 周三".into(),media:h.media.clone(),cursor:Some(Pos2::new(WIN_W/2.0,20.0)),backdrop:Some([0.8,0.84,0.88]),glass_blur:true,..Default::default()};
                 let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(t),
                     viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-                let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));h.app.frame(ui,win,&env);});});
+                let output=h.ctx.run_ui(raw, |ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));h.app.frame(ui,win,&env);});
                 raster.update_textures(&output.textures_delta);
                 if frame==139 {
                     raster.buf.fill([0.80,0.84,0.88,1.0]);
@@ -6983,7 +7038,7 @@ fn deepseek_balance_gallery(){
         for frame in 0..90{
             let t=frame as f64/60.0;let env=Env{t,clock:"09:41:00".into(),battery:Some(80),charging:true,cursor:if open{Some(Pos2::new(320.0,60.0))}else{None},..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(640.0,190.0))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,ui.max_rect(),&env);});});
+            let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,ui.max_rect(),&env);});
             raster.update_textures(&output.textures_delta);
             if frame==89{
                 raster.buf.fill([0.09,0.11,0.18,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);
@@ -7019,7 +7074,7 @@ fn deepseek_connection_preview(){
     let mut raster=crate::preview_raster::Raster::new(1200,1400);
     for frame in 0..8{
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(600.0,700.0))),time:Some(frame as f64/60.0),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().show(ctx,|ui|{h.app.quota_settings(ui);});});raster.update_textures(&output.textures_delta);
+        let output=h.ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.quota_settings(ui);});});raster.update_textures(&output.textures_delta);
         if frame==7{raster.buf.fill([0.1,0.1,0.1,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join("connection-status.png"),&rgba,1200,1400,image::ColorType::Rgba8).unwrap();}
         raster.free_textures(&output.textures_delta);
     }
@@ -7032,7 +7087,7 @@ fn deepseek_resident_preview_does_not_overlap_icons(){
     let mut raster=crate::preview_raster::Raster::new(1200,380);
     for frame in 0..8{
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(600.0,190.0))),time:Some(frame as f64/60.0),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().show(ctx,|ui|{h.app.resident_order_settings(ui);});});raster.update_textures(&output.textures_delta);
+        let output=h.ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.resident_order_settings(ui);});});raster.update_textures(&output.textures_delta);
         if frame==7{
             let circles:Vec<_>=output.shapes.iter().filter_map(|shape|if let egui::Shape::Circle(c)=&shape.shape{Some(c)}else{None}).collect();
             let whale=output.shapes.iter().find_map(|shape|if let egui::Shape::Mesh(mesh)=&shape.shape{let rect=mesh.calc_bounds();((rect.width()-24.0).abs()<0.1).then_some(rect)}else{None}).expect("DeepSeek 图标");
@@ -7050,7 +7105,7 @@ fn deepseek_resident_preview_does_not_overlap_icons(){
 fn quota_cards_expose_names_colors_settings_and_connection(){
     fn frame(h:&mut H,events:Vec<egui::Event>){
         h.t+=1.0/60.0;let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(600.0,800.0))),time:Some(h.t),events,..Default::default()};
-        let out=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().show(ctx,|ui|{h.app.quota_settings(ui);});});h.shapes=out.shapes;
+        let out=h.ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.quota_settings(ui);});});h.shapes=out.shapes;
     }
     fn click(h:&mut H,label:&str){
         let pos=h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==label=>Some(t.visual_bounding_rect().center()),_=>None}).expect("操作入口应可见");
@@ -7093,9 +7148,9 @@ fn quota_cards_settings_gallery(){
         h.app.quota.connect_open=dialog;h.app.quota.provider=crate::quota::Provider::DeepSeek;
         h.app.settings.settings_theme=if light{crate::settings_theme::SettingsTheme::Light}else{crate::settings_theme::SettingsTheme::Dark};h.app.settings_tab=11;h.app.open_settings();h.ctx.set_embed_viewports(false);
         let size=egui::vec2(width,650.0);let ppp=1.5;let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
-        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),focused:Some(true),..Default::default()})).collect(),focused:true,..Default::default()};*capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));});
+        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),focused:Some(true),..Default::default()})).collect(),focused:true,..Default::default()};*capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));});
         let (w,height)=((size.x*ppp)as u32,(size.y*ppp)as u32);let mut raster=crate::preview_raster::Raster::new(w as usize,height as usize);
-        for frame in 0..8{let root=h.ctx.run(egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()},|ctx|h.app.settings_ui(ctx,false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
+        for frame in 0..8{let root=h.ctx.run_ui(egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
             if frame==7{raster.buf.fill([0.0,0.0,0.0,1.0]);raster.draw(&h.ctx.tessellate(child.shapes,child.pixels_per_point),child.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(format!("quota-cards-{name}.png")),&rgba,w,height,image::ColorType::Rgba8).unwrap();}
             raster.free_textures(&root.textures_delta);raster.free_textures(&child.textures_delta);
         }
@@ -7113,7 +7168,7 @@ fn shoot_feature(h:&mut H,raster:&mut crate::preview_raster::Raster,dest:&std::p
             events:cursor.map(|p|vec![egui::Event::PointerMoved(p)]).unwrap_or_default(),
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
         let app=&mut h.app;
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));app.frame(ui,win,&env);});});
+        let output=h.ctx.run_ui(raw, |ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));app.frame(ui,win,&env);});
         raster.update_textures(&output.textures_delta);
         let primitives=h.ctx.tessellate(output.shapes,output.pixels_per_point);
         if f+1==frames {
@@ -7179,7 +7234,7 @@ fn shoot_side(h:&mut H,raster:&mut crate::preview_raster::Raster,dest:&std::path
             events:cursor.map(|p|vec![egui::Event::PointerMoved(p)]).unwrap_or_default(),
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
         let app=&mut h.app;let mut out=None;
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt));out=Some(app.frame(ui,win,&env));});});
+        let output=h.ctx.run_ui(raw, |ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt));out=Some(app.frame(ui,win,&env));});
         raster.update_textures(&output.textures_delta);
         if f+1==frames {
             raster.buf.fill([0.20,0.24,0.32,1.0]);
@@ -7287,7 +7342,7 @@ fn side_dock_stacks_ai_quota_and_opens_the_account(){
             h.t+=1.0/60.0;
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(w,hgt))),time:Some(h.t),focused:true,events,..Default::default()};
             let app=&mut h.app;let env=Env{t:h.t,..env.clone()};
-            let _=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env);});});
+            let _=h.ctx.run_ui(raw, |ui|{app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env);});
         }
     }
     assert_eq!(h.app.quota.config.selected,wb);
@@ -7373,7 +7428,7 @@ fn side_frame_with(h:&mut H,cursor:Option<Pos2>)->crate::app::FrameOut{
     let env=Env{t:h.t,clock:"09:41:00".into(),cursor,battery:Some(76),browser_at_top:at_top,..Default::default()};
     let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(w,hgt))),time:Some(h.t),focused:true,..Default::default()};
     let app=&mut h.app;let mut out=None;
-    let _=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{out=Some(app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env));});});
+    let _=h.ctx.run_ui(raw, |ui|{out=Some(app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env));});
     out.unwrap()
 }
 
@@ -7384,7 +7439,7 @@ fn side_frame(h:&mut H,cursor:Option<Pos2>)->crate::app::FrameOut{
     let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(w,hgt))),time:Some(h.t),focused:true,
         events:cursor.map(|p|vec![egui::Event::PointerMoved(p)]).unwrap_or_default(),..Default::default()};
     let app=&mut h.app;let mut out=None;
-    let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{out=Some(app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env));});});
+    let output=h.ctx.run_ui(raw, |ui|{out=Some(app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env));});
     h.shapes=output.shapes;
     out.unwrap()
 }
@@ -7455,7 +7510,7 @@ fn workbuddy_balance_gallery(){
         for frame in 0..90{
             let t=frame as f64/60.0;let env=Env{t,clock:"09:41:00".into(),battery:Some(80),charging:true,cursor:if open{Some(Pos2::new(320.0,60.0))}else{None},..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(640.0,190.0))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,ui.max_rect(),&env);});});
+            let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,ui.max_rect(),&env);});
             raster.update_textures(&output.textures_delta);
             if frame==89{
                 raster.buf.fill([0.09,0.11,0.18,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);
@@ -7519,7 +7574,7 @@ fn memory_profile_long_listening_session(){
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
         let env=Env{t:h.t,clock:"09:41:00".into(),today:"2026-10-28".into(),date:"10月28日 周三".into(),media:media.clone(),cursor:h.cursor,bt_ready:true,..Default::default()};
         let app=&mut h.app;
-        let out=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let _=app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);});});
+        let out=h.ctx.run_ui(raw, |ui|{let _=app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);});
         h.shapes=out.shapes;
     };
     let idle=crate::smtc::NowPlaying::default();
@@ -7562,11 +7617,11 @@ fn settings_gallery(){
                 let id=viewport.ids.this;
                 let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(w,hgt))),
                     viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(scale),..Default::default()})).collect(),..Default::default()};
-                *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+                *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
             });
             let mut raster=crate::preview_raster::Raster::new((w*scale) as usize,(hgt*scale) as usize);
             for frame in 0..4 {
-                let root=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+                let root=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
                 raster.update_textures(&root.textures_delta);
                 let child=output.lock().unwrap().take().unwrap();
                 raster.update_textures(&child.textures_delta);
@@ -7628,9 +7683,9 @@ fn messenger_notice_status_gallery(){
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(w,height))),time:Some(h.t),focused:true,
                 events:cursor.map(|p|vec![egui::Event::PointerMoved(p)]).unwrap_or_default(),
                 viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
+            let output=h.ctx.run_ui(raw, |ui|{
                 h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);
-            });});
+            });
             raster.update_textures(&output.textures_delta);
             if frame==89{
                 raster.buf.fill([0.93,0.95,0.97,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
@@ -7946,7 +8001,7 @@ fn side_dock_file_drag_opens_the_shelf_and_drop_saves_it(){
             if hovered {raw.hovered_files.push(egui::HoveredFile{path:Some(path.clone()),..Default::default()});}
             if dropped {raw.dropped_files.push(egui::DroppedFile{path:Some(path.clone()),..Default::default()});}
             let app=&mut h.app;let mut out=None;
-            let _=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{out=Some(app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env));});});
+            let _=h.ctx.run_ui(raw, |ui|{out=Some(app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env));});
             out.unwrap()
         };
         let out=frame(&mut h,false,false);
@@ -7974,7 +8029,7 @@ fn shoot_unread(h:&mut H,raster:&mut crate::preview_raster::Raster,dest:&std::pa
             events:cursor.map(|p|vec![egui::Event::PointerMoved(p)]).unwrap_or_default(),
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
         let app=&mut h.app;
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(ww,wh));app.frame(ui,win,&env);});});
+        let output=h.ctx.run_ui(raw, |ui|{let win=Rect::from_min_size(ui.max_rect().min,Vec2::new(ww,wh));app.frame(ui,win,&env);});
         raster.update_textures(&output.textures_delta);
         if f+1==frames {
             raster.buf.fill([0.20,0.24,0.32,1.0]);
@@ -8083,7 +8138,7 @@ fn calendar_add_button_does_not_overlap_the_battery_ring(){
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(h.t),focused:true,
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(scale),..Default::default()})).collect(),..Default::default()};
         let env=Env{t:h.t,clock:"17:43:00".into(),date:date.into(),today:day.to_string(),cursor:Some(Pos2::new(WIN_W/2.0,12.0)),battery,charging:true,..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);});});
+        let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H)),&env);});
         raster.update_textures(&output.textures_delta);shapes=output.shapes;
         raster.free_textures(&output.textures_delta);
     }
@@ -8298,7 +8353,7 @@ fn claude_local_only_settings_show_notice_without_manual_reset_controls(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     fn frame(h:&mut H,raster:&mut crate::preview_raster::Raster){
         h.t+=1.0/60.0;
-        let output=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(640.0,760.0))),time:Some(h.t),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));});
+        let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(640.0,760.0))),time:Some(h.t),..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});
         raster.update_textures(&output.textures_delta);h.shapes=output.shapes;
     }
     fn capture(h:&H,raster:&mut crate::preview_raster::Raster,name:&str){
@@ -8351,9 +8406,9 @@ fn notification_source_page_renders_in_both_modes(){
             let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
             egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
                 let id=viewport.ids.this;
-                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+                *capture.lock().unwrap()=Some(ctx.run_ui(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui)));
             });
-            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            let _root=h.ctx.run_ui(egui::RawInput{time:Some(time),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));
             assert!(output.lock().unwrap().is_some(),"read={read} qq_only={qq_only} 时设置页应完成渲染");
             h.t+=1.0/60.0;
         }
@@ -8438,7 +8493,7 @@ fn weather_resident_bar_preview(){
     for frame in 0..90{
         let t=frame as f64/60.0;let env=Env{t,clock:"18:07:00".into(),battery:Some(80),charging:false,..Default::default()};
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(640.0,190.0))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{h.app.frame(ui,ui.max_rect(),&env);});});
+        let output=h.ctx.run_ui(raw, |ui|{h.app.frame(ui,ui.max_rect(),&env);});
         raster.update_textures(&output.textures_delta);
         if frame==89{
             raster.buf.fill([0.09,0.11,0.18,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);
@@ -8452,7 +8507,7 @@ fn weather_resident_bar_preview(){
     for frame in 0..3{
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(600.0,150.0))),time:Some(frame as f64),
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().show(ctx,|ui|{h.app.resident_order_settings(ui);});});
+        let output=h.ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.resident_order_settings(ui);});});
         raster.update_textures(&output.textures_delta);
         if frame==2{
             raster.buf.fill([0.13,0.13,0.15,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);
@@ -8496,7 +8551,7 @@ fn weather_icon_atlas_preview(){
         for frame in 0..4 {
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(924.0,700.0))),time:Some(frame as f64),
                 viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()};
-            let output=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
+            let output=h.ctx.run_ui(raw, |ui|{
                 let c=Card::new(ui,Pos2::ZERO,ui.max_rect());c.fill(0.0,0.0,924.0,700.0,0.0,egui::Color32::from_rgb(14,15,19));
                 c.text(20.0,38.0,"常驻天气图标",22.0,W::Bold,theme::WHITE,Align::Left);
                 c.text(20.0,61.0,"11类图标 · 顶部横排与侧边竖排 · 当前实际绘制样式",11.5,W::Regular,theme::GRAY,Align::Left);
@@ -8516,8 +8571,8 @@ fn weather_icon_atlas_preview(){
                 }
                 c.text(20.0,690.0,"无数据、关闭天气或极简模式时不显示；超过半小时未更新时，温度转灰。",10.5,W::Regular,theme::GRAY,Align::Left);
                 // 和岛上一样按图层换色，天气图标登记的浅色配色才会生效。
-                if let Some(palette)=palette {let layer=ui.layer_id();crate::skin_paint::recolor_layer(ctx,layer,&[(0,crate::skin_paint::shape_count(ctx,layer))],&palette);}
-            });});
+                if let Some(palette)=palette {let layer=ui.layer_id();crate::skin_paint::recolor_layer(ui.ctx(),layer,&[(0,crate::skin_paint::shape_count(ui.ctx(),layer))],&palette);}
+            });
             raster.update_textures(&output.textures_delta);
             if frame==3 {raster.buf.fill([0.0,0.0,0.0,1.0]);raster.draw(&h.ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(format!("{name}.png")),&rgba,pw as u32,ph as u32,image::ColorType::Rgba8).unwrap();}
             raster.free_textures(&output.textures_delta);
@@ -8566,9 +8621,9 @@ fn phone_settings_page_renders_with_locked_sms_toggle(){
             let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
             egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
                 let id=viewport.ids.this;
-                *capture.lock().unwrap()=Some(ctx.run(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));
+                *capture.lock().unwrap()=Some(ctx.run_ui(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui)));
             });
-            let _root=h.ctx.run(egui::RawInput{time:Some(time),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+            let _root=h.ctx.run_ui(egui::RawInput{time:Some(time),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));
             assert!(output.lock().unwrap().is_some(),"手机连接页应完成渲染");
             h.t+=1.0/60.0;
         }
@@ -8582,7 +8637,7 @@ fn weather_settings_preview(){
     let dest=std::path::PathBuf::from(std::env::var_os("DAOZAI_WEATHER_SETTINGS_PREVIEW").expect("需指定预览目录"));std::fs::create_dir_all(&dest).unwrap();
     for (tag,theme,dropdown) in [("dark",SettingsTheme::Dark,false),("light",SettingsTheme::Light,false),("dropdown-dark",SettingsTheme::Dark,true),("dropdown-light",SettingsTheme::Light,true)] {
         let mut h=H::new();h.app.settings.weather_city="杭州".into();h.app.weather.city_input="杭州".into();h.app.weather.manual_city=true;h.app.settings.settings_theme=theme;
-        h.ctx.style_mut(|style|style.animation_time=0.0);
+        h.ctx.all_styles_mut(|style|style.animation_time=0.0);
         let current=crate::weather::Position{lat:30.27,lon:120.15,label:"杭州".into(),region:"浙江 · 中国".into()};
         h.app.weather.selected_city=Some(current.clone());h.app.weather.active_position=Some(current.clone());
         h.app.settings.weather_position=Some(current.clone());h.app.settings.weather_saved=vec![current.clone(),crate::weather::Position{lat:31.23,lon:121.47,label:"上海".into(),region:"上海 · 中国".into()}];
@@ -8603,13 +8658,13 @@ fn weather_settings_preview(){
             let id=viewport.ids.this;
             let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(800.0,620.0))),
                 viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            capture.lock().unwrap().push(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+            capture.lock().unwrap().push(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
         let mut raster=crate::preview_raster::Raster::new(1600,1240);
         for frame in 0..4 {
-            if dropdown && frame==1 {{ /* 0.35: popup state via Popup::open_bool */ };}
+            if dropdown && frame==1 {egui::Popup::open_id(&h.ctx, egui::Id::new("weather-city-options"));}
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(frame as f64),..Default::default()};
-            let root=h.ctx.run(raw,|ctx|h.app.settings_ui(ctx,false));
+            let root=h.ctx.run_ui(raw, |ui| h.app.settings_ui(ui.ctx(),false));
             let child_frames:Vec<_>=children.lock().unwrap().drain(..).collect();
             for child in &child_frames {raster.update_textures(&child.textures_delta);}
             raster.update_textures(&root.textures_delta);
@@ -8637,9 +8692,9 @@ fn settings_window_memory_restores_only_the_child_viewport_and_keeps_live_resizi
             viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),
                 inner_rect:Some(Rect::from_min_size(egui::pos2(100.0,140.0),size)),
                 outer_rect:Some(Rect::from_min_size(egui::pos2(92.0,100.0),size+egui::vec2(16.0,48.0))),..Default::default()})).collect(),..Default::default()};
-        let _=ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx));
+        let _=ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui));
     });
-    let frame=|h:&mut H|h.ctx.run(egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.75),..Default::default()})).collect(),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+    let frame=|h:&mut H|h.ctx.run_ui(egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(1.75),..Default::default()})).collect(),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));
     let _=frame(&mut h);h.app.settings_open=false;let _=frame(&mut h);
     *size.lock().unwrap()=egui::vec2(690.0,560.0);h.app.open_settings();let root=frame(&mut h);
     assert!(root.viewport_output.iter().filter(|(id,_)|**id!=egui::ViewportId::ROOT).flat_map(|(_,v)|&v.commands).any(|c|matches!(c,egui::ViewportCommand::OuterPosition(_))),"重开时应恢复子窗口");
@@ -8665,8 +8720,8 @@ fn quota_acceptance_closing_settings_cancels_the_key_dialog() {
     h.app.settings_tab=11;h.app.open_settings();h.ctx.set_embed_viewports(false);
     h.app.quota.provider=crate::quota::Provider::OpenCodeGo;h.app.quota.connect_open=true;h.app.quota.api_key="synthetic".into();
     let (connection,cancelled)=crate::quota::api::Connect::pending_test();h.app.quota.api_connecting=Some(connection);
-    egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let _=ctx.run(egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,700.0))),viewports:std::iter::once((id,egui::ViewportInfo{events:vec![egui::ViewportEvent::Close],..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx));});
-    let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+    egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let _=ctx.run_ui(egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,700.0))),viewports:std::iter::once((id,egui::ViewportInfo{events:vec![egui::ViewportEvent::Close],..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui));});
+    let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
     assert!(cancelled.load(std::sync::atomic::Ordering::Acquire));assert!(h.app.quota.api_connecting.is_none());
     assert!(!h.app.settings_open);assert!(!h.app.quota.connect_open&&h.app.quota.api_key.is_empty(),"关闭设置窗口后，密钥输入和连接状态仍未取消");
 }
@@ -8708,7 +8763,7 @@ fn quota_acceptance_new_api_user_balance_is_visible(){
 #[test]
 fn quota_new_api_user_connection_switches_without_reusing_api_key(){
     fn draw(h:&mut H,raster:&mut crate::preview_raster::Raster,events:Vec<egui::Event>)->egui::FullOutput{
-        h.t+=0.2;let output=h.ctx.run(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),events,..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));});
+        h.t+=0.2;let output=h.ctx.run_ui(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),events,..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});
         raster.update_textures(&output.textures_delta);output
     }
     let _guard=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
@@ -8742,7 +8797,7 @@ fn quota_cc_switch_general_and_custom_connections_render_in_both_themes(){
         h.app.settings_open=true;h.app.quota.connect_open=true;h.app.quota.provider=provider;h.app.quota.relay_manual=true;h.app.quota.alias="我的中转站".into();h.app.quota.source="https://relay.example".into();h.app.quota.api_key="synthetic-private-key".into();h.app.quota.relay_script=relay::script::DEFAULT_SCRIPT.into();
         let mut raster=crate::preview_raster::Raster::new(780,850);
         for frame in 0..4{
-            let output=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));});raster.update_textures(&output.textures_delta);
+            let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});raster.update_textures(&output.textures_delta);
             if frame==3{
                 let texts:Vec<_>=output.shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)=>Some(t.galley.text()),_=>None}).collect();let has_button=texts.contains(&"验证并连接");assert!(!texts.iter().any(|s|s.contains("synthetic-private-key")));
                 if provider==Provider::RelayCustom{assert!(texts.contains(&"查询脚本"));}
@@ -8766,7 +8821,7 @@ fn quota_acceptance_grouped_connections_preserve_saved_sources() {
         let account=Account{id:"existing".into(),provider,alias:"原账号".into(),source:source.into(),slot:Some("existing-reference".into()),enabled:true,pinned:false};
         h.app.quota.config.accounts=vec![account.clone()];h.app.quota.config.selected=account.id.clone();h.app.quota.connect_target=Some(account.id.clone());h.app.quota.source=source.into();
         for _ in 0..3{
-            let output=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));});h.shapes=output.shapes;
+            let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});h.shapes=output.shapes;
         }
         let expected=if provider.relay(){"中转站"}else{"GLM / ZCode"};
         assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()==expected)),"应显示统一入口：{expected}");
@@ -8779,7 +8834,7 @@ fn quota_acceptance_grouped_connections_preserve_saved_sources() {
 fn quota_glm_get_key_link_follows_region_without_submitting_the_key(){
     fn draw(h:&mut H,events:Vec<egui::Event>)->egui::FullOutput{
         h.t+=0.2;
-        h.ctx.run(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),events,..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));})
+        h.ctx.run_ui(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),events,..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));})
     }
     fn click(h:&mut H,output:&egui::FullOutput,label:&str)->egui::FullOutput{
         let pos=output.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==label=>Some(t.visual_bounding_rect().center()),_=>None}).unwrap_or_else(||panic!("找不到控件：{label}"));
@@ -8805,7 +8860,7 @@ fn quota_relay_automatic_is_the_default_and_manual_types_are_hidden() {
     let _guard=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.app.settings_open=true;h.app.quota.provider=crate::quota::Provider::NewApi;h.app.quota.connect_open=true;
     for _ in 0..3{
-        let output=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));});h.shapes=output.shapes;
+        let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});h.shapes=output.shapes;
     }
     let texts=h.shapes.iter().filter_map(|s|match &s.shape{egui::Shape::Text(t)=>Some(t.galley.text()),_=>None}).collect::<Vec<_>>();
     assert!(texts.contains(&"自动识别站点类型"));assert!(texts.contains(&"高级设置"));
@@ -8816,7 +8871,7 @@ fn quota_relay_automatic_is_the_default_and_manual_types_are_hidden() {
 fn quota_relay_manual_types_require_advanced_settings_and_preserve_the_site(){
     fn draw(h:&mut H,events:Vec<egui::Event>)->egui::FullOutput{
         h.t+=0.2;
-        h.ctx.run(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),events,..Default::default()},|ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));})
+        h.ctx.run_ui(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),events,..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));})
     }
     fn click(h:&mut H,output:&egui::FullOutput,label:&str)->egui::FullOutput{
         let pos=output.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==label=>Some(t.visual_bounding_rect().center()),_=>None}).unwrap_or_else(||panic!("找不到控件：{label}"));
@@ -8864,11 +8919,9 @@ fn quota_acceptance_period_colors_match_the_drawn_rings() {
             Window{label:"当前周期".into(),seconds:seconds[0],remaining:62.0,reset:None,amount:None},
             Window{label:"本周".into(),seconds:seconds[1],remaining:35.0,reset:None,amount:None},
         ],extra:vec![Window{label:"工具".into(),seconds:None,remaining:80.0,reset:None,amount:None}],..Default::default()}));
-        let output=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(400.0,200.0))),..Default::default()},|ctx|{
-            egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{
+        let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(400.0,200.0))),..Default::default()}, |ui|{
                 let c=crate::paint::Card::new(ui,Pos2::ZERO,ui.max_rect());h.app.page_quota(&c);
             });
-        });
         let expected=if seconds[0].is_none(){[inner,outer,crate::theme::GRAY]}else{[outer,inner,crate::theme::GRAY]};
         for (i,color) in expected.into_iter().enumerate(){
             let center=egui::pos2(159.0,79.0+i as f32*23.0);
@@ -8910,10 +8963,10 @@ fn quota_acceptance_gallery() {
             }
             h.app.settings_tab=11;h.app.open_settings();h.ctx.set_embed_viewports(false);
             let size=egui::vec2(780.0,1080.0);let ppp=1.25;let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
-            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),focused:Some(true),..Default::default()})).collect(),focused:true,..Default::default()};*capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));});
+            egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(ppp),focused:Some(true),..Default::default()})).collect(),focused:true,..Default::default()};*capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));});
             let mut raster=crate::preview_raster::Raster::new((size.x*ppp)as usize,(size.y*ppp)as usize);
             for f in 0..5{
-                let root=h.ctx.run(egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()},|ctx|h.app.settings_ui(ctx,false));
+                let root=h.ctx.run_ui(egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(ppp),..Default::default()})).collect(),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));
                 raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
                 if f==4{raster.buf.fill([0.1,0.1,0.11,1.0]);raster.draw(&h.ctx.tessellate(child.shapes,child.pixels_per_point),child.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(format!("settings-{group}-{}.png",if light{"light"}else{"dark"})),&rgba,(size.x*ppp)as u32,(size.y*ppp)as u32,image::ColorType::Rgba8).unwrap();}
                 raster.free_textures(&root.textures_delta);raster.free_textures(&child.textures_delta);
@@ -8924,10 +8977,10 @@ fn quota_acceptance_gallery() {
         let mut h=H::new();h.app.quota.provider=provider;h.app.quota.connect_open=true;
         h.app.settings.settings_theme=crate::settings_theme::SettingsTheme::Dark;h.app.settings_tab=11;h.app.open_settings();h.ctx.set_embed_viewports(false);
         let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
-        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;*capture.lock().unwrap()=Some(ctx.run(egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,600.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.5),focused:Some(true),..Default::default()})).collect(),..Default::default()},|ctx|(viewport.viewport_ui_cb)(ctx)));});
+        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{let id=viewport.ids.this;*capture.lock().unwrap()=Some(ctx.run_ui(egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,600.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.5),focused:Some(true),..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui)));});
         let mut raster=crate::preview_raster::Raster::new(1035,900);
         for f in 0..5{
-            let root=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
+            let root=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));raster.update_textures(&root.textures_delta);let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
             if f==4{raster.buf.fill([0.1,0.1,0.11,1.0]);raster.draw(&h.ctx.tessellate(child.shapes,child.pixels_per_point),child.pixels_per_point);let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(dest.join(format!("connect-{i}.png")),&rgba,1035,900,image::ColorType::Rgba8).unwrap();}
             raster.free_textures(&root.textures_delta);raster.free_textures(&child.textures_delta);
         }
@@ -9216,12 +9269,12 @@ fn render_settings(h:&mut H)->Vec<egui::epaint::ClippedShape>{
             screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,1800.0))),
             viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),
             ..Default::default()};
-        *capture.lock().unwrap()=Some(ctx.run(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+        *capture.lock().unwrap()=Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
     });
     h.ctx.set_embed_viewports(false);
     let mut shapes=Vec::new();
     for _ in 0..4 {
-        let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+        let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
         if let Some(out)=output.lock().unwrap().take(){shapes=out.shapes;}
     }
     shapes

@@ -18,8 +18,7 @@ fn fixture(h: &mut H) {
 
 fn settings_frame(h: &mut H, events: Vec<egui::Event>) {
     h.t+=1.0/60.0;
-    let output=h.ctx.run(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(780.0,900.0))),events,..Default::default()},
-        |ctx|{egui::CentralPanel::default().show(ctx,|ui|h.app.quota_settings(ui));});
+    let output=h.ctx.run_ui(egui::RawInput{time:Some(h.t),screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(780.0,900.0))),events,..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});
     h.shapes=output.shapes;
 }
 
@@ -68,11 +67,10 @@ fn doubao_settings_viewport_close_cancels_pending_validation() {
     h.app.quota.provider=crate::quota::Provider::Doubao;h.app.quota.connect_open=true;h.app.quota.doubao_cookie="synthetic-secret".into();
     let (connection,cancel)=crate::quota::doubao::Connect::pending_test();h.app.quota.doubao_connecting=Some(connection);
     egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
-        let id=viewport.ids.this;let _=ctx.run(egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,700.0))),
-            viewports:std::iter::once((id,egui::ViewportInfo{events:vec![egui::ViewportEvent::Close],..Default::default()})).collect(),..Default::default()},
-            |ctx|(viewport.viewport_ui_cb)(ctx));
+        let id=viewport.ids.this;let _=ctx.run_ui(egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,700.0))),
+            viewports:std::iter::once((id,egui::ViewportInfo{events:vec![egui::ViewportEvent::Close],..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui));
     });
-    let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
+    let _=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
     assert!(cancel.load(std::sync::atomic::Ordering::Acquire));
     assert!(!h.app.settings_open && !h.app.quota.connect_open && h.app.quota.doubao_cookie.is_empty());
 }
@@ -101,14 +99,13 @@ fn doubao_quota_gallery() {
             let size=Vec2::new(780.0,850.0);let ppp=1.25;
             let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
             egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
-                let id=viewport.ids.this;*capture.lock().unwrap()=Some(ctx.run(egui::RawInput{viewport_id:id,
+                let id=viewport.ids.this;*capture.lock().unwrap()=Some(ctx.run_ui(egui::RawInput{viewport_id:id,
                     screen_rect:Some(Rect::from_min_size(Pos2::ZERO,size)),viewports:std::iter::once((id,egui::ViewportInfo{
-                        native_pixels_per_point:Some(ppp),focused:Some(true),..Default::default()})).collect(),..Default::default()},
-                    |ctx|(viewport.viewport_ui_cb)(ctx)));
+                        native_pixels_per_point:Some(ppp),focused:Some(true),..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui)));
             });
             let mut raster=crate::preview_raster::Raster::new((size.x*ppp)as usize,(size.y*ppp)as usize);
             for frame in 0..5 {
-                let root=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));raster.update_textures(&root.textures_delta);
+                let root=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));raster.update_textures(&root.textures_delta);
                 let child=output.lock().unwrap().take().unwrap();raster.update_textures(&child.textures_delta);
                 if frame==4 {
                     raster.buf.fill(if light{[0.95,0.95,0.96,1.0]}else{[0.1,0.1,0.11,1.0]});

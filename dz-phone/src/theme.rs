@@ -238,11 +238,11 @@ mod tests {
     fn korean_titles_and_lyrics_have_glyphs_in_all_weights(){
         let ctx=eframe::egui::Context::default();
         super::load_fonts(&ctx);
-        let _=ctx.run(Default::default(),|ctx|{
+        let _=ctx.run_ui(Default::default(), |ui|{
             for weight in [super::W::Regular,super::W::Semibold,super::W::Bold]{
                 let font=super::font(14.0,weight);
                 for ch in "눈, 코, 입 향기로운 숨을 담은 너의 코 사랑해 眼鼻嘴 TAEYANG ㄱㄴㅏ".chars().filter(|c|!c.is_whitespace()){
-                    assert!(ctx.fonts(|f|f.has_glyph(&font,ch)),"缺少字形：{ch}，字体：{font:?}");
+                    assert!(ui.ctx().fonts_mut(|f|f.has_glyph(&font,ch)),"缺少字形：{ch}，字体：{font:?}");
                 }
             }
         });
@@ -259,12 +259,12 @@ mod tests {
         }
         let ctx=eframe::egui::Context::default();
         super::load_fonts(&ctx);
-        let _=ctx.run(Default::default(),|ctx|{
+        let _=ctx.run_ui(Default::default(), |ui|{
             for weight in [super::W::Regular,super::W::Semibold,super::W::Bold]{
                 let font=super::font(14.0,weight);
                 // 抽样：音节区起点、中段、终点，以及部首区一个。
                 for ch in ['\u{A000}','\u{A185}','\u{A4C6}','\u{A490}'].iter() {
-                    assert!(ctx.fonts(|f|f.has_glyph(&font,*ch)),"缺少彝文字形：{ch}，字体：{font:?}");
+                    assert!(ui.ctx().fonts_mut(|f|f.has_glyph(&font,*ch)),"缺少彝文字形：{ch}，字体：{font:?}");
                 }
             }
         });

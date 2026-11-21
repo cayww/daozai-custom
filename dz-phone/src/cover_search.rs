@@ -109,7 +109,7 @@ mod tests {
         let busy=[crate::resources::COVER.acquire().unwrap(),crate::resources::COVER.acquire().unwrap()];
         cache.fill_with(&media,now+WAIT,|_,_,_|panic!("工作线程已占满"));
         drop(busy);
-        let image=Arc::new(ColorImage::new([1,1],eframe::egui::Color32::RED));
+        let image=Arc::new(ColorImage::filled([1,1], eframe::egui::Color32::RED));
         let expected=image.clone();
         cache.fill_with(&media,now+WAIT+RETRY,move|_,_,_|Some(image));
         cache.worker.take().expect("并发空位释放后仍应补封面").join().unwrap();
@@ -126,7 +126,7 @@ mod tests {
         cache.fill_with(&media,start+WAIT,load(&calls,None));cache.worker.take().unwrap().join().unwrap();
         cache.fill_with(&media,start+WAIT,load(&calls,None));
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst),1,"失败后不立即重试");
-        let image=Arc::new(ColorImage::new([1,1],eframe::egui::Color32::RED));
+        let image=Arc::new(ColorImage::filled([1,1], eframe::egui::Color32::RED));
         cache.fill_with(&media,start+WAIT+RETRY,load(&calls,Some(image.clone())));cache.worker.take().unwrap().join().unwrap();
         assert!(Arc::ptr_eq(&cache.fill_with(&media,start+WAIT+RETRY,load(&calls,None)).unwrap(),&image));
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst),2);

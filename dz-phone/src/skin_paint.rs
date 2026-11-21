@@ -410,13 +410,13 @@ mod tests {
     fn fading_text_keeps_its_fade_after_recoloring() {
         // 切页时旧页面的文字按透明度淡出；换色后必须仍是半透明，不能和新页面叠在一起。
         let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            let painter = ctx.layer_painter(egui::LayerId::background());
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui|{
+            let painter = ui.ctx().layer_painter(egui::LayerId::background());
             let mut faded = painter.clone();
             faded.multiply_opacity(0.25);
             faded.text(egui::Pos2::ZERO, egui::Align2::LEFT_TOP, "淡出", egui::FontId::proportional(14.0), Color32::WHITE);
-            recolor_layer(ctx, egui::LayerId::background(), &[(0, 1)], &CREAM);
-            let shapes: Vec<_> = ctx.graphics_mut(|g| g.entry(egui::LayerId::background()).all_entries().cloned().collect());
+            recolor_layer(ui.ctx(), egui::LayerId::background(), &[(0, 1)], &CREAM);
+            let shapes: Vec<_> = ui.ctx().graphics_mut(|g| g.entry(egui::LayerId::background()).all_entries().cloned().collect());
             let Shape::Text(t) = &shapes[0].shape else { panic!() };
             let color = t.galley.rows.iter().flat_map(|r| r.visuals.mesh.vertices.iter()).next().unwrap().color;
             assert_eq!(color.a(), 64, "淡出透明度要保留：{color:?}");
@@ -438,14 +438,14 @@ mod tests {
     #[test]
     fn white_marks_on_colored_buttons_stay_white() {
         let ctx = egui::Context::default();
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui|{
             let layer = egui::LayerId::background();
-            let painter = ctx.layer_painter(layer);
+            let painter = ui.ctx().layer_painter(layer);
             painter.rect_filled(egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(60.0, 24.0)), 12.0, Color32::from_rgb(82, 162, 255));
             painter.text(egui::pos2(30.0, 12.0), egui::Align2::CENTER_CENTER, "保存", egui::FontId::proportional(12.0), Color32::WHITE);
             painter.text(egui::pos2(120.0, 12.0), egui::Align2::CENTER_CENTER, "取消", egui::FontId::proportional(12.0), Color32::WHITE);
-            recolor_layer(ctx, layer, &[(0, 3)], &CREAM);
-            let shapes: Vec<_> = ctx.graphics_mut(|g| g.entry(layer).all_entries().cloned().collect());
+            recolor_layer(ui.ctx(), layer, &[(0, 3)], &CREAM);
+            let shapes: Vec<_> = ui.ctx().graphics_mut(|g| g.entry(layer).all_entries().cloned().collect());
             let first = |s: &Shape| match s { Shape::Text(t) => t.galley.rows.iter().flat_map(|r| r.visuals.mesh.vertices.first()).next().unwrap().color, _ => panic!() };
             assert_eq!(first(&shapes[1].shape), Color32::WHITE, "彩色按钮上的白字保持白色");
             assert_eq!(first(&shapes[2].shape), Color32::from_rgb(46, 32, 22), "普通白字换成墨色");

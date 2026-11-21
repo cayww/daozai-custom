@@ -210,7 +210,7 @@ impl App {
             if c.live && has && self.music_volume_ui.is_some() {
                 if button.clicked(){self.music_volume_open=!self.music_volume_open;}
                 if button.hovered(){
-                    let delta=c.ui.ctx().input(|i|i.smooth_scroll_delta.y);
+                    let delta=crate::app::raw_scroll_y(c.ui.ctx());
                     if delta.abs()>0.5 {
                         self.change_music_volume(Transport::SetVolume((value as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32),cmds);
                     }
@@ -324,7 +324,7 @@ impl App {
                 command=Some(Transport::SetVolume(((75.0-popup.to_local(pointer).y)/43.0*100.0).round().clamp(0.0,100.0) as u32));
             }
         }else if popup.live && panel.contains(ctx.pointer_hover_pos().unwrap_or(Pos2::ZERO)) {
-            let delta=ctx.input(|i|i.smooth_scroll_delta.y);
+            let delta=crate::app::raw_scroll_y(ctx);
             if delta.abs()>0.5{command=Some(Transport::SetVolume((volume as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32));}
         }
         let mute=popup.hit(353.0,82.0,28.0,20.0,"m-volume-mute").on_hover_text(if muted{"恢复音乐音量"}else{"静音音乐，保留当前音量"});

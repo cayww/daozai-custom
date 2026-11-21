@@ -302,7 +302,7 @@ fn stalled_cover_requests_do_not_accumulate_threads_when_tracks_change(){
     assert_eq!(count,1,"旧封面请求阻塞时，切歌不能继续创建新下载线程");
     assert_eq!(active.load(Ordering::SeqCst),0,"解除阻塞后旧下载线程应结束");
     cache.worker.take().unwrap().join().unwrap();
-    let image=Arc::new(eframe::egui::ColorImage::new([2,2],eframe::egui::Color32::BLUE));
+    let image=Arc::new(eframe::egui::ColorImage::filled([2,2], eframe::egui::Color32::BLUE));
     let current=image.clone();
     cache.get_with("cover-39",move |url|{assert_eq!(url,"cover-39");Some(current)});
     cache.worker.take().unwrap().join().unwrap();
@@ -605,7 +605,7 @@ mod tests{
     }
     #[test]
     fn native_cover_cache_reuses_image_and_discards_late_results(){
-        let image=Arc::new(eframe::egui::ColorImage::new([2,2],eframe::egui::Color32::BLUE));
+        let image=Arc::new(eframe::egui::ColorImage::filled([2,2], eframe::egui::Color32::BLUE));
         let (tx,rx)=mpsc::channel();
         let mut cache=CoverCache{url:"cover-a".into(),pending:Some(rx),..Default::default()};
         assert!(cache.get("cover-a").is_none(),"封面下载中不能阻塞媒体刷新");
@@ -617,7 +617,7 @@ mod tests{
     }
     #[test]
     fn native_cover_only_fills_the_selected_netease_song(){
-        let image=Arc::new(eframe::egui::ColorImage::new([2,2],eframe::egui::Color32::BLUE));
+        let image=Arc::new(eframe::egui::ColorImage::filled([2,2], eframe::egui::Color32::BLUE));
         let mut reader=Reader::default();reader.playback.media.song_id=Some(123);reader.playback.artwork_url="cover".into();
         reader.cover=CoverCache{url:"cover".into(),image:Some(image.clone()),..Default::default()};
         for source in ["SodaMusic.exe","KuGou.exe","QQMusic.exe","Spotify.exe"]{
@@ -625,7 +625,7 @@ mod tests{
         }
         let mut media=NowPlaying{source:"cloudmusic.exe".into(),song_id:Some(456),..Default::default()};reader.fill_artwork(&mut media);assert!(media.artwork.is_none());
         media.song_id=Some(123);reader.fill_artwork(&mut media);assert!(Arc::ptr_eq(media.artwork.as_ref().unwrap(),&image));
-        let system_image=Arc::new(eframe::egui::ColorImage::new([2,2],eframe::egui::Color32::RED));
+        let system_image=Arc::new(eframe::egui::ColorImage::filled([2,2], eframe::egui::Color32::RED));
         media.artwork=Some(system_image.clone());reader.fill_artwork(&mut media);assert!(Arc::ptr_eq(media.artwork.as_ref().unwrap(),&system_image));
     }
     fn event(pid:u32,at:u64,body:&str)->String{format!("[{pid}:1:1103/170000:{at}:INFO:app.cpp(1)] 【playing】,{body}\n")}

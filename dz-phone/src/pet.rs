@@ -126,7 +126,7 @@ mod tests {
                     media:crate::smtc::NowPlaying{title:"晚风与星光".into(),artist:"示例歌手".into(),playing:true,duration:240.0,..Default::default()},..Default::default()};
                 let input=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H))),time:Some(t),
                     viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-                let output=ctx.run(input,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{app.frame(ui,ui.max_rect(),&env);});});
+                let output=ctx.run_ui(input, |ui|{app.frame(ui,ui.max_rect(),&env);});
                 raster.update_textures(&output.textures_delta);raster.buf.fill([0.95,0.96,0.98,1.0]);
                 raster.draw(&ctx.tessellate(output.shapes,output.pixels_per_point),output.pixels_per_point);
                 let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);let image=image::RgbaImage::from_raw(1280,540,rgba).unwrap();

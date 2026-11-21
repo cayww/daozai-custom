@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn preview_cache_bounds_textures_and_releases_them_when_cleared(){
         let ctx=egui::Context::default();let mut cache=Cache::default();
-        cache.start(ctx.clone(),|_|Loaded{image:Some(ColorImage::new([8,8],egui::Color32::WHITE)),metadata:"1 KB".into()});
+        cache.start(ctx.clone(),|_|Loaded{image:Some(ColorImage::filled([8,8], egui::Color32::WHITE)),metadata:"1 KB".into()});
         for i in 0..40{
             let path=PathBuf::from(format!("preview-{i}"));let deadline=Instant::now()+Duration::from_secs(2);
             while cache.get(&ctx,&path).is_none(){assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(1));}

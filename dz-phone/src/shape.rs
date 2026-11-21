@@ -314,8 +314,8 @@ mod dock_tests {
 mod cache_tests {
     use super::*;
     fn frame(ctx:&egui::Context,width:f32,feather:f32)->std::sync::Arc<egui::Mesh>{
-        let out=ctx.run(egui::RawInput::default(),|ctx|{
-            fill(&ctx.layer_painter(egui::LayerId::background()),Rect::from_min_size(Pos2::ZERO,Vec2::new(width,30.0)),5.0,8.0,12.5,Color32::BLACK,feather);
+        let out=ctx.run_ui(egui::RawInput::default(), |ui|{
+            fill(&ui.ctx().layer_painter(egui::LayerId::background()),Rect::from_min_size(Pos2::ZERO,Vec2::new(width,30.0)),5.0,8.0,12.5,Color32::BLACK,feather);
         });
         out.shapes.into_iter().find_map(|s|if let egui::Shape::Mesh(m)=s.shape{Some(m)}else{None}).unwrap()
     }
@@ -525,7 +525,7 @@ mod fluid_path_bench {
 
         let t = Instant::now();
         for _ in 0..N {
-            let mut image = egui::ColorImage::new([160, 80], Color32::TRANSPARENT);
+            let mut image = egui::ColorImage::filled([160, 80], Color32::TRANSPARENT);
             for row in 0..80usize {
                 let py = h * (row as f32 + 0.5) / 80.0;
                 for col in 0..160usize {

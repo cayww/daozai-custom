@@ -114,7 +114,7 @@ mod tests {
         let ctx=egui::Context::default();let id=egui::ViewportId::from_hash_of("settings-restore-test");
         let state=State{path:None,current:Some(Placement{position:[-2000.0,0.0],size:[900.0,600.0]}),..Default::default()};
         let raw=egui::RawInput{viewport_id:id,viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()};
-        let output=ctx.run(raw,|ctx|assert!(state.restore_in(ctx,&[area(-2560.0,-400.0,2560.0,1400.0,1.5)])));
+        let output=ctx.run_ui(raw, |ui| assert!(state.restore_in(ui.ctx(),&[area(-2560.0,-400.0,2560.0,1400.0,1.5)])));
         let commands=&output.viewport_output[&id].commands;
         assert!(commands.iter().any(|command|matches!(command,egui::ViewportCommand::InnerSize(size) if *size==egui::vec2(1350.0,900.0))));
         assert!(commands.iter().any(|command|matches!(command,egui::ViewportCommand::OuterPosition(position) if *position==egui::pos2(-2000.0,0.0))));
@@ -127,7 +127,7 @@ mod tests {
         let ctx=egui::Context::default();let id=egui::ViewportId::from_hash_of("settings-memory-test");
         let observe=|state:&mut State,minimized,maximized|{
             let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(800.0,600.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.5),inner_rect:Some(Rect::from_min_size(egui::pos2(0.0,0.0),egui::vec2(800.0,600.0))),outer_rect:Some(Rect::from_min_size(egui::pos2(-1000.0,80.0),egui::vec2(816.0,640.0))),minimized:Some(minimized),maximized:Some(maximized),..Default::default()})).collect(),..Default::default()};
-            let _=ctx.run(raw,|ctx|state.observe(ctx));
+            let _=ctx.run_ui(raw, |ui| state.observe(ui.ctx()));
         };
         observe(&mut state,false,false);let normal=state.current;assert_eq!(normal.unwrap().position,[-1500.0,120.0]);assert!(!path.exists());
         observe(&mut state,true,false);observe(&mut state,false,true);assert_eq!(state.current,normal);

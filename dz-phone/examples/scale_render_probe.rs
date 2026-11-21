@@ -6,7 +6,8 @@ use std::time::Instant;
 struct Probe {app:App,frame:usize,last:Instant,intervals:Vec<f64>,textures:usize,bytes:usize}
 
 impl eframe::App for Probe {
-    fn update(&mut self,ctx:&egui::Context,_:&mut eframe::Frame){
+    fn ui(&mut self, ui:&mut egui::Ui,_:&mut eframe::Frame){
+        let ctx=ui.ctx().clone();
         const FRAMES:usize=180;
         let cases=[("original",1.0,false),("enlarged-settings",1.4,true),("reset-settings",1.0,true),("enlarged-closed",1.4,false)];
         let stage=self.frame/FRAMES;let offset=self.frame%FRAMES;
@@ -15,18 +16,18 @@ impl eframe::App for Probe {
         let now=Instant::now();let interval=now.duration_since(self.last).as_secs_f64()*1000.0;self.last=now;
         if offset==0{
             self.intervals.clear();self.textures=0;self.bytes=0;
-            eframe::set_root_viewport_scale(scale);
+            // migration: viewport scale handled by new stack
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(CANVAS_W*scale,WIN_H*scale)));
             self.app.settings_open=settings;
         }
         if offset>=30{self.intervals.push(interval);}
         if offset%45==0{self.app.show_page((offset/45)%4);}
         let env=Env{t:self.frame as f64/60.0,clock:"09:41:00".into(),today:"2026-11-06".into(),date:"11月6日 周五".into(),cursor:Some(egui::pos2(WIN_W/2.0,60.0)),..Default::default()};
-        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui,|ui|{
             let win=egui::Rect::from_min_size(ui.max_rect().min,egui::vec2(WIN_W,WIN_H));
             self.app.frame(ui,win,&env);
         });
-        self.app.settings_ui(ctx,false);
+        self.app.settings_ui(&ctx,false);
         if offset>=30{
             let textures=ctx.tex_manager();let textures=textures.read();
             let fonts:Vec<_>=textures.allocated().filter(|(_,meta)|meta.name.starts_with("egui_font_texture")).collect();
@@ -43,14 +44,8 @@ impl eframe::App for Probe {
 }
 
 fn main()->eframe::Result<()> {
-    let wgpu=std::env::args().any(|arg|arg=="--wgpu");
-    let mut options=eframe::NativeOptions{vsync:false,viewport:egui::ViewportBuilder::default().with_title("岛仔缩放渲染检查").with_inner_size([CANVAS_W,WIN_H]).with_position([-10000.0,-10000.0]).with_active(false).with_taskbar(false),..Default::default()};
-    if wgpu{
-        options.renderer=eframe::Renderer::Wgpu;
-        if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup)=&mut options.wgpu_options.wgpu_setup{
-            setup.instance_descriptor.backends=eframe::wgpu::Backends::DX12;
-        }
-    }
+    // migration: egui 0.35 未启用 wgpu feature，统一走 glow 渲染
+    let options=eframe::NativeOptions{viewport:egui::ViewportBuilder::default().with_title("岛仔缩放渲染检查").with_inner_size([CANVAS_W,WIN_H]).with_position([-10000.0,-10000.0]).with_active(false).with_taskbar(false),..Default::default()};
     eframe::run_native("缩放渲染检查",options,Box::new(|cc|{
         cc.egui_ctx.on_begin_pass("检查窗口保持屏幕外",std::sync::Arc::new(|ctx|{
             if ctx.viewport_id()!=egui::ViewportId::ROOT{ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-10000.0,-10000.0)));}

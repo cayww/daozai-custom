@@ -32,13 +32,6 @@ impl Raster {
                     img.height(),
                     img.pixels.iter().map(|c| [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, c.a() as f32 / 255.0]).collect(),
                 ),
-                ImageData::Font(img) => (
-                    img.width(),
-                    img.height(),
-                    img.srgba_pixels(None)
-                        .map(|c| [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, c.a() as f32 / 255.0])
-                        .collect(),
-                ),
             };
             match d.pos {
                 Some([x0, y0]) => {

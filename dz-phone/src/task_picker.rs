@@ -66,7 +66,7 @@ impl ReminderPicker {
                     let steps=(self.wheel[column]/40.0).trunc() as i64;
                     self.wheel[column]-=steps as f32*40.0;
                     self.adjust(column,steps);
-                    ctx.input_mut(|i|{i.smooth_scroll_delta=egui::Vec2::ZERO;});
+                    ctx.input_mut(|i|{i.smooth_scroll_delta=egui::Vec2::ZERO;i.events.retain(|e|!matches!(e,egui::Event::MouseWheel{..}));});
                 }
             }
             if response.drag_started(){self.drag[column]=0.0;}

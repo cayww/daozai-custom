@@ -661,6 +661,26 @@ impl LyricLayoutCache {
 }
 
 /// 滚动速度：让整句尽量在本句时长内滚完，同时夹在可读区间。
+/// egui 0.35 移除了 raw_scroll_delta，只保留逐帧平滑的 smooth_scroll_delta。
+/// 岛仔的翻页/列表滚动是自定义交互，需要 0.31 的「本帧滚轮原始增量」语义：
+/// 从本帧事件里按 unit 换算后直接求和（等价旧 raw_scroll_delta.y）。
+pub(crate) fn raw_scroll_y(ctx: &egui::Context) -> f32 {
+    ctx.input(|i| {
+        i.events.iter().filter_map(|e| match e {
+            egui::Event::MouseWheel { unit, delta, modifiers, .. } => {
+                let mut d = match unit {
+                    egui::MouseWheelUnit::Point => *delta,
+                    egui::MouseWheelUnit::Line => 8.0 * *delta,
+                    egui::MouseWheelUnit::Page => i.viewport_rect().height() * *delta,
+                };
+                if modifiers.shift { d = egui::vec2(d.x + d.y, 0.0); }
+                Some(d.y)
+            }
+            _ => None,
+        }).sum()
+    })
+}
+
 fn lyric_scroll_speed(overflow:f32,window:f32)->f32 {
     let travel=(window-2.0*SCROLL_DWELL).max(0.8);
     (overflow/travel).clamp(SCROLL_MIN_SPEED,SCROLL_MAX_SPEED)
@@ -2628,7 +2648,8 @@ impl App {
             self.cancel_edit();
         }
         if (!self.is_editing() || self.todo_choosing) && page_hover && self.open && self.reveal > 0.95 {
-            let (scroll, left, right, esc) = ctx.input(|i| (i.smooth_scroll_delta.y, i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::Escape)));
+            let (left, right, esc) = ctx.input(|i| (i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::Escape)));
+            let scroll = raw_scroll_y(&ctx);
             if esc { self.hover_lock = true; }
             if (left || right) && !self.todo_choosing {
                 self.wheel_delta=0.0;
@@ -2672,7 +2693,13 @@ impl App {
                             self.navigate_page(next);
                             self.wheel_page_at=self.t;
                         }
-                        ctx.input_mut(|i|{i.smooth_scroll_delta=Vec2::ZERO;});
+                        let consumed = raw_scroll_y(&ctx);
+                        ctx.input_mut(|i|{
+                            i.smooth_scroll_delta=Vec2::ZERO;
+                            // 等价旧 raw_scroll_delta 清零：移除本帧滚轮事件，避免同一滚动被内容区重复消费。
+                            i.events.retain(|e| !matches!(e, egui::Event::MouseWheel{..}));
+                        });
+                        let _ = consumed;
                     }
                 }
             }
@@ -3146,7 +3173,7 @@ impl App {
         let slot=self.unread_slot(height);
         let max_scroll=(n as f32-3.0).max(0.0)*slot;
         if max_scroll>0.0 && cursor.is_some_and(|p|rect.contains(p)) {
-            let delta=ctx.input(|i|i.smooth_scroll_delta.y);
+            let delta=raw_scroll_y(ctx);
             self.messenger_scroll-=delta*0.5;
         }
         self.messenger_scroll=self.messenger_scroll.clamp(0.0,max_scroll);
@@ -4936,7 +4963,7 @@ mod lyric_scroll_tests {
     #[ignore]
     fn bench_long_line_layout_cost(){
         let ctx=egui::Context::default();
-        let _=ctx.run(Default::default(),|_|{});
+        let _=ctx.run_ui(Default::default(), |_| {});
         let text="这一句歌词故意写得非常非常长用来测试横向滚动到底能不能把整句话完整地显示出来".to_owned();
         let job=|size:f32|{
             let mut job=egui::text::LayoutJob::simple(text.clone(),egui::FontId::proportional(size),theme::WHITE,186.0);
@@ -4968,7 +4995,7 @@ mod lyric_scroll_tests {
     fn cache_matches_only_same_line_and_width(){
         let ctx=egui::Context::default();
         // 字体要等第一次 run 之后才可用。
-        let _=ctx.run(Default::default(),|_|{});
+        let _=ctx.run_ui(Default::default(), |_| {});
         // semibold 字体族由 App 启动时注册，这里只验证匹配逻辑，用默认族即可。
         let job=egui::text::LayoutJob::simple("测试".to_owned(),egui::FontId::proportional(11.0),theme::WHITE,f32::INFINITY);
         let galley=ctx.fonts_mut(|fonts|fonts.layout_job(job));

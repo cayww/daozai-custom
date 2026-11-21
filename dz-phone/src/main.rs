@@ -917,9 +917,9 @@ mod repaint_tests {
         let ctx=egui::Context::default();
         let mut delay=Duration::ZERO;
         for frame in 0..4 {
-            let output=ctx.run(egui::RawInput{time:Some(frame as f64),predicted_dt:1.0/60.0,..Default::default()},|ctx|{
-                if immediate{ctx.request_repaint();}
-                schedule_repaint(ctx,interval);
+            let output=ctx.run_ui(egui::RawInput{time:Some(frame as f64),predicted_dt:1.0/60.0,..Default::default()}, |ui|{
+                if immediate{ui.ctx().request_repaint();}
+                schedule_repaint(&ctx,interval);
             });
             delay=output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
         }

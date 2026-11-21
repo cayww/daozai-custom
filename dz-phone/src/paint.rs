@@ -320,10 +320,10 @@ mod gradient_tests {
                         let ctx=egui::Context::default();ctx.set_zoom_factor(ppp);
                         let center=Pos2::new(30.0+offset,26.0+offset);
                         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(64.0))),..Default::default()};
-                        let output=ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
+                        let output=ctx.run_ui(raw, |ui|{
                             let card=Card::new(ui,Pos2::ZERO,ui.max_rect()).scaled(center.x,center.y,scale);
                             play_pause(&card,center.x,center.y,size,0.0,color);
-                        });});
+                        });
                         let mut raster=crate::preview_raster::Raster::new((64.0*ppp) as usize,(64.0*ppp) as usize);
                         raster.update_textures(&output.textures_delta);
                         raster.draw(&ctx.tessellate(output.shapes,ppp),ppp);
@@ -344,14 +344,14 @@ mod gradient_tests {
         let ctx=egui::Context::default();
         let text=format!("https://example.com/{}","newsletter-link-".repeat(40));
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(500.0))),..Default::default()};
-        let _=ctx.run(raw,|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|{
+        let _=ctx.run_ui(raw, |ui|{
+            egui::CentralPanel::default().show(ui,|ui|{
                 let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
-                let before=ctx.fonts(|f|f.num_galleys_in_cache());
+                let before=ui.ctx().fonts(|f|f.num_galleys_in_cache());
                 let fitted=c.fit(&text,10.5,W::Regular,180.0);
                 assert!(fitted.ends_with('…'));
                 assert!(c.text_w(&fitted,10.5,W::Regular)<=180.0);
-                let layouts=ctx.fonts(|f|f.num_galleys_in_cache())-before;
+                let layouts=ui.ctx().fonts(|f|f.num_galleys_in_cache())-before;
                 assert!(layouts<=20,"长邮件链接只需少量排版，不应逐字重排：{layouts}");
                 println!("长链接排版次数：{layouts}");
             });
@@ -361,7 +361,7 @@ mod gradient_tests {
     fn text_fitting_preserves_short_text_and_unicode_results() {
         let ctx=egui::Context::default();
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(500.0))),..Default::default()};
-        let _=ctx.run(raw,|ctx|{egui::CentralPanel::default().show(ctx,|ui|{
+        let _=ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{
             let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
             for text in ["", "a", "收到新的邮件与验证码", "会议提醒 🌴 完整标题", "https://example.com/short"] {
                 for width in [0.0,10.0,40.0,80.0,300.0] {
@@ -377,12 +377,10 @@ mod gradient_tests {
     fn cover_gradient_keeps_all_four_corners_clear() {
         let ctx=egui::Context::default();
         let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(100.0))),..Default::default()};
-        let output=ctx.run(raw,|ctx|{
-            egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx,|ui|{
+        let output=ctx.run_ui(raw, |ui|{
                 let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
                 c.vgrad(20.0,20.0,62.0,62.0,13.0,Color32::RED,Color32::BLUE);
             });
-        });
         let meshes:Vec<_>=output.shapes.into_iter().filter_map(|s|if let egui::Shape::Mesh(m)=s.shape{Some(m)}else{None}).collect();
         let covers=|point:Pos2|meshes.iter().any(|m|m.indices.chunks_exact(3).any(|tri|{
             let [a,b,c]=[m.vertices[tri[0] as usize].pos,m.vertices[tri[1] as usize].pos,m.vertices[tri[2] as usize].pos];
