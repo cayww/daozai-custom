@@ -403,3 +403,23 @@ HLSL 版现已功能对齐 WGSL 的岛体玻璃 + 刘海形状 + 岛内控件玻
 
 ### 结论
 端到端架构完全闭环：**单 D3D11 device 上，WGC 实时抓桌面 → GPU CopyResource → HLSL 玻璃层 → egui 控件 → Present，全程零 CPU 回读、零 D3D11↔D3D12 跨 API 共享/fence**。这从根上消除了换分辨率时双 device 失配导致的 device-lost 风暴——当前 main 的"自动重启 workaround"在下一代渲染栈里不再需要。剩余仅是集成工程（eframe→winit、窗口透明/DComp、egui 0.31→0.35 适配与 1100+ 测试回归），无架构级未知。
+
+---
+
+## 二十五、集成工程进展：DComp 透明浮窗跑通（2026-11-21 10:40–10:55）
+
+用户"集成工程"——从透明窗口切入（eframe→winit 其实已在 spike 里完成，因为官方 example 就是 winit）。
+
+### 实证（独立工程 egui-directx11 commit `677a7fe`）
+- **透明路线定案**：`CreateSwapChainForHwnd` + FLIP_DISCARD/PREMULTIPLIED 在本机反复返回 `0x887A0001`（换 FLIP_SEQUENTIAL、去 no_redirection、去 DEBUG、换 CreateDXGIFactory2、最保守参数都无效）。正确路线是主项目验证过的 **DComp**：
+  - winit `with_no_redirection_bitmap(true)` + `with_decorations(false)`（WS_EX_NOREDIRECTIONBITMAP，已核实窗口样式位生效）；
+  - `CreateSwapChainForComposition`（FLIP_DISCARD + PREMULTIPLIED，不经 HWND）；
+  - `DCompositionCreateDevice2(IDXGIDevice)` → `CreateVisual()` → `CreateTargetForHwnd(hwnd, true)` → `visual.SetContent(swap)` → `target.SetRoot(visual)` → `dcomp.Commit()`；
+  - 每帧 Present 后 `dcomp.Commit()`；blend 改预乘（ONE/INV_SRC_ALPHA）；清屏 `[0,0,0,0]`；shader `notch.w=1` 走逐像素 alpha 分支。
+- HLSL `sample_px` 用 `quad.yz` 传窗口屏幕原点，从全屏 WGC 帧按 `(px+origin)/screen_size` 取样，玻璃后的桌面与玻璃外对齐。
+- **实机截图** `glass_dcomp_full.png`：左上角 640×220 无边框窗口**透明浮在桌面上**，能看到其下壁纸与桌面图标；窗口内深色状态条（green "BG: WGC live desktop"、FPS 220）+ 玻璃折射区 + 两块控件玻璃轮廓；窗口外桌面（动漫壁纸、图标、任务栏）完全正常。FPS 220。
+
+### 集成工程剩余状态
+- ✅ 已完成：egui-directx11 最新版、WGC 抓屏、HLSL 玻璃（岛体+刘海+控件）、单 device 零拷贝、透明浮窗（DComp）。
+- ⬜ 剩余：把 spike 的 DComp 透明渲染栈接回岛仔 app 的 UI 逻辑（eframe 的 `Shell::update` 全部绘制代码需迁到 winit 事件循环 + egui Context）；egui 0.31→0.35 vendor 全套升级 + 1100+ 测试回归；窗口置顶/点穿/多显示器等 native 行为迁移。
+- main 分支继续不动；这条线作为下一代渲染栈候选，已有完整可运行参考实现（独立工程 egui-directx11，commit `677a7fe`）。
