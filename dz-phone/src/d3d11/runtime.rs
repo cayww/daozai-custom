@@ -4,7 +4,7 @@
 //! 透明路线：CreateSwapChainForComposition + IDCompositionVisual（逐像素预乘 alpha），
 //! 窗口用 WS_EX_NOREDIRECTIONBITMAP，玻璃外区域完全透明显示桌面。
 
-use super::renderer::{Renderer, RendererOutput};
+use super::renderer::Renderer;
 use super::wgc_capture::WgcCapture;
 use std::ptr;
 use windows::core::Interface;
@@ -51,8 +51,15 @@ pub struct GlassParams {
 /// 把 app 本帧写入的控件玻璃快照（egui 逻辑点、y 从顶）同步到 shader uniform。
 /// 必须在 `ctx.run_ui` 之后调用——app 的 paint_gpu_glass 在 run_ui 内发布控件，
 /// 提前读会拿到上一帧，展开/收起动画时残留透镜白边会闪一条竖线。
-fn refresh_control_uniforms(u: &mut GlassParams, ppp: f32, win_h_phys: f32) {
-    let ppp = ppp.max(0.1);
+///
+/// 高度基准只用 `u.extra[2]`（= build_glass_params 写入、shader 全屏三角形实际使用的
+/// 画布物理高 WIN_H*ppp）。**不要**用 `window.inner_size().height`：那是窗口的物理像素
+/// 高（=WIN_H=270），高 DPI 下 WIN_H*ppp=337.5，两者差 67.5——控件 y 翻转用错基准会
+/// 让透镜整体偏移到面板外，表现为「控件只剩文字、没有玻璃」。岛体 bounds 用的正是
+/// extra[2]，控件必须与之同一坐标系。ppp 也从 extra[2] 反推，避免与 egui 的 ppp 漂移。
+fn refresh_control_uniforms(u: &mut GlassParams) {
+    let canvas_h = u.extra[2];
+    let ppp = (canvas_h / crate::app::WIN_H).max(0.1);
     let (ctls, n) = crate::gpu_glass::controls_snapshot();
     let slots = u.cprm.len();
     let n = n.min(slots);
@@ -62,8 +69,8 @@ fn refresh_control_uniforms(u: &mut GlassParams, ppp: f32, win_h_phys: f32) {
         let ry = r.min.y * ppp;
         let rw = r.width() * ppp;
         let rh = r.height() * ppp;
-        // y 从 egui 顶原点翻到 D3D11 底原点（与 build_glass_params 的 body 一致）。
-        u.crect[slot] = [rx, win_h_phys - ry - rh, rw, rh];
+        // y 从 egui 顶原点翻到 D3D11 底原点，画布高用 shader 的 extra[2]（=岛体 bounds 同基准）。
+        u.crect[slot] = [rx, canvas_h - ry - rh, rw, rh];
         u.cprm[slot] = [ctl.radius * ppp, 1.0, ctl.mag.max(1.0), ctl.refract.max(0.05)];
     }
     // 关键：本帧不用的槽必须清掉启用位，否则沿用上一帧的 cprm.y=1 会画出幽灵透镜
@@ -318,15 +325,6 @@ impl D3d11Runtime {
     pub fn render(&mut self, window: &winit::window::Window, origin: (f32, f32),
                   params: &GlassParams, input: egui::RawInput,
                   mut run_ui: impl FnMut(&egui::Context, &mut egui::Ui)) -> FrameStats {
-        // 坐标诊断（仅 DAOZAI_GLASS_DIAG 开启）：打印屏幕帧/窗口/原点/几何的实际数值。
-        if std::env::var("DAOZAI_GLASS_DIAG").is_ok() && self.frames == 3 {
-            let sz = window.inner_size();
-            let sf = window.scale_factor();
-            eprintln!("[diag] monitor_bg={}x{} win_inner={}x{} scale_factor={} origin=({},{}) extra(tex)={:?} bounds={:?} misc={:?} material={} tint={:?}",
-                self.glass.bg_w, self.glass.bg_h, sz.width, sz.height, sf,
-                origin.0, origin.1, params.extra, params.bounds, params.misc,
-                params.params[3], params.tint);
-        }
         // WGC 抓屏（GPU 侧 CopyResource）
         if let Some(wgc) = self.wgc.as_ref() {
             if wgc.grab_into(&self.ctx, &self.glass.bg_tex) { self.wgc_ever_frame = true; }
@@ -370,10 +368,7 @@ impl D3d11Runtime {
         // 控件玻璃透镜：run_ui 里 app 刚写入本帧控件快照，在这里（draw_glass 之前）
         // 同步到 uniform。若在 render 之前填会读到上一帧，收起动画时残留的透镜白边
         // 会在宠物与时间之间闪一条竖线，多帧后才随弹簧收敛消失。
-        {
-            let ppp = window.scale_factor() as f32;
-            refresh_control_uniforms(&mut u, ppp, window.inner_size().height as f32);
-        }
+        refresh_control_uniforms(&mut u);
         let platform = {
             let (ro, po, viewports) = super::renderer::split_output(egui_output);
             // 记录 egui 请求的重绘间隔（岛仔隐藏态 1fps、常态按设置 fps）
@@ -430,6 +425,13 @@ impl D3d11Runtime {
             ctx.RSSetViewports(Some(&[D3D11_VIEWPORT {
                 TopLeftX: 0.0, TopLeftY: 0.0, Width: win_w as f32, Height: win_h as f32,
                 MinDepth: 0.0, MaxDepth: 1.0,
+            }]));
+            // egui renderer 每画一个 mesh 都会 RSSetScissorRects 到该 mesh 的 clip_rect，
+            // 且这个状态跨 pass / 跨帧持续有效。glass pass 画全屏三角形前必须把 scissor
+            // 重置成整个 RT，否则会被上一帧 egui 最后一个 mesh 的小 clip 裁掉——表现为
+            // 某些页面（最后一个 mesh 的 clip 偏小，如新建日程表单）玻璃整层消失。
+            ctx.RSSetScissorRects(Some(&[RECT {
+                left: 0, top: 0, right: win_w as i32, bottom: win_h as i32,
             }]));
             ctx.OMSetBlendState(&self.glass.blend, Some(&[0.0; 4]), u32::MAX);
             ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

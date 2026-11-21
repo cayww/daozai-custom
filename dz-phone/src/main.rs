@@ -10,7 +10,6 @@ use daozai::poll_clock::PollClock;
 use std::time::{Duration, Instant};
 
 mod diagnostics;
-mod graphics;
 #[cfg(windows)]
 mod winit_runner;
 
@@ -143,7 +142,6 @@ impl Shell {
         diagnostics::startup("加载本地配置");
         let mut app = App::new(&egui_ctx, Options::default());
         app.render_compat_running=running_compat;
-        app.wgpu_format=None; // migration: D3D11 stack owns the glass
         #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
         #[cfg(not(feature="record"))] let quota_demo=false;
         diagnostics::startup("初始化额度配置");
@@ -842,17 +840,8 @@ impl eframe::App for Shell {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        // DirectComposition 是逐像素 alpha：清屏必须全透明，否则整窗是一块不透明底色。
-        if true { // migration: new stack is DComp-transparent
-            return [0.0; 4];
-        }
-        // 兼容渲染的窗口是不透明的：首帧清成黑色会「黑闪」一下。
-        // 液态玻璃皮肤下清成接近浅玻璃的灰白，等 GPU 内容覆盖，观感平滑很多。
-        if self.app.settings.skin == daozai::model::Skin::Liquid && self.app.wgpu_format.is_some() {
-            [0.93, 0.93, 0.94, 1.0]
-        } else {
-            [0.0; 4]
-        }
+        // D3D11 + DirectComposition 是逐像素 alpha：清屏必须全透明。
+        [0.0; 4]
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1095,7 +1084,7 @@ fn main() -> std::process::ExitCode {
             Err(error) => {diagnostics::report("诊断收集未完成。", &error); std::process::ExitCode::FAILURE}
         };
     }
-    // 内存剖析（--features memprof）：Profiler 在 run() 里创建、graphics::run 返回后 Drop，
+    // 内存剖析（--features memprof）：Profiler 在 run() 里创建、run() 返回后 Drop，
     // 写 dhat-heap.json 并挪进 data\diagnostics。不能用 taskkill /F（不走 Drop 没有报告），
     // 配合 DAOZAI_MEMPROF_EXIT=<秒> 让 Shell 自己发 ViewportCommand::Close 优雅退出。
     match run() {
@@ -1131,24 +1120,10 @@ fn run() -> eframe::Result<()> {
         .with_taskbar(false)
         .with_always_on_top()
         .with_visible(false);
-    let mut opts = eframe::NativeOptions { viewport, ..Default::default() };
-    // 液态玻璃可选「优先独立显卡」。显卡是启动期决定的（wgpu 适配器只选一次），
-    // 所以在建窗前独立读一次设置；非液态皮肤、或用户关掉这项时完全不动 wgpu 的默认策略。
-    //
-    // 为什么要这项：egui-wgpu 的默认偏好虽是 HighPerformance，但混合显卡机器上仍可能
-    // 落到核显。核显没有独立显存，玻璃的纹理/帧缓冲会从系统内存分配 —— 实测同一构建包
-    // 核显 548MB、独显 274MB（工作集）。用 is_surface_supported 过滤，保证选中的卡
-    // 一定能呈现到本窗口，不会黑屏；另把虚拟/远程显示适配器垫底。
-    let boot = daozai::model::Settings::load();
-    // spike v1.0.1：零拷贝抓屏开关（设置页 → 环境变量 → wgc::gpu_share_enabled）。
-    // 必须在建窗 / 创建 wgpu device 之前设好：gpu_share_enabled 用 OnceLock 只读一次，
-    // 且 WGC 的 D3D11 设备要据此绑定到 wgpu 同卡。设置页为准，显式写 1/0。
-    // 这里无条件设置是无害的：非液态皮肤没有 GlassCallback，不会有人读这个变量；
-    // 液态皮肤 + glow 后端（无 wgpu）同样不注册回调，零副作用。
-    std::env::set_var("DAOZAI_LIQUID_GPU_SHARE", if boot.liquid_gpu_share { "1" } else { "0" });
-    // 换分辨率自动重启开关（零拷贝专用），同样启动期快照给 wgc::auto_restart_enabled。
-    std::env::set_var("DAOZAI_AUTO_RESTART_ON_RESOLUTION", if boot.liquid_auto_restart { "1" } else { "0" });
+    let _opts = eframe::NativeOptions { viewport, ..Default::default() };
     // 启动期快照：设置页用它与当前 settings 比较，判断"改了但未重启"以显示立即重启按钮。
+    // DGPU 偏好是产品设置；选卡逻辑目前由 D3D11 运行时决定（见 d3d11/runtime.rs）。
+    let boot = daozai::model::Settings::load();
     std::env::set_var("DAOZAI_LIQUID_PREFER_DGPU", if boot.liquid_prefer_dgpu { "1" } else { "0" });
     // 注意：必须用 --profile memprof 构建（带符号，Rust 帧才能符号化）；taskkill /F 没有报告。
     #[cfg(feature = "memprof")]
@@ -1159,5 +1134,8 @@ fn run() -> eframe::Result<()> {
     #[cfg(windows)]
     { winit_runner::run().map_err(|e| eframe::Error::AppCreation(Box::new(std::io::Error::other(e.to_string())))) }
     #[cfg(not(windows))]
-    { let _ = opts; graphics::run(opts,|opts|eframe::run_native("岛仔", opts, Box::new(|_cc| Err(eframe::Error::Custom("非 Windows 无自绘栈".into()))))); Ok(()) }
+    {
+        let _ = _opts;
+        Err(eframe::Error::AppCreation(Box::new(std::io::Error::other("非 Windows 无自绘栈"))))
+    }
 }

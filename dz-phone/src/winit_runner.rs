@@ -16,30 +16,6 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
-/// 仿 eframe 官方 event_loop_context：让 show_viewport_immediate 的回调
-/// 能拿到当前 ActiveEventLoop 直接创建原生窗口（否则 callback 不触发/embedded）。
-mod event_loop_context {
-    use std::cell::Cell;
-    use winit::event_loop::ActiveEventLoop;
-    thread_local! {
-        static CURRENT: Cell<Option<*const ActiveEventLoop>> = const { Cell::new(None) };
-    }
-    struct Guard;
-    pub fn with<F: FnOnce()>(el: &ActiveEventLoop, f: F) {
-        CURRENT.with(|c| {
-            debug_assert!(c.get().is_none());
-            c.set(Some(el as *const _));
-        });
-        let _g = Guard;
-        f();
-        CURRENT.with(|c| c.set(None));
-        let _ = _g;
-    }
-    pub fn with_current<F: FnOnce(&ActiveEventLoop) -> R, R>(f: F) -> Option<R> {
-        CURRENT.with(|c| c.get().map(|p| unsafe { f(&*p) }))
-    }
-}
-
 /// 子 viewport 的 UI closure（egui 回调借用主 app，主线程内当帧有效）。
 type UiCb = Rc<RefCell<Box<dyn FnMut(&mut egui::Ui)>>>;
 
@@ -78,8 +54,6 @@ impl DaozaiApp {
     /// 消费 egui 的 viewport 请求：新建或更新子窗口。
     fn drain_viewports(&mut self) {
         let reqs = VIEWPORT_REQ.with(|q| std::mem::take(&mut *q.borrow_mut()));
-        static DC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let dc = DC.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         for (id, window, cb) in reqs {
             if self.sub_ids.contains_key(&id) {
                 if let Some(&wid) = self.sub_ids.get(&id) {
@@ -100,35 +74,28 @@ impl DaozaiApp {
         }
     }
 
-    /// 主窗口绘制一帧。必须在 about_to_wait 的事件循环上下文中调用：
-    /// show_viewport_immediate 的回调会 create_window，在 RedrawRequested handler 内会重入死锁。
-    fn draw_main(&mut self, el: &ActiveEventLoop) {
-        static FC: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let fc = FC.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    /// 主窗口绘制一帧。在 about_to_wait 的事件循环上下文中调用，
+    /// 避免在 RedrawRequested handler 内创建子窗口造成重入死锁。
+    fn draw_main(&mut self) {
         let Some(w) = self.window.as_ref() else { return };
         let origin = w.inner_position().map(|p| (p.x as f32, p.y as f32)).unwrap_or((0.0, 0.0));
         let ppp = self.runtime.as_ref().unwrap().egui_ctx.pixels_per_point();
         let params = build_glass_params(ppp);
         let input = { let w = self.window.as_ref().unwrap(); self.runtime.as_mut().unwrap().take_input(w) };
         let window = self.window.as_ref().unwrap();
-        event_loop_context::with(el, || {
-            let rt = self.runtime.as_mut().unwrap();
-            let sh = self.shell.as_mut().unwrap();
-            let _: FrameStats = rt.render(window, origin, &params, input, |_ctx, ui| sh.draw(ui));
-        });
+        let rt = self.runtime.as_mut().unwrap();
+        let sh = self.shell.as_mut().unwrap();
+        let _: FrameStats = rt.render(window, origin, &params, input, |_ctx, ui| sh.draw(ui));
         self.drain_viewports();
         // 不可见子窗口直接绘制（#5229）
         let invisible: Vec<WindowId> = self.subs.iter()
             .filter(|(_, s)| s.window.is_visible() != Some(true))
             .map(|(id, _)| *id).collect();
-        for wid in invisible { self.render_sub_direct(el, wid); }
+        for wid in invisible { self.render_sub_inner(wid); }
     }
 
     /// 绘制子窗口一帧（RedrawRequested 与"不可见窗口直接绘制"共用）。
-    fn render_sub_direct(&mut self, el: &ActiveEventLoop, wid: WindowId) {
-        event_loop_context::with(el, || self.render_sub_inner(wid));
-    }
-    fn render_sub(&mut self, _el: &ActiveEventLoop, wid: WindowId) {
+    fn render_sub(&mut self, wid: WindowId) {
         self.render_sub_inner(wid);
     }
     fn render_sub_inner(&mut self, wid: WindowId) {
@@ -144,7 +111,7 @@ impl DaozaiApp {
 }
 
 impl ApplicationHandler<()> for DaozaiApp {
-    fn user_event(&mut self, el: &ActiveEventLoop, _event: ()) {
+    fn user_event(&mut self, _el: &ActiveEventLoop, _event: ()) {
         // egui 后台线程请求重绘：消费 viewport 队列并请求重画。
         self.drain_viewports();
         if let Some(w) = self.window.as_ref() { w.request_redraw(); }
@@ -192,37 +159,27 @@ impl ApplicationHandler<()> for DaozaiApp {
     }
 
     fn new_events(&mut self, el: &ActiveEventLoop, cause: winit::event::StartCause) {
-        // WaitUntil 到期时 winit 调 new_events（不是 about_to_wait）——驱动每帧绘制。
+        // WaitUntil 到期时 winit 调 new_events；绘制统一放在 about_to_wait，
+        // 避免同一帧画两次（这里只维持 16ms 的唤醒节拍）。
         if matches!(cause, winit::event::StartCause::ResumeTimeReached { .. })
             || matches!(cause, winit::event::StartCause::Init) {
             self.drain_viewports();
-            self.draw_main(el);
             el.set_control_flow(ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_millis(16)));
         }
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // viewport 请求两处都消费，确保不漏（about_to_wait / RedrawRequested 时机不同）。
         self.drain_viewports();
-        self.draw_main(el);
-        let mut earliest: Option<Duration> = None;
-        if let (Some(w), Some(r)) = (self.window.as_ref(), self.runtime.as_ref()) {
-            let d = r.repaint_delay;
-            earliest = Some(d);
-            if d.is_zero() || d < Duration::from_millis(1) { w.request_redraw(); }
-        }
+        self.draw_main();
         for sub in self.subs.values() {
             sub.window.request_redraw();
         }
         // 固定 60fps 的 WaitUntil：确保 about_to_wait 每帧都被调用（Poll 模式下 winit
-        // 不调 about_to_wait，导致 viewport 队列无人消费）。稳定后可改为按 earliest 睡眠。
-        let _ = earliest;
+        // 不调 about_to_wait，导致 viewport 队列无人消费）。
         el.set_control_flow(ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_millis(16)));
     }
 
-    fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, _el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_some_and(|w| w.id() == id) {
             let repaint = self.runtime.as_mut().map(|r| {
                 let w = self.window.as_ref().unwrap();
@@ -246,7 +203,7 @@ impl ApplicationHandler<()> for DaozaiApp {
             let repaint = sub.renderer.on_event(&sub.window, &event);
             if repaint { sub.window.request_redraw(); }
         }
-        if let WindowEvent::RedrawRequested = event { self.render_sub(el, id); }
+        if let WindowEvent::RedrawRequested = event { self.render_sub(id); }
     }
 }
 

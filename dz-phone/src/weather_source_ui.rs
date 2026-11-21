@@ -68,7 +68,7 @@ pub(crate) struct State {
     tested:Option<Client>,
     testing:Option<Receiver<Result<Client,Error>>>,
     test_error:Option<Error>,
-    focus_city:bool,
+    pub(crate) focus_city:bool,
     draft_gate:Option<Arc<AtomicBool>>,
     search:Option<Receiver<Result<qweather::Search,Error>>>,
     geo_credits:Vec<String>,
@@ -324,11 +324,19 @@ impl App {
                 if input.changed()||input.clicked()||before!=self.weather_source.province {open_cmd=Some(egui::SetOpenCommand::Bool(true));}
                 if arrow.clicked(){open_cmd=Some(egui::SetOpenCommand::Toggle);}
                 if input.has_focus()||egui::Popup::is_id_open(ui.ctx(),popup){
+                    // egui 0.35 的 Popup 不再替调用方处理上下键/回车选中，必须自己做。
                     if keys.0 {
-                        if egui::Popup::is_id_open(ui.ctx(),popup){self.weather_source.highlighted=(self.weather_source.highlighted+1).min(self.weather_source.results.len().saturating_sub(1));}
+                        if !self.weather_source.results.is_empty() {
+                            self.weather_source.highlighted=(self.weather_source.highlighted+1).min(self.weather_source.results.len()-1);
+                        }
                         open_cmd=Some(egui::SetOpenCommand::Bool(true));
                     }
                     if keys.1{self.weather_source.highlighted=self.weather_source.highlighted.saturating_sub(1);}
+                    if keys.2 && !self.weather_source.results.is_empty() {
+                        let chosen=self.weather_source.results[self.weather_source.highlighted].clone();
+                        self.weather_source.choose_city(chosen);
+                        open_cmd=Some(egui::SetOpenCommand::Bool(false));
+                    }
                 }
             }
             input.union(arrow)

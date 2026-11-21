@@ -1085,8 +1085,6 @@ pub struct App {
     fluid_title:String,
     /// 悬浮云每帧刷新的颜色纹理：低分辨率交给 GPU 双线性插值，避免每帧生成上万顶点。
     fluid_tex:Option<egui::TextureHandle>,
-    /// wgpu 目标格式；只有兼容渲染（Direct3D 12）后端才有，液态玻璃皮肤据此决定走不走 GPU。
-    pub wgpu_format:Option<u32>, // migration stub: old wgpu::TextureFormat
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
     /// 液态玻璃的重绘档位：0=不管（交给原有节拍）、1=60fps（有动画/悬停/拖动）、
@@ -1390,10 +1388,7 @@ impl App {
             seek_drag:anim::Spring::new(0.0,1000.0,1.0),
             ctl_gpu:[false; CTL_N],
             ctl_down:false,
-            // 排障开关：`DAOZAI_OPEN_SETTINGS=1` 启动即打开设置页。
-            // 设置页是第二个 OS 窗口（独立 surface），透明合成出问题时只有它能复现，
-            // 有了这个开关就能在无人点击的情况下自动回归。
-            settings_open:std::env::var_os("DAOZAI_OPEN_SETTINGS").is_some(),
+            settings_open:false,
             settings_window:std::sync::Arc::new(std::sync::Mutex::new(crate::settings_window::State::load())),
             displays:Vec::new(),
             browser_at_top:false,
@@ -1412,7 +1407,6 @@ impl App {
             subpage:None,
             task_dialog:None,
             fluid_tex:None,
-            wgpu_format:None,
             liquid_k:1.0,
             glass_tick:0,
             pill_still_since:None,
@@ -2418,31 +2412,12 @@ impl App {
         self.current_hour=env.hour();
         self.system_idle=env.idle_seconds;
         self.dt = dt;
-        // 液态玻璃的背景来自实时抓屏：动态壁纸/视频一直在动，但 Windows 下 vsync 关闭、
-        // 重绘完全由输入事件驱动。鼠标不动时 egui 不重绘 → prepare 不调用 → 抓屏停止，
-        // 玻璃背景就「冻住」了，看起来正好像卡顿。所以需要持续喂重绘。
-        //
-        // **不在主循环里调 request_repaint_after**：那个 API 在 Windows 的 UI 循环内
-        // 会自我触发连续重绘（emilk/egui#3109），Duration 被忽略、帧率锁死 60fps。
-        // 这里只把期望节拍写给控制线程（见 `set_repaint_ms` 与 main.rs 的 repaint 线程）：
-        // 有动画/背景在变 → 16ms(60fps)；纯静止 → 33ms(30fps)。
-        if self.settings.skin == model::Skin::Liquid && self.wgpu_format.is_some() {
-            // 需要持续喂重绘（背景实时抓屏），但**不能在这里每帧调
-            // request_repaint_after**：egui 的 delay 从「现在」算，而请求要到帧末才被
-            // 处理，处理时已扣掉一帧时间 → 实际等待 = 设定值 − 帧周期，形成正反馈，
-            // 设 30ms 实测仍是 58fps（trace 里 delay 恒 13.6ms = 30.3 − 16.7）。
-            // 做法：只把「快/慢」记进 self.glass_tick，由 out.repaint_after 统一调度
-            // （main.rs 的 schedule_repaint 会补回 predicted_dt，不会自激）。
+        if self.settings.skin == model::Skin::Liquid {
             // 桌面拓扑检测放在这里（而不是只放在抓屏路径）：切显示模式时岛仔多半
             // 是收起态、根本不抓屏，只在抓屏时检测会整段错过 —— 展开后仍用旧拓扑
-            // 的底片，玻璃直接花掉。内部自带 ~100ms 降频，开销可忽略。
+            // 的背景，玻璃直接花掉。内部自带 ~100ms 降频，开销可忽略。
             crate::wgc::poll_topology();
-            // 换分辨率自动重启（实验开关，仅零拷贝）：延迟到桌面稳定后走标准重启
-            // 流程（保存窗口/拉新进程/释放单实例锁），同时重建 D3D11+D3D12 device，
-            // 绕开零拷贝独有的 device-lost 重建风暴。默认关，行为不变。
-            if crate::wgc::take_auto_restart_request() {
-                self.pending.push(Cmd::RestartApp);
-            }
+            // 液态玻璃的背景来自实时抓屏，有动画/悬停/拖动时要保持高节拍。
             self.glass_tick = if self.glass_morph > 0.01
                 || self.ctl_down
                 || env.cursor.is_some_and(|p| win.contains(p))
@@ -2645,6 +2620,19 @@ impl App {
             self.music_volume_open=false;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && self.is_editing() {
+            // egui 0.35 的 DragValue 会把键入值立即写回；这里用聚焦时快照恢复旧语义。
+            if self.settings_editing {
+                let snapshot_id = egui::Id::new("settings-edit-snapshot");
+                if let Some((field_id, before)) = ctx.data(|data| {
+                    data.get_temp::<(egui::Id, crate::model::Settings)>(snapshot_id)
+                }) {
+                    ctx.data_mut(|data| data.remove::<(egui::Id, crate::model::Settings)>(snapshot_id));
+                    // 清掉 DragValue 缓存的编辑文本，否则下一帧又会把键入值写回来。
+                    ctx.data_mut(|data| { data.remove_temp::<String>(field_id); });
+                    self.settings = before;
+                    self.settings.save();
+                }
+            }
             self.cancel_edit();
         }
         if (!self.is_editing() || self.todo_choosing) && page_hover && self.open && self.reveal > 0.95 {
@@ -2975,10 +2963,10 @@ impl App {
         // 收起深度休眠（设置项可关）：收起 + 无动画 + 鼠标不在岛上（留 24px 余量）
         // + 无通知/吐司 + 无媒体播放，持续 2 分钟 → 整条管线降到 1Hz
         // （抓屏/玻璃/时钟文字都够用）。实测它只省电不省内存——内存大头在
-        // D3D12 抓屏管线本身，所以留了开关。任何输入事件都会让 egui 立即重绘，
+        // 抓屏管线本身，所以留了开关。任何输入事件都会让 egui 立即重绘，
         // 悬停/点击的唤醒是即时的；媒体/通知状态变化最多 1 秒内被发现并回升到 30/60fps。
         let pill_still=pill_still(PillStillInput{
-            liquid:self.settings.skin==model::Skin::Liquid && self.wgpu_format.is_some(),
+            liquid:self.settings.skin==model::Skin::Liquid,
             open:self.open, cursor_far, transitioning, ambient, lyric_scrolling,
             toast:self.toast.is_some(), media:self.media.playing,
             notice:self.notice.is_some(), hud:self.hud_notice.is_none(),

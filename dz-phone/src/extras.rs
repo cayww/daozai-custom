@@ -3454,6 +3454,7 @@ impl App {
     }
     /// 「提醒时段」二级页：提醒时段起止、午休开关、午休起止（15 分钟一档），喝水和久坐共用。
     fn health_time_page(&mut self, c: &Card) {
+        let edit_snapshot = self.settings.clone();
         let row_y = |i: usize| 38.0 + i as f32 * 22.0;
         for i in 1..4 {
             c.fill(
@@ -3510,6 +3511,7 @@ impl App {
                 &format!("hour-{i}"),
             );
             if field.gained_focus() {
+                note_number_edit_focus(c, ("health-number", format!("hour-{i}")), &edit_snapshot);
                 self.pending.push(Cmd::Focus);
             }
             self.settings_editing |= field.has_focus();
@@ -3582,6 +3584,7 @@ impl App {
                 &format!("lunch-{i}"),
             );
             if field.gained_focus() {
+                note_number_edit_focus(c, ("health-number", format!("lunch-{i}")), &edit_snapshot);
                 self.pending.push(Cmd::Focus);
             }
             self.settings_editing |= field.has_focus();
@@ -3611,9 +3614,10 @@ fn island_number_field(
     value: egui::DragValue<'_>,
     id: impl std::hash::Hash + std::fmt::Debug,
 ) -> egui::Response {
+    let salt_id = egui::Id::new(&id);
     let mut ui = egui::Ui::new(
         c.ui.ctx().clone(),
-        egui::Id::new(id),
+        salt_id,
         egui::UiBuilder::new()
             .layer_id(c.ui.layer_id())
             .max_rect(rect)
@@ -3632,10 +3636,28 @@ fn island_number_field(
         .insert(egui::TextStyle::Body, c.font(11.0, W::Bold));
     ui.style_mut().explanation_tooltips = false;
     ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-    crate::quota_ui::bar_tooltip(
-        ui.put(rect, value.update_while_editing(false)),
-        "点击输入数值".into(),
-    )
+    let response = ui.put(rect, value.update_while_editing(false));
+    // 记录 DragValue 真正使用的 id（Ui::put 还会套一层 child scope），供 Esc/步进清理用。
+    c.ui.ctx().data_mut(|data| {
+        data.insert_temp(salt_id.with("widget-id"), response.id);
+    });
+    crate::quota_ui::bar_tooltip(response, "点击输入数值".into())
+}
+/// 数字框聚焦时记下整份设置快照；Esc 取消输入时由 App 恢复（0.35 会立即写回键入值）。
+fn note_number_edit_focus(c: &Card, field_id: impl std::hash::Hash + std::fmt::Debug, snapshot: &crate::model::Settings) {
+    let widget_id = c.ui.ctx().data(|data| data.get_temp::<egui::Id>(egui::Id::new(&field_id).with("widget-id")));
+    if let Some(widget_id) = widget_id {
+        c.ui.ctx().data_mut(|data| {
+            data.insert_temp(egui::Id::new("settings-edit-snapshot"), (widget_id, snapshot.clone()));
+        });
+    }
+}
+/// 点击加减按钮后清掉 DragValue 缓存的编辑文本，避免下一帧又把旧输入写回、覆盖步进结果。
+fn clear_number_edit(c: &Card, id: impl std::hash::Hash + std::fmt::Debug) {
+    let widget_id = c.ui.ctx().data(|data| data.get_temp::<egui::Id>(egui::Id::new(&id).with("widget-id")));
+    if let Some(widget_id) = widget_id {
+        c.ui.ctx().data_mut(|data| { data.remove_temp::<String>(widget_id); });
+    }
 }
 /// 加减器：[−] 可输入数值 [+]，右缘对齐到 right。
 fn stepper(
@@ -3669,6 +3691,7 @@ impl App {
             c.text(44.0, 44.0, help, 10.5, W::Regular, theme::GRAY, H::Left);
         }
         let before = format!("{:?}", self.settings);
+        let edit_snapshot = self.settings.clone();
         self.settings_editing = false;
         match self.settings_category {
             0 => {
@@ -3751,10 +3774,14 @@ impl App {
                         };
                         let (d, field) =
                             stepper(&wc, 370.0, row_y(i), value, &format!("water-{i}"));
-                        if field.gained_focus() {
-                            self.pending.push(Cmd::Focus);
+                    if field.gained_focus() {
+                        note_number_edit_focus(c, ("health-number", format!("water-{i}")), &edit_snapshot);
+                        self.pending.push(Cmd::Focus);
+                    }
+                    self.settings_editing |= field.has_focus();
+                    if d != 0 {
+                        clear_number_edit(&wc, ("health-number", format!("water-{i}")));
                         }
-                        self.settings_editing |= field.has_focus();
                         match i {
                             0 => {
                                 self.water.goal_ml = ((liters * 1000.0).round() as i32 + d * 250)
@@ -3795,6 +3822,7 @@ impl App {
                         .suffix(" 分钟");
                     let (d, field) = stepper(&sc, 370.0, row_y(0), value, "sit");
                     if field.gained_focus() {
+                        note_number_edit_focus(c, ("health-number", "sit"), &edit_snapshot);
                         self.pending.push(Cmd::Focus);
                     }
                     self.settings_editing |= field.has_focus();
@@ -3878,14 +3906,17 @@ impl App {
                         ("focus-duration", i),
                     );
                     if field.gained_focus() {
+                        note_number_edit_focus(c, ("focus-duration", i), &edit_snapshot);
                         self.pending.push(Cmd::Focus);
                     }
                     self.settings_editing |= field.has_focus();
                     if setting_button(c, 131.0, y, 27.0, "−", false, &format!("focus-minus-{i}"))
                     {
+                        clear_number_edit(c, ("focus-duration", i));
                         *value = value.saturating_sub(1).max(1);
                     }
                     if setting_button(c, 255.0, y, 27.0, "+", false, &format!("focus-plus-{i}")) {
+                        clear_number_edit(c, ("focus-duration", i));
                         *value = (*value + 1).min(max);
                     }
                 }
@@ -4186,41 +4217,15 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                     settings_hint(ui,"展开态看展开后的控件玻璃；收起态看胶囊常驻条的玻璃");
                                 ui.separator();
                                 let before=app.settings.liquid_prefer_dgpu;
-                                setting_row(ui,"优先独立显卡","独显渲染液态玻璃，需开启兼容渲染(D3D 12)，零拷贝也需要独显，重启生效",&mut app.settings.liquid_prefer_dgpu);
+                                setting_row(ui,"优先独立显卡","让液态玻璃尽量使用独显，重启生效",&mut app.settings.liquid_prefer_dgpu);
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
-                                settings_hint(ui,"混合显卡机器建议开启：同卡才能零拷贝、也更省内存");
+                                settings_hint(ui,"混合显卡机器建议开启；当前 D3D11 栈的选卡策略仍在完善");
                                 // 与 D3D12 那处一致：改了启动期生效的开关就直接给「立即重启」。
                                 // 启动值由 main.rs 写进环境变量（建窗前快照），无需额外字段。
                                 let dgpu_boot=std::env::var("DAOZAI_LIQUID_PREFER_DGPU").map(|v|v!="0").unwrap_or(app.settings.liquid_prefer_dgpu);
                                 if app.settings.liquid_prefer_dgpu!=dgpu_boot {
                                     ui.horizontal(|ui|{
                                         ui.label(egui::RichText::new("优先独显重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));
-                                        if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
-                                    });
-                                }
-                                ui.separator();
-                                // spike 实验：零拷贝抓屏（去掉 Map(READ) CPU 同步读回）。
-                                // 默认关闭；出错可随时关掉退回旧路径，方便 A/B 对比。
-                                let before=app.settings.liquid_gpu_share;
-                                setting_row(ui,"零拷贝抓屏（实验）","玻璃背景不走 CPU 读回，降低卡顿；异常时请关闭",&mut app.settings.liquid_gpu_share);
-                                if before!=app.settings.liquid_gpu_share {app.settings.save();}
-                                settings_hint(ui,"仅液态皮肤 + 兼容渲染(D3D12) 生效，重启后生效；非液态皮肤无影响");
-                                let share_boot=std::env::var("DAOZAI_LIQUID_GPU_SHARE").map(|v|v!="0").unwrap_or(app.settings.liquid_gpu_share);
-                                if app.settings.liquid_gpu_share!=share_boot {
-                                    ui.horizontal(|ui|{
-                                        ui.label(egui::RichText::new("零拷贝重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));
-                                        if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
-                                    });
-                                }
-                                // 换分辨率自动重启（零拷贝专用）：detector 在 wgc，走 Cmd::RestartApp。
-                                let before_restart=app.settings.liquid_auto_restart;
-                                setting_row(ui,"切换分辨率/显示器模式后自动重启","零拷贝专属：切换分辨率或显示器模式（复制/扩展/仅单屏）约 2 秒后自动重启一次，避免玻璃卡住、闪烁、背景定格；这不是闪退，重启后自动恢复",&mut app.settings.liquid_auto_restart);
-                                if before_restart!=app.settings.liquid_auto_restart {app.settings.save();}
-                                settings_hint(ui,"建议零拷贝用户开启：不开时切换分辨率可能导致玻璃卡住/背景不更新（需手动重启岛仔）；仅零拷贝生效，重启时岛仔短暂消失属正常");
-                                let restart_boot=std::env::var("DAOZAI_AUTO_RESTART_ON_RESOLUTION").map(|v|v=="1").unwrap_or(app.settings.liquid_auto_restart);
-                                if app.settings.liquid_auto_restart!=restart_boot {
-                                    ui.horizontal(|ui|{
-                                        ui.label(egui::RichText::new("自动重启开关重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));
                                         if ui.button("立即重启").clicked(){app.pending.push(crate::app::Cmd::RestartApp);}
                                     });
                                 }

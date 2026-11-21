@@ -1002,15 +1002,9 @@ python <skill>/scripts/ui_probe.py click --x 1293 --y 72
 | 变量 | 作用 |
 |---|---|
 | `DAOZAI_DATA_DIR=<dir>` | **必带**，否则读写 `%APPDATA%\Daozai` 的正式设置 |
-| `DAOZAI_LIQUID_FREEZE_BG=1` | 冻结背景 + 解除捕获排除（截图/录屏可见），预热 24 帧后自动切 |
-| `DAOZAI_LIQUID_FLAT=1` | 玻璃内原样输出背景（查抓屏对齐） |
-| `DAOZAI_LIQUID_FLAT=2` | 20px 网格 + AA 细线（查折射位移/色散） |
-| `DAOZAI_LIQUID_FORCE_LUMA=0.2` | 强制背景亮度（验证深色材质） |
-| `DAOZAI_LIQUID_NO_EXCLUDE=1` | 关闭 WDA 排除 |
-| `DAOZAI_LIQUID_DUMP=1` | 前 8 帧写 PPM |
-| `DAOZAI_LIQUID_MORPH_FORCE=1` | 把 morph 钉成常数，做确定性 A/B |
-| `DAOZAI_LIQUID_CAPTURE_EVERY=<1~4>` | 抓屏节流，默认 1；设 2 省 34% CPU |
-| `DAOZAI_SETTLE_MS=<毫秒>` | 覆盖切换显示模式后的稳定期（优先级最高，0~30000）。不设则用自学习值（首次 500） |
+| ~~`DAOZAI_LIQUID_FREEZE_BG` / `FLAT` / `NO_EXCLUDE` / `DUMP` / `MORPH_FORCE` / `CAPTURE_EVERY`~~ | 旧 wgpu 栈调试项；随孤立文件 `gpu_glass.rs` 删除（见 §7.0zzg.16） |
+| `DAOZAI_LIQUID_FORCE_LUMA=0.2` | 强制背景亮度（验证深色材质）——**保留**，现行 stub 仍读取 |
+| ~~`DAOZAI_SETTLE_MS`~~ | 已删除；稳定期固定 1000ms（见 §7.0zzg.16） |
 
 液态玻璃设置项（`settings.txt`，界面在「外观 → 大小」下方，仅液态皮肤显示）：
 
@@ -1025,10 +1019,9 @@ python <skill>/scripts/ui_probe.py click --x 1293 --y 72
 | 形变强度 | `liquid_morph` | 0~3 | 1.0 |
 | **优先独立显卡** | `liquid_prefer_dgpu` | 0/1 | 1（开） |
 
-> `liquid_prefer_dgpu` 是**启动期**生效（wgpu 适配器只选一次），改后必须重启岛仔。
+> `liquid_prefer_dgpu` 是**启动期**设置，改后需重启；研究分支已移除 wgpu 选卡逻辑，新 D3D11 栈尚未实现该偏好（见 §7.0zzg.16 遗留项）。
 >
-> 稳定期学习值存在 `data\diagnostics\settle-learned.txt`（纯数字，毫秒）。删掉它即回到 500ms 重新学。
-> 关掉 = 回到 eframe/wgpu 默认策略（混合显卡机器可能落核显，省电但更占内存）。
+> 稳定期曾使用自学习值（`settle-learned.txt`），已移除；现在固定 1000ms。
 
 日志关键字（`data\diagnostics\liquid-glass.log`）：
 
@@ -1575,3 +1568,21 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **根因**：`glass.hlsl::sample_px` 的 `.bgr` 交换错误。照搬独立工程 egui-directx11 的写法（那套 pipeline 手动上传 BGRA 字节，需交换）；新栈 bg_tex 来自 WGC CopyResource，D3D11 SRV 采样 B8G8R8A8 已映射成正确 RGBA 语义（.r=红），再交换就把 RGB 翻一次 → 暖色(R高B低)变青蓝(B高R低)。
 - 修法：`.bgr` → `.rgb`（commit 待填）。A/B 实证：改后用户确认"这下正常了"。shader 重编译 bin sha `a4fc18b5d7c74809`，release exe sha 见速览。
 - 教训：移植 shader 时，采样通道语义取决于纹理来源 pipeline（手动上传 vs CopyResource），不能照抄 swizzle。
+
+
+### 7.0zzg.16 清调试残留 + 删 D3D12/wgpu/WGSL 旧栈（2026-11-21 17:48–18:20，用户"继续审查重构"）
+- **先调查后动手**：`gpu_glass.rs` 是孤儿文件（`lib.rs` 用 `#[path]` 把 `gpu_glass` 指向 stub），1834 行 WGSL/wgpu/D3D12 零拷贝从未参与编译；`graphics.rs` 只在非 Windows 分支运行；`wgc.rs::grab()/grab_shared()` 只被孤儿文件调用，现行 D3D11 抓屏在 `d3d11/wgc_capture.rs`。vendor 的 egui/wgpu 补丁未生效。唯一生效的 `[diag]` 是 `d3d11/runtime.rs` 的 `DAOZAI_GLASS_DIAG`。
+- **删除**：`src/gpu_glass.rs`、`src/graphics.rs`；`wgc.rs` 约 700 行旧栈（SharedFrame/SharedHandle/NT handle+keyed mutex、adapter_by_luid、grab/grab_shared、自动重启、抓屏 staging）；`DAOZAI_GLASS_DIAG`、`OPEN_SETTINGS`、`OUTLINE_TEST`、`TRAY_DUMP`、`DCOMP`、零拷贝与自动重启设置桥接及两组 UI；`wgpu = 24` 直接依赖 + `Win32_Graphics_Direct3D12` feature（`Cargo.lock` -407 行）。
+- **保留**：`gpu_glass_stub.rs` 数据接口（MAX_CTL/Ctl/controls/uniforms/background_luma 含 `DAOZAI_LIQUID_FORCE_LUMA`）、`wgc.rs` 亮度采样+拓扑稳定期与 11 个单测、`DAOZAI_DATA_DIR`、测试/录制/剖析类开关、产品诊断日志。
+- **修正**：`wgpu_format` 占位字段删除后，液态皮肤的 `poll_topology()` 不再被恒为 None 的字段挡住（换分辨率稳定期终于生效）；`winit_runner` 删除未使用且 panic 后留悬垂指针的 unsafe 裸指针 TLS（`event_loop_context`），并去掉同一帧在 `new_events`/`about_to_wait` 双次绘制；删掉 wgpu 依赖后 windows crate 的 `Win32_System_Kernel` feature 显式补回（`SetUnhandledExceptionFilter` 曾靠传递依赖意外启用）。
+- **7 个遗留测试已修复（同日追加）**：①2 个 native 用例改为断言 D3D11+DComp 的矩形窗口区域 + 逐像素 alpha（旧 wgpu 二值轮廓硬裁已整体停用）；②宠物图集 UV 断言改为半纹素内缩 `0.5/144`（commit ac177bb 修白线的预期值）；③设置页数字框用聚焦时设置快照恢复 Esc 取消语义，并在点击 +/- 后清掉 DragValue 缓存文本，避免下一帧把键入值写回覆盖步进（egui 0.35 行为差）；④置物架长路径提示改用 `Tooltip::for_widget(&r).width(900)` + `TextWrapMode::Extend`，不再被 500px 默认宽度截成省略号；⑤和风城市搜索在 0.35 下自己处理上下键/回车选中（Popup 不再代劳），测试里直接驱动省份与显式聚焦，去掉对 headless popup 状态查询的依赖。
+- **验证**：`cargo check --all-targets` 清零错误；`cargo build --release` 成功（2m36s）；`cargo test --lib -- --test-threads=1` **1385 passed / 0 failed / 131 ignored**（全绿，基线 8 failed 全部清零）。研究分支未部署、main 不动。
+- **遗留**：①`liquid_prefer_dgpu` 设置与环境变量保留，但 D3D11 runtime 尚未实现选卡；②设置页「兼容渲染(D3D12)」与液态玻璃配置窗 `render_compat` 门禁仍是迁移残留；③固定 16ms WaitUntil 未用 `repaint_delay`，隐藏态仍跑 60fps；④WGC 帧尺寸变化未重建 `bg_tex`；⑤vendor 旧栈目录（约 4.4MB）未删，作为归档保留。详见审查报告与 docs/research-fence-device-lost.md 后续章节。
+
+
+### 7.0zzg.17 修「新建日程页」无液态玻璃：D3D11 ScissorRect 状态泄漏（2026-11-21 19:49–21:49，用户报「添加日程页控件不显示、背景也没有，仅此页」）
+- **症状**：新建/编辑日程页控件无玻璃透镜、面板无玻璃底，文字压壁纸；**其他所有页正常**。
+- **最终根因**：`egui renderer` 每画一个 mesh 都 `RSSetScissorRects` 到该 mesh 的 clip_rect，且该状态**跨 pass / 跨帧持续有效**。而 `d3d11::runtime::draw_glass` 画全屏玻璃三角形前只重置了 Viewport，**没重置 ScissorRect**，于是玻璃被上一帧 egui 最后一个 mesh 的小 clip 裁切。新建日程表单的最后一个 mesh（TextEdit/按钮）clip 偏小 → 玻璃整层被裁掉 → 透壁纸；其他页最后一个 mesh 的 clip 恰好覆盖面板 → 正常。这解释了「参数全对却仅此页没玻璃」的所有矛盾。
+- **修复**：`draw_glass` 里画三角形前 `ctx.RSSetScissorRects(Some(&[RECT{left:0,top:0,right:win_w,bottom:win_h}]))`；import 补 `Foundation::RECT`。
+- **验证**：编译通过（exe `3603f791f6387af5`），用户实机确认**玻璃已回来**。按用户要求未跑全量测试。
+- **排查弯路（留痕）**：先误判 125% 缩放控件 y 翻转基准（`inner_size().height` 270 vs `extra[2]` 337.5）——坐标验算虽合理但没有实机效果，因翻转只影响控件、解释不了「背景也没有」。随后用运行时诊断证实 app 发布/bounds/crect/cbuffer/egui 形状/RT 尺寸全部正确；最后靠「shader 全屏染红编辑页仍透明」锁定问题在 GPU 状态而非参数，顺藤摸瓜找到 scissor 泄漏。染红/棋盘/日志等临时诊断代码已全部删除，shader bin 已还原。

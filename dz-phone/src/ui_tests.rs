@@ -3940,7 +3940,8 @@ fn mascot_atlas_respects_visibility_and_skin_switches(){
             }).expect("新表情应画在常驻岛上");
             assert!(h.region.contains_rect(drawn.calc_bounds()),"新表情不能撑出岛体");
             // 每个表情单独一张序列图：横向铺满整张，纹理只有一列大小。
-            assert!(drawn.vertices[0].uv.x.abs()<0.001);
+            // 每帧内缩半纹素避开 LINEAR 采样边界（修复精灵边框白线），不是精确 0。
+            assert!((drawn.vertices[0].uv.x-0.5/144.0).abs()<0.001);
             assert_eq!(h.ctx.tex_manager().read().meta(atlas).unwrap().size,[144,1440],"只保留正在播放的表情");
         }
     }
@@ -6299,7 +6300,7 @@ fn hover_tooltips_fit_native_region_and_release_it_after_leaving(){
         h.hover(pointer,0.4);
         let hit_before_tooltip=h.hit;
         h.hover(pointer,1.1);
-        let bounds=find_text_bounds(&h.shapes,&label).expect("悬停后应显示完整提示");
+        let bounds=find_text_bounds(&h.shapes,&label).unwrap_or_else(||panic!("悬停后应显示完整提示：{label}"));
         assert!(h.region.contains_rect(bounds),"悬停提示不能被原生窗口裁掉：{bounds:?} / {:?}",h.region);
         assert_eq!(h.hit,hit_before_tooltip,"提示不应扩大岛体交互区域");
         h.hover(Pos2::new(900.0,250.0),3.0);

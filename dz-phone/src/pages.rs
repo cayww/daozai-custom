@@ -910,7 +910,13 @@ impl App {
             }
             let r = row.hit_drag(x - 31.0, 30.0, 62.0, 78.0, ("shelf", p));
             let show_hint=self.shelf_menu_rect.is_none() && !r.context_menu_opened() && !r.secondary_clicked();
-            if show_hint {r.clone().on_hover_text(p.display().to_string());}
+            if show_hint {
+                // egui 0.35 默认把长路径截断成省略号；置物架提示必须能看到完整路径。
+                let path=p.display().to_string();
+                egui::Tooltip::for_widget(&r).width(900.0).show(move |ui| {
+                    ui.add(egui::Label::new(&path).wrap_mode(egui::TextWrapMode::Extend));
+                });
+            }
             let (h, pr) = row.hover_t(&r);
             let cc = row.faded(a).scaled(x, 66.0, 1.0 - 0.04 * pr);
             if h > 0.01 {

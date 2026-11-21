@@ -9,7 +9,6 @@
 //! - 前台窗口切走（`EVENT_SYSTEM_FOREGROUND`，且不是本进程）时通知主线程收起；
 //! - 原版没有可用的 Esc 收起入口（§2.5），这里也不注册键盘钩子。
 
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -341,11 +340,12 @@ unsafe fn apply_style(hwnd: HWND, editing: bool, raise: bool) {
 /// 但同为 AMD，也有不少机器逐像素透明完全正常（#152 RX 5600、#114 AMD 核显）。所以这里只决定
 /// 「不直接信任系统合成」：画面改由分层窗口逐像素显示（见 `present_frame`），两类机器都不会有黑框，
 /// 边缘也保持抗锯齿；不再像 v0.6.63–0.6.64 那样直接用二值的窗口区域硬裁剪（圆角、肩部全是台阶）。
-// Migration stub: the old wgpu backend enum, kept for the outline-clip logic.
-// The new D3D11/DComp stack never needs outline clipping.
+// 旧 wgpu 后端枚举：D3D11/DComp 栈不再需要轮廓裁剪，仅为历史回归测试保留。
+#[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Backend { Dx12, Vulkan, Gl }
 
+#[cfg(test)]
 fn surface_needs_outline_clip(backend:Option<Backend>,vendor:&str,renderer:&str)->bool {
     if matches!(backend,Some(Backend::Dx12|Backend::Vulkan)){return true;}
     if renderer.to_ascii_lowercase().contains("radeon"){return true;}
@@ -385,16 +385,6 @@ enum Layering {
     Active(crate::layered::Layered),
     /// 读不到 alpha 或系统拒绝：一直用轮廓裁剪。
     Unavailable,
-}
-
-/// 本机验证分层显示的开关：None 不启用；Some(false) 按需要分层的显卡处理；Some(true) 另外假装读回的画面没有透明通道。
-fn outline_test()->Option<bool> {
-    static VALUE:std::sync::OnceLock<Option<bool>>=std::sync::OnceLock::new();
-    *VALUE.get_or_init(||match std::env::var("DAOZAI_OUTLINE_TEST").ok()?.trim().to_ascii_lowercase().as_str() {
-        "alpha"=>Some(false),
-        "opaque"=>Some(true),
-        _=>None,
-    })
 }
 
 pub struct Window {
@@ -488,11 +478,8 @@ impl Window {
         if !hook.is_invalid(){FG_CONTEXT.set(Some(egui_ctx.clone()));}
         // 区域用哨兵值：首帧（包括启动即隐藏的空区域）也必须真正调用 SetWindowRgn，
         // 否则整块透明画布会挡住下层程序的点击。
-        let backend:Option<Backend>=None; // migration: D3D11 stack has no wgpu render state
-        let (vendor,renderer)=(String::new(),String::new()); // D3D11 stack: no GL vendor info
-        // 本机验证用：DAOZAI_OUTLINE_TEST=alpha 按 AMD 等路径处理；=opaque 再假装读回的画面没有透明通道。
-        let opaque_surface=surface_needs_outline_clip(backend,&vendor,&renderer) || outline_test().is_some();
-        if opaque_surface{glass_diagnostic(&format!("渲染兼容：{vendor} {renderer} {backend:?}，不直接信任系统透明合成，首帧前先按轮廓裁剪"));}
+        // D3D11+DComp 有逐像素 alpha，不需要旧 wgpu 时代的轮廓裁剪兜底。
+        let opaque_surface=false;
         let passive=Arc::new(AtomicBool::new(false));
         let strip=Arc::new(Mutex::new(None));
         watch_drag(hwnd,egui_ctx.clone(),passive.clone(),strip.clone());
@@ -544,11 +531,8 @@ impl Window {
     pub fn present_frame(&mut self,size:[usize;2],rgba:&[u8])->bool {
         if !self.wants_frames(){return false;}
         if matches!(self.layering,Layering::Pending) {
-            // D3D12/兼容后端的 WGSL 硬约束是 alpha=1，读回画面没有可信任的逐像素透明：
-            // 只看画布四角的 alpha 会被 FLAT=2/抓屏范围骗到（四角可能透明），
-            // 一旦误判 real=true 就不套轮廓蒙版，分层窗口直接显示整块矩形画面
-            // —— 棋盘诊断里就是直角矩形 + 外层圆角轮廓。只有显式诊断开关才允许走 real。
-            let real=outline_test()==Some(false) && crate::layered::has_real_alpha(size,rgba);
+            // D3D11+DComp 的交换链有逐像素预乘 alpha；没有旧 wgpu/WGSL 的 alpha=1 约束。
+            let real=crate::layered::has_real_alpha(size,rgba);
             // 还没收到过岛体轮廓时无从补 alpha，先保持轮廓裁剪，等下一帧。
             if !real && self.outline.polygons.is_empty() {return false;}
             match crate::layered::Layered::new() {
@@ -692,7 +676,8 @@ impl Window {
         // 上层另有一张带真实 alpha 的显示窗口负责抗锯齿，硬裁只作用于 owner 的交换链，不会吃掉柔边。
         // DirectComposition 已经有逐像素 alpha，不能再套 SetWindowRgn 硬裁：
         // 窗口区域是二值裁剪，会把非液态皮肤的圆角和文字边缘切出锯齿。
-        let outline_clip=self.opaque_surface && !true;
+        // D3D11+DComp 走逐像素 alpha；旧 wgpu 时代的 SetWindowRgn 二值硬裁已整体停用。
+        let outline_clip=false;
         {
             // 一次性诊断：透明合成走的是哪条路，直接影响圆角是柔边还是硬裁。
             // 排障时先看这一行，比截图猜快得多。
@@ -764,7 +749,7 @@ mod tests {
     static NATIVE_STATE_LOCK:Mutex<()>=Mutex::new(());
 
     #[test]
-    fn opaque_surface_clips_black_background_even_without_system_blur(){
+    fn dcomp_keeps_rect_window_region_even_with_legacy_opaque_flag(){
         let _guard=NATIVE_STATE_LOCK.lock().unwrap_or_else(|e|e.into_inner());
         use windows::Win32::Graphics::Gdi::{GetWindowRgn,PtInRegion};
         for (backend,vendor,renderer) in [
@@ -783,8 +768,8 @@ mod tests {
                 let region=CreateRectRgn(0,0,0,0);
                 GetWindowRgn(hwnd,region);
                 assert!(PtInRegion(region,px(200.0),px(100.0)).as_bool());
-                assert!(!PtInRegion(region,px(10.0),px(10.0)).as_bool(),"兼容后端不能保留画布上的黑色背景：{backend:?} / {vendor} / {renderer}");
-                assert!(!PtInRegion(region,px(81.0),px(61.0)).as_bool(),"圆角外侧必须透出桌面");
+                assert!(PtInRegion(region,px(10.0),px(10.0)).as_bool(),"DComp 路径不再二值硬裁：{backend:?} / {vendor} / {renderer}");
+                assert!(PtInRegion(region,px(81.0),px(61.0)).as_bool(),"圆角柔边由交换链 alpha 负责");
                 assert!(!native.blur);
                 assert!(native.backdrop.is_none(),"轮廓兼容模式不能再启用独立模糊底板");
                 native.update((0.0,0.0,0.0,0.0),(0.0,0.0,0.0,0.0),None,None,None,None,ppp,false,false);
@@ -797,9 +782,9 @@ mod tests {
         }}}}
     }
 
-    /// 兼容后端恢复合并前行为：不使用分层读回窗口，owner 直接按轮廓裁剪显示。
+    /// D3D11+DComp 不走分层读回窗口；owner 用矩形窗口区域 + 逐像素 alpha。
     #[test]
-    fn opaque_surface_stays_on_outline_clip_without_layered_window(){
+    fn dcomp_ignores_legacy_outline_clip_without_layered_window(){
         use crate::app::GlassShape;
         use eframe::egui::{pos2,Rect};
         use windows::Win32::Graphics::Gdi::{CreateRectRgn,DeleteObject,GetWindowRgn,PtInRegion};
@@ -813,12 +798,12 @@ mod tests {
                 let shapes=[GlassShape::Outline(island)];
                 let opaque=[0u8,0,0,255].repeat(w*h);
                 native.update((0.0,0.0,w as f32,h as f32),(80.0,0.0,240.0,60.0),None,None,None,Some(&shapes),1.0,false,false);
-                assert!(!native.wants_frames(),"D3D12 下必须走合并前的 owner 轮廓裁剪，不能启用分层读回");
+                assert!(!native.wants_frames(),"D3D11+DComp 下不走分层读回");
                 assert!(!native.present_frame([w,h],&opaque),"分层读回已停用");
                 assert!(matches!(native.layering,Layering::Pending));
                 let region=CreateRectRgn(0,0,0,0);
                 if GetWindowRgn(hwnd,region).0!=0 {
-                    assert!(!PtInRegion(region,10,150).as_bool(),"画布黑底必须被裁掉");
+                    assert!(PtInRegion(region,10,150).as_bool(),"DComp 逐像素 alpha 下窗口区域保持矩形");
                     assert!(PtInRegion(region,200,30).as_bool(),"岛体内部仍可命中");
                 }
                 let _=DeleteObject(region);

@@ -68,9 +68,6 @@ pub fn spawn_replacement() -> bool {
     let Ok(exe) = std::env::current_exe() else { return false };
     let mut command = std::process::Command::new(exe);
     command.arg("--restart-after").arg(std::process::id().to_string()).env_remove("DAOZAI_TEST_CRASH");
-    // DComp 标记只对「这次 DX12 启动」有意义。继承给重启后的进程会让窗口没有 GDI 表面：
-    // 关掉兼容渲染再点「立即重启」时，新进程走 OpenGL，岛体就完全不显示了。
-    command.env_remove("DAOZAI_DCOMP");
     if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(PathBuf::from)) { command.current_dir(dir); }
     command.spawn().is_ok()
 }

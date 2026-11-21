@@ -37,8 +37,8 @@ memprof = ["dep:dhat"]
 imap = { path = "vendor/imap" }
 imap-proto = { path = "vendor/imap-proto" }
 ureq = { path = "vendor/ureq" }
-# egui/eframe/egui-winit/egui-wgpu/wgpu-hal vendor patches removed for egui 0.35:
-# wgpu is dropped entirely (new stack is winit + egui-directx11/D3D11).
+# egui/eframe/egui-winit vendor patches removed for egui 0.35.
+# The legacy wgpu/D3D12/WGSL stack is gone; rendering is D3D11 + winit only.
 
 [dependencies]
 eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
@@ -72,7 +72,6 @@ eframe = { version = "0.35", default-features = false, features = ["glow", "defa
 ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 clipboard-win = "5.4.3"
-wgpu = { version = "24", default-features = false, features = ["dx12"] }
 memmap2 = "0.9.12"
 # D3D11 自绘栈（从 egui-directx11 移植到 windows 0.58）：winit 事件循环 + egui 平台桥
 egui-winit = { version = "0.35", default-features = false }
@@ -97,6 +96,7 @@ windows = { version = "0.58", features = [
   "Win32_System_RemoteDesktop",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Diagnostics_Debug",
+  "Win32_System_Kernel",
   "Win32_Storage_FileSystem",
   "Win32_Storage_Packaging_Appx",
   "Win32_UI_Input_KeyboardAndMouse",
@@ -121,7 +121,7 @@ windows = { version = "0.58", features = [
   "Win32_Devices_Bluetooth",
   "Devices_Bluetooth", "Devices_Enumeration",
   "Graphics", "Graphics_Capture", "Graphics_DirectX", "Graphics_DirectX_Direct3D11",
-  "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D12",
+  "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11",
   "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
   "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture",
 ] }
