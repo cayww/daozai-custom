@@ -1531,3 +1531,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 渲染栈降级占位：`gpu_glass_stub.rs` + paint_gpu_glass fallback + graphics.rs 简化 + main.rs 删 wgpu_setup 44 行 + native.rs wgpu 存根；真玻璃由独立工程 egui-directx11 HLSL/D3D11 层承担。修 CRLF 噪音，diff 34k→1390 行。
 - 实证：`cargo check` 通过、`cargo build --release` 成功、**实机启动**（岛仔+托盘窗口，截图 `daozai_egui035_migrated.png` 顶部胶囊 11:22/19° 正常渲染；玻璃为纯色 stub 属迁移占位）。
 - 剩余：①测试代码 207 个 cfg(test) 错误（171 处 ctx.run→ctx.run_ui + 36 零散）；②把 WGC+HLSL+DComp 真正接入岛仔替换 stub。main 不动。详见 docs/research-fence-device-lost.md §28。
+
+### 7.0zzg.10 测试代码适配 egui 0.35：77 编译错误清零 + 行为回归修复（2026-11-21 11:31–12:20，接手续做）
+- 背景：前一个 agent（ctx.run→run_ui 转换脚本）余额耗尽，遗留 22 文件未提交改动 + 报告"lib test 应已能编译"。接手实测 `cargo test --lib --no-run` 仍有 **77 个编译错误**，判断过于乐观。
+- 编译修复（77→0，三轮脚本逐类断言命中）：viewport_ui_cb 由 `Fn(&Context)` 改 `Fn(&mut Ui)` 故 `(ui.ctx())`→`(ui)`（53 处）；ColorImage::new→filled（Vec<Color32>）+ source_size + ImageData::Font 变体删除 + Event::MouseWheel.phase + load_svg 双参 + style_mut→all_styles_mut + fonts_mut（has_glyph 需 &mut）+ ctx 引用/作用域。脚本固化在 egui-directx11 `tools/fix_test_compile_egui035.py`、`fix_round2_egui035.py`（commit 本地）。
+- **关键语义回归（探针漏报的 0.31→0.35 行为差）**：① 0.35 移除 `raw_scroll_delta` 改逐帧平滑 `smooth_scroll_delta`，自定义翻页/音量/列表滚动单帧只拿约 10% delta → 翻页失效；新增 `app::raw_scroll_y()` 从 `i.events` 复刻旧 raw 语义，覆盖 app/pages/extras/task_picker 全部 7 处（wheel 测试 11→0 失败）。② theme/style 按 Theme 分离且全局，设置窗口 `set_style` 被降级为 `Ui::set_style` → 浅色主题失效；改 set_theme + set_style_of + `settings_color(ctx.theme())`。③ memory popup API 私有化，用 `Popup::open_id/is_id_open/open_memory/SetOpenCommand` 恢复天气城市下拉（生产功能同步修复）。④ 0.35 RichText 拆多 Text shape，测试 helper 按 y 分组拼回整行匹配。
+- 实证：`cargo check --all-targets` 全过（lib+bin+examples+tests）；`cargo test --lib -- --test-threads=1` 从 **19 failed 降到 8 failed**（1377 passed / 131 ignored）。全程修 CRLF 噪音，diff 34k→420 行。commit `d522521`（35 files +420/-351）。
+- 剩余 8 个：2 个 native 黑底裁剪（glow stub 预期降级）+ 6 个 0.35 深度交互差（DragValue Esc/加号即时生效、tooltip 长路径省略号、qweather ComboBox 独立 viewport 点击），属研究分支后续。main 不动。详见 docs/research-fence-device-lost.md §29。

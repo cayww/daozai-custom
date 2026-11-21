@@ -490,3 +490,32 @@ glass_spike.rs 换成岛仔风格 UI：通知胶囊（`rect_filled`+`rect_stroke
 - 渲染栈接线：把独立工程验证过的 WGC+HLSL+DComp 真正接入岛仔（替换 stub），这是最后一块。
 
 结论：迁移从"可行性验证"进入"实操落地"——主代码已在 egui 0.35 编译+启动，剩余是测试适配与渲染接线两项确定工作。main 分支不动，迁移在 research/egui035-migration 分支。
+
+---
+
+## 二十九、测试代码适配 egui 0.35：编译清零与四类行为回归（2026-11-21 11:31–12:20）
+
+承接 §28（主代码迁移编译通过、实机启动），本轮把遗留的 cfg(test) 从 0.31 迁到 0.35。接手时前 agent 报告"lib test 应已能编译"，实测 `cargo test --lib --no-run` 仍有 **77 个编译错误**。
+
+### 编译层（77→0）
+用三个脚本逐类精准替换并断言命中数（egui-directx11 tools/）：
+1. `migrate_tests_egui035.py`（前 agent 遗留）：平衡括号解析，`ctx.run(raw,|ctx|{CentralPanel...})` → `ctx.run_ui(raw,|ui|{...})`。
+2. `fix_test_compile_egui035.py` + `fix_round2_egui035.py`（本轮）：
+   - `DeferredViewportUiCallback = Fn(&mut Ui)`（0.31 是 `Fn(&Context)`）→ `(viewport.viewport_ui_cb)(ui.ctx())` 全改 `(ui)`，53 处。
+   - `ColorImage::new([w,h], Color32)` → `ColorImage::filled`（0.35 new 收 Vec<Color32>）；`ColorImage{}` 加 `source_size`；`ImageData::Font` 变体删除（raster.rs match arm 删）；`Event::MouseWheel` 加 `phase: TouchPhase::Move`；`load_svg_bytes` 加第 2 参；`ctx.style_mut` → `all_styles_mut`；`fonts` → `fonts_mut`（has_glyph 需 &mut）。
+   - 收尾零散：`ColorImage::filled` 丢 `egui::` 前缀、`show_viewport_immediate` 回调参数序 `|ui,_|`、`eframe::egui` 三级前缀、ctx 作用域/引用。
+3. examples 独立错误：`NativeOptions.vsync` 移除、`Renderer::Wgpu`/`egui_wgpu` 不存在（去 wgpu feature）→ scale_render_probe 删 wgpu 分支。
+
+### 行为回归（探针漏报，最关键部分）
+§26/§27 的 API 探针只验证"能编译"，未验证语义。本轮 19 个运行时失败暴露四类真实 0.31→0.35 行为差：
+
+1. **滚轮 raw→smooth**（11 个失败，最大宗）：0.35 移除 `raw_scroll_delta`，新增逐帧指数平滑 `smooth_scroll_delta`（unprocessed delta 每帧只释放约 9.5%）。岛仔自定义翻页/音量/列表滚动依赖"本帧完整 delta ≥8.0"，平滑后单帧不够 → 翻页失效。修法：新增 `app::raw_scroll_y(ctx)`，从 `ctx.input().events` 里按 unit 换算直接求和（等价旧 raw_scroll_delta.y），覆盖 app.rs(3)/pages.rs(2)/extras.rs(1)/task_picker.rs(1) 共 7 处；"消费"处 `events.retain` 去掉 MouseWheel 避免重复。**修后 wheel 相关 15 个测试全绿**。
+2. **主题 theme/style 分离**（1 个失败）：0.35 把 style 拆 `dark_style`/`light_style`，theme 是全局 Options；设置窗口旧 `ctx.set_style(light)` 被降级为 `Ui::set_style`（只作用于子树）+ `style_of(Dark)` 恒 dark → 浅色主题全失效。修法：设置窗口 `set_theme(ThemePreference)` + `set_style_of(theme, style)`，`settings_color` 改用 `ctx.theme()==Dark` 判断。
+3. **popup memory API 私有化**（3 个失败）：0.35 `memory.open_popup/is_popup_open` 变 pub(crate)，公开替代为 `Popup::open_id/is_id_open/open_memory(SetOpenCommand)`。前一个 agent 把生产代码的 popup 打开逻辑 stub 成空（`let _=&popup;`）、测试断言 stub 成 `assert!(!false)`/`assert!(false)`。全部恢复：天气城市下拉与和风城市下拉的生产功能同步修好（点击输入/箭头/候选选中关闭均恢复）。
+4. **RichText 分片**（3 个失败）：0.35 把一段文本拆成多个 Text shape（"25 分钟"→"25"+" 分钟"，"0.35 秒"→"0.35"+" 秒"），测试按完整字符串精确匹配找不到。新增 `find_text_bounds`/`find_text_click_point` helper（按 y 分组 + x 排序 + 滑动窗口拼接匹配）。
+
+### 实证与剩余
+- `cargo check --locked --all-targets` 全过（lib+bin+examples+tests）；`cargo test --lib -- --test-threads=1` 从 19 failed 降到 **8 failed / 1377 passed / 131 ignored**。
+- 全程修 CRLF 噪音（Python 文本模式写回会 LF↔CRLF 翻转，34 文件 diff 从 ~16k 行降到 420 行）。
+- 源码 commit `d522521`（research/egui035-migration，35 files +420/-351）；工具 commit 在 egui-directx11。main 不动。
+- 剩余 8 个：2 native 黑底裁剪（glow stub 预期，需真 D3D11 渲染层）+ 6 个 0.35 深度交互差（DragValue Esc/加号即时生效与旧延迟提交语义不同、tooltip 长路径省略号截断、qweather ComboBox 独立 viewport 点击路由）。这些是"渲染接线 + 精细交互适配"的后续工作，非架构未知。
