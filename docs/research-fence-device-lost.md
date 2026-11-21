@@ -386,3 +386,20 @@ D. 接受"换分辨率=进程自动重启"——main 现有方案，最可靠。
 
 ### 结论
 HLSL 版现已功能对齐 WGSL 的岛体玻璃 + 刘海形状 + 岛内控件玻璃三大块。剩余工程清单不变（WGC 抓屏接入、eframe→winit、窗口透明、egui 0.31→0.35 适配测试），但这些是**集成工程**，渲染栈核心（光学效果）已全部验证可用。
+
+---
+
+## 二十四、端到端闭环：WGC 实时抓屏 → HLSL 玻璃 → egui，单 device 零拷贝实机跑通（2026-11-21 10:30–10:40）
+
+用户"继续"——把 spike 从静态壁纸接到真实桌面抓屏，补齐整条链路。
+
+### 实证（独立工程 egui-directx11 commit `f71df6e`）
+- 新增 `examples/wgc_capture.rs`：windows 0.62 WGC 轮询式封装（无 async event handler）：
+  - `RoInitialize(RO_INIT_MULTITHREADED)`（关键：缺这步 TryGetNextFrame 拿不到帧）→ `D3D11CreateDevice` 的 DXGI device 经 `CreateDirect3D11DeviceFromDXGIDevice` 包成 WinRT `IDirect3DDevice` → `factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()` + `CreateForMonitor(主屏)` → `Direct3D11CaptureFramePool::CreateFreeThreaded` + `CreateCaptureSession` + `StartCapture` + `SetIsBorderRequired(false)`。
+  - 每帧 `TryGetNextFrame()` → `frame.Surface()` → **`surface.cast::<IDirect3DDxgiInterfaceAccess>()` → `GetInterface::<ID3D11Texture2D>()`**（关键：IDirect3DSurface 不能直接 cast 成 ID3D11Texture2D，这是之前 CopyResource 没生效的根因）→ `CopyResource` 到背景纹理。
+- 背景纹理 B8G8R8A8_UNORM（= WGC 帧格式，2560x1440），HLSL `sample_px` 做 `.bgr` 交换 + `quad.x` flag 控制 Y 翻转（WGC top-down vs D3D11 top-left 采样）。
+- `Cargo.toml` windows features 加 Graphics_Capture / Graphics_DirectX / Win32_System_WinRT(_Direct3D11/_Graphics_Capture) 等。
+- **实机截图** `glass_wgc_fixed.png`：状态条绿字 `BG: WGC live desktop (GPU CopyResource, zero readback)`；窗口内玻璃下方是**当前真实桌面**（浅色壁纸、QQ/Chrome 图标、中文文字方向正常）；大玻璃胶囊 + 两块控件玻璃叠加其上，白边高光 + 折射清晰。FPS 227。
+
+### 结论
+端到端架构完全闭环：**单 D3D11 device 上，WGC 实时抓桌面 → GPU CopyResource → HLSL 玻璃层 → egui 控件 → Present，全程零 CPU 回读、零 D3D11↔D3D12 跨 API 共享/fence**。这从根上消除了换分辨率时双 device 失配导致的 device-lost 风暴——当前 main 的"自动重启 workaround"在下一代渲染栈里不再需要。剩余仅是集成工程（eframe→winit、窗口透明/DComp、egui 0.31→0.35 适配与 1100+ 测试回归），无架构级未知。

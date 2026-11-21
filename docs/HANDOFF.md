@@ -1503,3 +1503,8 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 用户"继续完成"——补齐 §7.0zzg.3 的两个省略项。`glass.hlsl` 新增 `notch_sdf`（刘海肩部外扩，fs 里按 notch.z 选用）、`ctrl_glass`（小尺寸透镜，材质补偿/倒角/Beer-Lambert/白边按短边缩放，位移 0.55 折）、`pick_ctl`（后覆盖前命中、0.5px 内缩）；cbuffer 按 WGSL 顺序插入 `crect[13]`/`cprm[13]` = 35×float4 = 560B（与 WGSL 注释字节数完全一致）；FLAT 与正常分支末尾都合成控件玻璃。
 - 实机（`glass_ctl_crop.png`）：大玻璃胶囊内出现两块独立小玻璃卡片（各自圆角/白边/折射），状态条文字清晰 FPS 233。fxc vs/ps_5_0 通过；提交 egui-directx11 `682510c`。
 - 结论：HLSL 版功能已对齐 WGSL 的岛体玻璃+刘海+控件玻璃三大块。剩余仅集成工程（接 WGC、eframe→winit、窗口透明、egui 0.31→0.35 测试回归），光学核心全部验证可用。详见 docs/research-fence-device-lost.md §23。
+
+### 7.0zzg.5 【端到端闭环】WGC 实时抓屏 → HLSL 玻璃 → egui 单 device 零拷贝跑通（2026-11-21 10:30–10:40）
+- 用户"继续"——spike 接真实桌面。新增 `examples/wgc_capture.rs`（windows 0.62 WGC 轮询式，无 async）：`RoInitialize(MTA)`（缺这步 TryGetNextFrame 拿不到帧）→ DXGI device 经 `CreateDirect3D11DeviceFromDXGIDevice` 包 WinRT `IDirect3DDevice` → `factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()` + `CreateForMonitor` → `CreateFreeThreaded` + `StartCapture`；每帧 `TryGetNextFrame` → `Surface` → **`cast::<IDirect3DDxgiInterfaceAccess>()` + `GetInterface::<ID3D11Texture2D>()`**（不能直接 cast，这是之前 CopyResource 无效根因）→ CopyResource。背景纹理 B8G8R8A8 2560x1440，HLSL `.bgr` + `quad.x` Y 翻转 flag。
+- 实机 `glass_wgc_fixed.png`：状态条绿字 `BG: WGC live desktop (GPU CopyResource, zero readback)`；玻璃下方是真实桌面（浅色壁纸+QQ/Chrome 图标+中文文字方向正常），大玻璃胶囊+两块控件玻璃叠加、白边+折射清晰，FPS 227。提交 egui-directx11 `f71df6e`。
+- 结论：**单 D3D11 device 端到端闭环——WGC 抓屏→GPU CopyResource→HLSL 玻璃→egui→Present，零 CPU 回读/零跨 API fence**，根治换分辨率 device-lost（main 的自动重启 workaround 在下一代不再需要）。剩余仅集成工程（eframe→winit、窗口透明/DComp、egui 0.31→0.35 测试回归），无架构级未知。详见 docs/research-fence-device-lost.md §24。
