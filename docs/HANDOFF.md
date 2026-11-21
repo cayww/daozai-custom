@@ -1524,3 +1524,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 用户"继续完成"。精确扫描：`app.rs` 共 10 处变更、`main.rs` 0 处。`raw_scroll_delta` 3 处（L2631读/L2675 input_mut/L3149读）；`ColorImage::new([TEX_W,TEX_H],Color32)` 1 处（L3715）；`fonts(|f|layout_job)`→`fonts_mut` 6 处。**关键例外**：main.rs:387 `fonts(|f|num_galleys_in_cache())` 是只读，0.35 fonts() 仍可用，不改（脚本只重写闭包含 layout_job 的 `.fonts(`）。
 - 工具 `egui-directx11/tools/migrate_egui035.py`（commit `dcb7a0a`/`fde5f17`）：dry-run 打印 before/after，`--apply`/`--out` 写；input_mut 特殊处理（删 raw 保留 smooth）。验证：10 处精确命中、副本重跑 0 变更（幂等）、行数不变、无残留 0.31 API。探针补验 input_mut 写 smooth 与只读 fonts 在 0.35 可编译。
 - 剩余：高版本分支 `--apply` → vendor 0.31→0.35 全套升级 → eframe Frame 替换 → 1100+ 测试回归。脚本+探针已把最易错的 API 变更固化为可重复步骤。详见 docs/research-fence-device-lost.md §27。
+
+
+### 7.0zzg.9 【真搬落地】岛仔主代码迁 egui 0.35 编译通过并实机启动（2026-11-21 10:58–11:25，用户"让你搬啊"）
+- 开 `research/egui035-migration` 分支实搬（commit `675334b`，23 files +799/-659）。vendor patch 移除、egui/eframe/egui_extras 换官方 0.35、去 wgpu feature；应用迁移脚本 + 手修 §26 探针漏报的 10+ 类变化（style_of/all_styles_mut、content_rect、ImeEvent/SizeHint struct variant、TextEdit::Frame::NONE、MouseWheel.phase、Id Hash+Debug、load_svg 3参、popup 状态私有化→stub no-op、eframe App::update→ui、Panel::show(&mut Ui) 等，详见 tools/migrate_egui035.py docstring）。
+- 渲染栈降级占位：`gpu_glass_stub.rs` + paint_gpu_glass fallback + graphics.rs 简化 + main.rs 删 wgpu_setup 44 行 + native.rs wgpu 存根；真玻璃由独立工程 egui-directx11 HLSL/D3D11 层承担。修 CRLF 噪音，diff 34k→1390 行。
+- 实证：`cargo check` 通过、`cargo build --release` 成功、**实机启动**（岛仔+托盘窗口，截图 `daozai_egui035_migrated.png` 顶部胶囊 11:22/19° 正常渲染；玻璃为纯色 stub 属迁移占位）。
+- 剩余：①测试代码 207 个 cfg(test) 错误（171 处 ctx.run→ctx.run_ui + 36 零散）；②把 WGC+HLSL+DComp 真正接入岛仔替换 stub。main 不动。详见 docs/research-fence-device-lost.md §28。

@@ -467,3 +467,26 @@ glass_spike.rs 换成岛仔风格 UI：通知胶囊（`rect_filled`+`rect_stroke
 
 ### 剩余
 真正迁移执行：在高版本分支/副本 `--apply` 本脚本 → vendor egui/eframe/egui-winit/egui-wgpu 0.31→0.35 全套升级 → eframe Frame 依赖替换 → 1100+ 测试回归。属确定工程，脚本+探针已把最易出错的 API 变更固化为可重复、可验证的步骤。main 不动。
+
+---
+
+## 二十八、真正开搬：岛仔主代码迁移 egui 0.35 编译通过并实机启动（2026-11-21 10:58–11:25）
+
+用户"让你搬啊"——停止探针/工具准备，直接在主项目开 `research/egui035-migration` 分支实搬。
+
+### 迁移动作（commit `675334b`，23 files，+799/-659）
+- Cargo.toml 移除 eframe/egui/egui-winit/egui-wgpu/wgpu-hal 的 vendor patch，egui/eframe/egui_extras 换官方 0.35，去掉 eframe `wgpu` feature（新栈不用 wgpu）。
+- 应用 `tools/migrate_egui035.py` 的 raw_scroll_delta(14处跨 app/extras/pages/task_picker)、ColorImage(1)、fonts_mut(9)、popup builder(2)、SidePanel→Panel(1)。
+- **实测发现 §26 探针漏报的大量 API 变化**（脚本 docstring 已补全清单）：style→style_of(Theme::Dark)/all_styles_mut、screen_rect→content_rect、ImeEvent/SizeHint 变 struct variant、TextEdit::frame(Frame::NONE)、MouseWheel 加 phase、Id::new 需 Hash+Debug、load_svg_bytes_with_size 3参、popup 状态 api 私有化（stub 为 no-op）、eframe App::update→ui(&mut Ui,frame)、NativeOptions 去 vsync、set_root_viewport_scale 移除、Panel::show(&mut Ui)。逐个手修。
+- 渲染栈降级占位：`gpu_glass_stub.rs`（保留 12 个外部符号的空实现）、`paint_gpu_glass` fallback 纯色、`graphics.rs` 简化为 glow launch、main.rs 删 44 行 wgpu_setup 块、native.rs wgpu 类型存根。真玻璃由独立工程 egui-directx11 的 HLSL/D3D11 层承担。
+- 修了 3 个 CRLF→LF 噪音文件（extras.rs/ui_tests.rs/updates.rs），diff 从 34k 行降到 1390 行。
+
+### 实证
+- `cargo check`（lib+bin）通过；`cargo build --release` 成功（3m35s）。
+- **实机启动**：`daozai.exe` 运行无报错，`EnumWindows` 检测到 `岛仔`+`岛仔托盘` 窗口；截图 `daozai_egui035_migrated.png`：屏幕顶部灵动岛胶囊（11:22、19°、图标）正常渲染在桌面。玻璃为纯色 stub（迁移占位），功能降级但主体 UI 正常。
+
+### 剩余
+- **测试代码 207 个 cfg(test) 编译错误**：171 处 `ctx.run(raw,|ctx|...)` → 0.35 `ctx.run_ui(raw,|ui|...)`（闭包体需适配 &mut Ui，嵌套 CentralPanel 结构），另 36 处零散（Event.phase、ImageData::Font、ColorImage.source_size 等）。测试 harness 适配是明确的下一块工作。
+- 渲染栈接线：把独立工程验证过的 WGC+HLSL+DComp 真正接入岛仔（替换 stub），这是最后一块。
+
+结论：迁移从"可行性验证"进入"实操落地"——主代码已在 egui 0.35 编译+启动，剩余是测试适配与渲染接线两项确定工作。main 分支不动，迁移在 research/egui035-migration 分支。
