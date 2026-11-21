@@ -370,20 +370,20 @@ impl App {
                 let row=col.faded((1.0-distance.abs()*0.35).clamp(0.0,1.0));
                 let font=row.font(if active {12.0}else{10.0},if active {W::Semibold}else{W::Regular});
                 // 音乐页歌词自动折行：先按阅读顺序分行再逐行 RTL 转换，避免先显示句尾。
-                let text=crate::rtl_text::display_wrapped(&line.text,132.0*c.s,
+                let text=crate::rtl_text::display_wrapped(&line.text,132.0,
                     |s|row.painter.layout_no_wrap(s.to_owned(),font.clone(),ink).size().x).into_owned();
-                let mut job=egui::text::LayoutJob::simple(text,font,ink,132.0*c.s);
+                let mut job=egui::text::LayoutJob::simple(text,font,ink,132.0);
                 job.wrap.max_rows=if active {3}else{1};
                 job.wrap.break_anywhere=true;
                 let galley=row.painter.layout_job(job);
-                let y=64.0+distance*29.0-galley.size().y/(2.0*c.s);
-                row.painter.galley(row.pos(246.0,y),galley,ink);
+                let y=64.0+distance*29.0-galley.size().y/2.0;
+                row.paint_galley(egui::pos2(246.0,y),galley,ink);
             }
             if !lyrics.synced {col.text(246.0,39.0,"文本歌词",8.0,W::Regular,theme::GRAY,H::Left);}
         } else {
             let status=if self.ly.loading {"正在查找歌词…"}else if let Some(error)=&self.ly.error {error.label()}else{"暂无歌词"};
-            let galley=col.painter.layout(status.into(),col.font(10.0,W::Regular),theme::GRAY,130.0*c.s);
-            col.painter.galley(col.pos(246.0,61.0-galley.size().y/(2.0*c.s)),galley,theme::GRAY);
+            let galley=col.painter.layout(status.into(),col.font(10.0,W::Regular),theme::GRAY,130.0);
+            col.paint_galley(egui::pos2(246.0,61.0-galley.size().y/2.0),galley,theme::GRAY);
             if self.ly.error.is_some() {
                 col.text(246.0,87.0,"点击重试",9.0,W::Regular,theme::GRAY,H::Left);
                 if c.hit(243.0,28.0,136.0,74.0,"lyrics-retry").on_hover_text("重新查询当前歌曲的歌词").clicked(){self.ly.key.clear();self.ly.manual_retry=true;}

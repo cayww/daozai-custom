@@ -90,9 +90,9 @@ fn temp_text(value: f32) -> String {
 /// 数字中线统一按「0」量取，所有温度共享同一条中线，零下与否都不会上下跳动。
 fn temp_ink(c: &Card, text: &str, size: f32, weight: W) -> (f32, f32) {
     let zero = c.galley("0", size, weight, theme::WHITE);
-    let asc = zero.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size * c.s);
-    let mid = (zero.mesh_bounds.center().y - asc) / c.s;
-    let ink = |t: &str| { let b = c.galley(t, size, weight, theme::WHITE).mesh_bounds; (b.width() / c.s, b.min.x / c.s) };
+    let asc = zero.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size);
+    let mid = zero.mesh_bounds.center().y - asc;
+    let ink = |t: &str| { let b = c.galley(t, size, weight, theme::WHITE).mesh_bounds; (b.width(), b.min.x) };
     match text.strip_prefix('-') {
         Some(rest) => { let (dash, _) = ink("-"); (dash + size * 0.07 + ink(rest).0, mid) }
         None => (ink(text).0, mid),
@@ -108,14 +108,14 @@ fn paint_temp(c: &Card, x: f32, base: f32, text: &str, size: f32, weight: W, col
         Some(rest) => {
             let dash = c.galley("-", size, weight, color).mesh_bounds;
             // 字形网格四周各带半个像素的抗锯齿留边，减掉才是连字符真实的长短与粗细。
-            let pad = 1.0 / c.ui.ctx().pixels_per_point();
-            let (len, thick) = ((dash.width() - pad) / c.s, ((dash.height() - pad) / c.s).max(1.2));
+            let pad = 1.0 / (c.ui.ctx().pixels_per_point() * c.s);
+            let (len, thick) = (dash.width() - pad, (dash.height() - pad).max(1.2));
             c.fill(left, base + mid - thick / 2.0, len, thick, thick * 0.3, color);
             (rest, left + len + size * 0.07)
         }
         None => (text, left),
     };
-    let bearing = c.galley(digits, size, weight, color).mesh_bounds.min.x / c.s;
+    let bearing = c.galley(digits, size, weight, color).mesh_bounds.min.x;
     c.text(start - bearing, base, digits, size, weight, color, H::Left);
     width
 }

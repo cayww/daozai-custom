@@ -5,6 +5,8 @@
 
 use crate::theme::{self, font, W};
 use eframe::egui::{self, Color32, FontId, Id, Pos2, Rect, Response, Sense, Stroke, Vec2};
+use eframe::egui::epaint::Shape;
+use eframe::egui::emath::TSTransform;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -72,43 +74,49 @@ impl<'a> Card<'a> {
     }
 
     // ---------- 文字（y 一律是基线，跨字体对齐稳定） ----------
+    //
+    // 字体缩放策略（2026-11-22 重构，彻底解决液态皮肤弹簧动画文字抖动）：
+    // galley 一律按固定字号 `size` 排版（不含 s），字形只栅格化一次、缓存稳定；
+    // 卡片缩放 s 由 Shape::transform 在绘制时缩放 mesh 顶点承担，不重新排版。
+    // 因此 galley.size()/mesh_bounds 天然是「局部单位」，调用方无需再 /s。
+    // 参考：egui#3197、Bevy B0005「If you need to smoothly scale font size,
+    // use Transform::scale」。
     pub fn font(&self, size: f32, w: W) -> FontId {
-        let scaled = size * self.s;
-        // 液态皮肤按压/入场弹簧让 s 连续振荡（实测 0.95↔1.0），字号随之每帧微调，
-        // egui 0.35 每帧重排字形 → 文字左右抖 1px。把字号量化到 1/8pt，
-        // 字形缓存命中稳定，缩放由 galley 位置承担，视觉无感。
-        // 测试构建保留原值：UI 测试大量断言字号相关坐标，测试目的是逻辑非字形。
-        #[cfg(not(test))]
-        let scaled = (scaled * 8.0).round() / 8.0;
-        font(scaled, w)
+        font(size, w)
     }
     pub fn galley(&self, t: &str, size: f32, w: W, color: Color32) -> std::sync::Arc<egui::Galley> {
-        self.painter.layout_no_wrap(crate::rtl_text::display(t).into_owned(), self.font(size, w), color)
+        self.painter.layout_no_wrap(crate::rtl_text::display(t).into_owned(), font(size, w), color)
+    }
+    /// 在局部坐标 p（未缩放）绘制已排版的 galley：先缩放 mesh 到屏幕，再平移 origin。
+    pub fn paint_galley(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) {
+        let mut shape = Shape::galley(p, g, color);
+        shape.transform(TSTransform::new(self.origin.to_vec2(), self.s));
+        self.painter.add(shape);
     }
     pub fn text_w(&self, t: &str, size: f32, w: W) -> f32 {
-        self.galley(t, size, w, Color32::WHITE).size().x / self.s
+        self.galley(t, size, w, Color32::WHITE).size().x
     }
     /// 返回局部坐标下的文字宽度。
     pub fn text(&self, x: f32, base: f32, t: &str, size: f32, w: W, color: Color32, h: H) -> f32 {
         let g = self.galley(t, size, w, color);
         let gw = g.size().x;
-        let asc = g.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size * self.s);
-        let mut p = self.pos(x, base) - Vec2::new(0.0, asc);
+        let asc = g.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size);
+        let mut p = Pos2::new(x, base) - Vec2::new(0.0, asc);
         match h {
             H::Left => {}
             H::Center => p.x -= gw / 2.0,
             H::Right => p.x -= gw,
         }
-        self.painter.galley(p, g, color);
-        gw / self.s
+        self.paint_galley(p, g, color);
+        gw
     }
     /// 以字形的实际可见范围对齐垂直中心，保持中英文状态文字居中。
     pub fn centered_text(&self, x:f32, cy:f32, t:&str, size:f32, w:W, color:Color32, h:H) {
         if t.is_empty(){return;}
         let g=self.galley(t,size,w,color);
         let dx=match h {H::Left=>0.0,H::Center=>g.size().x/2.0,H::Right=>g.size().x};
-        let pos=self.pos(x,cy)-Vec2::new(dx,g.mesh_bounds.center().y);
-        self.painter.galley(pos,g,color);
+        let pos=Pos2::new(x,cy)-Vec2::new(dx,g.mesh_bounds.center().y);
+        self.paint_galley(pos,g,color);
     }
     /// 超宽时末尾加省略号。
     pub fn fit(&self, t: &str, size: f32, w: W, max_w: f32) -> String {
@@ -951,8 +959,9 @@ pub fn clock_width(c:&Card,text:&str,size:f32)->f32 {
 pub fn clock(c:&Card,x:f32,y:f32,text:&str,size:f32) {
     let (digits,x)=if let Some((period,digits))=text.split_once(' ') {
         let numbers=c.galley(digits,size,W::Bold,theme::WHITE);
-        let ascent=numbers.rows.first().and_then(|r|r.glyphs.first()).map(|g|g.pos.y).unwrap_or(size*c.s);
-        let center=y+(numbers.mesh_bounds.center().y-ascent)/c.s;
+        let ascent=numbers.rows.first().and_then(|r|r.glyphs.first()).map(|g|g.pos.y).unwrap_or(size);
+        // galley 固定字号排版，mesh_bounds 已是局部单位，无需再 /c.s
+        let center=y+(numbers.mesh_bounds.center().y-ascent);
         c.centered_text(x,center,period,size*0.72,W::Semibold,theme::WHITE,H::Left);
         (digits,x+c.text_w(period,size*0.72,W::Semibold)+4.0)
     }else{(text,x)};
