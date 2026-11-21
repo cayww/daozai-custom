@@ -48,6 +48,31 @@ pub struct GlassParams {
     pub lightcfg: [f32; 4],
 }
 
+/// 把 app 本帧写入的控件玻璃快照（egui 逻辑点、y 从顶）同步到 shader uniform。
+/// 必须在 `ctx.run_ui` 之后调用——app 的 paint_gpu_glass 在 run_ui 内发布控件，
+/// 提前读会拿到上一帧，展开/收起动画时残留透镜白边会闪一条竖线。
+fn refresh_control_uniforms(u: &mut GlassParams, ppp: f32, win_h_phys: f32) {
+    let ppp = ppp.max(0.1);
+    let (ctls, n) = crate::gpu_glass::controls_snapshot();
+    let slots = u.cprm.len();
+    let n = n.min(slots);
+    for (slot, ctl) in ctls.iter().take(n).enumerate() {
+        let r = &ctl.rect;
+        let rx = r.min.x * ppp;
+        let ry = r.min.y * ppp;
+        let rw = r.width() * ppp;
+        let rh = r.height() * ppp;
+        // y 从 egui 顶原点翻到 D3D11 底原点（与 build_glass_params 的 body 一致）。
+        u.crect[slot] = [rx, win_h_phys - ry - rh, rw, rh];
+        u.cprm[slot] = [ctl.radius * ppp, 1.0, ctl.mag.max(1.0), ctl.refract.max(0.05)];
+    }
+    // 关键：本帧不用的槽必须清掉启用位，否则沿用上一帧的 cprm.y=1 会画出幽灵透镜
+    // （收起后残留的竖白线正是这个）。
+    for slot in n..slots {
+        u.cprm[slot] = [0.0, 0.0, 1.0, 1.0];
+    }
+}
+
 struct GlassPipeline {
     vs: ID3D11VertexShader,
     ps: ID3D11PixelShader,
@@ -342,6 +367,13 @@ impl D3d11Runtime {
         // egui pass（ctx 先克隆，避免闭包内同时借用 self 与移动 run_ui）
         let ctx = self.egui_ctx.clone();
         let egui_output = ctx.run_ui(input, |ui| run_ui(&ctx, ui));
+        // 控件玻璃透镜：run_ui 里 app 刚写入本帧控件快照，在这里（draw_glass 之前）
+        // 同步到 uniform。若在 render 之前填会读到上一帧，收起动画时残留的透镜白边
+        // 会在宠物与时间之间闪一条竖线，多帧后才随弹簧收敛消失。
+        {
+            let ppp = window.scale_factor() as f32;
+            refresh_control_uniforms(&mut u, ppp, window.inner_size().height as f32);
+        }
         let platform = {
             let (ro, po, viewports) = super::renderer::split_output(egui_output);
             // 记录 egui 请求的重绘间隔（岛仔隐藏态 1fps、常态按设置 fps）

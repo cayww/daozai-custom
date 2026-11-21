@@ -18,8 +18,31 @@ pub struct Ctl {
     pub mag: f32,
     pub refract: f32,
 }
+impl Ctl {
+    const fn none() -> Self { Self { rect: Rect::ZERO, radius: 0.0, mag: 1.0, refract: 1.0 } }
+}
 impl Default for Ctl {
-    fn default() -> Self { Self { rect: Rect::ZERO, radius: 0.0, mag: 1.0, refract: 1.0 } }
+    fn default() -> Self { Self::none() }
+}
+
+/// 本帧的岛内控件玻璃列表，由 app::paint_gpu_glass 每帧写入，
+/// winit_runner::build_glass_params 读出转成 shader 的 crect/cprm。
+/// 用固定数组避免每帧分配；MAX_CTL = shader cbuffer 的槽位数。
+static CONTROLS: std::sync::Mutex<([Ctl; MAX_CTL], usize)> =
+    std::sync::Mutex::new(([Ctl::none(); MAX_CTL], 0));
+
+/// app 每帧发布控件玻璃几何（egui 逻辑点坐标，相对窗口）。
+pub fn set_controls(ctls: &[Ctl]) {
+    if let Ok(mut guard) = CONTROLS.lock() {
+        let n = ctls.len().min(MAX_CTL);
+        guard.0[..n].copy_from_slice(&ctls[..n]);
+        guard.1 = n;
+    }
+}
+
+/// 渲染循环读取本帧控件玻璃列表（egui 逻辑点坐标）。
+pub fn controls_snapshot() -> ([Ctl; MAX_CTL], usize) {
+    CONTROLS.lock().map(|g| *g).unwrap_or(([Ctl::none(); MAX_CTL], 0))
 }
 
 /// Opaque frame descriptor; the real HLSL path builds its own uniform buffer.

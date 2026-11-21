@@ -282,6 +282,9 @@ fn build_glass_params(ppp: f32) -> GlassParams {
     p.misc = [u.pointer[0] * ppp, h - u.pointer[1] * ppp, u.refract * ppp, 0.0];
     p.look = [u.blur * ppp, u.band * ppp, u.edge_w * ppp, u.edge_op];
     p.lightcfg = [u.light_follow, 0.0, 0.0, 0.0];
+    // 控件玻璃透镜在 D3d11Runtime::render 里、run_ui 之后填充——
+    // app 的控件快照由 run_ui 当帧写入，在这里填会读到上一帧，展开/收起动画时差一帧
+    // 会在宠物与时间之间留下一条残留透镜白边。见 refresh_control_uniforms。
     // 深浅材质的玻璃染色：暗色玻璃偏冷灰，浅色偏白。
     p.tint = if u.material > 0.5 { [0.96,0.97,1.0,0.10] } else { [0.55,0.72,0.90,0.10] };
     p.notch = [0.0, 0.0, 0.0, 1.0]; // DComp 逐像素 alpha
