@@ -96,7 +96,7 @@ impl Picker {
         }
         let mut close=false;
         let response=egui::Modal::new(egui::Id::new("avoidance-picker"))
-            .frame(egui::Frame::popup(&ctx.style()).inner_margin(20).corner_radius(12.0)).show(ctx,|ui|{
+            .frame(egui::Frame::popup(&ctx.style_of(egui::Theme::Dark)).inner_margin(20).corner_radius(12.0)).show(ctx,|ui|{
             ui.visuals_mut().override_text_color=Some(crate::settings_theme::color(ctx,Color32::from_gray(235),Color32::from_gray(30)));
             ui.set_width(410.0);
             ui.heading("添加应用");
@@ -108,7 +108,7 @@ impl Picker {
             if self.rx.is_some(){ui.horizontal(|ui|{ui.spinner();ui.label("正在读取应用…");});}
             let query=self.query.trim().to_lowercase();
             let entries:Vec<_>=self.entries.iter().filter(|a|a.name.to_lowercase().contains(&query)||a.title.to_lowercase().contains(&query)).cloned().collect();
-            egui::ScrollArea::vertical().id_salt("avoidance-apps").max_height((ctx.screen_rect().height()-250.0).clamp(100.0,285.0)).show(ui,|ui|{
+            egui::ScrollArea::vertical().id_salt("avoidance-apps").max_height((ctx.content_rect().height()-250.0).clamp(100.0,285.0)).show(ui,|ui|{
                 if entries.is_empty() && self.rx.is_none(){ui.label("未找到匹配的应用，请先打开应用后刷新。");}
                 for app in &entries {
                     let reason=Self::reason(app,settings);

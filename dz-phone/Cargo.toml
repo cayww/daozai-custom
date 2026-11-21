@@ -36,17 +36,14 @@ memprof = ["dep:dhat"]
 [patch.crates-io]
 imap = { path = "vendor/imap" }
 imap-proto = { path = "vendor/imap-proto" }
-eframe = { path = "vendor/eframe" }
-egui = { path = "vendor/egui" }
-egui-winit = { path = "vendor/egui-winit" }
-egui-wgpu = { path = "vendor/egui-wgpu" }
-wgpu-hal = { path = "vendor/wgpu-hal" }
 ureq = { path = "vendor/ureq" }
+# egui/eframe/egui-winit/egui-wgpu/wgpu-hal vendor patches removed for egui 0.35:
+# wgpu is dropped entirely (new stack is winit + egui-directx11/D3D11).
 
 [dependencies]
-eframe = { version = "0.31", default-features = false, features = ["glow", "wgpu", "default_fonts"] }
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
 dhat = { version = "0.3", optional = true }
-egui_extras = { version = "0.31", default-features = false, features = ["svg", "image"] }
+egui_extras = { version = "0.35", default-features = false, features = ["svg", "image"] }
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -67,7 +64,7 @@ rquickjs = "0.8"
 
 # Linux 下 winit 至少要一个后端才能编译（只用于开发/录制，正式目标是 Windows）。
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts", "x11"] }
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 ureq = { version = "2.12", default-features = false, features = ["native-tls"] }

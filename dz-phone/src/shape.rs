@@ -139,8 +139,8 @@ pub fn fill_gradient(painter: &egui::Painter, rect: Rect, flare: f32, flare_h: f
 fn fill_mapped(painter: &egui::Painter, rect: Rect, map: EdgeMap, flare: f32, flare_h: f32, radius: f32, top: Color32, bottom: Color32, span: f32, feather: f32) {
     let span=if top==bottom {0.0} else {span};
     let key=([rect.min.x,rect.min.y,rect.max.x,rect.max.y,flare,flare_h,radius,feather,span,map.code(),map.edge].map(f32::to_bits),top,bottom);
-    let mesh=painter.ctx().memory_mut(|memory|memory.caches.cache::<FillCache>().get(key));
-    painter.add(egui::Shape::Mesh(mesh));
+    let mesh=painter.ctx().memory_mut(|memory|memory.caches.cache::<FillCache>().get(key).clone());
+    painter.add(egui::Shape::Mesh(mesh.clone()));
 }
 
 type FillKey=([u32;11],Color32,Color32);

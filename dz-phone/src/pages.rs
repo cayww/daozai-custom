@@ -210,7 +210,7 @@ impl App {
             if c.live && has && self.music_volume_ui.is_some() {
                 if button.clicked(){self.music_volume_open=!self.music_volume_open;}
                 if button.hovered(){
-                    let delta=c.ui.ctx().input(|i|i.raw_scroll_delta.y);
+                    let delta=c.ui.ctx().input(|i|i.smooth_scroll_delta.y);
                     if delta.abs()>0.5 {
                         self.change_music_volume(Transport::SetVolume((value as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32),cmds);
                     }
@@ -324,7 +324,7 @@ impl App {
                 command=Some(Transport::SetVolume(((75.0-popup.to_local(pointer).y)/43.0*100.0).round().clamp(0.0,100.0) as u32));
             }
         }else if popup.live && panel.contains(ctx.pointer_hover_pos().unwrap_or(Pos2::ZERO)) {
-            let delta=ctx.input(|i|i.raw_scroll_delta.y);
+            let delta=ctx.input(|i|i.smooth_scroll_delta.y);
             if delta.abs()>0.5{command=Some(Transport::SetVolume((volume as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32));}
         }
         let mute=popup.hit(353.0,82.0,28.0,20.0,"m-volume-mute").on_hover_text(if muted{"恢复音乐音量"}else{"静音音乐，保留当前音量"});
@@ -931,10 +931,10 @@ impl App {
             let mut delete=remove.clicked();
             if show_hint {remove.on_hover_text("从置物架移除，保留原文件");}
             r.context_menu(|ui|{
-                if ui.button("打开").clicked(){if p.exists(){cmds.push(Cmd::Open(p.clone()));}ui.close_menu();}
-                if ui.button("在文件夹中显示").clicked(){cmds.push(Cmd::Reveal(p.clone()));ui.close_menu();}
-                if ui.button("复制完整路径").clicked(){cmds.push(Cmd::Copy(p.display().to_string()));ui.close_menu();}
-                if ui.button("从置物架移除").clicked(){delete=true;ui.close_menu();}
+                if ui.button("打开").clicked(){if p.exists(){cmds.push(Cmd::Open(p.clone()));}}
+                if ui.button("在文件夹中显示").clicked(){cmds.push(Cmd::Reveal(p.clone()));}
+                if ui.button("复制完整路径").clicked(){cmds.push(Cmd::Copy(p.display().to_string()));}
+                if ui.button("从置物架移除").clicked(){delete=true;}
                 self.shelf_menu_rect=Some(egui::Frame::menu(ui.style()).widget_rect(ui.min_rect()));
             });
             if delete { self.shelf.remove(p); self.icons.remove(p); self.shelf_x.remove(p); self.shelf_born.remove(p); self.shelf_first=self.shelf_first.min(self.shelf.items.len().saturating_sub(5)); }
@@ -976,7 +976,7 @@ impl App {
         let mut buf = std::mem::take(&mut self.clip_query);
         let te = egui::TextEdit::singleline(&mut buf)
             .id(egui::Id::new("clip-search-edit"))
-            .frame(false)
+            .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .text_color(theme::WHITE)
             .font(theme::font(size::TINY, W::Regular))
@@ -1287,8 +1287,8 @@ impl App {
                 if reminder_clicked {self.open_task_reminder(i);}
                 let mut edit_this=false;
                 r.context_menu(|ui|{
-                    if ui.button("编辑与提醒…").clicked(){edit_this=true;ui.close_menu();}
-                    if ui.button("取消提醒").clicked(){self.todos.items[i].due=None;self.todos.save();ui.close_menu();}
+                    if ui.button("编辑与提醒…").clicked(){edit_this=true;}
+                    if ui.button("取消提醒").clicked(){self.todos.items[i].due=None;self.todos.save();}
                 });
                 if edit_this {self.open_task_dialog(i);}
                 if delete {

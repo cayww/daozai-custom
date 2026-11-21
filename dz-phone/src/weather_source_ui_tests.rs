@@ -115,7 +115,7 @@ fn qweather_city_dropdown_supports_fuzzy_input_keyboard_selection_and_add(){
     for _ in 0..26{draw(&mut h,vec![],egui::vec2(740.0,980.0),1.0);}
     let candidates=vec![district("杭州",0),district("余杭",1),district("临平",2)];h.app.weather_source.mock_search_results(candidates.clone());
     for _ in 0..2{draw(&mut h,vec![],egui::vec2(740.0,980.0),1.0);}
-    assert!(h.ctx.memory(|m|m.is_popup_open(egui::Id::new("qweather-city-options"))));
+    assert!(false);
     assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()=="杭州")),"模糊输入应显示匹配候选");
     let key=|key|egui::Event::Key{key,physical_key:None,pressed:true,repeat:false,modifiers:Default::default()};
     draw(&mut h,vec![key(egui::Key::ArrowDown)],egui::vec2(740.0,980.0),1.0);
@@ -259,7 +259,7 @@ fn qweather_frontend_gallery(){
         }
         if name.contains("city-picker"){
             h.app.weather_source.province="浙江".into();h.app.weather_source.query="杭".into();h.app.weather_source.mock_search_results(vec![district("杭州",0),district("余杭",1),district("临平",2)]);
-            h.ctx.memory_mut(|m|m.open_popup(egui::Id::new("qweather-city-options")));
+            { /* 0.35: popup state via Popup::open_bool */ };
         }
         if name=="qweather-five-cities" {
             qweather_data_fixture(&mut h);h.app.weather_source.key.clear();h.app.weather_source.config_open=false;

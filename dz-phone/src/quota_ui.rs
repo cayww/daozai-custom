@@ -147,7 +147,7 @@ fn logo_texture(ctx:&egui::Context,provider:Provider,pixels:u32)->Option<egui::T
         egui::ColorImage::from_rgba_unmultiplied([pixels as usize,pixels as usize],bitmap.as_raw())
     }else{
         let bytes:&[u8]=match provider{Provider::ZCode=>include_bytes!("../assets/ai-icons/zcode.svg"),Provider::Codex=>include_bytes!("../assets/ai-icons/codex.svg"),Provider::Claude=>include_bytes!("../assets/ai-icons/claude.svg"),Provider::Kimi=>include_bytes!("../assets/ai-icons/kimi.svg"),Provider::GrokBot=>include_bytes!("../assets/ai-icons/grokbot.svg"),Provider::Gemini=>include_bytes!("../assets/ai-icons/gemini.svg"),Provider::WorkBuddy=>include_bytes!("../assets/ai-icons/workbuddy.svg"),Provider::DeepSeek=>include_bytes!("../assets/ai-icons/deepseek.svg"),Provider::Kiro=>include_bytes!("../assets/ai-icons/kiro.svg"),Provider::OpenCodeGo=>include_bytes!("../assets/ai-icons/opencode.svg"),Provider::MiniMax=>include_bytes!("../assets/ai-icons/minimax.svg"),Provider::Glm=>include_bytes!("../assets/ai-icons/glm.svg"),_=>include_bytes!("../assets/ai-icons/api-key.svg")};
-        egui_extras::image::load_svg_bytes_with_size(bytes,Some(egui::load::SizeHint::Size(pixels,pixels))).ok()?
+        egui_extras::image::load_svg_bytes_with_size(bytes,egui::load::SizeHint::Size { width: pixels, height: pixels, maintain_aspect_ratio: true }, &Default::default()).ok()?
     };
     // 白色标识使用矢量覆盖率，避免透明边缘再次变暗。
     for pixel in &mut image.pixels{if keeps_brand_color(provider){continue;}*pixel=if provider==Provider::DeepSeek{Color32::from_rgba_unmultiplied(77,107,254,pixel.a())}else{Color32::from_white_alpha(pixel.a())};}
@@ -172,7 +172,7 @@ fn deepseek_badge(c:&Card,skin:crate::model::Skin,x:f32,y:f32,size:f32){
     let ctx=c.ui.ctx();let ppp=ctx.pixels_per_point();let pixels=(size*c.s*ppp).round().max(1.0) as u32;
     let key=egui::Id::new(("deepseek-badge",skin.key(),pixels));
     let texture=ctx.data_mut(|data|data.get_temp::<egui::TextureHandle>(key)).or_else(||{
-        let image=egui_extras::image::load_svg_bytes_with_size(deepseek_badge_svg(skin).as_bytes(),Some(egui::load::SizeHint::Size(pixels,pixels))).ok()?;
+        let image=egui_extras::image::load_svg_bytes_with_size(deepseek_badge_svg(skin).as_bytes(),egui::load::SizeHint::Size { width: pixels, height: pixels, maintain_aspect_ratio: true }, &Default::default()).ok()?;
         let texture=ctx.load_texture(format!("deepseek-badge-{}-{pixels}",skin.key()),image,egui::TextureOptions::LINEAR);
         crate::skin_paint::mark_colored(texture.id());
         ctx.data_mut(|data|data.insert_temp(key,texture.clone()));Some(texture)
@@ -362,7 +362,7 @@ impl App {
     pub(crate) fn quota_balance_layout(&self,ctx:&egui::Context)->Vec<(usize,f32)>{
         self.quota_bar_indices().iter().enumerate().filter_map(|(position,index)|{
             let account=&self.quota.config.accounts[*index];
-            let extra=if let Some(text)=self.quota.tail_text(&account.id){ctx.fonts(|fonts|fonts.layout_no_wrap(text,theme::font(theme::size::PILL_CLOCK,W::Bold),theme::WHITE).size().x).ceil()+6.0}
+            let extra=if let Some(text)=self.quota.tail_text(&account.id){ctx.fonts_mut(|fonts|fonts.layout_no_wrap(text,theme::font(theme::size::PILL_CLOCK,W::Bold),theme::WHITE).size().x).ceil()+6.0}
                 else if account.provider.balance()&&self.quota.balance_loading(&account.id){22.0}
                 else{return None;};
             Some((position,extra))
@@ -682,8 +682,8 @@ impl App {
         if !self.quota.connect_open{return;}let mut open=true;
         egui::Window::new(egui::RichText::new(if self.quota.connect_target.is_some(){"重新连接账号"}else{"添加账号"}).size(16.0).color(crate::settings_theme::color(ctx,Color32::from_gray(235),Color32::from_gray(35)))).id(egui::Id::new("quota-connect-window")).open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER,egui::Vec2::ZERO).default_width(410.0).show(ctx,|ui|{
             ui.set_max_width(410.0);ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);ui.spacing_mut().item_spacing.y=9.0;ui.visuals_mut().override_text_color=Some(crate::settings_theme::color(ctx,Color32::from_gray(225),Color32::from_gray(35)));
-            if self.quota.provider==Provider::RelayCustom{ui.set_min_height((ctx.screen_rect().height()-160.0).clamp(260.0,560.0));}
-            egui::ScrollArea::vertical().max_height(if self.quota.provider==Provider::RelayCustom{(ctx.screen_rect().height()-140.0).clamp(260.0,640.0)}else{460.0}).show(ui,|ui|{
+            if self.quota.provider==Provider::RelayCustom{ui.set_min_height((ctx.content_rect().height()-160.0).clamp(260.0,560.0));}
+            egui::ScrollArea::vertical().max_height(if self.quota.provider==Provider::RelayCustom{(ctx.content_rect().height()-140.0).clamp(260.0,640.0)}else{460.0}).show(ui,|ui|{
             let previous_provider=self.quota.provider;
             let mut group=connection_group(self.quota.provider);
             ui.add_enabled_ui(self.quota.connect_target.is_none()&&self.quota.api_connecting.is_none()&&self.quota.kiro_connecting.is_none()&&self.quota.workbuddy_connecting.is_none()&&self.quota.deepseek_connecting.is_none()&&self.quota.gemini_connecting.is_none()&&self.quota.doubao_connecting.is_none()&&self.quota.login.is_none(),|ui|{
@@ -936,7 +936,7 @@ mod tests {
         state.busy.insert("test".into());assert!(state.balance_loading("test"));
     }
     #[test] fn zcode_badge_has_clear_corners_and_a_visible_edge(){
-        let icon=egui_extras::image::load_svg_bytes_with_size(include_bytes!("../assets/ai-icons/zcode.svg"),Some(egui::load::SizeHint::Size(26,26))).unwrap();
+        let icon=egui_extras::image::load_svg_bytes_with_size(include_bytes!("../assets/ai-icons/zcode.svg"),egui::load::SizeHint::Size { width: 26, height: 26, maintain_aspect_ratio: true }, &Default::default()).unwrap();
         for (x,y) in [(3,3),(22,3),(3,22),(22,22)] {assert_eq!(icon[(x,y)].a(),0);}
         assert!(icon[(13,1)].a()>180);
         assert!(icon.pixels.iter().filter(|p|p.r()>230&&p.a()>240).count()>35);
@@ -956,7 +956,7 @@ mod tests {
     #[test] fn deepseek_badge_keeps_brand_blue_in_every_skin(){
         use crate::model::Skin;
         for skin in [Skin::Classic,Skin::Cream,Skin::GlassLight,Skin::GlassDark]{
-            let image=egui_extras::image::load_svg_bytes_with_size(deepseek_badge_svg(skin).as_bytes(),Some(egui::load::SizeHint::Size(100,100))).unwrap();
+            let image=egui_extras::image::load_svg_bytes_with_size(deepseek_badge_svg(skin).as_bytes(),egui::load::SizeHint::Size { width: 100, height: 100, maintain_aspect_ratio: true }, &Default::default()).unwrap();
             assert!(image.pixels.iter().any(|p|*p==Color32::from_rgb(77,107,254)));
             let id=egui::TextureId::User(0xDEE5);crate::skin_paint::mark_monochrome(id);crate::skin_paint::mark_colored(id);
             let mut mesh=egui::Mesh::with_texture(id);mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(24.0,24.0)),egui::Rect::from_min_max(egui::Pos2::ZERO,egui::pos2(1.0,1.0)),Color32::WHITE);
@@ -1022,7 +1022,7 @@ mod tests {
                         assert!(image.pixels.iter().any(|pixel|pixel.a()>150&&pixel.b()>pixel.r().saturating_add(20)),"豆包头像应保留官方原始配色");
                         assert!(image.pixels.iter().any(|pixel|pixel.a()==0),"豆包头像应保留透明底");
                     }else if provider==Provider::MiniMax{
-                        let original=egui_extras::image::load_svg_bytes_with_size(include_bytes!("../assets/ai-icons/minimax.svg"),Some(egui::load::SizeHint::Size(pixels as u32,pixels as u32))).unwrap();
+                        let original=egui_extras::image::load_svg_bytes_with_size(include_bytes!("../assets/ai-icons/minimax.svg"),egui::load::SizeHint::Size { width: pixels as u32, height: pixels as u32, maintain_aspect_ratio: true }, &Default::default()).unwrap();
                         assert_eq!(image.pixels,original.pixels,"MiniMax 应保留品牌颜色和透明边缘");
                     }else{for pixel in &image.pixels {let expected=if keeps_brand_color(provider){*pixel}else if provider==Provider::DeepSeek{Color32::from_rgba_unmultiplied(77,107,254,pixel.a())}else{Color32::from_white_alpha(pixel.a())};assert_eq!(*pixel,expected,"标识颜色与透明边缘应保持一致");}}
                 }

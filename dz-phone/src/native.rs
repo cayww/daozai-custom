@@ -341,8 +341,12 @@ unsafe fn apply_style(hwnd: HWND, editing: bool, raise: bool) {
 /// 但同为 AMD，也有不少机器逐像素透明完全正常（#152 RX 5600、#114 AMD 核显）。所以这里只决定
 /// 「不直接信任系统合成」：画面改由分层窗口逐像素显示（见 `present_frame`），两类机器都不会有黑框，
 /// 边缘也保持抗锯齿；不再像 v0.6.63–0.6.64 那样直接用二值的窗口区域硬裁剪（圆角、肩部全是台阶）。
-fn surface_needs_outline_clip(backend:Option<eframe::wgpu::Backend>,vendor:&str,renderer:&str)->bool {
-    use eframe::wgpu::Backend;
+// Migration stub: the old wgpu backend enum, kept for the outline-clip logic.
+// The new D3D11/DComp stack never needs outline clipping.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Backend { Dx12, Vulkan, Gl }
+
+fn surface_needs_outline_clip(backend:Option<Backend>,vendor:&str,renderer:&str)->bool {
     if matches!(backend,Some(Backend::Dx12|Backend::Vulkan)){return true;}
     if renderer.to_ascii_lowercase().contains("radeon"){return true;}
     [vendor,renderer].into_iter().any(|name|{
@@ -477,7 +481,7 @@ impl Window {
         if !hook.is_invalid(){FG_CONTEXT.set(Some(cc.egui_ctx.clone()));}
         // 区域用哨兵值：首帧（包括启动即隐藏的空区域）也必须真正调用 SetWindowRgn，
         // 否则整块透明画布会挡住下层程序的点击。
-        let backend=cc.wgpu_render_state.as_ref().map(|state|state.adapter.get_info().backend);
+        let backend:Option<Backend>=None; // migration: D3D11 stack has no wgpu render state
         let (vendor,renderer)=cc.gl.as_ref().map(|gl|{
             use eframe::glow::HasContext;
             unsafe{(gl.get_parameter_string(eframe::glow::VENDOR),gl.get_parameter_string(eframe::glow::RENDERER))}
@@ -684,7 +688,7 @@ impl Window {
         // 上层另有一张带真实 alpha 的显示窗口负责抗锯齿，硬裁只作用于 owner 的交换链，不会吃掉柔边。
         // DirectComposition 已经有逐像素 alpha，不能再套 SetWindowRgn 硬裁：
         // 窗口区域是二值裁剪，会把非液态皮肤的圆角和文字边缘切出锯齿。
-        let outline_clip=self.opaque_surface && !eframe::egui_wgpu::winit::direct_composition_active();
+        let outline_clip=self.opaque_surface && !true;
         {
             // 一次性诊断：透明合成走的是哪条路，直接影响圆角是柔边还是硬裁。
             // 排障时先看这一行，比截图猜快得多。
@@ -692,7 +696,7 @@ impl Window {
             LOG.call_once(|| glass_diagnostic(&format!(
                 "透明合成：opaque={} dcomp={} outline_clip={}",
                 self.opaque_surface,
-                eframe::egui_wgpu::winit::direct_composition_active(),
+                true,
                 outline_clip
             )));
         }
@@ -703,7 +707,7 @@ impl Window {
                     unsafe {
                         if let Some(rgn)=glass_region(&key) {
                             if SetWindowRgn(self.hwnd, rgn, true) != 0 {
-                                glass_diagnostic(&format!("区域：玻璃轮廓 dcomp={} oc={} key[:6]={:?}",eframe::egui_wgpu::winit::direct_composition_active(),outline_clip,&key[..key.len().min(6)]));
+                                glass_diagnostic(&format!("区域：玻璃轮廓 dcomp={} oc={} key[:6]={:?}",true,outline_clip,&key[..key.len().min(6)]));
                                 self.glass=Some(key);
                                 // 回到矩形区域时必须重新设置。
                                 self.region=(i32::MIN,0,0,0);
@@ -720,7 +724,7 @@ impl Window {
                 unsafe {
                     let rgn = CreateRectRgn(r.0, r.1, r.2, r.3);
                     if SetWindowRgn(self.hwnd, rgn, true) != 0 {
-                        glass_diagnostic(&format!("区域：整块矩形 dcomp={} oc={} r={:?}",eframe::egui_wgpu::winit::direct_composition_active(),outline_clip,r));
+                        glass_diagnostic(&format!("区域：整块矩形 dcomp={} oc={} r={:?}",true,outline_clip,r));
                         self.region = r;
                         self.glass=None;
                         let _ = windows::Win32::Graphics::Dwm::DwmFlush();
@@ -760,8 +764,8 @@ mod tests {
         let _guard=NATIVE_STATE_LOCK.lock().unwrap_or_else(|e|e.into_inner());
         use windows::Win32::Graphics::Gdi::{GetWindowRgn,PtInRegion};
         for (backend,vendor,renderer) in [
-            (Some(eframe::wgpu::Backend::Dx12),"",""),
-            (Some(eframe::wgpu::Backend::Vulkan),"",""),
+            (Some(Backend::Dx12),"",""),
+            (Some(Backend::Vulkan),"",""),
             (None,"ATI Technologies Inc.","AMD Radeon RX 6750 GRE 12GB"),
             (None,"Advanced Micro Devices, Inc.","Radeon RX 7900 XT"),
         ] {for blur_unavailable in [true,false] {for ppp in [1.0,1.25,1.5,2.0] {unsafe {

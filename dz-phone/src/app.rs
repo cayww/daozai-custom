@@ -1066,7 +1066,7 @@ pub struct App {
     /// 悬浮云每帧刷新的颜色纹理：低分辨率交给 GPU 双线性插值，避免每帧生成上万顶点。
     fluid_tex:Option<egui::TextureHandle>,
     /// wgpu 目标格式；只有兼容渲染（Direct3D 12）后端才有，液态玻璃皮肤据此决定走不走 GPU。
-    pub wgpu_format:Option<eframe::egui_wgpu::wgpu::TextureFormat>,
+    pub wgpu_format:Option<u32>, // migration stub: old wgpu::TextureFormat
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
     /// 液态玻璃的重绘档位：0=不管（交给原有节拍）、1=60fps（有动画/悬停/拖动）、
@@ -1256,7 +1256,7 @@ impl App {
         egui_extras::install_image_loaders(ctx);
         ctx.set_theme(egui::ThemePreference::Dark);
         ctx.set_visuals(egui::Visuals::dark());
-        ctx.style_mut(|s| {
+        ctx.all_styles_mut(|s| {
             s.interaction.selectable_labels = false;
             s.visuals.text_cursor.stroke = egui::Stroke::new(1.5_f32, theme::BLUE);
             s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
@@ -2095,10 +2095,10 @@ impl App {
     pub fn filter_todo_input(&mut self,input:&mut egui::RawInput) {
         self.todo_ime_frame=false;
         if !self.adding && self.editing.is_none(){self.todo_ime_active=false;return;}
-        self.todo_ime_frame=self.todo_ime_active || input.events.iter().any(|event|matches!(event,egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit(_)|egui::ImeEvent::Commit(_))));
+        self.todo_ime_frame=self.todo_ime_active || input.events.iter().any(|event|matches!(event,egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit { .. }|egui::ImeEvent::Commit(_))));
         for event in &input.events {
             match event {
-                egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit(_))=>self.todo_ime_active=true,
+                egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit { .. })=>self.todo_ime_active=true,
                 egui::Event::Ime(egui::ImeEvent::Commit(_)|egui::ImeEvent::Disabled)=>self.todo_ime_active=false,
                 _=>{},
             }
@@ -2232,7 +2232,7 @@ impl App {
             job.halign=if cfg!(test){egui::Align::Center}else{egui::Align::Min};
             job.wrap.break_anywhere=true;
             if title {job.wrap.max_rows=1;}
-            ctx.fonts(|fonts|fonts.layout_job(job))
+            ctx.fonts_mut(|fonts|fonts.layout_job(job))
         };
         // 单行不折行：横向滚动用，galley 宽度就是整句的真实宽度。
         let layout_single=|text:&str,size:f32| {
@@ -2240,7 +2240,7 @@ impl App {
             let mut job=egui::text::LayoutJob::simple(text,theme::font(size,W::Semibold),ink,f32::INFINITY);
             job.halign=egui::Align::Min;
             job.wrap.break_anywhere=false;
-            ctx.fonts(|fonts|fonts.layout_job(job))
+            ctx.fonts_mut(|fonts|fonts.layout_job(job))
         };
         let (galley,overflow)=match cached {
             Some(hit)=>hit,
@@ -2529,7 +2529,7 @@ impl App {
                 layout.x[bar::PET]=Some(pet_center-base/2.0);
             }
         }
-        self.resident.step(layout,dt,ctx.style().animation_time>0.0&&bar::animations_enabled());
+        self.resident.step(layout,dt,ctx.style_of(egui::Theme::Dark).animation_time>0.0&&bar::animations_enabled());
         if self.opts.fetch_lyrics {
             self.poll_lyrics();
         }
@@ -2628,7 +2628,7 @@ impl App {
             self.cancel_edit();
         }
         if (!self.is_editing() || self.todo_choosing) && page_hover && self.open && self.reveal > 0.95 {
-            let (scroll, left, right, esc) = ctx.input(|i| (i.raw_scroll_delta.y, i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::Escape)));
+            let (scroll, left, right, esc) = ctx.input(|i| (i.smooth_scroll_delta.y, i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::Escape)));
             if esc { self.hover_lock = true; }
             if (left || right) && !self.todo_choosing {
                 self.wheel_delta=0.0;
@@ -2672,7 +2672,7 @@ impl App {
                             self.navigate_page(next);
                             self.wheel_page_at=self.t;
                         }
-                        ctx.input_mut(|i|{i.raw_scroll_delta=Vec2::ZERO;i.smooth_scroll_delta=Vec2::ZERO;});
+                        ctx.input_mut(|i|{i.smooth_scroll_delta=Vec2::ZERO;});
                     }
                 }
             }
@@ -3022,7 +3022,7 @@ impl App {
             });
         }
         FrameOut {
-            region: rel(floating_toast.into_iter().chain(self.shelf_menu_rect.map(|r|r.union(r + ctx.style().visuals.popup_shadow.margin()).expand(1.0 / ctx.pixels_per_point()))).fold(region,Rect::union).intersect(ui.max_rect())),
+            region: rel(floating_toast.into_iter().chain(self.shelf_menu_rect.map(|r|r.union(r + ctx.style_of(egui::Theme::Dark).visuals.popup_shadow.margin()).expand(1.0 / ctx.pixels_per_point()))).fold(region,Rect::union).intersect(ui.max_rect())),
             glass: glass_region,
             hit: rel(next_hit),
             // 极简收起且无通知时点击穿透；strip_rect 就是细条本身的精确矩形。
@@ -3146,7 +3146,7 @@ impl App {
         let slot=self.unread_slot(height);
         let max_scroll=(n as f32-3.0).max(0.0)*slot;
         if max_scroll>0.0 && cursor.is_some_and(|p|rect.contains(p)) {
-            let delta=ctx.input(|i|i.raw_scroll_delta.y);
+            let delta=ctx.input(|i|i.smooth_scroll_delta.y);
             self.messenger_scroll-=delta*0.5;
         }
         self.messenger_scroll=self.messenger_scroll.clamp(0.0,max_scroll);
@@ -3668,38 +3668,13 @@ impl App {
 
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
-    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,origin:Pos2){
+    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,_flare:f32,_flare_h:f32,radius:f32,_origin:Pos2){
+        // Migration: the WGSL/eframe-wgpu paint callback is gone. Liquid-glass optics
+        // are drawn by the HLSL layer in the D3D11 render loop (egui-directx11 stack).
+        // Draw a neutral fallback body here so the UI keeps its silhouette.
         let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
-        let Some(format)=self.wgpu_format else {
-            painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,225));
-            painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
-            return;
-        };
-        // GPU 未就绪时铺一层可见的兜底底色；就绪后几乎透明，别把折射压黑。
-        let backup=if crate::gpu_glass::gpu_ready(){20}else{170};
-        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,backup));
-        let ctx=painter.ctx();
-        let ppp=ctx.pixels_per_point();
-        let win=ctx.screen_rect().size();
-        // 折射要把采样 UV 推到岛体外，所以抓一块比岛体大的矩形。
-        let capture=rect.expand2(egui::vec2(64.0,48.0))
-            .intersect(Rect::from_min_size(Pos2::ZERO,win));
-        if capture.width()<8.0 || capture.height()<8.0 {return;}
-        // 用全局光标而不是 hover_pos：后者只在指针位于岛仔窗口内才有值，
-        // 折叠态只有 45px 高，指针大部分时间在外面，高光会一直是死的。
-        let pointer=self.cursor_win.unwrap_or_else(||rect.center());
-        crate::gpu_glass::set_direct_composition(eframe::egui_wgpu::winit::direct_composition_active());
-        let frame=crate::gpu_glass::frame_for(
-            rect,capture,((win.x*ppp) as u32,(win.y*ppp) as u32),ppp,radius,
-            self.glass_morph,
-            crate::gpu_glass::NEUTRAL_TINT,self.t as f32,
-            (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]),self.liquid_k,
-            self.settings.liquid_light_follow,
-            &self.glass_controls(origin),
-            // 刘海形状：把肩部参数传给着色器；胶囊/圆角矩形传 None。
-            if self.settings.island_shape==model::IslandShape::Notch {Some((flare,flare_h))}else{None});
-        painter.add(eframe::egui_wgpu::Callback::new_paint_callback(
-            capture,crate::gpu_glass::GlassCallback{frame,format}));
+        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,225));
+        painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
     }
 
     /// 悬浮云主体：轮廓交给 `RectShape` 的精确圆角，流动颜色做成一张固定尺寸的小纹理。
@@ -3712,7 +3687,7 @@ impl App {
         let w=rect.width().max(1.0);
         let h=rect.height().max(1.0);
         let expand=self.progress().clamp(0.0,1.0);
-        let mut image=egui::ColorImage::new([TEX_W,TEX_H],Color32::TRANSPARENT);
+        let mut image=egui::ColorImage::new([TEX_W,TEX_H], vec![Color32::TRANSPARENT; TEX_W * TEX_H]);
         for row in 0..TEX_H {
             let py=h*(row as f32+0.5)/TEX_H as f32;
             for col in 0..TEX_W {
@@ -4889,7 +4864,7 @@ impl App {
         let mut buf = std::mem::take(&mut self.buf);
         let te = egui::TextEdit::singleline(&mut buf)
             .id(egui::Id::new("todo-input"))
-            .frame(false)
+            .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .text_color(theme::WHITE)
             .font(theme::font(size::BODY, W::Regular))
@@ -4970,11 +4945,11 @@ mod lyric_scroll_tests {
         };
         let n=300;
         let t=std::time::Instant::now();
-        for _ in 0..n {let _=ctx.fonts(|fonts|fonts.layout_job(job(11.0)));}
+        for _ in 0..n {let _=ctx.fonts_mut(|fonts|fonts.layout_job(job(11.0)));}
         let one=t.elapsed().as_secs_f64()/n as f64;
         let t=std::time::Instant::now();
         for _ in 0..n {
-            for size in [11.0,10.5,10.0,9.5,9.0,8.5,8.0] {let _=ctx.fonts(|fonts|fonts.layout_job(job(size)));}
+            for size in [11.0,10.5,10.0,9.5,9.0,8.5,8.0] {let _=ctx.fonts_mut(|fonts|fonts.layout_job(job(size)));}
         }
         let seven=t.elapsed().as_secs_f64()/n as f64;
         // 每句都不一样才会真的走排版，用来区分「命中 egui 内部 galley 缓存」和「真重排」。
@@ -4982,7 +4957,7 @@ mod lyric_scroll_tests {
         for i in 0..n {
             let mut job=egui::text::LayoutJob::simple(format!("{}{}",text,i),egui::FontId::proportional(11.0),theme::WHITE,186.0);
             job.wrap.break_anywhere=true;
-            let _=ctx.fonts(|fonts|fonts.layout_job(job));
+            let _=ctx.fonts_mut(|fonts|fonts.layout_job(job));
         }
         let cold=t.elapsed().as_secs_f64()/n as f64;
         println!("命中缓存 {:.1}us | 未命中(真排版) {:.1}us | 每帧7次 {:.1}us | 30fps 每秒多花 {:.3}ms",
@@ -4996,7 +4971,7 @@ mod lyric_scroll_tests {
         let _=ctx.run(Default::default(),|_|{});
         // semibold 字体族由 App 启动时注册，这里只验证匹配逻辑，用默认族即可。
         let job=egui::text::LayoutJob::simple("测试".to_owned(),egui::FontId::proportional(11.0),theme::WHITE,f32::INFINITY);
-        let galley=ctx.fonts(|fonts|fonts.layout_job(job));
+        let galley=ctx.fonts_mut(|fonts|fonts.layout_job(job));
         let cache=LyricLayoutCache{text:"测试".into(),width:160.0,white:true,title:false,galley,overflow:0.0};
         assert!(cache.matches("测试",160.0,true,false));
         // 换句、改宽度、换颜色、歌名/歌词切换都必须重排。

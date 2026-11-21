@@ -68,6 +68,9 @@ pub mod paint;
 pub mod shape;
 mod fluid;
 #[cfg(windows)]
+// egui 0.35 / D3D11 migration: WGSL/wgpu paint-callback replaced by HLSL layer.
+pub mod gpu_glass_stub;
+#[path = "gpu_glass_stub.rs"]
 pub mod gpu_glass;
 pub mod wgc;
 pub mod smtc;

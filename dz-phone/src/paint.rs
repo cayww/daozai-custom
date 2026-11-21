@@ -255,14 +255,14 @@ impl<'a> Card<'a> {
     }
 
     // ---------- 交互 ----------
-    pub fn hit(&self, x: f32, y: f32, w: f32, h: f32, id: impl std::hash::Hash) -> Response {
+    pub fn hit(&self, x: f32, y: f32, w: f32, h: f32, id: impl std::hash::Hash + std::fmt::Debug) -> Response {
         let rect = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
         let sense = if self.live { Sense::click() } else { Sense::hover() };
         let id = Id::new(("card", self.live, id));
         self.ui.interact(rect, id, sense)
     }
 
-    pub fn hit_drag(&self,x:f32,y:f32,w:f32,h:f32,id:impl std::hash::Hash)->Response {
+    pub fn hit_drag(&self,x:f32,y:f32,w:f32,h:f32,id:impl std::hash::Hash+std::fmt::Debug)->Response {
         let rect=self.rect(x,y,w,h).intersect(self.painter.clip_rect());
         self.ui.interact(rect,Id::new(("card-drag",self.live,id)),if self.live{Sense::click_and_drag()}else{Sense::hover()})
     }

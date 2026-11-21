@@ -56,7 +56,7 @@ impl ReminderPicker {
             if response.hovered(){
                 let (delta,now)=ctx.input(|i|{
                     let delta=i.events.iter().filter_map(|event|match event{
-                        egui::Event::MouseWheel{unit,delta,modifiers} if !modifiers.ctrl && !modifiers.command=>Some(-delta.y*if *unit==egui::MouseWheelUnit::Point{1.0}else{40.0}),_=>None,
+                        egui::Event::MouseWheel{unit,delta,modifiers,phase:_} if !modifiers.ctrl && !modifiers.command=>Some(-delta.y*if *unit==egui::MouseWheelUnit::Point{1.0}else{40.0}),_=>None,
                     }).sum::<f32>();(delta,i.time)
                 });
                 if delta!=0.0 {
@@ -66,7 +66,7 @@ impl ReminderPicker {
                     let steps=(self.wheel[column]/40.0).trunc() as i64;
                     self.wheel[column]-=steps as f32*40.0;
                     self.adjust(column,steps);
-                    ctx.input_mut(|i|{i.raw_scroll_delta=egui::Vec2::ZERO;i.smooth_scroll_delta=egui::Vec2::ZERO;});
+                    ctx.input_mut(|i|{i.smooth_scroll_delta=egui::Vec2::ZERO;});
                 }
             }
             if response.drag_started(){self.drag[column]=0.0;}

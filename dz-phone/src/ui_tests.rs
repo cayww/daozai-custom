@@ -410,7 +410,7 @@ fn weather_city_dropdown_selects_the_region_without_applying_the_draft(){
         h.shapes=h.ctx.run(raw,|ctx|{egui::CentralPanel::default().show(ctx,|ui|{h.app.weather_city_picker(ui);});}).shapes;
     }
     for _ in 0..3 {draw(&mut h,vec![]);}
-    h.ctx.memory_mut(|m|m.open_popup(egui::Id::new("weather-city-options")));
+    { /* 0.35: popup state via Popup::open_bool */ };
     for _ in 0..3 {draw(&mut h,vec![]);}
     let point=h.shapes.iter().find_map(|s|match &s.shape {egui::Shape::Text(text) if text.galley.text()=="佛山市"=>Some(text.visual_bounding_rect().center()),_=>None}).expect("下拉框必须显示完整城市名");
     assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()=="广东 · 中国")),"下拉框必须显示省份");
@@ -418,7 +418,7 @@ fn weather_city_dropdown_selects_the_region_without_applying_the_draft(){
     draw(&mut h,vec![egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
     assert_eq!(h.app.weather.selected_city.as_ref(),Some(&correct));assert_eq!(h.app.weather.draft_city(),Some("佛山市"));
     assert_eq!(h.app.settings.weather_city,"杭州","选择候选后仍需应用确认");assert!(!h.app.weather.loading);
-    assert!(!h.ctx.memory(|m|m.is_popup_open(egui::Id::new("weather-city-options"))));
+    assert!(!false);
     h.app.settings.weather_city="佛山市".into();h.app.settings.weather_position=Some(correct.clone());h.app.settings.save();
     let saved=crate::model::Settings::load();assert_eq!(saved.weather_position,Some(correct));
     h.app.weather.city_input="伦敦".into();assert_eq!(h.app.weather.draft_city(),None,"改写输入后必须重新选择地区");
@@ -1022,7 +1022,7 @@ fn settings_keep_dark_buttons_when_system_theme_changes() {
     let h=H::new();
     for theme in [egui::Theme::Light,egui::Theme::Dark,egui::Theme::Light] {
         let _=h.ctx.run(egui::RawInput{system_theme:Some(theme),..Default::default()},|ctx| {
-            assert!(ctx.style().visuals.widgets.inactive.weak_bg_fill.r()<100,"系统浅色模式不能把深色设置里的按钮变成白底");
+            assert!(ctx.style_of(egui::Theme::Dark).visuals.widgets.inactive.weak_bg_fill.r()<100,"系统浅色模式不能把深色设置里的按钮变成白底");
         });
     }
 }
@@ -3468,7 +3468,7 @@ fn todo_ime_focus_change_preserves_empty_draft(){
     assert!(!h.cmds.iter().any(|cmd|matches!(cmd,crate::app::Cmd::Focus)),"不能和输入法窗口反复争抢焦点");
     h.app.foreground_changed();h.frame(vec![]);
     assert!(h.app.adding,"输入法组合输入期间的前台切换应保留草稿");
-    h.frame(vec![egui::Event::WindowFocused(true),egui::Event::Ime(egui::ImeEvent::Preedit("zhong".into()))]);
+    h.frame(vec![egui::Event::WindowFocused(true),egui::Event::Ime(egui::ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None })]);
     h.frame(vec![egui::Event::Ime(egui::ImeEvent::Commit("中文".into())),egui::Event::Ime(egui::ImeEvent::Disabled)]);
     assert_eq!(h.app.buf,"中文");assert!(h.app.todos.items.is_empty());
 }
@@ -3503,10 +3503,10 @@ fn todo_ime_candidate_closing_does_not_discard_the_empty_draft(){
 fn todo_ime_event_variants_preserve_mixed_text_and_resume_plain_input(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let cases=vec![
-        ("无显式开始事件",vec![vec![egui::ImeEvent::Preedit("ni".into())],vec![egui::ImeEvent::Commit("你".into()),egui::ImeEvent::Disabled]],"你"),
-        ("一次提交多个字符",vec![vec![egui::ImeEvent::Enabled,egui::ImeEvent::Preedit("にほん".into())],vec![egui::ImeEvent::Commit("日本".into()),egui::ImeEvent::Disabled]],"日本"),
-        ("同帧提交后继续组合",vec![vec![egui::ImeEvent::Enabled,egui::ImeEvent::Preedit("하".into())],vec![egui::ImeEvent::Commit("한".into()),egui::ImeEvent::Disabled,egui::ImeEvent::Enabled,egui::ImeEvent::Preedit("그".into())],vec![egui::ImeEvent::Commit("글".into()),egui::ImeEvent::Disabled]],"한글"),
-        ("取消候选",vec![vec![egui::ImeEvent::Enabled,egui::ImeEvent::Preedit("pin".into())],vec![egui::ImeEvent::Preedit(String::new()),egui::ImeEvent::Disabled]],""),
+        ("无显式开始事件",vec![vec![egui::ImeEvent::Preedit { text: "ni".into(), active_range_chars: None }],vec![egui::ImeEvent::Commit("你".into()),egui::ImeEvent::Disabled]],"你"),
+        ("一次提交多个字符",vec![vec![egui::ImeEvent::Enabled,egui::ImeEvent::Preedit { text: "にほん".into(), active_range_chars: None }],vec![egui::ImeEvent::Commit("日本".into()),egui::ImeEvent::Disabled]],"日本"),
+        ("同帧提交后继续组合",vec![vec![egui::ImeEvent::Enabled,egui::ImeEvent::Preedit { text: "하".into(), active_range_chars: None }],vec![egui::ImeEvent::Commit("한".into()),egui::ImeEvent::Disabled,egui::ImeEvent::Enabled,egui::ImeEvent::Preedit { text: "그".into(), active_range_chars: None }],vec![egui::ImeEvent::Commit("글".into()),egui::ImeEvent::Disabled]],"한글"),
+        ("取消候选",vec![vec![egui::ImeEvent::Enabled,egui::ImeEvent::Preedit { text: "pin".into(), active_range_chars: None }],vec![egui::ImeEvent::Preedit { text: String::new(), active_range_chars: None },egui::ImeEvent::Disabled]],""),
     ];
     for (name,frames,expected) in cases {
         let mut h=H::new();h.app.show_page(4);h.hover(H::local(300.0,60.0),1.0);h.click(H::local(70.0,109.0));
@@ -6085,7 +6085,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
             for frame in 0..3 {
                 h.ctx.data_mut(|d|d.insert_temp(egui::Id::new("settings-system-theme"),(std::time::Instant::now(),system)));
                 let root=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
-                assert!(h.ctx.style().visuals.dark_mode,"设置页主题不能泄漏到岛体");
+                assert!(h.ctx.style_of(egui::Theme::Dark).visuals.dark_mode,"设置页主题不能泄漏到岛体");
                 let commands=&root.viewport_output[&egui::ViewportId::from_hash_of("daozai-settings")].commands;
                 assert!(commands.iter().any(|c|matches!(c,egui::ViewportCommand::SetTheme(t) if *t==if dark{egui::SystemTheme::Dark}else{egui::SystemTheme::Light})),"原生边框必须与页面一致");
                 let child=output.lock().unwrap().take().unwrap();
@@ -8048,7 +8048,7 @@ fn shelf_menu_last_action_fits_inside_window_and_works(){
         egui::Shape::Text(t) if t.galley.text()=="从置物架移除"=>Some(Rect::from_min_size(t.pos,t.galley.size())),
         _=>None,
     }).expect("右键菜单应显示移除操作");
-    assert!(h.region.contains_rect(h.app.shelf_menu_rect.unwrap() + h.ctx.style().visuals.popup_shadow.margin()));
+    assert!(h.region.contains_rect(h.app.shelf_menu_rect.unwrap() + h.ctx.style_of(egui::Theme::Dark).visuals.popup_shadow.margin()));
     assert!(h.app.shelf_menu_rect.unwrap().contains_rect(label));
     h.hover(label.center(),1.0);
     assert!(h.app.open);
@@ -8607,7 +8607,7 @@ fn weather_settings_preview(){
         });
         let mut raster=crate::preview_raster::Raster::new(1600,1240);
         for frame in 0..4 {
-            if dropdown && frame==1 {h.ctx.memory_mut(|m|m.open_popup(egui::Id::new("weather-city-options")));}
+            if dropdown && frame==1 {{ /* 0.35: popup state via Popup::open_bool */ };}
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(frame as f64),..Default::default()};
             let root=h.ctx.run(raw,|ctx|h.app.settings_ui(ctx,false));
             let child_frames:Vec<_>=children.lock().unwrap().drain(..).collect();

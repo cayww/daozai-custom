@@ -48,9 +48,7 @@ pub fn graphics(cc:&eframe::CreationContext<'_>) {
     use eframe::glow::HasContext;
     let details=if let Some(gl)=&cc.gl {unsafe{format!("厂商：{}\n渲染器：{}\nOpenGL：{}\n",
         gl.get_parameter_string(eframe::glow::VENDOR),gl.get_parameter_string(eframe::glow::RENDERER),gl.get_parameter_string(eframe::glow::VERSION))}}
-    else if let Some(state)=&cc.wgpu_render_state {
-        let info=state.adapter.get_info();format!("渲染器：{}\n图形后端：{:?}\n设备类型：{:?}\n",info.name,info.backend,info.device_type)
-    }else{return;};
+    else{return;};
     let directory=daozai::model::config_dir().join("diagnostics");
     if std::fs::create_dir_all(&directory).is_ok(){let _=std::fs::write(directory.join("last-graphics.log"),details);}
 }
