@@ -291,3 +291,46 @@ D. 接受"换分辨率=进程自动重启"——main 现有方案，最可靠。
 社区有 egui 0.31 的 D3D11 渲染器（egui-directx11 0.7.0），技术上"存在"，但要真正
 替换 eframe + 重写玻璃 shader，工程量和风险都极大（相当于重写渲染栈）。
 这不是"救活零拷贝"的轻量方案，是架构级重写。需用户权衡。
+
+---
+
+## 二十一、egui-directx11 最新版本实证（用户要求，2026-11-21 10:07–10:15）
+
+用户要求：调用 daozai skill 继续 egui-directx11 尝试，**直接拉取上游最新代码、读最新 commit、用最新版本**（不再基于 §20 里旧的 0.7.0/egui-0.31 推测）。
+
+### 拉到的最新代码（真实 commit，非 crates.io 猜测）
+- 仓库 `nekomaru-pku/egui-directx11`，clone 到 `D:\code\egui-directx11`。
+- 最新 commit `38201f9b9620a26c3e3740775fcaf24487f1dde1`（2026-07-17 "Bump version to 0.13.0"）。
+- Cargo.toml：`version = "0.13.0+egui-0.35.0"`，edition 2024，`egui = 0.35.0`，`windows = 0.62.2`（feature Dxgi/Direct3D/Direct3D11）。**没有 GitHub Releases，tag 到 0.12.1，0.13.0 只在 main**。
+- 对比我们：egui `0.31.1` + windows `0.58`（全 vendor patch）。**最新版比 §20 假设的 0.7.0 又跨了 egui 0.31→0.35 四个大版本 + windows 0.58→0.62**，版本差更大，不是更小。
+
+### 实证 1：最新版能编译、渲染器本身正常（通过）
+- `cargo build --locked --release --examples` 在本机（rustc 1.99.1 / x86_64-pc-windows-msvc）44s 全部通过：egui 0.35 + windows 0.62 + winit 0.30 全链编译。
+- 跑 `examples/main.rs` / `user_texture.rs`：窗口和 egui UI 全部由 D3D11 渲染，**渲染器工作正常**。
+
+### 实证 2：核心链路 D3D11 纹理 → register_user_texture → egui Image（通过）★
+- 为验证"统一 device + 零 CPU 回读"路径，新增 `examples/desktop_spike.rs`（独立工程内，**不改岛仔主项目**）：
+  - 单 D3D11 device 同时建 swapchain 与抓屏；Desktop Duplication 抓帧 → `CopyResource` 到 `D3D11_BIND_SHADER_RESOURCE` 纹理 → `CreateShaderResourceView` → `renderer.register_user_texture(srv)` → `egui::Image::from_texture(tid)` 显示。
+- 本机 Desktop Duplication `AcquireNextFrame` 第一帧返回 `HRESULT 0x80070005 E_ACCESSDENIED`（已是管理员权限；远程/虚拟会话下 DDU 常被系统策略禁用）。**这是抓屏来源的环境限制，与 egui-directx11 无关；岛仔生产用的 WGC 抓屏不走 DDU。**
+- 改用官方 `examples/user_texture.rs`（把 jpeg 解码成 D3D11 纹理再 register）做等价验证：**晚霞大图完整铺满窗口显示成功**（exe sha256 前16 `6ea18259e61a19ac`）。
+- **结论**：`register_user_texture(SRV)` → egui Image 这条链路 100% 可用。也就是说，若将来走 D3D11 后端，WGC 抓到的 D3D11 纹理可以零拷贝直接喂给 egui 显示（无需 D3D11→D3D12 跨 API OpenSharedHandle/fence，OBS 式"单 device"难题从根上消失）。
+
+### 实证 3：致命障碍——paint callback 不支持（实锤，源码级）
+- 最新 `src/lib.rs` 的 `Renderer::render()`：
+  ```rust
+  Primitive::Callback(..) => { log::warn!("paint callbacks are not yet supported."); None }
+  ```
+  即 egui 的 `Shape::Callback` / `PaintCallback` **被直接丢弃**。
+- 岛仔液态玻璃的全部视觉效果正是 `painter.add(eframe::egui_wgpu::Callback::new_paint_callback(capture, GlassCallback{frame,format}))`（`app.rs:3701`），由 `GlassCallback: egui_wgpu::CallbackTrait` 在 wgpu render pass 里执行（`gpu_glass.rs:1441`）。
+- **egui-directx11 不执行 callback ⇒ 液态玻璃在该渲染器下完全不会出现**，只能显示普通 egui 控件。要保留玻璃必须把 callback 渲染路径重写成 D3D11。
+
+### 迁移工作量（实测数据，非估算）
+- `gpu_glass.rs` 共 **1834 行**；内联 WGSL shader（`const SHADER`）约 **460 行、12 个函数**：`vs` / `rr_sdf` / `notch_sdf` / `hash21` / `sample_px` / `tap5`（5 采样色散）/ `ctrl_glass`（Snell 折射 + Cauchy 七波长色散 + Schlick Fresnel 核心）/ `pick_ctl` / `fs`。**全部要重写成 HLSL**。
+- 还要把 `GlassCallback::prepare/paint` 的 wgpu 管线（bind group、uniform、D3D12 OpenSharedHandle 零拷贝采样）整体改写成 D3D11 资源与状态管理。
+- 外加：弃用 eframe →  winit 自搭事件循环；egui 0.31 → 0.35（vendor 的 egui/egui-winit/egui-wgpu/wgpu-hal 全要对齐，1100+ UI 测试坐标断言回归风险）；windows 0.58 → 0.62。
+
+### 最终结论（基于最新 commit，替代 §20 的权衡请求）
+1. **能用的部分已实证**：egui-directx11 0.13.0 编译通过、D3D11 渲染正常、user texture 零拷贝展示链路通过——"单 D3D11 device 抓屏 + 显示"在技术上成立，可根治换分辨率 device-lost。
+2. **不能用的部分已实锤**：paint callback 不支持，液态玻璃 460 行 WGSL + 整个 callback 管线必须重写为 HLSL/D3D11；再叠加 eframe→winit 与 egui 0.31→0.35 双大版本迁移。这是**架构级重写**（≈重写渲染栈），不是轻量修复。
+3. **建议**：主项目 main 保持现状（自动重启 workaround + 非零拷贝 `liquid_gpu_share=0` 已实测解决换分辨率问题）；egui-directx11 线作为**长期备选**留档，除非用户明确接受"重写渲染栈 + 玻璃效果重做"的巨大成本，否则不启动。
+4. 研究分支 `research/obs-capture-study`，本轮提交含：本节文档 + `examples/desktop_spike.rs`（独立工程 `D:\code\egui-directx11`，**不在岛仔主项目内，不碰 Cargo.lock**）。截图见工作区 `spike_full.png` / `user_texture_full.png`。

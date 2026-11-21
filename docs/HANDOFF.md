@@ -1486,3 +1486,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 判定改动已撤销（`git checkout HEAD -- wgc.rs`），逻辑回到 29bb757 状态。
 - 只改文案（extras.rs）：标题「切换分辨率/显示器模式后自动重启」；说明加"切换显示器模式（复制/扩展/仅单屏）约2秒后自动重启一次"；提示补"不开时切换分辨率可能导致玻璃卡住/背景不更新（需手动重启岛仔）"。
 - 新 exe `cfd17f60fccfafb0`，已部署。编译通过、测试未跑。未重新打包（预览包仍 -62）。
+
+### 7.0zzg.2 egui-directx11 最新版本实证（2026-11-21 10:07–10:15，研究分支）
+- 用户要求"继续 egui-directx11 尝试 + 直接拉最新代码/读最新 commit/用最新版本"。已 clone `nekomaru-pku/egui-directx11` 到 `D:\code\egui-directx11`，最新 commit **`38201f9`**（2026-07-17，版本 `0.13.0+egui-0.35.0`，egui 0.35 + windows 0.62 + edition 2024；无 GitHub Release、tag 止于 0.12.1）。比 §20 推测的 0.7.0/egui0.31 又跨 4 个大版本，**版本差更大**。
+- **实证通过**：`cargo build --locked --release --examples` 44s 全过；D3D11 渲染 egui UI 正常；新增 `examples/desktop_spike.rs`（独立工程，不碰岛仔主项目/Cargo.lock）验证单 D3D11 device 抓屏→`CopyResource`→`register_user_texture`→egui Image。本机 Desktop Duplication 返回 `0x80070005`（管理员权限仍拒绝，远程/虚拟会话常见，与库无关；岛仔用 WGC 不走 DDU）；改用官方 `user_texture` example 实证 **D3D11 纹理经 register_user_texture 完整显示为 egui Image**（exe sha `6ea18259e61a19ac`）。即"单 device 零拷贝展示"链路 100% 可用，可根治换分辨率 device-lost。
+- **致命障碍（源码实锤）**：最新 `src/lib.rs` 的 `Renderer::render()` 对 `Primitive::Callback(..)` 直接 `warn!("paint callbacks are not yet supported")` 丢弃。岛仔液态玻璃核心 `app.rs:3701` 的 `new_paint_callback` + `GlassCallback: egui_wgpu::CallbackTrait`（`gpu_glass.rs:1441`）在该渲染器下**完全不执行**。WGSL shader `gpu_glass.rs:190-649` 约 460 行/12 函数（Snell 折射+七波长色散+Fresnel）须全部重写 HLSL，外加 eframe→winit、egui 0.31→0.35（vendor 全套回归）、windows 0.58→0.62 = **架构级重写**。
+- **结论**：主项目 main 不动（保持自动重启 + `liquid_gpu_share=0` 非零拷贝，已实测解决换分辨率）；egui-directx11 作长期备选留档，除非用户明确接受重写渲染栈+玻璃重做。详见 `docs/research-fence-device-lost.md` §21；截图工作区 `spike_full.png`/`user_texture_full.png`。分支 `research/obs-capture-study`。
