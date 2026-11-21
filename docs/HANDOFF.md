@@ -1513,3 +1513,8 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 用户"集成工程"。**透明路线定案**：`CreateSwapChainForHwnd`+FLIP_DISCARD/PREMULTIPLIED 本机反复 `0x887A0001`（换参数/去 no_redirection/去 DEBUG/换 Factory2 均无效）；正确=主项目验证过的 DComp：winit `with_no_redirection_bitmap(true)`+`with_decorations(false)`（WS_EX_NOREDIRECTIONBITMAP）→ `CreateSwapChainForComposition` → `DCompositionCreateDevice2(IDXGIDevice)`→`CreateVisual`→`CreateTargetForHwnd`→`visual.SetContent(swap)`→`target.SetRoot`→每帧 `Commit`；blend 预乘、清屏 [0,0,0,0]、shader notch.w=1 逐像素 alpha；`quad.yz` 传窗口屏幕原点对齐 WGC 全屏帧。
 - 实机 `glass_dcomp_full.png`：左上角 640×220 无边框窗口**透明浮在桌面**（透出壁纸/图标），内有 WGC live 玻璃+两控件玻璃，FPS 220。提交 egui-directx11 `677a7fe`。
 - 集成状态：✅ egui-directx11 最新版/WGC/HLSL 玻璃全型/单 device 零拷贝/DComp 透明浮窗全跑通；⬜ 剩余=岛仔 `Shell::update` UI 迁到 winit+egui 0.35 vendor 升级+1100 测试回归+置顶/点穿/多显示器 native 行为迁移。main 不动，独立工程 `egui-directx11` commit `677a7fe` 为完整可运行参考。详见 docs/research-fence-device-lost.md §25。
+
+### 7.0zzg.7 UI 迁移可行性验证：egui 0.31→0.35 仅 3 类破坏性变更（2026-11-21 10:51–11:00）
+- 用户"继续"。写 `examples/ui_api_probe.rs` 把 app.rs/main.rs 全部关键 egui API 在 0.35 编译，5 轮编辑后全过，**仅 3 类破坏性变更**：①`i.raw_scroll_delta`→`i.smooth_scroll_delta`（app.rs 2 处）②`ColorImage::new([w,h],Color32)`→`Vec<Color32>`（1 处）③`ctx.fonts(|f|f.layout_job())`→`fonts_mut`（0.35 fonts() 给 `&FontsView`；排版处较多但纯机械）。其余全兼容（含 `send_viewport_cmd`/`StrokeKind`/`Ui::input`）。**UI 迁移=机械替换非重写**。
+- glass_spike 换岛仔风格 UI（通知胶囊+居中大时间+fonts_mut 状态行），`glass_ui_crop.png` 实机显示"3 条未读"胶囊/`10:54`/状态行/玻璃折射，中文方块=默认字体无中文字形（岛仔 vendor 字体有）。提交 egui-directx11 `053466e`。
+- 剩余：`Shell::update` 500 行+`app.rs` 5107 行按 3 类规则替换、vendor 字体/纹理迁移、1100+ 测试回归——**大但确定**，无架构未知。`ui_api_probe.rs` 是迁移检查清单。详见 docs/research-fence-device-lost.md §26。

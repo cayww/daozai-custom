@@ -423,3 +423,25 @@ HLSL 版现已功能对齐 WGSL 的岛体玻璃 + 刘海形状 + 岛内控件玻
 - ✅ 已完成：egui-directx11 最新版、WGC 抓屏、HLSL 玻璃（岛体+刘海+控件）、单 device 零拷贝、透明浮窗（DComp）。
 - ⬜ 剩余：把 spike 的 DComp 透明渲染栈接回岛仔 app 的 UI 逻辑（eframe 的 `Shell::update` 全部绘制代码需迁到 winit 事件循环 + egui Context）；egui 0.31→0.35 vendor 全套升级 + 1100+ 测试回归；窗口置顶/点穿/多显示器等 native 行为迁移。
 - main 分支继续不动；这条线作为下一代渲染栈候选，已有完整可运行参考实现（独立工程 egui-directx11，commit `677a7fe`）。
+
+---
+
+## 二十六、UI 迁移可行性验证：egui 0.31→0.35 仅 3 类破坏性变更（2026-11-21 10:51–11:00）
+
+用户"继续"——推进 UI 代码迁移（集成工程最后一块）。先评估规模：`Shell::update` 约 500 行（main.rs:370-874），`app.rs` 5107 行（核心 `frame()` 760 行 + paint_* 系列），egui 全 vendor 0.31。
+
+### 实测方法：API 兼容探针
+写 `examples/ui_api_probe.rs`，把 app.rs/main.rs 用到的所有关键 egui API（`ctx.input(|i|...)` 各种、`send_viewport_cmd` 5 种、`StrokeKind`、`rect_stroke`、`load_texture`、`RectShape::with_texture`、`Ui::input`、`pointer.*`、`fonts`/galley 排版等）在 egui 0.35 下编译。编辑 5 轮后全部通过，**精确定位出仅 3 类破坏性变更**：
+1. `i.raw_scroll_delta` → `i.smooth_scroll_delta`（app.rs 2 处：2631、3149）
+2. `ColorImage::new([w,h], Color32)` → `ColorImage::new([w,h], Vec<Color32>)`（paint_fluid_pill 1 处）
+3. `ctx.fonts(|f| f.layout_job(..))` → `ctx.fonts_mut(...)`（0.35 的 fonts() 给 `&FontsView`，layout 需可变；所有文字排版处，较多但纯机械）
+
+其余 API 全部源码兼容（含 `send_viewport_cmd` 在 egui core、不依赖 eframe、`StrokeKind`、`Ui::input`）。**结论：UI 迁移主要是机械替换，不是重写。**
+
+### 岛仔风格 UI 在新栈实机渲染（commit `053466e`）
+glass_spike.rs 换成岛仔风格 UI：通知胶囊（`rect_filled`+`rect_stroke`/`StrokeKind::Inside`+galley）、居中大号时间、`fonts_mut`+LayoutJob 状态行；截图 `glass_ui_crop.png`：透明浮窗上清楚显示"3 条未读"胶囊（中文方块是默认字体无中文字形，岛仔 vendor 字体有）、居中 `10:54`、状态行、玻璃折射/两控件玻璃。FPS 正常，WGC live。
+
+### 迁移结论与剩余
+- egui 0.35 对岛仔 UI 源码兼容性好（3 类机械改动），DComp 透明栈 + 玻璃 + WGC 已全部跑通。
+- 剩余真正工作量：把 `Shell::update` 500 行 + `app.rs` 5107 行按上述 3 类规则替换、eframe Frame 依赖替换（viewport cmd 部分已验证可用）、vendor 字体/纹理迁移、1100+ UI 测试回归。属**大但确定**的工程，无架构未知。
+- main 不动；独立工程 egui-directx11 commit `053466e` 为参考实现，`ui_api_probe.rs` 是迁移检查清单。
