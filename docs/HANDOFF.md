@@ -1560,3 +1560,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **② 液态玻璃实机确认**：用 `skin=liquid_glass` 数据目录（merge-work/dpgpu-off）启动，日志 `WGC OK 2560x1440`+`glass pipeline OK`+`got first frame OK`，glass-diagnostics.txt 实时记录岛体矩形/dcomp=true/系统透明效果开，确认玻璃真在渲染（此前用默认 Classic 目录验证是错的）。
 - **③ 高 DPI 背景放大 bug（本轮重点）**：用户报"玻璃内背景被放大大概一倍"。用一次性数值诊断（DAOZAI_GLASS_DIAG）定位：本机 scale_factor=1.25，物理渲染目标 `1200×338`，但 build_glass_params 把 egui 逻辑点/CSS px 直接塞进 shader，shader 认为画布只有 `960×270`（=1200/1.25），采到桌面区域缩小 1.25 倍再拉伸→背景放大 1.25 倍。**根因=移植时漏了旧栈 gpu_glass::build_uniform 的 ×ppp 换算**。修复 `6ca92e0`：build_glass_params 接收 egui_ctx.pixels_per_point()，body_rect/radius/pointer/chroma/refract/blur/band/edge_w 全乘 ppp，morph/material/edge_op 无量纲不缩放。诊断实证：extra(tex) `960×270`→`1200×337.5`（=物理 RT）、refract `48`→`60`。main 不动。
 - **验证**：release 编译通过（仅既有 warning）；按用户要求未跑全量测试。exe sha 更新见速览区，未部署（研究分支）。
+
+
+### 7.0zzg.14 修玻璃偏蓝不透：D3D11 栈接通实时背景亮度采样（2026-11-21 16:00–16:15，用户"玻璃不够透偏蓝"）
+- 用户报玻璃偏蓝不透。诊断(DAOZAI_GLASS_DIAG)实测 `material=0.74` 卡在半深不浅区：matdark=(1-0.74)*0.7 把背景压暗叠冷白雾/青绿导光，闷蓝。
+- 根因：shader 常数与旧栈逐行一致，差异在 material 来源。旧 wgpu 栈 background_luma 每帧从 WGC 帧玻璃背后实时采样(theme_rect+theme_luma_commit 过滤过渡帧)；新 D3D11 栈迁移时 stub 只读启动时静态壁纸平均值(0.74)，注释留的"后续接入 WGC 帧亮度"没做，material 被钉死。
+- 修复 `6dec689`：①wgc.rs 暴露 sample_theme_luma_d3d11()(复用 staging/500ms 节流/commit 状态)；②d3d11/runtime.rs 抓屏后按玻璃矩形换算采样框(屏幕上缘锚定)读回亮度；③stub background_luma() 改读 wgc::theme_luma() 实时值，seed 转发 wgc；保留 FORCE_LUMA 覆盖。
+- 实证：material 0.74→1.0(纯浅材质，matdark=0 不压暗，通透)。release 编译通过，未跑全量测试(用户要求)，未部署。main 不动。

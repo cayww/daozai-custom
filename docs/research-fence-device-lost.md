@@ -572,3 +572,30 @@ glass_spike.rs 换成岛仔风格 UI：通知胶囊（`rect_filled`+`rect_stroke
 - release 编译通过（仅既有 dead_code warning）；按用户要求未跑全量测试。
 - 诊断复测：`extra(tex) 960×270 → 1200×337.5`（=物理 RT 1200×338）、`bounds.h 24.5→37.5`（逻辑30×1.25）、`refract 48→60`（48×1.25）。坐标系与物理 RT 对齐，放大消除。
 - main 不动；研究分支未部署。
+
+---
+
+## 三十二、玻璃偏蓝不透修复：接通实时背景亮度采样（2026-11-21 16:00–16:15）
+
+### 现象与定位
+- 用户报玻璃不够透、偏蓝。HLSL shader 常数已确认与旧 wgpu 栈逐行一致，排除 shader 差异。
+- `DAOZAI_GLASS_DIAG` 实测 `material=0.74`（tint 冷白）：卡在 0.52~0.66 滞回区之上一点但不是纯浅 1.0。
+  `matdark=(1-0.74)*0.7=0.18` 把背景压到 0.58 混合 18%，叠 matfog 冷白雾 + Beer-Lambert 青绿导光 → 闷蓝。
+
+### 根因：material 来源机制缺失
+- 旧栈 `gpu_glass::background_luma()` 读 BG_LUMA，每帧从 WGC 干净帧的 theme_rect(玻璃背后区域)实时采样，
+  经 theme_luma_commit(过渡帧过滤+壁纸锚点校验)更新。玻璃背后亮→浅材质通透，暗→深材质。
+- 迁移到 winit/D3D11 时 stub 只读启动时的静态壁纸平均值(0.74)，代码注释"后续接入 WGC 帧亮度"没做。
+  material 被永久钉在壁纸平均亮度，浅色壁纸下也走半深材质 → 偏蓝不透。
+
+### 修法（commit `6dec689`）
+- `wgc.rs`: 暴露 `sample_theme_luma_d3d11()`，复用旧栈现成的 staging 纹理/500ms 时间节流/
+  theme_luma_commit 过滤状态，避免两套亮度判定。
+- `d3d11/runtime.rs::render`: 抓屏后把 params.bounds(窗口内物理,y 从底)换算成屏幕顶原点采样框
+  (上缘锚定，与旧栈 theme_rect 一致)，调采样函数读回亮度到 wgc::THEME_LUMA。
+- `gpu_glass_stub.rs`: background_luma() 改读 wgc::theme_luma()(实时)，seed_theme_luma() 转发 wgc；
+  保留 DAOZAI_LIQUID_FORCE_LUMA 诊断覆盖。
+
+### 实证
+- material 0.74 → 1.0（纯浅材质 matdark=0，不压暗，通透）；release 编译通过。
+- 按用户要求未跑全量测试；研究分支未部署，main 不动。
