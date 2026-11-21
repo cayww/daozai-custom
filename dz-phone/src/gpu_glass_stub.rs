@@ -40,8 +40,18 @@ pub struct GlassCallback {
 
 pub const NEUTRAL_TINT: [f32; 3] = [0.62, 0.66, 0.74];
 
-pub fn background_luma() -> f32 { 0.5 }
-pub fn seed_theme_luma(_v: f32) {}
+/// 背景亮度：由 app 启动时从壁纸文件播种（seed_theme_luma），供 liquid_k 决定深/浅材质。
+/// 迁移期不再从 wgpu 抓屏帧读；新 D3D11 栈后续可在此接入 WGC 帧亮度。
+static BG_LUMA: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f000000); // 0.5
+pub fn background_luma() -> f32 {
+    if let Some(v) = std::env::var("DAOZAI_LIQUID_FORCE_LUMA").ok().and_then(|s| s.parse::<f32>().ok()) {
+        return v.clamp(0.0, 1.0);
+    }
+    f32::from_bits(BG_LUMA.load(std::sync::atomic::Ordering::Relaxed))
+}
+pub fn seed_theme_luma(v: f32) {
+    BG_LUMA.store(v.clamp(0.0, 1.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
 pub fn gpu_ready() -> bool { true }
 pub fn set_morph_scale(v: f32) {
     if let Ok(mut u) = UNIFORMS.lock() { u.morph = v; }
