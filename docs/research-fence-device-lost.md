@@ -334,3 +334,36 @@ D. 接受"换分辨率=进程自动重启"——main 现有方案，最可靠。
 2. **不能用的部分已实锤**：paint callback 不支持，液态玻璃 460 行 WGSL + 整个 callback 管线必须重写为 HLSL/D3D11；再叠加 eframe→winit 与 egui 0.31→0.35 双大版本迁移。这是**架构级重写**（≈重写渲染栈），不是轻量修复。
 3. **建议**：主项目 main 保持现状（自动重启 workaround + 非零拷贝 `liquid_gpu_share=0` 已实测解决换分辨率问题）；egui-directx11 线作为**长期备选**留档，除非用户明确接受"重写渲染栈 + 玻璃效果重做"的巨大成本，否则不启动。
 4. 研究分支 `research/obs-capture-study`，本轮提交含：本节文档 + `examples/desktop_spike.rs`（独立工程 `D:\code\egui-directx11`，**不在岛仔主项目内，不碰 Cargo.lock**）。截图见工作区 `spike_full.png` / `user_texture_full.png`。
+
+---
+
+## 二十二、架构突破：HLSL 玻璃层绕过 callback 限制，单 D3D11 device 实机跑通（2026-11-21 10:16–10:25）
+
+用户要求"写，你要相信自己的能力"——不再停在 §21 的"架构级重写、不建议启动"结论，直接把可运行的 D3D11 玻璃渲染栈写出来。**成功。**
+
+### 关键洞察（推翻 §21 的"致命障碍"判断）
+§21 认为 `Renderer::render()` 丢弃 `Primitive::Callback` = 液态玻璃无法迁移。**这个判断错在把玻璃当成"必须走 egui callback"**。真相：液态玻璃本质就是 UI 背后的一层背景图。正确架构是：
+```
+单 D3D11 device + swapchain
+  1) 先用自定义 HLSL 管线把玻璃层画到 RT（采样抓屏纹理 / 壁纸）
+  2) 再 egui_directx11::Renderer::render() 把 egui 控件画在同一 RT 上层
+  3) Present
+```
+玻璃不是 `Shape::Callback`，而是渲染循环里 egui 之前的一层——**callback 限制被彻底绕过，无需 eframe/wgpu，无需 D3D12 跨 API 共享/fence**。
+
+### 实证（独立工程 `D:\code\egui-directx11`，不碰岛仔主项目/Cargo.lock）
+- `shaders/glass.hlsl`：忠实移植 `gpu_glass.rs` WGSL 的岛体光学核心——圆角矩形 SDF、5 点分通道采样色散、Snell 折射（-g·k·strength）、Schlick 方向性白边高光、倒角暗带、内导光 + Beer-Lambert 吸收、逐像素 scrim、抖动。省略项（不影响架构结论）：刘海 SDF、岛内控件玻璃（additive refinement，可按同法补）。fxc 编译 `vs_5_0`/`ps_5_0` 通过（`glass_vs.bin` 888B / `glass_ps.bin` 18488B）。
+- `examples/glass_spike.rs`：960×400 窗口，单 D3D11 device；背景壁纸 → SRV；每帧写 cbuffer（bounds/params/extra/tint/look/misc）→ Draw(3) 全屏三角形画玻璃 → egui 画 UI。**实机截图**：圆角玻璃胶囊边缘有清晰白色高光线、内部折射+材质压暗与外侧原始壁纸明显区分；深色状态条里 egui 文字（"dao zai / HLSL glass on D3D11"、"Mode: GLASS"、"FPS 228"）清晰可读 = egui 控件确实在玻璃上层。点按钮切 FLAT 模式：画面变回原始壁纸、状态条变 "Mode: FLAT"，证明玻璃是 shader 实时算的且按钮交互正常。
+- 截图：工作区 `glass_spike_v2_crop.png`（GLASS）/ `glass_spike_flat.png`（FLAT）。exe sha256 前16 见 git 提交 `2f1d495`。
+
+### 结论更新（替代 §21 的"不建议启动"）
+1. **渲染栈可行且有实证**：egui 0.35 / windows 0.62 最新库 + 自写 HLSL 玻璃 + egui-directx11，单 device 全流程跑通，彻底绕开 paint callback。这直接根治换分辨率的 D3D11 device-lost（不再有 D3D11↔D3D12 双 device）。
+2. **剩余工作量**（比 §21 的"重写渲染栈"清晰且可控）：
+   - a. 接 WGC 抓屏（项目 `wgc.rs` 已有成熟代码，纹理经 `register_user_texture` 喂入，§21 实证 2 已验证链路）；
+   - b. 补 HLSL 的刘海 SDF + 岛内控件玻璃（照 WGSL 逐函数移植）；
+   - c. eframe → winit 自搭事件循环（官方 example 提供完整模板）+ 窗口透明（分层窗口或 DComp，主项目已有 0.58 经验可迁移到 0.62）；
+   - d. egui 0.31 → 0.35 的 UI 代码适配 + vendor 对齐 + 1100+ 测试回归。
+   - 这些是**明确的工程清单**，不再是"是否可能的未知"。
+3. **建议**：这是可行路线，值得作为下一代渲染栈推进；但仍是大工程（c/d 两项影响面最大），建议单开 `research/egui-dx11-stack` 分支逐步推进，主项目 main 保持现状直到 spike 补齐 b/c/d。
+
+提交：独立工程 `egui-directx11` commit `2f1d495`（glass spike）+ `448f127`（抓屏 spike）；研究文档本节。
