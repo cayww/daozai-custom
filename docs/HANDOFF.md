@@ -1498,3 +1498,8 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **推翻 zzg.2 的致命障碍判断**：之前认为 Renderer 丢弃 Primitive::Callback = 玻璃无法迁移，错在把玻璃当成必须走 egui callback。真相：玻璃本质是 UI 背后的一层背景。正确架构=单 D3D11 device：①自定义 HLSL 管线先把玻璃画到 RT（采样抓屏纹理）②egui_directx11::Renderer 再把控件画到同一 RT 上层③Present。callback 限制彻底绕过，无 eframe/wgpu、无 D3D12 跨 API 共享/fence，根治换分辨率 device-lost。
 - 实证（独立工程 D:\code\egui-directx11，不碰岛仔主项目/Cargo.lock）：`shaders/glass.hlsl` 忠实移植 gpu_glass.rs WGSL 岛体光学核心（圆角 SDF、5点分通道色散、Snell 折射、Schlick 方向白边、倒角暗带、内导光+Beer-Lambert、scrim、抖动），fxc 编译 vs/ps_5_0 通过；`examples/glass_spike.rs` 单 device 每帧写 cbuffer→Draw(3)玻璃→egui 画 UI。实机截图（`glass_spike_v2_crop.png`）：圆角玻璃胶囊白边高光清晰、内部折射/压暗与外侧壁纸鲜明对比，深色状态条 egui 文字清晰可读（FPS 228）；点按钮切 FLAT 模式（`glass_spike_flat.png`）画面变回原始壁纸、按钮交互正常=玻璃是 shader 实时算的。
 - 结论更新：渲染栈可行且有实证，值得作下一代方向；剩余=接 WGC 抓屏（wgc.rs 现成）+补 HLSL 刘海/控件玻璃+eframe→winit+窗口透明+egui 0.31→0.35 适配测试回归 = **明确工程清单**而非未知。建议单开 research/egui-dx11-stack 分支推进，main 保持现状。详见 docs/research-fence-device-lost.md §22；提交 egui-directx11 commit 2f1d495。
+
+### 7.0zzg.4 HLSL 功能对齐 WGSL：刘海 SDF + 岛内控件玻璃跑通（2026-11-21 10:26–10:30）
+- 用户"继续完成"——补齐 §7.0zzg.3 的两个省略项。`glass.hlsl` 新增 `notch_sdf`（刘海肩部外扩，fs 里按 notch.z 选用）、`ctrl_glass`（小尺寸透镜，材质补偿/倒角/Beer-Lambert/白边按短边缩放，位移 0.55 折）、`pick_ctl`（后覆盖前命中、0.5px 内缩）；cbuffer 按 WGSL 顺序插入 `crect[13]`/`cprm[13]` = 35×float4 = 560B（与 WGSL 注释字节数完全一致）；FLAT 与正常分支末尾都合成控件玻璃。
+- 实机（`glass_ctl_crop.png`）：大玻璃胶囊内出现两块独立小玻璃卡片（各自圆角/白边/折射），状态条文字清晰 FPS 233。fxc vs/ps_5_0 通过；提交 egui-directx11 `682510c`。
+- 结论：HLSL 版功能已对齐 WGSL 的岛体玻璃+刘海+控件玻璃三大块。剩余仅集成工程（接 WGC、eframe→winit、窗口透明、egui 0.31→0.35 测试回归），光学核心全部验证可用。详见 docs/research-fence-device-lost.md §23。

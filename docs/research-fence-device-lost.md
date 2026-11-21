@@ -367,3 +367,22 @@ D. 接受"换分辨率=进程自动重启"——main 现有方案，最可靠。
 3. **建议**：这是可行路线，值得作为下一代渲染栈推进；但仍是大工程（c/d 两项影响面最大），建议单开 `research/egui-dx11-stack` 分支逐步推进，主项目 main 保持现状直到 spike 补齐 b/c/d。
 
 提交：独立工程 `egui-directx11` commit `2f1d495`（glass spike）+ `448f127`（抓屏 spike）；研究文档本节。
+
+---
+
+## 二十三、HLSL 玻璃功能对齐 WGSL：刘海 SDF + 岛内控件玻璃实机跑通（2026-11-21 10:26–10:30）
+
+用户"继续完成"——把 §22 里标注为"省略项"的两块也补齐，让 HLSL 版本功能对齐原 WGSL。
+
+### 本轮新增（独立工程 egui-directx11 commit `682510c`）
+- `glass.hlsl` 补齐：
+  - `notch_sdf(p,b,r,flare,fh)`：刘海肩部外扩几何（顶部 flare_h 内半宽按 `flare*(1-t)^2.4` 外扩、底部圆角），fs 里 `d` 在 `notch.z>0.5` 时改用它。
+  - `ctrl_glass(...)`：小尺寸透镜，完整移植 WGSL 的材质补偿（亮度反相 scrim、逐像素 scrim、深色材质 0.58/0.70）、顶部冷光、倒角暗带、Beer-Lambert、导光、白边；只按短边缩放折射带、位移打 0.55 折再乘每控件 refr、放大 mag。
+  - `pick_ctl(p)`：后覆盖前的命中测试（音量浮层压歌词卡），0.5px 内缩，返回 idx=13 表示未命中。
+  - cbuffer 按 WGSL 顺序重排，插入 `crect[13]`/`cprm[13]`（共 35×float4=560B，与 WGSL 注释的 560 字节完全一致）。
+  - FLAT 诊断分支与正常分支末尾都合成控件玻璃。
+- `examples/glass_spike.rs`：`GlassU` 同步扩到 560B，spike 里放两块控件玻璃（`crect[0]=(150,68,r16,mag1.12,refr0.9)`、`crect[1]=(96,68,r14,mag1.20,refr1.1)`）。
+- fxc 编译 vs/ps_5_0 通过；实机截图 `glass_ctl_crop.png`：大玻璃胶囊内出现**两块独立的小玻璃卡片**（各自圆角、细白边、内部折射），状态条文字清晰（FPS 233），证明控件玻璃在单 D3D11 device 上真实渲染。
+
+### 结论
+HLSL 版现已功能对齐 WGSL 的岛体玻璃 + 刘海形状 + 岛内控件玻璃三大块。剩余工程清单不变（WGC 抓屏接入、eframe→winit、窗口透明、egui 0.31→0.35 适配测试），但这些是**集成工程**，渲染栈核心（光学效果）已全部验证可用。
