@@ -1546,3 +1546,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 实机验证：`cargo build --release` 通过、`cargo test --lib` 无回归；启动日志 `WGC OK 1920x1080` + `got first frame OK`，截图确认透明胶囊（时间 13:01/天气 17°、白边高光、下方桌面透出），FPS 正常。commit 待补。
 - **已知限制：设置页仍内嵌本体**（用户观察到"设置页跑到本体"）。尝试 `set_embed_viewports(false)` + `set_immediate_viewport_renderer` 独立窗口时踩 egui 官方已知坑：issue #5229（Windows 不可见窗口收不到 RedrawRequested，Visible(true) 命令卡住）、#8326（Poll 空转 CPU）、#7776。按官方 `event_loop_context` 模式实现后，在 draw 上下文 create_window 仍导致 winit 事件循环卡在第二帧，故回退内嵌保证稳定。**功能完整可用**，仅窗口不独立；后续接 eframe 完整 `new_events/check_redraw_requests` 调度后可解。
 - 详见 docs/research-fence-device-lost.md §30。main 不动。
+
+### 7.0zzg.12 液态玻璃接通（2026-11-21 14:20–15:15，用户"液态玻璃效果没有"→"岛仔把自己采样进去了"）
+- commit `1fad5e0`。承接 d6d7800 的渲染栈，把 HLSL 玻璃真正显示出来。
+- 四个根因（用户三次关键观察定位）：①stub 底色 alpha=225 遮住玻璃→20；②默认 Classic 皮肤未启用液态→测试数据设 liquid_glass；③egui(顶原点) 与 D3D11(底原点) Y 相反——bounds.y/pointer.y 翻转 + shader sample_px 按 extra.z 翻正；④WGC CreateForMonitor 抓整屏时把岛仔自己抓进去（递归自采样）→ SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)，与旧 wgc.rs 同策略。
+- 另修：gpu_glass stub 的 set_* 全改成真实桥接（app 每帧写 rect/参数）；extra.yz 传窗口尺寸（否则全岛采样同一点）；quad.x flip 关掉（WGC 与 D3D11 纹理同向）。
+- 用户观察链（很有价值）："设置页跑本体" → "玻璃没效果" → "玻璃在下方冒头" → "采样在屏幕正下方对称" → "任务栏上下颠倒" → "岛仔把自己采样进去"，逐层剥出坐标系+自采样问题。
+- 验证：test --lib 1379/6/131（无回归）；液态皮肤展开态玻璃折射正确、任务栏不再入镜、窗口仍可见。副作用：GDI 截图工具抓不到岛仔（与原版 wgc 一致）。
