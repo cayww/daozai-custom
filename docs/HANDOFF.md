@@ -1538,3 +1538,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **关键语义回归（探针漏报的 0.31→0.35 行为差）**：① 0.35 移除 `raw_scroll_delta` 改逐帧平滑 `smooth_scroll_delta`，自定义翻页/音量/列表滚动单帧只拿约 10% delta → 翻页失效；新增 `app::raw_scroll_y()` 从 `i.events` 复刻旧 raw 语义，覆盖 app/pages/extras/task_picker 全部 7 处（wheel 测试 11→0 失败）。② theme/style 按 Theme 分离且全局，设置窗口 `set_style` 被降级为 `Ui::set_style` → 浅色主题失效；改 set_theme + set_style_of + `settings_color(ctx.theme())`。③ memory popup API 私有化，用 `Popup::open_id/is_id_open/open_memory/SetOpenCommand` 恢复天气城市下拉（生产功能同步修复）。④ 0.35 RichText 拆多 Text shape，测试 helper 按 y 分组拼回整行匹配。
 - 实证：`cargo check --all-targets` 全过（lib+bin+examples+tests）；`cargo test --lib -- --test-threads=1` 从 **19 failed 降到 8 failed**（1377 passed / 131 ignored）。全程修 CRLF 噪音，diff 34k→420 行。commit `d522521`（35 files +420/-351）。
 - 剩余 8 个：2 个 native 黑底裁剪（glow stub 预期降级）+ 6 个 0.35 深度交互差（DragValue Esc/加号即时生效、tooltip 长路径省略号、qweather ComboBox 独立 viewport 点击），属研究分支后续。main 不动。详见 docs/research-fence-device-lost.md §29。
+
+### 7.0zzg.11 渲染接线落地：WGC+HLSL+DComp 接进岛仔替换 glow stub（2026-11-21 12:30–14:15，用户"下一步完成渲染接线"）
+- 用户选"直接完整接线 + 保持 windows 0.58 移植渲染代码"（避免升 0.62 动 6 万行 native/wgc）。
+- 移植 egui-directx11 到主项目：`src/d3d11/{renderer,texture,wgc_capture,runtime}.rs` + `shaders/*.bin/hlsl`（整块复制，仅适配 0.58 的 `D3D11CreateDevice` 泛型差异、`BOOL` 路径）；新增 `egui`/`egui-winit`/`winit` 依赖（lock 只 +4 行，无版本漂移）。
+- 新 `src/winit_runner.rs`：winit 0.30 事件循环替换 `eframe::run_native`；`Shell::new(egui_ctx,hwnd)` 取代 CreationContext（`native::Window::new`、`diagnostics::graphics` 同步适配，examples 加 `from_cc` 兼容入口）；每帧 WGC CopyResource→HLSL 玻璃→egui→Present→DComp Commit。
+- 实机验证：`cargo build --release` 通过、`cargo test --lib` 无回归；启动日志 `WGC OK 1920x1080` + `got first frame OK`，截图确认透明胶囊（时间 13:01/天气 17°、白边高光、下方桌面透出），FPS 正常。commit 待补。
+- **已知限制：设置页仍内嵌本体**（用户观察到"设置页跑到本体"）。尝试 `set_embed_viewports(false)` + `set_immediate_viewport_renderer` 独立窗口时踩 egui 官方已知坑：issue #5229（Windows 不可见窗口收不到 RedrawRequested，Visible(true) 命令卡住）、#8326（Poll 空转 CPU）、#7776。按官方 `event_loop_context` 模式实现后，在 draw 上下文 create_window 仍导致 winit 事件循环卡在第二帧，故回退内嵌保证稳定。**功能完整可用**，仅窗口不独立；后续接 eframe 完整 `new_events/check_redraw_requests` 调度后可解。
+- 详见 docs/research-fence-device-lost.md §30。main 不动。

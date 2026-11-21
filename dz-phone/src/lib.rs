@@ -73,6 +73,9 @@ pub mod gpu_glass_stub;
 #[path = "gpu_glass_stub.rs"]
 pub mod gpu_glass;
 pub mod wgc;
+#[cfg(windows)]
+// D3D11 自绘栈（egui-directx11 移植到 windows 0.58）：WGC+HLSL 玻璃+egui+DComp
+pub mod d3d11;
 pub mod smtc;
 pub mod music_volume;
 pub mod theme;

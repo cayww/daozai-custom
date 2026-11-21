@@ -42,6 +42,8 @@ ureq = { path = "vendor/ureq" }
 
 [dependencies]
 eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.35"
+log = "0.4"
 dhat = { version = "0.3", optional = true }
 egui_extras = { version = "0.35", default-features = false, features = ["svg", "image"] }
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
@@ -72,11 +74,15 @@ tungstenite = { version = "0.28", default-features = false, features = ["handsha
 clipboard-win = "5.4.3"
 wgpu = { version = "24", default-features = false, features = ["dx12"] }
 memmap2 = "0.9.12"
+# D3D11 自绘栈（从 egui-directx11 移植到 windows 0.58）：winit 事件循环 + egui 平台桥
+egui-winit = { version = "0.35", default-features = false }
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Devices_Display",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Dwm",
+  "Win32_Graphics_DirectComposition",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_System_Com",

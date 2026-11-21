@@ -567,12 +567,15 @@ dependencies = [
  "clipboard-win",
  "dhat",
  "eframe",
+ "egui",
+ "egui-winit",
  "egui_extras",
  "flate2",
  "image",
  "imap",
  "imap-proto",
  "keyring",
+ "log",
  "mailparse",
  "memmap2",
  "native-tls",
@@ -588,6 +591,7 @@ dependencies = [
  "url",
  "wgpu 24.0.5",
  "windows",
+ "winit",
  "zstd",
 ]
 

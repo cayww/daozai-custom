@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 mod diagnostics;
 mod graphics;
+#[cfg(windows)]
+mod winit_runner;
 
 struct Shell {
     app: App,
@@ -134,11 +136,12 @@ impl Shell {
         self.unread_at=PollClock::now();
     }
 
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        diagnostics::graphics(cc);
+    /// D3D11 自绘栈构造：直接接收 egui Context 与窗口 HWND（不经 eframe CreationContext）。
+    fn new(egui_ctx: egui::Context, hwnd: windows::Win32::Foundation::HWND) -> Self {
+        diagnostics::graphics();
         let running_compat=false; // migration: no wgpu render state
         diagnostics::startup("加载本地配置");
-        let mut app = App::new(&cc.egui_ctx, Options::default());
+        let mut app = App::new(&egui_ctx, Options::default());
         app.render_compat_running=running_compat;
         app.wgpu_format=None; // migration: D3D11 stack owns the glass
         #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
@@ -158,7 +161,7 @@ impl Shell {
         if let Ok(mode)=std::env::var("DAOZAI_QUOTA_DEMO"){app.quota_demo(&mode);}
         diagnostics::startup("初始化媒体和托盘");
         let media = smtc::shared();
-        let media_enabled=smtc::spawn_poller(media.clone(),cc.egui_ctx.clone());
+        let media_enabled=smtc::spawn_poller(media.clone(),egui_ctx.clone());
         media_enabled.store(app.settings.visible_pages[0],std::sync::atomic::Ordering::Relaxed);
         #[cfg(windows)]
         let autostart = daozai::tray::autostart_enabled();
@@ -170,12 +173,12 @@ impl Shell {
         });
         diagnostics::startup("初始化通知监听");
         #[cfg(windows)]
-        let incoming=if app.settings.read_notifications {match daozai::system::connect_with_settings(cc.egui_ctx.clone(),&app.settings){Ok(rx)=>Some(rx),Err(e)=>{app.listener_status=format!("Windows 无法读取通知：{}",e.code());None}}}else{None};
+        let incoming=if app.settings.read_notifications {match daozai::system::connect_with_settings(egui_ctx.clone(),&app.settings){Ok(rx)=>Some(rx),Err(e)=>{app.listener_status=format!("Windows 无法读取通知：{}",e.code());None}}}else{None};
         // 音频、网络与输入法查询由后台完成，避免首帧等待系统服务。
         diagnostics::startup("创建后台采样与窗口");
         let initial_input=None;
         #[cfg(windows)] let system_state=daozai::system::Snapshot::default();
-        #[cfg(windows)] let system_rx=daozai::system::observe(cc.egui_ctx.clone(),system_state.clone(),initial_input);
+        #[cfg(windows)] let system_rx=daozai::system::observe(egui_ctx.clone(),system_state.clone(),initial_input);
         // 岛体大小只作用于主窗口，在首帧之前生效，避免启动时先按 100% 闪一下。
         // migration: viewport scale handled by new stack
         Self {
@@ -217,7 +220,7 @@ impl Shell {
             #[cfg(windows)] hidden:false,
             #[cfg(windows)] backdrop:None,
             #[cfg(windows)]
-            native: daozai::native::Window::new(cc),
+            native: daozai::native::Window::new(hwnd, egui_ctx.clone()),
             #[cfg(windows)]
             tray,
             #[cfg(windows)]
@@ -348,26 +351,9 @@ impl Shell {
     }
 }
 
-impl eframe::App for Shell {
-    fn raw_input_hook(&mut self,_ctx:&egui::Context,input:&mut egui::RawInput) {
-        if input.viewport_id==egui::ViewportId::ROOT {self.app.filter_todo_input(input);}
-    }
-
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        // DirectComposition 是逐像素 alpha：清屏必须全透明，否则整窗是一块不透明底色。
-        if true { // migration: new stack is DComp-transparent
-            return [0.0; 4];
-        }
-        // 兼容渲染的窗口是不透明的：首帧清成黑色会「黑闪」一下。
-        // 液态玻璃皮肤下清成接近浅玻璃的灰白，等 GPU 内容覆盖，观感平滑很多。
-        if self.app.settings.skin == daozai::model::Skin::Liquid && self.app.wgpu_format.is_some() {
-            [0.93, 0.93, 0.94, 1.0]
-        } else {
-            [0.0; 4]
-        }
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+impl Shell {
+    /// 岛仔 UI 绘制主体（eframe 与新 winit 自绘循环共用）。
+    fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let frame_start=Instant::now();
         // 内存剖析运行：DAOZAI_MEMPROF_EXIT=<秒> 到点后优雅退出（走 Drop 写 dhat 报告）。
@@ -850,6 +836,32 @@ impl eframe::App for Shell {
     }
 }
 
+impl eframe::App for Shell {
+    fn raw_input_hook(&mut self,_ctx:&egui::Context,input:&mut egui::RawInput) {
+        if input.viewport_id==egui::ViewportId::ROOT {self.app.filter_todo_input(input);}
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // DirectComposition 是逐像素 alpha：清屏必须全透明，否则整窗是一块不透明底色。
+        if true { // migration: new stack is DComp-transparent
+            return [0.0; 4];
+        }
+        // 兼容渲染的窗口是不透明的：首帧清成黑色会「黑闪」一下。
+        // 液态玻璃皮肤下清成接近浅玻璃的灰白，等 GPU 内容覆盖，观感平滑很多。
+        if self.app.settings.skin == daozai::model::Skin::Liquid && self.app.wgpu_format.is_some() {
+            [0.93, 0.93, 0.94, 1.0]
+        } else {
+            [0.0; 4]
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.draw(ui);
+    }
+
+
+}
+
 // ---------------- 额度线程对齐 ----------------
 
 /// 额度线程只关心总开关和账号身份；别名、置顶只影响显示，改了不重新查询。
@@ -1144,6 +1156,8 @@ fn run() -> eframe::Result<()> {
         let path=daozai::model::config_dir().join("diagnostics").join("dhat-heap.json");
         dhat::Profiler::builder().file_name(path).build()
     };
-    let result=graphics::run(opts,|opts|eframe::run_native("岛仔", opts, Box::new(|cc| Ok(Box::new(Shell::new(cc))))));
-    result
+    #[cfg(windows)]
+    { winit_runner::run().map_err(|e| eframe::Error::AppCreation(Box::new(std::io::Error::other(e.to_string())))) }
+    #[cfg(not(windows))]
+    { let _ = opts; graphics::run(opts,|opts|eframe::run_native("岛仔", opts, Box::new(|_cc| Err(eframe::Error::Custom("非 Windows 无自绘栈".into()))))); Ok(()) }
 }

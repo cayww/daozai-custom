@@ -44,11 +44,9 @@ pub fn startup(stage:&str) {
 }
 
 /// 记录实际使用的图形设备，避免把电脑里的显卡列表误当作当前渲染设备。
-pub fn graphics(cc:&eframe::CreationContext<'_>) {
-    use eframe::glow::HasContext;
-    let details=if let Some(gl)=&cc.gl {unsafe{format!("厂商：{}\n渲染器：{}\nOpenGL：{}\n",
-        gl.get_parameter_string(eframe::glow::VENDOR),gl.get_parameter_string(eframe::glow::RENDERER),gl.get_parameter_string(eframe::glow::VERSION))}}
-    else{return;};
+/// D3D11 自绘栈：渲染器信息由 graphics 运行时写入，这里留空实现保持签名兼容。
+pub fn graphics() {
+    let details="渲染栈：D3D11 单 device + DirectComposition（WGC 抓屏 + HLSL 玻璃）\n".to_string();
     let directory=daozai::model::config_dir().join("diagnostics");
     if std::fs::create_dir_all(&directory).is_ok(){let _=std::fs::write(directory.join("last-graphics.log"),details);}
 }

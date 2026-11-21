@@ -461,9 +461,16 @@ impl Window {
         }
     }
 
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Option<Self> {
+    /// eframe examples 兼容入口：从 CreationContext 提取 HWND 与 Context。
+    #[cfg(windows)]
+    pub fn from_cc(cc: &eframe::CreationContext<'_>) -> Option<Self> {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let RawWindowHandle::Win32(handle) = cc.window_handle().ok()?.as_raw() else { return None };
-        let hwnd = HWND(handle.hwnd.get() as *mut _);
+        Self::new(windows::Win32::Foundation::HWND(handle.hwnd.get() as _), cc.egui_ctx.clone())
+    }
+
+    /// D3D11 栈直接传 HWND + egui Context（不再经由 eframe CreationContext）。
+    pub fn new(hwnd: windows::Win32::Foundation::HWND, egui_ctx: egui::Context) -> Option<Self> {
         let hook = unsafe {
             apply_style(hwnd, false, false);
             let _=enable_alpha_composition(hwnd);
@@ -478,20 +485,17 @@ impl Window {
                 WINEVENT_OUTOFCONTEXT,
             )
         };
-        if !hook.is_invalid(){FG_CONTEXT.set(Some(cc.egui_ctx.clone()));}
+        if !hook.is_invalid(){FG_CONTEXT.set(Some(egui_ctx.clone()));}
         // 区域用哨兵值：首帧（包括启动即隐藏的空区域）也必须真正调用 SetWindowRgn，
         // 否则整块透明画布会挡住下层程序的点击。
         let backend:Option<Backend>=None; // migration: D3D11 stack has no wgpu render state
-        let (vendor,renderer)=cc.gl.as_ref().map(|gl|{
-            use eframe::glow::HasContext;
-            unsafe{(gl.get_parameter_string(eframe::glow::VENDOR),gl.get_parameter_string(eframe::glow::RENDERER))}
-        }).unwrap_or_default();
+        let (vendor,renderer)=(String::new(),String::new()); // D3D11 stack: no GL vendor info
         // 本机验证用：DAOZAI_OUTLINE_TEST=alpha 按 AMD 等路径处理；=opaque 再假装读回的画面没有透明通道。
         let opaque_surface=surface_needs_outline_clip(backend,&vendor,&renderer) || outline_test().is_some();
         if opaque_surface{glass_diagnostic(&format!("渲染兼容：{vendor} {renderer} {backend:?}，不直接信任系统透明合成，首帧前先按轮廓裁剪"));}
         let passive=Arc::new(AtomicBool::new(false));
         let strip=Arc::new(Mutex::new(None));
-        watch_drag(hwnd,cc.egui_ctx.clone(),passive.clone(),strip.clone());
+        watch_drag(hwnd,egui_ctx.clone(),passive.clone(),strip.clone());
         Some(Self { hwnd, layering:Layering::Pending, region: (i32::MIN, 0, 0, 0), expanded: false, hook, browser_state:(None,PollClock::default()), drag_capture:DragCapture::default(), glass:None, backdrop:None, blur:false, blur_unavailable:false, opaque_surface, outline:ShapeAlpha::default(), passive, strip })
     }
 

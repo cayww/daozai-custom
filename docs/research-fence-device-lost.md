@@ -519,3 +519,32 @@ glass_spike.rs 换成岛仔风格 UI：通知胶囊（`rect_filled`+`rect_stroke
 - 全程修 CRLF 噪音（Python 文本模式写回会 LF↔CRLF 翻转，34 文件 diff 从 ~16k 行降到 420 行）。
 - 源码 commit `d522521`（research/egui035-migration，35 files +420/-351）；工具 commit 在 egui-directx11。main 不动。
 - 剩余 8 个：2 native 黑底裁剪（glow stub 预期，需真 D3D11 渲染层）+ 6 个 0.35 深度交互差（DragValue Esc/加号即时生效与旧延迟提交语义不同、tooltip 长路径省略号截断、qweather ComboBox 独立 viewport 点击路由）。这些是"渲染接线 + 精细交互适配"的后续工作，非架构未知。
+
+---
+
+## 三十、渲染接线：egui-directx11 移植回岛仔，替换 glow stub（2026-11-21 12:30–14:15）
+
+承接 §24/§25（独立工程验证单 device 零拷贝 + DComp 透明浮窗）与 §29（测试适配），本轮把验证过的渲染栈接回主项目。
+
+### 决策
+- 用户选"直接完整接线 + 保持 windows 0.58"。核心理由：0.58 已有 D3D11/DComp/WGC 全部 API，升 0.62 会波及 native.rs/wgc.rs 数百处调用。
+- `D3D11CreateDevice` 签名差异（0.58 第 3 参 `Param<HMODULE>`，0.62 直接 HMODULE）、`BOOL` 从 `Win32::Foundation` 导入 —— 少量适配即可。
+
+### 移植内容
+- `src/d3d11/renderer.rs` + `texture.rs`（egui→D3D11 渲染，整块复制改 shader 路径）。
+- `src/d3d11/wgc_capture.rs`（轮询式 WGC，CopyResource 零回读，无改动）。
+- `src/d3d11/runtime.rs`：`D3d11Runtime`（device+FLIP_DISCARD/PREMULTIPLIED composition swapchain+DComp visual+玻璃 HLSL 管线+egui render）与 `PlainWindow`（轻量子窗口渲染器）。
+- `shaders/*.hlsl` + 4 个已编译 `.bin`（无需 fxc）。
+- `src/winit_runner.rs`：winit 0.30 `ApplicationHandler` 事件循环；`Shell::new(egui_ctx, hwnd)` 去掉 eframe CreationContext 依赖；`set_request_repaint_callback` + EventLoopProxy 唤醒。
+
+### 实证
+- `cargo check --all-targets`、`cargo build --release` 通过；测试无回归。
+- 实机：WGC 抓屏 1920x1080/2560x1440 自适应，首帧 CopyResource 成功；截图确认玻璃胶囊透明渲染（时间/天气正常，桌面透出）。
+
+### 已知限制与社区答案（用户问"社区有没有这个问题"）
+设置页多独立窗口未达成，仍内嵌本体（功能完整）。这不是孤例，是 egui 官方已知难题：
+- **issue #5229**：Windows 不可见窗口收不到 `RedrawRequested`，`Visible(true)` 等 viewport 命令卡住（设置页 builder 是 `with_visible(false)`，正中要害）。
+- **issue #8326**：`ControlFlow::Poll` 空转 CPU，应用 `WaitUntil` + 显式 repaint 调度。
+- **issue #7776**：不可见窗口 repaint 要节流到 100ms。
+- eframe 的官方解法：维护 `windows_next_repaint_times`/`redraw_deadline`，用 `event_loop_context`（thread_local 存 ActiveEventLoop）让 `show_viewport_immediate` 回调能建原生窗口；不可见窗口在 `check_redraw_requests` 里直接跑 UI pass 而非等 `RedrawRequested`。
+- 本轮实现了 `event_loop_context` + repaint proxy + 首版调度，但在 draw 上下文 create_window 仍使事件循环卡在第二帧；为保稳定回退内嵌。**后续路径**：完整移植 eframe 的 `new_events`/`check_redraw_requests`/`PassMode` 调度（非 draw 上下文建窗），即可开多窗口。

@@ -60,7 +60,7 @@ fn main()->eframe::Result<()> {
             GetWindowRect(hwnd,&mut rect).unwrap();
             CreateWindowExW(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW,windows::core::w!("STATIC"),windows::core::w!(""),WS_POPUP|WS_VISIBLE|WINDOW_STYLE(6),rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,None,None,None,None).unwrap()
         };
-        let native=daozai::native::Window::new(cc).unwrap();
+        let native=daozai::native::Window::from_cc(cc).unwrap();
         if hidden_start {unsafe{
             use windows::Win32::Graphics::Dwm::*;
             DwmEnableBlurBehindWindow(hwnd,&DWM_BLURBEHIND{dwFlags:DWM_BB_ENABLE,..Default::default()}).unwrap();
