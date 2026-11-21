@@ -103,6 +103,18 @@ impl D3d11Runtime {
             return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL));
         };
         let size = window.inner_size();
+        // WGC 抓整屏合成帧；必须把岛仔自己排除出合成树，否则玻璃会采样到
+        // 它自己的窗口（递归自采样）。原版 gpu_glass.rs 在 wgpu 栈做同样的事，
+        // 但迁移后 gpu_glass 被重定向到 stub，这里由新渲染栈接手。
+        {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+            };
+            let hwnd = HWND(h.hwnd.get() as _);
+            if let Err(e) = unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) } {
+                eprintln!("[d3d11] WDA_EXCLUDEFROMCAPTURE failed: {:?}", e);
+            }
+        }
         eprintln!("[d3d11] create_device_swap {}x{} hwnd={:?}", size.width, size.height, h.hwnd.get());
         let (device, ctx, swap, dcomp) = match Self::create_device_swap(HWND(h.hwnd.get() as _), size.width, size.height) {
             Ok(v) => { eprintln!("[d3d11] device/swap/dcomp OK"); v }
@@ -287,7 +299,9 @@ impl D3d11Runtime {
         }
         // HLSL uniform：补上窗口原点与 flipY（WGC top-down）
         let mut u = *params;
-        u.quad[0] = if self.wgc.is_some() { 1.0 } else { 0.0 };
+        // WGC 帧与 D3D11 纹理同为 top-down（v=0 顶部），不要额外翻转 uv.y；
+        // 窗口局部 y 已在 shader 的 sample_px 里按 extra.z 翻正。
+        u.quad[0] = 0.0;
         u.quad[1] = origin.0;
         u.quad[2] = origin.1;
         u.notch[3] = 1.0; // DComp 逐像素 alpha

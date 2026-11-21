@@ -71,11 +71,13 @@ float3 sample_px(float2 px) {
         float ln = 1.0 - smoothstep(0.6, 1.8, dl);
         return lerp(float3(0.80,0.84,0.90), float3(0.18,0.22,0.30), ln);
     }
-    // px is window-local physical pixels; quad.yz = window origin on the desktop.
-    // The WGC texture is the whole monitor, so sample at (px + origin)/screen_size.
+    // px is window-local physical pixels, but y counts from the BOTTOM (D3D11 fullscreen
+    // triangle: uv.y=0 at bottom). Flip it against window height (extra.z) so it counts
+    // from the top, matching the desktop/window origin in quad.yz.
+    // Without this flip the capture is mirrored vertically (island at top -> sample at bottom).
     uint w, h;
     bg.GetDimensions(w, h);
-    float2 screen_px = px + quad.yz;
+    float2 screen_px = float2(px.x + quad.y, (extra.z - px.y) + quad.z);
     float2 uv = saturate(screen_px / float2(w, h));
     // WGC frames are top-down; D3D11 SRV samples top-left origin -> flip Y.
     // quad.x is the flip flag (set when the live WGC path is active).

@@ -3696,11 +3696,14 @@ impl App {
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
     fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,_flare:f32,_flare_h:f32,radius:f32,_origin:Pos2){
-        // Migration: the WGSL/eframe-wgpu paint callback is gone. Liquid-glass optics
-        // are drawn by the HLSL layer in the D3D11 render loop (egui-directx11 stack).
-        // Draw a neutral fallback body here so the UI keeps its silhouette.
+        // Liquid glass optics are drawn by the HLSL layer in the D3D11 render loop,
+        // BEFORE egui (see d3d11::runtime). Publish the real island geometry so the
+        // shader refracts exactly this rect; keep this body nearly transparent so the
+        // refracted desktop shows through, only the rim keeps the silhouette.
+        let pointer=self.cursor_win.unwrap_or_else(||rect.center());
+        crate::gpu_glass::set_body(rect,radius,(pointer.x,pointer.y),self.liquid_k);
         let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
-        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,225));
+        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,20));
         painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
     }
 
