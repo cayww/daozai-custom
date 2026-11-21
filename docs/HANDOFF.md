@@ -1622,6 +1622,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - **决定性证据**：从 D3D11 RT 直接 `CopyResource` 读回 GPU 原始像素（绕开 WDA_EXCLUDEFROMCAPTURE 与手机拍屏摩尔纹），收起态/展开态中文（"杀死那个石家庄人""专注时间""25:00"）**全部清晰锐利**，无变形。诊断值 `win_inner=1200×338 rt_phys=1200×338 egui_ppp=1.25 zoom=1`，`max_texture_side=None`(=2048)。
   - transfer function `DARK→Off` A/B：字形灰阶有变（中间灰 69.9%→62.9%），但**清晰度无差**，非根因。跳过 glass pass、放大图集到 4096、ppp=1.25 独立工程复现——全部清晰。
 - **字形度量探针** `examples/font_probe.rs`（0.35 与 0.31 各一份）：用岛仔同款字体链（segoeui idx0 + msyh.ttc idx1）layout"专注时间不提醒 2026年11月21日"，逐字打印 pos.y/ascent/uv/advance。**结果：0.31 与 0.35 行为一致**——中文 `pos.y=15.0 face_asc=14.2`，数字 `pos.y=16.0 face_asc=15.1`，同句混排本就差 1px（两版都如此，非迁移引入）。差异仅在 advance 14.2→14.0、uv_h 14→12/13（skrifa 栅格化略小），不足以造成变形。
-- **当前困境（诚实记录）**：本机能用到的全部客观手段（字形度量、GPU RT 读回、GDI 截图）都显示 0.31/0.35 字形一致且清晰，**无法复现用户肉眼/拍屏看到的"变形/高低不齐"**。强烈怀疑与**用户机器的显示缩放/多显示器/DPI 环境**有关（本机单屏 2560×1440@125%；进程内实际 ppp=1.25）。用户对比的"之前架构清晰"可能是不同 DPI 配置下运行。
-- **下一步（需用户配合）**：①请用户在其看到毛刺的机器上、用干净版 exe（sha `967d1fba57db3927`=HEAD 原始代码）确认症状仍在；②告知 Windows 显示缩放比例、显示器数量、各屏缩放是否一致、以及"之前架构"对比时的缩放配置；③若确认是 DPI 环境差异，重点查进程/窗口 DPI awareness（`app.rc` 无 dpi manifest、main() 无进程级 SetProcessDpiAwarenessContext，仅线程级在 kuwo/player_seek/wechat 临时用）。
-- **源码状态**：三个源码文件已 `git checkout` 恢复，工作树仅 `docs/HANDOFF.md` 改动；诊断 exe 已重编为原始代码 sha `967d1fba57db3927`。未提交、未部署、未跑全量测试。
+- **【已解决，见 §7.0zzg.21】** 上述"困境"是当时的误判。用户后续澄清症状是"变形/大小不一/高低不齐"而非抗锯齿毛刺，并确认"配置全一样、一启动就所有字、迁移后出现"。真正根因是 0.35 的 skrifa hinting + subpixel_binning（字形压小）+ 液态皮肤按钮弹簧导致字号连续变化（字形重排抖动），均已修复并提交 `7a579d2`。环境/DPI 假设作废。
+
+### 7.0zzg.21 【已修复】文字变形 + 液态皮肤控件抖动的真正根因（2026-11-21 23:55–2026-11-22 01:05，提交 `7a579d2`）
+- **用户关键澄清**（推翻此前所有"毛刺=抗锯齿"方向）：症状是**文字变形、有些部位变小、字高低不齐**；所有文字/所有字号、**一启动就**、**迁移后出现**；配置与 agent 机器完全相同。后又补充："液态玻璃下抖、其他皮肤不抖"，且"跟之前翻页后控件抖动是同一个问题"。
+- **两个独立根因**（都是 0.35 引入，都已有实证）：
+  1. **字形变形**：0.35 用 skrifa 替换 ab_glyph，默认 `font_hinting=true`（把中文字形垂直压小，探针实测 uv_h 14→12）+ `subpixel_binning=true`（笔画粗细不均）。修复：`App::new` 的 `all_styles_mut` 里关闭二者，`#[cfg(not(test))]` 隔离（UI 测试断言坐标，保持基线）。用户实机确认字形**完全恢复正常**。
+  2. **液态皮肤控件抖动**：`Card::font()` 用 `font(size * s)`，s=弹簧缩放（按压/入场）。液态皮肤下 `pages.rs` 按钮走 `c.scaled(..., ctl_scale(ctl))`，弹簧 s 振荡（逐帧日志实测 0.95↔1.0，约 2 秒），字号 `size*s` 每帧连续变化 → egui 0.35 为每帧新字号重新栅格化字形 → 字位左右抖 1px。其他皮肤走 `capsule()` 不缩放，故不抖。修复：`Card::font()` 把字号量化到 1/8pt（`#[cfg(not(test))]`），字形缓存命中稳定。用户实机确认**抖动小了很多**，仅"歌"字长按残余极轻微。
+- **为何 §7.0ze 的 6 次抖动修复全失败**：改 ζ / 锁 60fps / progress snap 都在因果链最左端（弹簧参数）打转，真正的放大器是中间的"字号连续变化→egui 重排"，之前没人碰 `Card::font()`。
+- **排除记录**（避免重走）：egui 版本降级（独立工程 0.31 vs 0.35 同字体字形一致，无效）、DPI/缩放环境（用户配置相同）、GPU 玻璃 pass（SKIP_GLASS 仍抖）、控件 GPU 透镜（NO_CTL_GLASS 仍抖）、RT 读回分辨率、transfer function、text 起点 snap（字形未量化时无效）。
+- **社区更优方案（技术债，暂不采纳）**：egui 官方讨论 #3197、Bevy 警告 B0005 都指出正解是**固定字号排版 + 用 Transform::scale 缩放 mesh 顶点**，而非改字号。我试过用 `Shape::scale`，但 `clock`/`weather_ui` 大量依赖 `galley.mesh_bounds`（与字号成正比）做垂直对齐，只改 text 会破坏对齐测试；统一改造需动 paint.rs/weather_ui.rs 等多文件，风险大于当前收益。当前 1/8pt 量化是"廉价版 transform"，抓住同一根因，已验证有效。将来若系统重构文字系统可切换至官方方案。
+- **验证**：全量 `cargo test --locked --release --lib -- --test-threads=1` = **1385 passed / 0 failed / 131 ignored**（两处修复均 cfg(not(test))，测试构建=基线）。exe sha（量化版）`3a4e68c885940a22`。未部署、未打包、main 不动（在 research/egui035-migration 分支提交 `7a579d2`）。
