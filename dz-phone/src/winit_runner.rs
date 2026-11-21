@@ -107,7 +107,8 @@ impl DaozaiApp {
         let fc = FC.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let Some(w) = self.window.as_ref() else { return };
         let origin = w.inner_position().map(|p| (p.x as f32, p.y as f32)).unwrap_or((0.0, 0.0));
-        let params = build_glass_params();
+        let ppp = self.runtime.as_ref().unwrap().egui_ctx.pixels_per_point();
+        let params = build_glass_params(ppp);
         let input = { let w = self.window.as_ref().unwrap(); self.runtime.as_mut().unwrap().take_input(w) };
         let window = self.window.as_ref().unwrap();
         event_loop_context::with(el, || {
@@ -250,7 +251,13 @@ impl ApplicationHandler<()> for DaozaiApp {
 }
 
 /// 从 app 当前状态构造 HLSL 玻璃 uniform（岛体胶囊布局）。
-fn build_glass_params() -> GlassParams {
+///
+/// 坐标系（移植自旧 wgpu 栈 gpu_glass::build_uniform）：app/egui 传进来的几何和
+/// 光学强度全是「逻辑点 / CSS px」，而 shader 的全屏三角形铺的是「物理像素」渲染
+/// 目标（= 逻辑尺寸 × ppp，如 960×270 × 1.25 = 1200×338）。所有像素单位必须先乘
+/// ppp 转成设备像素——漏掉这步会让 shader 认为画布只有实际的 1/1.25，采到的桌面
+/// 区域随之缩小 1.25 倍，表现为「玻璃里的背景被放大一圈」（高 DPI 屏尤甚）。
+fn build_glass_params(ppp: f32) -> GlassParams {
     let u = daozai::gpu_glass::uniforms();
     let mut p = GlassParams::default();
     if !u.active {
@@ -258,17 +265,22 @@ fn build_glass_params() -> GlassParams {
         p.bounds = [-10000.0, -10000.0, 1.0, 1.0];
         return p;
     }
-    // 坐标转换：egui 的 y 从窗口顶部往下，D3D11 全屏三角形 uv.y=0 在窗口底部。
-    // 必须翻转 y，否则玻璃画到窗口下方（"展开时最下方冒头"正是这个原因）。
-    let h = crate::app::WIN_H as f32;
+    let ppp = ppp.max(0.1);
+    // 画布物理尺寸 = egui 逻辑画布 × ppp（与 D3D11 RT / swap 的真实尺寸一致）。
+    let cw = crate::app::CANVAS_W * ppp;
+    let h = crate::app::WIN_H * ppp;
+    // 岛体矩形、指针：逻辑点 → 设备像素。y 从 egui(顶原点) 翻到 D3D11(底原点)。
     let b = u.body_rect;
-    p.bounds = [b[0], h - b[1] - b[3], b[2], b[3]];
-    // shader 的 `p = i.uv * float2(extra.y, extra.z)` 是窗口物理像素坐标，
-    // 必须给真实渲染目标尺寸，否则全岛采样同一个点、看不到任何折射。
-    p.extra = [u.radius, crate::app::CANVAS_W as f32, h, 0.0];
-    p.params = [u.chroma, 0.0, u.morph, u.material];
-    p.misc = [u.pointer[0], h - u.pointer[1], u.refract, 0.0];
-    p.look = [u.blur, u.band, u.edge_w, u.edge_op];
+    let bx = b[0] * ppp;
+    let by = b[1] * ppp;
+    let bw = b[2] * ppp;
+    let bh = b[3] * ppp;
+    p.bounds = [bx, h - by - bh, bw, bh];
+    p.extra = [u.radius * ppp, cw, h, 0.0];
+    // 光学强度（折射/色散/模糊，单位 CSS px）同样转设备像素；morph/material 无量纲不缩放。
+    p.params = [u.chroma * ppp, 0.0, u.morph, u.material];
+    p.misc = [u.pointer[0] * ppp, h - u.pointer[1] * ppp, u.refract * ppp, 0.0];
+    p.look = [u.blur * ppp, u.band * ppp, u.edge_w * ppp, u.edge_op];
     p.lightcfg = [u.light_follow, 0.0, 0.0, 0.0];
     // 深浅材质的玻璃染色：暗色玻璃偏冷灰，浅色偏白。
     p.tint = if u.material > 0.5 { [0.96,0.97,1.0,0.10] } else { [0.55,0.72,0.90,0.10] };

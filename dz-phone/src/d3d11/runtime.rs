@@ -293,6 +293,14 @@ impl D3d11Runtime {
     pub fn render(&mut self, window: &winit::window::Window, origin: (f32, f32),
                   params: &GlassParams, input: egui::RawInput,
                   mut run_ui: impl FnMut(&egui::Context, &mut egui::Ui)) -> FrameStats {
+        // 坐标诊断（仅 DAOZAI_GLASS_DIAG 开启）：打印屏幕帧/窗口/原点/几何的实际数值。
+        if std::env::var("DAOZAI_GLASS_DIAG").is_ok() && self.frames == 3 {
+            let sz = window.inner_size();
+            let sf = window.scale_factor();
+            eprintln!("[diag] monitor_bg={}x{} win_inner={}x{} scale_factor={} origin=({},{}) extra(tex)={:?} bounds={:?} misc={:?}",
+                self.glass.bg_w, self.glass.bg_h, sz.width, sz.height, sf,
+                origin.0, origin.1, params.extra, params.bounds, params.misc);
+        }
         // WGC 抓屏（GPU 侧 CopyResource）
         if let Some(wgc) = self.wgc.as_ref() {
             if wgc.grab_into(&self.ctx, &self.glass.bg_tex) { self.wgc_ever_frame = true; }
