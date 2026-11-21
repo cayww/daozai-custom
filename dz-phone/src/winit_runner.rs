@@ -16,22 +16,47 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
-/// 子 viewport 的 UI closure（egui 回调借用主 app，主线程内当帧有效）。
-type UiCb = Rc<RefCell<Box<dyn FnMut(&mut egui::Ui)>>>;
-
 /// egui repaint 唤醒事件循环的代理（user event = ()）。
 static REPAINT_PROXY: std::sync::OnceLock<winit::event_loop::EventLoopProxy<()>> = std::sync::OnceLock::new();
 
 thread_local! {
-    /// set_immediate_viewport_renderer 回调把新/更新的子 viewport 放进这个队列，
-    /// 事件循环在下一处 about_to_wait 里消费它（创建/更新 winit 窗口）。
-    static VIEWPORT_REQ: RefCell<Vec<(egui::ViewportId, Window, UiCb)>> = RefCell::new(Vec::new());
+    /// immediate viewport renderer 回调（在 draw 上下文同步执行）把该帧子窗口的
+    /// FullOutput 放进此队列；drain_viewports 在事件循环里消费、建/更新 winit 窗口。
+    /// 存 output 而非 UI 闭包：immediate 回调借用 app，不能跨帧存；output 可以。
+    static VIEWPORT_REQ: RefCell<Vec<(egui::ViewportId, Rc<Window>, egui::FullOutput)>> = RefCell::new(Vec::new());
+    /// immediate 回调每帧都触发（show_viewport_immediate 每帧调用），窗口必须复用，
+    /// 否则每帧 create 一个 invisible 新窗口（builder with_visible(false)）。
+    static VIEWPORT_WINDOWS: RefCell<HashMap<egui::ViewportId, (Rc<Window>, egui::ViewportBuilder)>> = RefCell::new(HashMap::new());
+    /// 子窗口的输入（含鼠标/键盘事件）：window_event 累积，draw_main 前取出交给
+    /// immediate 回调（回调在主窗口 draw 上下文执行，拿不到 sub.renderer）。
+    static VIEWPORT_INPUTS: RefCell<HashMap<egui::ViewportId, egui::RawInput>> = RefCell::new(HashMap::new());
+    /// 照搬 eframe 0.35：回调在 draw 上下文执行但 create_window 需要 &ActiveEventLoop，
+    /// 用 thread_local 存当前 event loop（guard 保证生命周期）。
+    static CURRENT_EVENT_LOOP: std::cell::Cell<Option<*const ActiveEventLoop>> = const { std::cell::Cell::new(None) };
+}
+
+/// 在事件处理方法入口建立 event loop 上下文，guard drop 时清除。
+fn with_event_loop_context(el: &ActiveEventLoop, f: impl FnOnce()) {
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) { CURRENT_EVENT_LOOP.with(|c| c.set(None)); }
+    }
+    CURRENT_EVENT_LOOP.with(|c| c.set(Some(std::ptr::from_ref::<ActiveEventLoop>(el))));
+    let _guard = Guard;
+    f();
+}
+fn with_current_event_loop<F, R>(f: F) -> Option<R>
+where F: FnOnce(&ActiveEventLoop) -> R {
+    CURRENT_EVENT_LOOP.with(|c| c.get().map(|ptr| {
+        #[allow(unsafe_code)] // 指针由 guard 持有，存活期间有效（eframe 同款）
+        unsafe { f(&*ptr) }
+    }))
 }
 
 struct SubWindow {
-    window: Window,
+    window: Rc<Window>,
     renderer: PlainWindow,
-    cb: UiCb,
+    output: Option<egui::FullOutput>,
     id: egui::ViewportId,
 }
 
@@ -51,26 +76,28 @@ impl DaozaiApp {
                subs: HashMap::new(), sub_ids: HashMap::new(), pending_close: Vec::new() }
     }
 
-    /// 消费 egui 的 viewport 请求：新建或更新子窗口。
+    /// 消费 immediate viewport 请求：新建/更新子窗口，并保存该帧 output 供绘制。
     fn drain_viewports(&mut self) {
         let reqs = VIEWPORT_REQ.with(|q| std::mem::take(&mut *q.borrow_mut()));
-        for (id, window, cb) in reqs {
-            if self.sub_ids.contains_key(&id) {
-                if let Some(&wid) = self.sub_ids.get(&id) {
-                    if let Some(sub) = self.subs.get_mut(&wid) { sub.cb = cb; }
+        for (id, window, output) in reqs {
+            let wid = window.id();
+            if let Some(&existing) = self.sub_ids.get(&id) {
+                if let Some(sub) = self.subs.get_mut(&existing) {
+                    sub.window = window;
+                    sub.output = Some(output);
                 }
                 continue;
             }
             let Some(rt) = self.runtime.as_ref() else { continue };
-            // 子窗口是否透明：从 builder 推断（设置页 with_transparent 未设，按不透明）。
-            let transparent = false;
-            let renderer = match PlainWindow::new(&window, &rt.egui_ctx, transparent) {
+            let renderer = match PlainWindow::new(&window, &rt.egui_ctx, false) {
                 Ok(r) => r, Err(e) => { eprintln!("[d3d11] PlainWindow failed: {e}"); continue; }
             };
-            let wid = window.id();
-            eprintln!("[winit] sub viewport {:?} -> window {:?}", id, wid);
+            eprintln!("[winit] sub viewport {id:?} -> window {wid:?}");
+            // builder 里 with_visible(false) 防白屏，但 Visible(true) 命令在首帧发出时
+            // 窗口尚未创建（drain 在 render 之后）而丢失，这里窗口建好后主动显示。
+            window.set_visible(true);
             self.sub_ids.insert(id, wid);
-            self.subs.insert(wid, SubWindow { window, renderer, cb, id });
+            self.subs.insert(wid, SubWindow { window, renderer, output: Some(output), id });
         }
     }
 
@@ -82,16 +109,30 @@ impl DaozaiApp {
         let ppp = self.runtime.as_ref().unwrap().egui_ctx.pixels_per_point();
         let params = build_glass_params(ppp);
         let input = { let w = self.window.as_ref().unwrap(); self.runtime.as_mut().unwrap().take_input(w) };
+        // 收集子窗口输入（含鼠标/键盘事件）供 immediate 回调使用。
+        for sub in self.subs.values_mut() {
+            let sin = sub.renderer.egui_winit.take_egui_input(&sub.window);
+            VIEWPORT_INPUTS.with(|m| { m.borrow_mut().insert(sub.id, sin); });
+        }
         let window = self.window.as_ref().unwrap();
         let rt = self.runtime.as_mut().unwrap();
         let sh = self.shell.as_mut().unwrap();
-        let _: FrameStats = rt.render(window, origin, &params, input, |_ctx, ui| sh.draw(ui));
+        let stats: FrameStats = rt.render(window, origin, &params, input, |_ctx, ui| sh.draw(ui));
+        // 把主窗口 output 里子 viewport 的窗口命令（Visible(true)/位置/大小）应用到子窗口。
+        for (vid, cmds) in stats.viewport_commands {
+            if let Some(&wid) = self.sub_ids.get(&vid) {
+                if let Some(sub) = self.subs.get_mut(&wid) {
+                    egui_winit::process_viewport_commands(&rt.egui_ctx, &mut sub.renderer.viewport_info,
+                        cmds, &sub.window, &mut sub.renderer.actions);
+                }
+            }
+        }
         self.drain_viewports();
-        // 不可见子窗口直接绘制（#5229）
-        let invisible: Vec<WindowId> = self.subs.iter()
-            .filter(|(_, s)| s.window.is_visible() != Some(true))
-            .map(|(id, _)| *id).collect();
-        for wid in invisible { self.render_sub_inner(wid); }
+        // immediate viewport 由父窗口驱动重绘：父每帧 draw 时通过回调拿到子窗口 output，
+        // 这里统一画所有子窗口（含可见的）。原来的"只画 invisible"是内嵌 workaround，
+        // 独立窗口后必须每帧画，否则内容区空白。
+        let subs: Vec<WindowId> = self.subs.keys().copied().collect();
+        for wid in subs { self.render_sub_inner(wid); }
     }
 
     /// 绘制子窗口一帧（RedrawRequested 与"不可见窗口直接绘制"共用）。
@@ -102,11 +143,10 @@ impl DaozaiApp {
         let Some(rt) = self.runtime.as_ref() else { return };
         let ctx = rt.egui_ctx.clone();
         let Some(sub) = self.subs.get_mut(&wid) else { return };
-        let input = sub.renderer.egui_winit.take_egui_input(&sub.window);
-        let cb = sub.cb.clone();
-        sub.renderer.render(&sub.window, &ctx, input, sub.id, |ui| {
-            if let Ok(mut f) = cb.try_borrow_mut() { f(ui); }
-        });
+        // immediate viewport 的 UI 在主窗口 draw 时已同步跑过，这里只画存起来的 output。
+        if let Some(output) = sub.output.take() {
+            sub.renderer.paint_output(&sub.window, &ctx, sub.id, output);
+        }
     }
 }
 
@@ -134,15 +174,55 @@ impl ApplicationHandler<()> for DaozaiApp {
         };
         let ctx = runtime.egui_ctx.clone();
 
-        // 多窗口限制：set_embed_viewports(false) + create_window 在 draw 上下文会
-        // 让 winit 事件循环死锁（eframe 需一整套 check_redraw_requests 调度才能安全）。
-        // 暂保持 egui 默认内嵌：设置页画在本体，功能完整、循环稳定。
-        // TODO: 接 eframe 的完整 new_events/check_redraw_requests 模式后再开多窗口。
         if let Some(proxy) = REPAINT_PROXY.get() {
             let px = proxy.clone();
             ctx.set_request_repaint_callback(move |_info| { let _ = px.send_event(()); });
         }
-        // 暂时不注册 immediate viewport renderer（内嵌模式下不需要）。
+        // 让 show_viewport_immediate 走原生独立窗口（egui 默认内嵌会把设置页画到岛仔本体）。
+        // 照搬 eframe 0.35：注册 immediate renderer，回调在 draw 上下文同步执行——
+        // 用 event_loop_context 取当前 event loop 建窗口，跑 viewport_ui_cb 拿 output 存队列。
+        ctx.set_embed_viewports(false);
+        egui::Context::set_immediate_viewport_renderer(|egui_ctx, viewport| {
+            let egui::ImmediateViewport { ids, builder, mut viewport_ui_cb } = viewport;
+            let id = ids.this;
+            // 复用已创建的窗口；只有首次或 builder 变化时才 create。
+            let need_create = VIEWPORT_WINDOWS.with(|m| {
+                m.borrow().get(&id).map(|(_, old)| *old != builder).unwrap_or(true)
+            });
+            if need_create {
+                let attrs = egui_winit::create_winit_window_attributes(egui_ctx, builder.clone());
+                let Some(Ok(window)) = with_current_event_loop(|el| el.create_window(attrs)) else {
+                    eprintln!("[winit] viewport {id:?} create_window failed");
+                    return;
+                };
+                let window = Rc::new(window);
+                egui_winit::apply_viewport_builder_to_window(egui_ctx, &window, &builder);
+                VIEWPORT_WINDOWS.with(|m| { m.borrow_mut().insert(id, (window, builder.clone())); });
+            }
+            let Some(window) = VIEWPORT_WINDOWS.with(|m| m.borrow().get(&id).map(|(w, _)| w.clone())) else { return };
+            // 子窗口 input：优先用 window_event 累积的真实 input（含鼠标/键盘），
+            // 否则（首帧）构造最小 input。viewport_id/viewports 必须配套，
+            // 否则设置页 ctx.input(|i| i.viewport()) 会 panic（egui RawInput::viewport）。
+            let mut input = VIEWPORT_INPUTS.with(|m| m.borrow_mut().remove(&id)).unwrap_or_default();
+            input.viewport_id = id;
+            let ppp = egui_ctx.pixels_per_point();
+            if input.screen_rect.is_none() {
+                let size = window.inner_size();
+                input.screen_rect = Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0),
+                    egui::vec2(size.width as f32 / ppp, size.height as f32 / ppp)));
+            }
+            if !input.viewports.contains_key(&id) {
+                input.viewports.insert(id, egui::ViewportInfo {
+                    native_pixels_per_point: Some(egui_ctx.native_pixels_per_point().unwrap_or(ppp)),
+                    inner_rect: input.screen_rect,
+                    ..Default::default()
+                });
+            }
+            if input.time.is_none() { input.time = Some(egui_ctx.input(|i| i.time)); }
+            // 同步跑子窗口 UI（viewport_ui_cb 借用 app，只能在此调用，不能跨帧存）。
+            let output = egui_ctx.run_ui(input, |ui| viewport_ui_cb(ui));
+            VIEWPORT_REQ.with(|q| q.borrow_mut().push((id, window, output)));
+        });
 
         let shell = Shell::new(ctx, hwnd);
         self.shell = Some(shell);
@@ -169,8 +249,10 @@ impl ApplicationHandler<()> for DaozaiApp {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        self.drain_viewports();
-        self.draw_main();
+        with_event_loop_context(el, || {
+            self.drain_viewports();
+            self.draw_main();
+        });
         for sub in self.subs.values() {
             sub.window.request_redraw();
         }

@@ -99,10 +99,14 @@ struct DcompState {
 }
 
 /// 一帧的渲染统计（供 UI 状态行显示）。
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct FrameStats {
     pub fps: f32,
     pub wgc_live: bool,
+    /// 主窗口 run_ui 产出的子 viewport 窗口命令（Visible/OuterPosition/InnerSize 等），
+    /// 由 winit_runner 应用到对应子窗口。immediate viewport 的 UI 在主窗口跑，
+    /// 命令也在主窗口 output 里，必须传出去否则设置页永远 invisible。
+    pub viewport_commands: Vec<(egui::ViewportId, Vec<egui::ViewportCommand>)>,
 }
 
 /// 渲染运行时。持有窗口生命周期内不能重建的 D3D/DComp 状态。
@@ -381,8 +385,13 @@ impl D3d11Runtime {
                 egui_winit::process_viewport_commands(&ctx, &mut self.viewport_info,
                     vo.commands.clone(), window, &mut self.actions);
             }
+            // 子 viewport 的窗口命令传出给 winit_runner 应用到子窗口（设置页 Visible(true)）。
+            let child_cmds = viewports.iter()
+                .filter(|(id, _)| **id != egui::ViewportId::ROOT)
+                .map(|(id, vo)| (*id, vo.commands.clone()))
+                .collect();
             self.egui_winit.as_mut().unwrap().handle_platform_output(window, po);
-            ro
+            (ro, child_cmds)
         };
         // 帧率统计
         self.frames += 1;
@@ -400,11 +409,12 @@ impl D3d11Runtime {
                 self.ctx.OMSetRenderTargets(Some(&[Some(rt.clone())]), None);
             }
             self.draw_glass(size.width, size.height, &u);
-            let _ = self.egui_renderer.render(&self.ctx, &rt, &self.egui_ctx, platform);
+            let _ = self.egui_renderer.render(&self.ctx, &rt, &self.egui_ctx, platform.0);
             unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
             unsafe { let _ = self.dcomp._device.Commit(); }
         }
-        FrameStats { fps: self.fps, wgc_live: self.wgc_ever_frame }
+        FrameStats { fps: self.fps, wgc_live: self.wgc_ever_frame,
+                     viewport_commands: platform.1 }
     }
 
     fn draw_glass(&mut self, win_w: u32, win_h: u32, u: &GlassParams) {
@@ -450,8 +460,8 @@ pub struct PlainWindow {
     pub egui_winit: egui_winit::State,
     renderer: Renderer,
     pub transparent: bool,
-    viewport_info: egui::ViewportInfo,
-    actions: Vec<egui_winit::ActionRequested>,
+    pub viewport_info: egui::ViewportInfo,
+    pub actions: Vec<egui_winit::ActionRequested>,
 }
 
 impl PlainWindow {
@@ -508,6 +518,28 @@ impl PlainWindow {
             if let winit::event::WindowEvent::Resized(s) = event { self.resize(s.width, s.height); }
         }
         resp.repaint
+    }
+
+    /// immediate viewport：主窗口 run_ui 时已同步跑过子窗口 UI（借 app），
+    /// 这里只负责把拿到的 FullOutput 画出来 + 处理窗口命令。
+    pub fn paint_output(&mut self, window: &winit::window::Window, egui_ctx: &egui::Context,
+                        viewport_id: egui::ViewportId, output: egui::FullOutput) {
+        egui_winit::update_viewport_info(&mut self.viewport_info, egui_ctx, window, false);
+        let (ro, po, viewports) = super::renderer::split_output(output);
+        if let Some(vo) = viewports.get(&viewport_id) {
+            egui_winit::process_viewport_commands(egui_ctx, &mut self.viewport_info,
+                vo.commands.clone(), window, &mut self.actions);
+        }
+        self.egui_winit.handle_platform_output(window, po);
+        if let Some(rt) = self.rt.clone() {
+            unsafe {
+                self.ctx.OMSetRenderTargets(Some(&[Some(rt.clone())]), None);
+                let clear = if self.transparent { [0.0, 0.0, 0.0, 0.0] } else { [0.1, 0.1, 0.12, 1.0] };
+                self.ctx.ClearRenderTargetView(&rt, &clear);
+            }
+            let _ = self.renderer.render(&self.ctx, &rt, egui_ctx, ro);
+            unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
+        }
     }
 
     /// 渲染子 viewport 的 UI。
