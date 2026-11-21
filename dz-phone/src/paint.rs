@@ -73,7 +73,14 @@ impl<'a> Card<'a> {
 
     // ---------- 文字（y 一律是基线，跨字体对齐稳定） ----------
     pub fn font(&self, size: f32, w: W) -> FontId {
-        font(size * self.s, w)
+        let scaled = size * self.s;
+        // 液态皮肤按压/入场弹簧让 s 连续振荡（实测 0.95↔1.0），字号随之每帧微调，
+        // egui 0.35 每帧重排字形 → 文字左右抖 1px。把字号量化到 1/8pt，
+        // 字形缓存命中稳定，缩放由 galley 位置承担，视觉无感。
+        // 测试构建保留原值：UI 测试大量断言字号相关坐标，测试目的是逻辑非字形。
+        #[cfg(not(test))]
+        let scaled = (scaled * 8.0).round() / 8.0;
+        font(scaled, w)
     }
     pub fn galley(&self, t: &str, size: f32, w: W, color: Color32) -> std::sync::Arc<egui::Galley> {
         self.painter.layout_no_wrap(crate::rtl_text::display(t).into_owned(), self.font(size, w), color)

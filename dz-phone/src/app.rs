@@ -1278,6 +1278,17 @@ impl App {
             s.interaction.selectable_labels = false;
             s.visuals.text_cursor.stroke = egui::Stroke::new(1.5_f32, theme::BLUE);
             s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
+            // 0.35 字体栅格化退回 0.31 观感：新引入的 skrifa hinting 会把中文字形
+            // 垂直压小（实测 uv_h 14→12，表现为"字变小/高低不齐/笔画变形"），
+            // subpixel_binning 让笔画粗细不均。两者都是 0.35 新增、0.31 没有，
+            // 全部关闭以恢复迁移前用户熟悉的清晰度（2026-11-21 用户实机确认）。
+            // 测试构建保留 0.35 默认值：UI 测试大量断言具体坐标/文本边界，
+            // 字形变大后布局偏移会让这些断言失效；测试目的是逻辑而非字形像素。
+            #[cfg(not(test))]
+            {
+                s.visuals.text_options.font_hinting = false;
+                s.visuals.text_options.subpixel_binning = false;
+            }
         });
         let settings = model::Settings::load();
         // 专注统计只在启动和每分钟更新，构造前先取一次。

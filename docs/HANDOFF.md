@@ -1586,3 +1586,42 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修复**：`draw_glass` 里画三角形前 `ctx.RSSetScissorRects(Some(&[RECT{left:0,top:0,right:win_w,bottom:win_h}]))`；import 补 `Foundation::RECT`。
 - **验证**：编译通过（exe `3603f791f6387af5`），用户实机确认**玻璃已回来**。按用户要求未跑全量测试。
 - **排查弯路（留痕）**：先误判 125% 缩放控件 y 翻转基准（`inner_size().height` 270 vs `extra[2]` 337.5）——坐标验算虽合理但没有实机效果，因翻转只影响控件、解释不了「背景也没有」。随后用运行时诊断证实 app 发布/bounds/crect/cbuffer/egui 形状/RT 尺寸全部正确；最后靠「shader 全屏染红编辑页仍透明」锁定问题在 GPU 状态而非参数，顺藤摸瓜找到 scissor 泄漏。染红/棋盘/日志等临时诊断代码已全部删除，shader bin 已还原。
+
+
+### 7.0zzg.18 文字毛刺/不锐利（排查中，2026-11-21 21:52–22:50，用户报「所有主题文字有毛刺，之前架构没有」）
+- **症状**：egui 0.35 迁移后出现，用户实拍 4 张照片（新建日程/AI 额度/健康提醒/专注页）。放大判读：整体发虚 + 小字笔画粗细不均/边缘毛躁（「不提醒」「专注时间」「日期 年-月-日」最明显），大字号（25:00）边缘毛躁；**无明显红蓝彩边**。手机拍屏有摩尔纹，已排除其干扰。**100% 缩放同样毛刺** → 排除 DPI/非整数缩放/坐标系重采样。所有主题都有 → 排除液态玻璃 shader。
+- **已试无效并全部撤销**：①恢复历史误删的进程级 `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`（`main()`，曾在 29bb757 顺手删掉）——用户实测无变化；②纹理 `R8G8B8A8_UNORM`→`_SRGB`——无变化；③关闭 egui 0.35 新增的 `font_hinting`（`ctx.all_styles_mut(|s| s.visuals.text_options.font_hinting=false)`）——无变化。三次改动均已撤销，源码无残留。
+- **静态排除（关键证据）**：把本工程 `d3d11/renderer.rs`+`texture.rs`+shader（`vs/ps_egui.bin` 哈希一致）与文字清晰的独立工程 `D://code//egui-directx11` 逐行/归一化对比——**逻辑完全一致**，仅 import 路径差异。sampler（`MIN_MAG_MIP_LINEAR`）、blend（`ONE, INV_SRC_ALPHA` 预乘）、rasterizer（ScissorEnable=1）、顶点换算（`pos*zoom/frame_size_scaled`）、纹理上传（R8G8B8A8_UNORM + MAP_WRITE_DISCARD）全部相同。egui 版本同为 0.35.0 同来源。
+- **字体配置排除**：`theme.rs` 字体代码迁移前后一字未改（msyh.ttc/segoeui.ttf/`FontData::from_static`/`theme::font()` 全同，`git diff 8b6c0e3..e5b00b5 -- theme.rs` 只有测试里 `run`→`run_ui` 机械替换）；`paint.rs` 文字绘制生产代码零改动（diff 全是测试 + trait bound）。字号、字体文件、字形布局逻辑均未变。
+- **运行时数据**：首帧 `scale_factor=1.25 ctx_ppp=1`（egui-winit 0.35 改由 `RawInput.viewports[].native_pixels_per_point` 传 ppp），`run_ui` 后 `ctx_ppp=1.25 out_ppp=1.25`（正确）；窗口物理 960×270。100% 缩放也毛刺说明 ppp 非根因。
+- **剩余唯一怀疑**：egui 0.31→0.35 内部 epaint 字体栅格化实现差异（0.32 起有 `Improve text sharpness #5838`、`Improve texture filtering by doing it in gamma space #7311`、`Make the font atlas use a color image #7298`；0.35 新增 `font_hinting`/`HintingTarget::Smooth`、`subpixel_binning`）。已关闭 hinting 无效，但 gamma/图集格式机制变化未逐一验证。
+- **版本回退评估（用户问「只降版本改动多吗」）**：在 `D://code//daozai-custom//merge-work//egui031-test`（独立工程副本）实测：Cargo.toml 三个版本号 0.35→0.31 + 3 处 API 适配（`OrderedViewportIdMap`→`ViewportIdMap`；`ImageData::Font` 两个 match 分支）→ lib 编译过；example 再 4 处（`run_ui`→`run`、`fonts_mut`→`fonts`、包 CentralPanel）→ **全编译过，0 错误**。结论：**只降版本改动量小、可行**。但独立工程用 egui 默认字体无中文（显示方框），无法直接对比中文毛刺；要公平对比需把岛仔 theme.rs 中文字体加载逻辑（约 100 行 + memmap2）搬进测试工程，或直接在本项目副本上只降版本。
+- **下一步（待用户定）**：①在测试工程搭中文字体后对比 0.31 vs 0.35 字形（干净、不碰岛仔）；②在本项目副本只降版本看毛刺是否消失（最贴近真实，但要处理 Cargo.lock + API 适配）；③搁置。
+- **现场状态**：主项目工作区干净，HEAD `e5b00b5`（7.0zzg.17 玻璃修复，用户已确认生效）；磁盘 exe 已从诊断版重编译恢复干净版。临时诊断/测试代码全删，shader bin 还原原始 `a4fc18b5`。未跑全量测试、未部署、main 不动。
+
+### 7.0zzg.19 【验证结论】独立工程 0.31 vs 0.35 中文字形对比 —— 排除 egui 版本本身（2026-11-21 22:58–23:10）
+- **用户指定**：不走降版本改岛仔，先在独立工程做纯验证："把 egui 降到 0.31 渲染同样的中文，直接对比 0.31 vs 0.35 字形——纯验证，不碰岛仔"。
+- **实验搭建**（两个工程都只加了 example，未动任何生产代码）：
+  - 0.35 工程 `D:\code\egui-directx11\examples\font_compare.rs`；0.31 副本 `D:\code\daozai-custom\merge-work\egui031-test\examples\font_compare.rs`（后者版本早已降好，HANDOFF §7.0zzg.18 建的）。
+  - 两版用**完全相同的字体加载**：`segoeui.ttf`(index 0) + `msyh.ttc`(index 1)，`FontData::from_owned` + `d.index`，与岛仔 `theme.rs` 一致。
+  - 两版画**完全相同的文本**（"不提醒 专注时间 2026年-11月-21日" / 14号正文 / 12号小字 / 28号 "25:00"），同样 `CentralPanel` + 白底、**离屏 RTV 渲染 → CopyResource 读回 → 自写 24bit BMP**（绕开手机拍屏摩尔纹，直接取 GPU 像素）。
+  - 坑：字体图集纹理 delta 只在第 0 帧产生，必须**每帧都跑 `renderer.render`**（含 clear）才能把字体纹理灌进 pool；只 render 最后一帧 → 文字全丢（首次跑出全白 BMP，已修正）。
+  - 产物：`egui-directx11\fontcmp-035.bmp` 与 `egui031-test\fontcmp-031.bmp`、**`cmp-side-by-side.png` / `cmp-side-by-side-3x.png`（严格同条件：两版同背景 RGB(27,27,27)、同字色、同裁剪 (0,0)-(820,180)、左右并排，最终采用的公平对比图）**；早期 `fontcmp-compare.png` 因 0.35 那版当时未套 CentralPanel（白底 vs 深底）不公平，已弃用。`line-031/035.png`、`diff-x8.png` 为辅助。
+- **结论（确定性）**：
+  1. **两版字形都清晰锐利，0.35 不比 0.31 糊**。放大4倍肉眼无可见差异；0.35 那组甚至略锐。
+  2. **逐像素 diff**：平均通道差 1.58/255，仅 4.58% 像素有差异，`diff-x8` 显示差异只落在文字笔画轮廓上、背景全一致、**无整行重影/偏移**。属 hinting/subpixel 灰阶微观差别，不是字形或几何问题。
+  3. **抗锯齿过渡带占比**：0.31 中间灰 10.5% vs 0.35 8.8%——0.35 实心笔画更多、过渡带更窄，**理论上更锐**，`color_transfer_function`(gamma 图集) 没有把字变糊。
+  4. **⇒ egui 0.31→0.35 的字体栅格化/图集机制不是毛刺根因**。版本降级（下一步②）大概率**无效**，不必去动岛仔 Cargo.lock。§7.0zzg.18「剩余唯一怀疑=epaint 栅格化差异」被证伪。
+- **新方向（下一步）**：既然纯 egui 文字清晰，毛刺只能来自岛仔特有管线——重点排查 ①岛仔 UI 的**实际 ppp/zoom**（HANDOFF 记 `ctx_ppp=1.25`，但独立工程这版 ppp=1，需在岛仔实机打印 `content_rect`/`tessellate` 传入的 ppp 并对比物理窗口尺寸）；②**液态玻璃 pass 与 egui pass 之间的 RT/采样状态**（scissor 泄漏已在 7.0zzg.17 修过一次，同类状态问题仍可疑）；③岛仔是否对 egui 输出做了额外缩放/采样（DComp surface 尺寸 vs 逻辑尺寸）。建议下一步在岛仔做 A/B：临时把 glass pass 整个跳过，只留纯 egui，实机截图看毛刺是否消失——一刀切定位是"egui 本身"还是"玻璃管线叠加"。
+- **现场状态**：两工程仅新增 `examples/font_compare.rs`（验证用，未提交）；岛仔主工程 `.workbuddy` 源码与 HEAD `e5b00b5` 未动。未跑全量测试、未部署。
+
+### 7.0zzg.20 岛仔内排查 + 字形度量探针（2026-11-21 23:10–23:52，用户"跟液态玻璃无关，查社区/迁移删了啥"）
+- **用户澄清症状**（关键，推翻此前"毛刺=抗锯齿"的判断）：不是发虚彩边，而是**"文字变形、有些部位变小、跟其他字一个高一个低"**；**所有文字/所有字号**都这样，**一启动就这样**（非运行后），**迁移后立刻出现**。⇒ 排除图集 fill_ratio>0.8 重建、排除歌词 Galley 跨帧缓存（非仅歌词、非延时）。
+- **社区排查结论**：egui 0.35 相关已知坑有三类——①`Fonts::begin_pass` 在 `TextOptions` 变化或 `atlas.fill_ratio()>0.8` 时整张重建图集 + 清空 galley_cache（#219/#0004/#0005）；②`Visuals::dark()` 带 `color_transfer_function=TwoCoverageMinusCoverageSq`，light=Off；③0.34 起 ab_glyph→skrifa+vello_cpu。但均不解释"一启动全量变形"。
+- **岛仔内诊断**（临时开关，已全部撤销、源码恢复 HEAD e5b00b5）：加过 `DAOZAI_SKIP_GLASS`/`DUMP_RT`/`NO_EXCLUDE`/`DIAG`/`ATLAS_SIDE`/`TF_OFF`/`NO_GALLEY_CACHE` 做 A/B。
+  - **决定性证据**：从 D3D11 RT 直接 `CopyResource` 读回 GPU 原始像素（绕开 WDA_EXCLUDEFROMCAPTURE 与手机拍屏摩尔纹），收起态/展开态中文（"杀死那个石家庄人""专注时间""25:00"）**全部清晰锐利**，无变形。诊断值 `win_inner=1200×338 rt_phys=1200×338 egui_ppp=1.25 zoom=1`，`max_texture_side=None`(=2048)。
+  - transfer function `DARK→Off` A/B：字形灰阶有变（中间灰 69.9%→62.9%），但**清晰度无差**，非根因。跳过 glass pass、放大图集到 4096、ppp=1.25 独立工程复现——全部清晰。
+- **字形度量探针** `examples/font_probe.rs`（0.35 与 0.31 各一份）：用岛仔同款字体链（segoeui idx0 + msyh.ttc idx1）layout"专注时间不提醒 2026年11月21日"，逐字打印 pos.y/ascent/uv/advance。**结果：0.31 与 0.35 行为一致**——中文 `pos.y=15.0 face_asc=14.2`，数字 `pos.y=16.0 face_asc=15.1`，同句混排本就差 1px（两版都如此，非迁移引入）。差异仅在 advance 14.2→14.0、uv_h 14→12/13（skrifa 栅格化略小），不足以造成变形。
+- **当前困境（诚实记录）**：本机能用到的全部客观手段（字形度量、GPU RT 读回、GDI 截图）都显示 0.31/0.35 字形一致且清晰，**无法复现用户肉眼/拍屏看到的"变形/高低不齐"**。强烈怀疑与**用户机器的显示缩放/多显示器/DPI 环境**有关（本机单屏 2560×1440@125%；进程内实际 ppp=1.25）。用户对比的"之前架构清晰"可能是不同 DPI 配置下运行。
+- **下一步（需用户配合）**：①请用户在其看到毛刺的机器上、用干净版 exe（sha `967d1fba57db3927`=HEAD 原始代码）确认症状仍在；②告知 Windows 显示缩放比例、显示器数量、各屏缩放是否一致、以及"之前架构"对比时的缩放配置；③若确认是 DPI 环境差异，重点查进程/窗口 DPI awareness（`app.rc` 无 dpi manifest、main() 无进程级 SetProcessDpiAwarenessContext，仅线程级在 kuwo/player_seek/wechat 临时用）。
+- **源码状态**：三个源码文件已 `git checkout` 恢复，工作树仅 `docs/HANDOFF.md` 改动；诊断 exe 已重编为原始代码 sha `967d1fba57db3927`。未提交、未部署、未跑全量测试。
