@@ -1633,3 +1633,18 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **排除记录**（避免重走）：egui 版本降级（独立工程 0.31 vs 0.35 同字体字形一致，无效）、DPI/缩放环境（用户配置相同）、GPU 玻璃 pass（SKIP_GLASS 仍抖）、控件 GPU 透镜（NO_CTL_GLASS 仍抖）、RT 读回分辨率、transfer function、text 起点 snap（字形未量化时无效）。
 - **社区更优方案（技术债，暂不采纳）**：egui 官方讨论 #3197、Bevy 警告 B0005 都指出正解是**固定字号排版 + 用 Transform::scale 缩放 mesh 顶点**，而非改字号。我试过用 `Shape::scale`，但 `clock`/`weather_ui` 大量依赖 `galley.mesh_bounds`（与字号成正比）做垂直对齐，只改 text 会破坏对齐测试；统一改造需动 paint.rs/weather_ui.rs 等多文件，风险大于当前收益。当前 1/8pt 量化是"廉价版 transform"，抓住同一根因，已验证有效。将来若系统重构文字系统可切换至官方方案。
 - **验证**：全量 `cargo test --locked --release --lib -- --test-threads=1` = **1385 passed / 0 failed / 131 ignored**（两处修复均 cfg(not(test))，测试构建=基线）。exe sha（量化版）`3a4e68c885940a22`。未部署、未打包、main 不动（在 research/egui035-migration 分支提交 `7a579d2`）。
+
+### 7.0zzm 【已修复】设置页串渲染到岛仔本体 → 独立原生窗口（2026-11-22 01:05–02:32，提交 `9ebb6c0`）
+- **症状**：打开设置页后，设置内容画在岛仔本体小窗上（肉眼看屏幕，非抓屏问题）。用户明确要独立窗口。
+- **根因**：迁移 D3D11 自绘（d6d7800）时漏接多窗口。`winit_runner.rs:137` 原注释写明"因担心 draw 上下文 create_window 死锁，暂保持 egui 默认内嵌：设置页画在本体"。两层原因：①egui 0.35 `embed_viewports` **默认 true**（eframe 会设 false，我们自己管却没设）；②未注册 `set_immediate_viewport_renderer`。两者叠加 → `show_viewport_immediate` 走 `show_embedded_viewport`，把设置页当 egui Window 画进主岛 RT。
+- **社区/官方调研**：OBS 的 WDA_EXCLUDEFROMCAPTURE 线索排查后排除（用户肉眼可见，非捕获问题）。正解来自 eframe 0.35 官方源码：`native/glow_integration.rs` 的 `set_immediate_viewport_renderer` 注册 + `render_immediate_viewport` 同步渲染，`native/event_loop_context.rs` 的 thread_local ActiveEventLoop 机制（解决 draw 上下文建窗口死锁）。另确认 egui#3197 的 viewport 多窗口语义。
+- **关键设计约束（踩过的坑）**：`show_viewport_immediate` 的 `viewport_ui_cb` 是 `Box<dyn FnMut + 'a>`，egui 在 `show_viewport_immediate` 内**同步**要求 renderer 回调执行它（`out.expect`），**不能跨帧存**（一开始想存进队列导致生命周期编译错误）。它在主窗口 draw 上下文执行、借用 `&mut App`——但通过 `run_ui(input, |ui| viewport_ui_cb(ui))` 同步调用是合法的（嵌套 reborrow），**不需要把 Shell 改成 Rc<RefCell>**。
+- **修复**（winit_runner.rs + d3d11/runtime.rs）：
+  1. thread_local `CURRENT_EVENT_LOOP` + guard（eframe 同款），事件方法入口 `with_event_loop_context`。
+  2. `set_embed_viewports(false)` + 注册 immediate renderer：回调里 create_window → 同步 run_ui → FullOutput 存 `VIEWPORT_REQ` 队列。
+  3. 窗口按 viewport id 复用（`Rc<Window>` + `VIEWPORT_WINDOWS`）：否则 immediate 回调每帧触发、每帧新建 invisible 窗口（builder `with_visible(false)`）。
+  4. 子窗口输入：`window_event` 经 egui_winit 累积 → `VIEWPORT_INPUTS` 缓存 → 回调取出喂给 run_ui（含鼠标键盘，交互正常）。
+  5. 主窗口 output 里子 viewport 的命令（`Visible`/位置/尺寸）：`FrameStats.viewport_commands` 传出 → `process_viewport_commands` 应用到子窗口。首帧 Visible 命令因窗口未建而丢失，drain 建窗后主动 `set_visible(true)` 兜底。
+  6. `PlainWindow::paint_output`（只画 output 命令+render，不再 run_ui）+ 每帧绘制**所有**子窗口（原"只画 invisible"是内嵌 workaround，独立窗口后必须每帧画，否则内容区白屏）。
+- **验证**：实机截图确认设置页独立窗口正常显示（侧栏通用/外观/位置/音乐… + 右侧设置项），点击"外观"成功切换内容。全量 `cargo test --locked --release --lib -- --test-threads=1` = 1385 passed / 0 failed / 131 ignored。诊断开关全清。诊断版 last-error 曾报 `raw_input.rs:110`（RawInput 缺 viewports 里的当前 viewport），已修（回调 input 填 viewports[id] ViewportInfo）。
+- **状态**：提交 `9ebb6c0`（分支 research/egui035-migration）。未部署、未打包、main 不动。其他 3 个 `show_viewport_immediate`（邮件阅读器/更新/天气教程）同样受益于该机制，未逐一实机验证。
