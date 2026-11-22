@@ -1766,3 +1766,13 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 测试 `scaled_text_ignores_press_spring_when_text_k_fixed`：k_shape 1.0/1.14/0.9 且 k_text=1.0
   时行 pos 与全部顶点逐位相同；k_text=1.08 时必须不同。paint 测试 20 passed。
 - 部署 exe `41ab30c53797941d`，PID 33296，备份 `daozai.exe.prev-before-statictext`。
+
+### 7.0zzx 入场也不缩放文字（2026-11-22 22:24–22:30）
+- 用户实测：解耦按压后「长按不抖了」，但**翻页到日程页**入场时文字仍上下抖。
+- 机制：`ctl_appear` 目标 = `reveal`，而 `reveal` 由高度弹簧 `h.pos` 归一化后 smoothstep 得到；
+  翻到日程页 `expanded_height()` 从 PH 变 CALENDAR_H，高度弹簧换目标并回振 → `appear` 跟着回振
+  → 文字 k 每帧变化重采样 → 入场也抖。按压与入场是同一个病根，只是激励源不同。
+- 修法：`＋ 新增` 的 `scaled_text(k_shape, 1.0)` —— 文字恒按 1.0 画，玻璃照旧吃 `ctl_scale`
+  （按压 14% + 入场 spring）。字形 mesh 逐帧完全一致，物理上不会再抖。
+- 相应删掉 `App::ctl_text_scale`（已无调用点，避免 dead_code）。
+- 部署 exe `6e78b71047f52a61`，PID 21796，备份 `daozai.exe.prev-before-frozentry`。
