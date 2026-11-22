@@ -237,19 +237,19 @@ fn shadow_mapped(painter: &egui::Painter, rect: Rect, map: EdgeMap, flare: f32, 
     }
 }
 
-/// 液态玻璃的柔和外落影：沿岛体轮廓向外羽化到透明，本体内部一根线都不画。
+/// 液态玻璃的柔和外落影：只画岛体下半圈，顶部完全无影，岛体内部一根线都不画。
 ///
-/// 苹果 Liquid Glass / 资料包 8 件套的投影是高斯式的 `0.5*exp(-sd²/2σ²)`：从元素轮廓
-/// 向外衰减、再乘 `smoothstep(-1,1,elementSd)` 把内部裁掉——影子只趴在轮廓外且边缘柔和，
-/// 并且光源在上方、影子整体略向下偏。
+/// 苹果 Liquid Glass 的投影是高斯式、光源在上方：影子只在物体下方与两侧下部，上方没有。
+/// 岛仔贴屏幕顶，肩部两翼的外法线朝上、顶点落在屏幕外——任何「沿整圈轮廓画影」的做法，
+/// 上方都会只剩左右直边的一截，看起来像「矩形投影」（用户实机连续两次反馈的根因）。
 ///
-/// 踩过的坑：① 旧 `shadow_mapped` 每层是整块实心圆角矩形，4 层累计 alpha≈0.24 的黑盖住
-/// 玻璃 → 整个岛体发灰；② 第一版环形阴影是硬边梯形带 → 岛体边缘一圈生硬「黑框」；
-/// ③ 第二版沿外法线羽化，但刘海肩部（上方两翼）的外法线朝上、顶点被屏幕顶裁掉，
-/// 只剩左右直边的影子 → 左右上角看起来是「矩形投影」（用户实机反馈）。
+/// 踩过的坑：① 旧 `shadow_mapped` 每层整块实心圆角矩形 → 4 层盖住玻璃、岛体发灰；
+/// ② 硬边环形带 → 轮廓处一圈「黑框」；③ 沿外法线羽化 + 向下偏移 → 肩翼影子仍在屏外，
+/// 左右上角依旧矩形。
 ///
-/// 本版：egui 顶点渐变羽化（轮廓实色 → 沿外法线外扩透明），并给外扩顶点加**向下落影
-/// 偏移**，让肩部翼的影子落回屏幕内、与两侧自然衔接，也更符合「光源在上」的浮起感。
+/// 本版从根上解决：轮廓顶点的 alpha 随 y 渐变——顶部 30% 完全透明（不生成几何），
+/// 到 75% 高度渐增到满，再由外法线羽化到透明。光学上就是「上方无影、越往下越浓」的
+/// 落影，既没有矩形角，也贴回苹果液态玻璃的观感。
 #[allow(clippy::too_many_arguments)]
 pub fn shadow_ring(painter: &egui::Painter, rect: Rect, dock: Dock,
                    flare: f32, flare_h: f32, radius: f32, strength: f32) {
@@ -258,23 +258,26 @@ pub fn shadow_ring(painter: &egui::Painter, rect: Rect, dock: Dock,
     let pts = outline(frame, flare, flare_h, radius);
     let n = pts.len();
     if n < 2 { return; }
+    let h = frame.height().max(1.0);
+    // 顶部 30% 无影 → 75% 处到满：肩部两翼不投影，矩形角从根上消失。
+    let fade = |y: f32| (((y - frame.top()) / h - 0.30) / 0.45).clamp(0.0, 1.0);
     // (外扩宽度, 起始 alpha)：宽度递减、alpha 也递减，叠加后近浓远淡。
-    // 比旧阴影更淡——液态玻璃靠折射与白边立形，投影只是很轻的浮起感。
-    for (width, a) in [(12.0f32, 0.026f32), (8.0, 0.030), (4.5, 0.034), (2.0, 0.038)] {
-        let color = Color32::from_black_alpha((255.0 * a * strength) as u8);
-        let clear = Color32::TRANSPARENT;
-        // 向下落影偏移：顶部肩翼的外法线朝上，加这个偏移把影子拉回屏幕内。
-        let drop = Vec2::new(0.0, width * 0.55);
+    for (width, a) in [(12.0f32, 0.030f32), (8.0, 0.034), (4.5, 0.038), (2.0, 0.042)] {
         let mut mesh = egui::Mesh::default();
         for i in 0..n - 1 {
             let (p, q) = (pts[i], pts[i + 1]);
+            let (fp, fq) = (fade(p.y), fade(q.y));
+            if fp <= 0.0 && fq <= 0.0 { continue; }   // 上半圈整段跳过
+            let cp = Color32::from_black_alpha((255.0 * a * strength * fp) as u8);
+            let cq = Color32::from_black_alpha((255.0 * a * strength * fq) as u8);
+            let clear = Color32::TRANSPARENT;
             let np = edge_normal(&pts, i);
             let nq = edge_normal(&pts, i + 1);
             let base = mesh.vertices.len() as u32;
-            mesh.colored_vertex(p, color);                            // 轮廓：实色
-            mesh.colored_vertex(q, color);
-            mesh.colored_vertex(q + nq * width + drop, clear);        // 外扩+下落：透明
-            mesh.colored_vertex(p + np * width + drop, clear);
+            mesh.colored_vertex(p, cp);                       // 轮廓：随高度渐变
+            mesh.colored_vertex(q, cq);
+            mesh.colored_vertex(q + nq * width, clear);       // 外扩 width：透明
+            mesh.colored_vertex(p + np * width, clear);
             mesh.add_triangle(base, base + 1, base + 2);
             mesh.add_triangle(base, base + 2, base + 3);
         }
