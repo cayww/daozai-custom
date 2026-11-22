@@ -791,13 +791,20 @@ impl App {
         let total = widths.iter().sum::<f32>() + 4.0;
         if glassy { paint::glass_chip(c, x, 9.5, total, 21.0, 10.5, 0.12); } else { c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN); }
         let mut left = x + 2.0;
+        // 选中透镜由 GPU 画时，egui 侧跳过选中胶囊的矢量填充，避免双层；
+        // 但文字/命中区照常。
+        let tab_on_gpu = glassy && self.ctl_on_gpu(Ctl::ShelfTab);
         for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
             let selected = self.shelf_tab == i;
+            // 记录选中胶囊几何（面板局部：中心 x + 宽），供 ctl_geom 的滑动透镜用。
+            self.shelf_tab_layout[i] = (left + w / 2.0, *w);
             let r = c.hit(left, 9.5, *w, 21.0, ("shelf-tab", i));
             let r = if i == 1 { r.on_hover_text("切到剪贴板") } else { r };
             let (h, _) = c.hover_t(&r);
             if selected {
-                c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
+                if !tab_on_gpu {
+                    c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
+                }
             } else if h > 0.01 {
                 c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_white_alpha((18.0 * h) as u8));
             }

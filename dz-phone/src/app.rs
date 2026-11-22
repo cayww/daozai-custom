@@ -193,7 +193,7 @@ mod pill_still_tests {
 /// 只有「像玻璃」的配色，没有真折射。现在全部走真折射，矢量玻璃片只在
 /// 没有 wgpu 设备（没开兼容渲染）时兜底。
 /// 控件玻璃的槽位数（= `Ctl::ALL` 的长度；**同时可见数** ≤ `gpu_glass::MAX_CTL`）。
-pub(crate) const CTL_N: usize = 26;
+pub(crate) const CTL_N: usize = 27;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ctl {
@@ -230,10 +230,12 @@ pub(crate) enum Ctl {
     MailAccount,
     /// 邮件页无账号时的「去添加」引导按钮（pages.rs page_mail 空态，quota_ui 的 QuotaAdd 同款）。
     MailSetup,
+    /// 置物架页「置物架/剪贴板」分栏的滑动指示器（资料包标签栏：单透镜随弹簧滑动+拉伸）。
+    ShelfTab,
 }
 
 impl Ctl {
-    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount, Ctl::MailSetup];
+    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount, Ctl::MailSetup, Ctl::ShelfTab];
     pub(crate) fn idx(self) -> usize { self as usize }
     /// 日程编辑器提醒分段的槽位下标（CalRem0..4）。
     pub(crate) fn rem_index(self) -> usize { self as usize - Ctl::CalRem0 as usize }
@@ -995,6 +997,10 @@ pub struct App {
     pub(crate) confirm_clear: Option<f64>,
     /// 置物架页的两个分栏：0 = 文件，1 = 剪贴板。
     pub(crate) shelf_tab: usize,
+    /// 分栏滑动指示器弹簧（资料包标签栏：单透镜随弹簧滑动+拉伸）。
+    shelf_tab_spring: Spring,
+    /// 两个分栏选中胶囊的几何 [(中心x, 宽)]，由 shelf_tabs 绘制时写入供 ctl_geom 用。
+    pub(crate) shelf_tab_layout: [(f32, f32); 2],
     pub clipboard: crate::clipboard::Shared,
     pub(crate) clip_first: usize,
     pub(crate) clip_confirm_clear: Option<f64>,
@@ -1365,6 +1371,8 @@ impl App {
             icons: Default::default(), avoidance: Default::default(),
             confirm_clear: None,
             shelf_tab: 0,
+            shelf_tab_spring: Spring::new(0.0, 300.0, 0.5),
+            shelf_tab_layout: [(0.0, 0.0); 2],
             clipboard: crate::clipboard::Shared::new(clipboard_on),
             clip_first: 0,
             clip_confirm_clear: None,
@@ -3609,6 +3617,23 @@ impl App {
                 if self.page!=5 || self.subpage.is_some() || !self.mail.accounts.is_empty() {return None;}
                 (Rect::from_min_size(Pos2::new(42.0,88.0),Vec2::new(84.0,26.0)),13.0)
             }
+            // 置物架分栏滑动指示器（资料包标签栏同 MailTab）：单透镜在两段间滑，
+            // 滑动横向拉伸 st、按压果冻 sc。几何由 shelf_tabs 绘制时写入 layout。
+            Ctl::ShelfTab=>{
+                if self.page!=3 || self.subpage.is_some() {
+                    return None;
+                }
+                let (x0,w0)=self.shelf_tab_layout[0];
+                let (x1,w1)=self.shelf_tab_layout[1];
+                if w0<2.0 || w1<2.0 {return None;}
+                let s=self.shelf_tab_spring.pos.clamp(-0.25,1.25);
+                let st=(self.shelf_tab_spring.vel.abs()*0.06).min(0.5);
+                let sc=1.0+0.3*self.ctl_press[Ctl::ShelfTab.idx()].pos.clamp(0.0,1.3);
+                let cx=x0+(x1-x0)*s;
+                let w=(w0+(w1-w0)*s)*(1.0+st)*sc;
+                let h=(17.0*(1.0-st*0.35)*sc).min(19.0);
+                (Rect::from_center_size(Pos2::new(cx,20.0),Vec2::new(w,h)),(h*0.5).min(9.5))
+            }
         })
     }
 
@@ -3652,6 +3677,12 @@ impl App {
                 // 指示器滑到当前筛选段（0=全部，1=未读）。
                 self.mail_tab.target=if self.mail.manage.unread_only {1.0}else{0.0};
                 self.mail_tab.step(dt);
+            }
+            if ctl==Ctl::ShelfTab {
+                // 分栏指示器滑到当前分栏（0=置物架，1=剪贴板）。
+                self.shelf_tab_spring.target=if self.shelf_tab==1 {1.0}else{0.0};
+                self.shelf_tab_spring.tune(300.0*sk,zt);
+                self.shelf_tab_spring.step(dt);
             }
             // 圆钮的拖动放大弹簧：按在进度条上就进入放大镜态（尺寸与 mag 同步 ×1.9）。
             // 圆钮的拖动放大弹簧：target 直接用 pages.rs 写入的 egui 真实拖动状态
