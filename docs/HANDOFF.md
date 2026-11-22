@@ -1690,4 +1690,4 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **来源**：用户从分享页「查看液态玻璃效果层次」继续任务；上一轮对话里用户先说「可以不要暗底」，队列消息「做成高斯模糊的玻璃」。接手时工作树是半成品：`app.rs` 已把 ShelfTabBar style 改成 0，`glass.hlsl` 已加 `gauss_blur` 但没在 fs 里用，bin/exe 未重编。
 - **实现**：容器 style=1 不再 `×0.55` 压暗、加深色 tint；在 `fs` 里用新增的 13 点高斯采样 `gauss_blur(p, 6.0)`（中心 + 内环4 + 对角4 + 外环4，按距离加权）取模糊背景，以内深权重 `smoothstep(0,7,-cs.d)*0.85` 替换 `ce.rgb` 内部，边缘仍走 `ctrl_glass` 的白边/倒角；模糊底套用同款浅材质补偿但不加 scrim。指示器 style=2 保持提亮 + 强白边，层次仍在。
 - **坑**：HLSL 编译成功只说明语法对，函数没接进 fs 就是死代码——这次接手第一步就是检查函数是否真被调用。
-- **验证**：fxc bin `e6065fb0`→`f0c07099`，exe `33d42186`→`c6b38aea44220ef9`；全量 `cargo test --locked --release --lib -- --test-threads=1` = **1391 passed / 0 failed / 131 ignored**。已启动 `target/release/daozai.exe`（PID 21532）供用户实机查看；未打正式安装包，`main` 未动。
+- **验证**：fxc bin `e6065fb0`→`f0c07099`，exe `33d42186`→`c6b38aea44220ef9`；全量 `cargo test --locked --release --lib -- --test-threads=1` = **1391 passed / 0 failed / 131 ignored**。已启动 `target/release/daozai.exe`（PID 21532）供用户实机查看；桌面预览目录 `daozai.exe` 已同步为新 exe（旧版备份 `daozai.exe.prev-before-frost`）。未打正式安装包，`main` 未动。
