@@ -196,6 +196,36 @@ fn weather_today_opens_solar_details_and_returns_to_forecast(){
 }
 
 #[test]
+fn weather_press_on_solar_entry_does_not_shrink_forecast(){
+    // 回归：日照入口卡的按下微缩曾因 `let c = &entry` 遮蔽外层 Card，
+    // 把下方七日预报一起缩小。按下卡片时预报文字坐标必须与未按下的静止态一致。
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let forecast_x=|h:&H|->f32{
+        h.shapes.iter().find_map(|s|match &s.shape{
+            egui::Shape::Text(t) if t.galley.text()=="今天"=>Some(t.visual_bounding_rect().center().x),
+            _=>None,
+        }).expect("七日预报的第一天「今天」应可见")
+    };
+    let mut h=H::new();h.app.settings.pet=false;
+    h.app.weather.snapshot=Some(crate::weather::Snapshot{place:"杭州".into(),temp:19.0,sunrise:Some("06:52".into()),sunset:Some("17:21".into()),
+        days:vec![crate::weather::Day{label:"今天".into(),date:"2026-11-09".into(),high:15.2,low:6.8,code:51,rain:60}],..Default::default()});
+    h.app.show_page(8);
+    let away=H::local(250.0,200.0);
+    h.hover(away,1.0);
+    let base=forecast_x(&h);
+
+    // 指针按在日照入口卡中心（局部 342,94），保持按下不松开（松开才会触发 click 切换视图）。
+    let press=H::local(342.0,94.0);
+    h.cursor=Some(press);
+    for _ in 0..30 {
+        h.frame(vec![egui::Event::PointerMoved(press),egui::Event::PointerButton{pos:press,button:egui::PointerButton::Primary,pressed:true,modifiers:Default::default()}]);
+    }
+    let pressed=forecast_x(&h);
+    assert!((pressed-base).abs()<0.5,"按下日照卡片不应让下方预报一起缩小：静止 x={base:.2}，按下 x={pressed:.2}");
+    assert!(!h.app.weather.solar_open,"只按下未松开时不应切换视图");
+}
+
+#[test]
 fn weather_side_bar_shows_a_clickable_temperature_on_both_edges(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for dock in [crate::model::Dock::Left,crate::model::Dock::Right] {

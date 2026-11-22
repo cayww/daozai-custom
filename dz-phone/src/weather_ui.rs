@@ -558,14 +558,17 @@ fn paint_forecast(c: &Card, snapshot: &weather::Snapshot, t: f32, lift: f32, pre
     stat_tile(c, tx[1], 38.0, tw, "湿度", &snapshot.humidity.map(|v| format!("{v}%")).unwrap_or(dash.clone()), |c, x, y| paint::droplet(c, x, y, 11.0, RAIN));
     stat_tile(c, tx[0], 77.0, tw, "风速", &snapshot.wind.map(|v| format!("{v:.0} km/h")).unwrap_or(dash), |c, x, y| wind_glyph(c, x, y, theme::CYAN));
     // 第四张是日照入口：暖色底，箭头轻轻摆动提示可点；悬停时小太阳从地平线升起，按下时卡片微缩。
-    let entry = c.scaled(tx[1] + tw / 2.0, 94.0, 1.0 - 0.05 * press);
-    let c = &entry;
-    c.fill(tx[1], 77.0, tw, 34.0, 9.0, paint::alpha(SUN, 0.13 + 0.07 * lift));
-    sunrise_glyph(c, tx[1] + 14.0, 77.0 + 16.0, lift, SUN);
-    c.text(tx[1] + 27.0, 77.0 + 14.5, &format!("日出 {}", snapshot.sunrise.as_deref().unwrap_or("--:--")), 9.5, W::Regular, theme::GRAY, H::Left);
-    c.text(tx[1] + 27.0, 77.0 + 28.0, &format!("日落 {}", snapshot.sunset.as_deref().unwrap_or("--:--")), 9.5, W::Semibold, theme::WHITE, H::Left);
-    let nudge = (t * 3.0).sin() * 1.2;
-    c.path(&[(tx[1] + tw - 9.0 + nudge, 90.0), (tx[1] + tw - 6.0 + nudge, 94.0), (tx[1] + tw - 9.0 + nudge, 98.0)], 1.3, paint::alpha(SUN, 0.9));
+    // 缩放只作用于这张卡片本身：用局部作用域承载 entry，避免遮蔽外层 c 而把下方七日预报一起缩小。
+    {
+        let entry = c.scaled(tx[1] + tw / 2.0, 94.0, 1.0 - 0.05 * press);
+        let c = &entry;
+        c.fill(tx[1], 77.0, tw, 34.0, 9.0, paint::alpha(SUN, 0.13 + 0.07 * lift));
+        sunrise_glyph(c, tx[1] + 14.0, 77.0 + 16.0, lift, SUN);
+        c.text(tx[1] + 27.0, 77.0 + 14.5, &format!("日出 {}", snapshot.sunrise.as_deref().unwrap_or("--:--")), 9.5, W::Regular, theme::GRAY, H::Left);
+        c.text(tx[1] + 27.0, 77.0 + 28.0, &format!("日落 {}", snapshot.sunset.as_deref().unwrap_or("--:--")), 9.5, W::Semibold, theme::WHITE, H::Left);
+        let nudge = (t * 3.0).sin() * 1.2;
+        c.path(&[(tx[1] + tw - 9.0 + nudge, 90.0), (tx[1] + tw - 6.0 + nudge, 94.0), (tx[1] + tw - 9.0 + nudge, 98.0)], 1.3, paint::alpha(SUN, 0.9));
+    }
 
     // 下方七日预报：图标、降水概率，以及贯穿七天的高低温曲线。
     c.seg((24.0, 122.0), (395.0, 122.0), 0.8, Color32::from_white_alpha(16));
