@@ -274,8 +274,10 @@ impl App {
         let (add,b)=if self.glassy() && self.ctl_on_gpu(Ctl::CalAdd) {
             let add=c.hit(101.0,9.0,46.0,18.0,"calendar-add-local");
             let (hover,_)=c.hover_t(&add);
-            // 玻璃吃满按压果冻，文字只跟入场：按压时 k_text 恒为 1，字形不重采样。
-            let b=c.scaled_text(124.0,18.0,self.ctl_scale(Ctl::CalAdd),self.ctl_text_scale(Ctl::CalAdd));
+            // 玻璃吃满按压果冻，文字完全不缩放（k_text 恒 1）。
+            // 文字跟入场弹簧也会抖：翻到日程页时高度弹簧换目标、`reveal` 跟着回振，
+            // 文字每帧被不同的 k 重采样就是上下抽。玻璃的「弹」足够表达按压/入场。
+            let b=c.scaled_text(124.0,18.0,self.ctl_scale(Ctl::CalAdd),1.0);
             if hover>0.01 {
                 let from=paint::chrome_mark(c);
                 b.fill(101.0,9.0,46.0,18.0,9.0,Color32::from_white_alpha((12.0+hover*16.0) as u8));
