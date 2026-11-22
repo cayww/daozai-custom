@@ -33,16 +33,24 @@ pub enum TextScale {
     Frozen,
 }
 
-/// 把文字 mesh 的 UV 向每个字形 quad 中心内缩半像素。
+/// 把文字 mesh 的 UV 向每个字形 quad 中心内缩 `amount` 个 texel（0..=1，每边一半）。
 ///
-/// 弹簧缩放文字时，mesh 顶点被放大但 UV 不变，GPU 线性采样会在字形 quad 边缘
+/// 弹簧放大文字时，mesh 顶点被放大但 UV 不变，GPU 线性采样会在字形 quad 边缘
 /// 采到图集里相邻的空白/黑色像素，表现为「1」顶上或长按按钮文字上方的小黑线。
-/// 字体图集的 UV 是 texel 坐标，所以 1.0  texel 就是 `1/atlas_size`。
-fn inset_text_uv(shape: &mut Shape, atlas_size: [usize; 2]) {
+/// 字体图集的 UV 是 texel 坐标，所以 1.0 texel 就是 `1/atlas_size`。
+///
+/// `amount` 必须随缩放比连续变化、且只在放大（s>1）时生效：早先按
+/// `|s-1|>1%` 硬开关、每次内缩整整 1 texel，弹簧回弹经过阈值时字形会突然
+/// 变瘦一下再弹回（用户看到的就是文字上下抽动）。
+fn inset_text_uv(shape: &mut Shape, atlas_size: [usize; 2], amount: f32) {
+    let amount = amount.clamp(0.0, 1.0);
+    if amount <= 0.0 {
+        return;
+    }
     let Shape::Text(text_shape) = shape else { return };
     if atlas_size[0] == 0 || atlas_size[1] == 1 { return }
-    let texel_u = 1.0 / atlas_size[0] as f32;
-    let texel_v = 1.0 / atlas_size[1] as f32;
+    let texel_u = amount / atlas_size[0] as f32;
+    let texel_v = amount / atlas_size[1] as f32;
     let galley = Arc::make_mut(&mut text_shape.galley);
     for placed in &mut galley.rows {
         let row = Arc::make_mut(&mut placed.row);
@@ -269,10 +277,14 @@ impl<'a> Card<'a> {
         }
         let mut shape = Shape::galley(p, g, color);
         shape.transform(TSTransform::new(origin, s));
-        // 只在发生非整数缩放时内缩 UV：s≈1 时字形按原始尺寸采样，不需要动。
-        if (s - 1.0).abs() > 0.01 {
-            let atlas = self.ui.ctx().fonts(|f| f.font_image_size());
-            inset_text_uv(&mut shape, atlas);
+        // 只在放大时内缩 UV，且内缩量随缩放比连续增长：
+        // 硬开关会让弹簧回弹经过阈值时字形突变一次（看起来像文字抖一下）。
+        if s > 1.0 {
+            let amount = ((s - 1.0) / 0.12).clamp(0.0, 1.0);
+            if amount > 1e-3 {
+                let atlas = self.ui.ctx().fonts(|f| f.font_image_size());
+                inset_text_uv(&mut shape, atlas, amount);
+            }
         }
         shape
     }
@@ -709,9 +721,49 @@ mod gradient_tests {
         }
     }
 
+    /// UV 内缩必须只在放大时生效、且随缩放比连续变化。
     #[test]
-    fn wrap_matches_char_by_char_reference() {
-        // 旧的逐字符算法：只作为新二分折行的行为基准。
+    fn text_uv_inset_is_one_sided_and_continuous() {
+        fn uv_sum(shape: &Shape) -> f64 {
+            let Shape::Text(t) = shape else {
+                panic!("期望文字图元")
+            };
+            let mut sum = 0.0f64;
+            for row in &t.galley.rows {
+                let range = row.visuals.glyph_vertex_range.clone();
+                for quad in row.visuals.mesh.vertices[range].chunks_exact(4) {
+                    let min_u = quad.iter().map(|v| v.uv.x).fold(f32::INFINITY, f32::min) as f64;
+                    let max_u = quad.iter().map(|v| v.uv.x).fold(f32::NEG_INFINITY, f32::max) as f64;
+                    sum += max_u - min_u;
+                }
+            }
+            sum
+        }
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(200.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+            let g = c.galley("＋ 新增", 9.0, W::Regular, Color32::WHITE);
+            let at = |k: f32| {
+                let cc = c.scaled(40.0, 24.0, k).text_scale(TextScale::Follow);
+                uv_sum(&cc.galley_shape(Pos2::new(4.0, 14.0), g.clone(), Color32::WHITE))
+            };
+            let base = at(1.0);
+            // 缩小不该动 UV：早先 |s-1|>1% 的硬开关会在这里把字形缩瘦一圈。
+            assert_eq!(at(0.9), base, "缩小不应触发 UV 内缩");
+            // 放大时连续收缩，且 1% 放大只内缩一点点（不是整 texel 硬跳）。
+            let a = at(1.01);
+            let b = at(1.02);
+            assert!(a < base && b < a, "UV 应随放大单调内缩：{base} / {a} / {b}");
+            assert!((base - a) / base < 0.02, "1% 放大内缩应极小：{base} → {a}");
+        });
+    }
+
+    #[test]
+    fn wrap_matches_char_by_char_reference() {        // 旧的逐字符算法：只作为新二分折行的行为基准。
         fn reference(c: &Card, t: &str, size: f32, w: W, max_w: f32, max_lines: usize) -> Vec<String> {
             let mut out: Vec<String> = Vec::new();
             let mut cur = String::new();
