@@ -1732,3 +1732,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 跨两格 `k=1.2+1/32` 必须不同（防止死区+量化把动画吞掉）。
   - 这是抖动的可执行定义：**相邻帧同一段文字生成了不同顶点**。
 - 验证：`cargo test --lib paint:: -- --test-threads=1` = **18 passed**；release 构建 2m47s；exe sha256 前 16 位 `205b1e2375b4c578`，PID 26072；预览目录同步，旧版备份 `daozai.exe.prev-before-galley-shape`。
+
+### 7.0zzu 去掉文字缩放量化：修「长按新增按钮松手文字上下抽动」（2026-11-22 22:00–22:06）
+- 用户反馈：日程页「＋ 新增」长按再松手，文字上下抖动。
+- 层级排查（`calendar_ui.rs:274-288`）：命中区 `c.hit(101,9,46,18,"calendar-add-local")` 画在**未缩放**页卡上；玻璃本体要么由 GPU 透镜画（`Ctl::CalAdd` 已在 app.rs:3580 注册给 `pick_ctl`），要么由 `paint::capsule()` 返回 `(Response, Card)`；文字 `b.centered_text(124,18,...)` 画在 `b = c.scaled(124,18,ctl_scale(CalAdd))` 上——只有这张缩放卡带 `text_anchor`，才走 `Damped`。
+- 根因：`CTL_PRESS=(300,0.5)` 欠阻尼 + `CTL_PRESS_SCALE=0.14*sk`，松手时 k 在 1.16 ↔ 0.84 之间摆；`Damped` 里我加的 1/64 量化每档 ≈0.016 缩放比，回弹一次跨 ~20 档，60fps 下几乎每帧跳一档 → 文字逐帧整档变大变小，看起来就是上下抽动。量化只在死区附近有意义，而死区本来就把那一带锁死了。
+- 修法：`damped_text_scale` 只保留 `|k-1|<6% → 1.0` + `[6%,12%]` smoothstep 过渡 + 更远**连续跟随** k；删掉 `TEXT_SCALE_QUANTUM`。同步更新测试：`text_scale_damps_tail_without_boundary_jump` 增加「死区外连续单调、相邻采样差 ≤0.01」；`scaled_text_mesh_holds_still_inside_deadzone` 改为「死区内逐位相同、死区外连续变化」。
+- 验证：paint 测试 18 passed；release 构建 2m45s；exe sha256 前 16 位 `e2b83718140d08da`，PID 11536；预览目录同步，备份 `daozai.exe.prev-before-noquant`。
