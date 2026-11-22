@@ -2939,7 +2939,14 @@ impl App {
             self.pet.draw(&base.scaled(cx-origin.x,15.0,fit).shifted(0.0,y).faded(pet_alpha),cx-origin.x+self.resident.position(bar::PET),self.pet_anim_t,self.skin_palette());
         }
         if reveal > 0.004 && !banner && !restoring_lyrics {
-            let c = base.shifted(0.0, (1.0 - reveal) * -5.0).faded(reveal);
+            // 「内容上浮 5px」只属于从胶囊展开那一段（面板还没到基础高度）。
+            // 以前直接挂在 reveal 上：切页会改 expanded_height，progress 一回落
+            // reveal 就跟着掉，整页内容跟着下滑 5px 再弹回来——这就是切页「上下抖」。
+            let bar_h = self.base_size().1;
+            let unveil = if self.open && self.h.pos < PH {
+                smoothstep(0.50, 0.97, ((self.h.pos - bar_h) / (PH - bar_h).max(1.0)).clamp(0.0, 1.0))
+            } else { 1.0 };
+            let c = base.shifted(0.0, (1.0 - unveil) * -5.0).faded(reveal);
             let c = if reveal < 0.6 { c.ghost() } else { c };
             if self.calendar.draft.is_some(){self.draw_calendar_editor(&c);}else if self.task_dialog.is_some(){self.draw_task_editor(&c);}else{self.panel_body(&c, env, &mut cmds);}
             if !self.toast_below {self.toast_layer(&c,106.0);}

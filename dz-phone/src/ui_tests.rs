@@ -9401,3 +9401,23 @@ fn 手机通知走receive路径也会自动登记App(){
     h.app.receive_notification_from("QQ".into(),"QQ".into(),"新App名 · 消息".into(),None);
     assert_eq!(h.app.phone_apps.items.len(),before+1,"非手机通道不应登记到手机名单");
 }
+
+/// 切到更高的页面时，`expanded_height` 会立刻变大、`progress` 回落；内容坐标
+/// 不能跟着 reveal 一起上下滑（那会表现为整页文字上下抖）。
+#[test]
+fn page_flip_to_taller_page_does_not_slide_content(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.show_page(1);
+    for _ in 0..120 { h.frame(vec![]); }
+    h.app.go(7,1.0);
+    let mut ys=Vec::new();
+    for _ in 0..60 {
+        h.frame(vec![]);
+        if let Some(r)=find_text_bounds(&h.shapes,"日程") { ys.push(r.min.y); }
+    }
+    assert!(ys.len()>20,"切页过渡里应能取到新页标题：{ys:?}");
+    let first=ys[0];
+    let dev=ys.iter().map(|y|(y-first).abs()).fold(0.0f32,f32::max);
+    assert!(dev<0.01,"切页过渡中页面内容不应上下移动，实测位移 {dev}px：{ys:?}");
+}
