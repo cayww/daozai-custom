@@ -2452,6 +2452,9 @@ impl App {
         crate::gpu_glass::set_morph_scale(self.settings.liquid_morph);
         crate::gpu_glass::set_liquid_optics(self.settings.liquid_refract_px,self.settings.liquid_chroma_px);
         crate::gpu_glass::set_liquid_look(self.settings.liquid_blur_px,self.settings.liquid_band_px,self.settings.liquid_edge_w_px,self.settings.liquid_edge_op);
+        // 高光跟随鼠标：迁移到 D3D11 时漏接的线——之前 shader 的 lightcfg.x 恒为 0，
+        // 滑杆怎么拖都只出固定左上光。每帧同步，拖滑杆立即生效。
+        crate::gpu_glass::set_light_follow(self.settings.liquid_light_follow);
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
         self.window_origin=env.window_origin;
@@ -2743,11 +2746,25 @@ impl App {
         // 毛玻璃：真实模糊下保留柔和投影增加层次；无模糊时阴影再减淡一些，保持轻盈。
         let skin_shadow = if !glass_skin {1.0} else if env.glass_blur {0.75} else {0.7};
         // 液态玻璃可关掉胶囊外围的多层落影（设置 → 液态玻璃 → 岛体投影）：
-        // shadow_k 归零后 shape::shadow_mapped / pill_shadow 的 strength<=0.01 早退
+        // shadow_k 归零后 shadow_ring / pill_shadow 的 strength<=0.01 早退
         // 会跳过全部 4 层；玻璃内部的接触阴影在 shader 侧，不受这里影响。
         let shadow_k = glass::shadow_alpha(0.0, thick) / 0.12 * skin_shadow
             * if self.settings.skin==model::Skin::Liquid && !self.settings.liquid_shadow {0.0} else {1.0};
-        let island_shadow=|r:Rect,flare:f32,flare_h:f32,radius:f32,strength:f32| if pill {pill_shadow(&painter,r,radius,strength)} else if side {shape::shadow_docked(&painter,r,dock,flare,flare_h,radius,strength)} else {shape::shadow(&painter,r,flare,flare_h,radius,strength)};
+        // 液态玻璃用环形落影：只在岛体轮廓外画影子，本体不盖黑。旧的全屏实心阴影在
+        // D3D11 栈里会盖在先画的折射玻璃上，整个岛体发灰（资料包苹果液态玻璃做法：
+        // 阴影用元素自身 SDF 把内部裁掉）。其他皮肤维持原有实心阴影观感。
+        let liquid_skin = self.settings.skin==model::Skin::Liquid;
+        let island_shadow=|r:Rect,flare:f32,flare_h:f32,radius:f32,strength:f32| {
+            if liquid_skin {
+                shape::shadow_ring(&painter,r,dock,flare,flare_h,radius,strength);
+            } else if pill {
+                pill_shadow(&painter,r,radius,strength);
+            } else if side {
+                shape::shadow_docked(&painter,r,dock,flare,flare_h,radius,strength);
+            } else {
+                shape::shadow(&painter,r,flare,flare_h,radius,strength);
+            }
+        };
         // 拿起时投影加深，像被从屏幕边缘提起来。
         let lifted = self.drag_lift.pos.clamp(0.0, 1.2);
         island_shadow(body, flare, flare_h, radius, (smoothstep(0.1, 0.9, pc) + lifted * 0.9) * shadow_k);

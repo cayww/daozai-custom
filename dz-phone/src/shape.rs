@@ -237,6 +237,86 @@ fn shadow_mapped(painter: &egui::Painter, rect: Rect, map: EdgeMap, flare: f32, 
     }
 }
 
+/// 轮廓外的环形落影：只画「外形外扩环带」，岛体本体正下方一根线都不画。
+///
+/// 苹果 Liquid Glass（及资料包 8 件套）的投影做法是 `shadow *= smoothstep(-1,1,elementSd)`：
+/// 阴影本质是元素 SDF 的外扩模糊，再用元素自身的 SDF 把内部遮掉——影子只趴在轮廓外，
+/// 元素内部保持干净。旧 `shadow_mapped` 每层都是**整块实心圆角矩形**，而 D3D11 先画折射
+/// 玻璃、egui 后画阴影，4 层累计 alpha≈0.24 的黑就盖在玻璃上，整个岛体发灰（用户报的 bug）。
+///
+/// 这里按行扫描：外扩轮廓与本体轮廓之间，左右两段 + 上下帽檐连成环带；本体覆盖的 y
+/// 区间只取两侧窄条，不再填中心。顶部贴屏幕边，帽檐自然被裁掉，与旧实现观感一致。
+#[allow(clippy::too_many_arguments)]
+pub fn shadow_ring(painter: &egui::Painter, rect: Rect, dock: Dock,
+                   flare: f32, flare_h: f32, radius: f32, strength: f32) {
+    if strength <= 0.01 { return; }
+    let (map, frame) = EdgeMap::of(rect, dock);
+    // 本体轮廓的逐行 (y, 左, 右)，用来在任意 y 求本体的左右边界。
+    let inner = sections(frame, flare, flare_h, radius);
+    for (grow, a) in [(10.0f32, 0.035f32), (6.5, 0.05), (3.5, 0.07), (1.5, 0.09)] {
+        let (d, dy) = shadow_expansion(grow);
+        let outer = Rect::from_min_max(
+            Pos2::new(frame.left() - d, frame.top() - (d - dy)),
+            Pos2::new(frame.right() + d, frame.bottom() + d + dy),
+        );
+        let outer_rows = sections(outer, flare, flare_h, radius + d);
+        let color = Color32::from_black_alpha((255.0 * a * strength) as u8);
+        let mut mesh = egui::Mesh::default();
+        // 给定相邻两行的 (y,左,右)，连成一条水平梯形带。
+        let quad = |m: &mut egui::Mesh, py: f32, pl: f32, pr: f32, y: f32, l: f32, r: f32| {
+            if (pr - pl).abs() < 0.01 && (r - l).abs() < 0.01 { return; }
+            let i = m.vertices.len() as u32;
+            m.colored_vertex(Pos2::new(pl, py), color);
+            m.colored_vertex(Pos2::new(pr, py), color);
+            m.colored_vertex(Pos2::new(r, y), color);
+            m.colored_vertex(Pos2::new(l, y), color);
+            m.add_triangle(i, i + 1, i + 2);
+            m.add_triangle(i, i + 2, i + 3);
+        };
+        // 三个独立的连续条带：左、右、上下帽檐。跨出本体 y 范围时切换，避免出现
+        // 「一行两段、下一行一段」无法连成四边形的情况。
+        let mut left_prev: Option<(f32, f32, f32)> = None;
+        let mut right_prev: Option<(f32, f32, f32)> = None;
+        let mut cap_prev: Option<(f32, f32, f32)> = None;
+        for &(y, ol, or) in &outer_rows {
+            let ilr = if y < inner[0].0 || y > inner[inner.len() - 1].0 {
+                None
+            } else {
+                let mut found = None;
+                for w in inner.windows(2) {
+                    if w[0].0 <= y && y <= w[1].0 {
+                        let t = (y - w[0].0) / (w[1].0 - w[0].0).max(1e-6);
+                        found = Some((w[0].1 + (w[1].1 - w[0].1) * t,
+                                      w[0].2 + (w[1].2 - w[0].2) * t));
+                        break;
+                    }
+                }
+                found
+            };
+            if let Some((raw_il, raw_ir)) = ilr {
+                // 肩部 wing 的绝对宽度内外一致，外扩矩形更矮时可能出现 il<ol；夹一下，
+                // 保证左右条带宽度非负（胶囊 flare=0 不会触发）。
+                let il = raw_il.max(ol);
+                let ir = raw_ir.min(or);
+                cap_prev = None;
+                if let Some((py, pl, pr)) = left_prev { quad(&mut mesh, py, pl, pr, y, ol, il); }
+                left_prev = Some((y, ol, il));
+                if let Some((py, pl, pr)) = right_prev { quad(&mut mesh, py, pl, pr, y, ir, or); }
+                right_prev = Some((y, ir, or));
+            } else {
+                left_prev = None;
+                right_prev = None;
+                if let Some((py, pl, pr)) = cap_prev { quad(&mut mesh, py, pl, pr, y, ol, or); }
+                cap_prev = Some((y, ol, or));
+            }
+        }
+        if map.code() != 0.0 {
+            for v in &mut mesh.vertices { v.pos = map.apply(v.pos); }
+        }
+        painter.add(egui::Shape::Mesh(std::sync::Arc::new(mesh)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,6 +365,81 @@ mod tests {
         assert!(!inside(&pts, Pos2::new(rect.left() - 0.5, 70.0)));
         // 底部圆角外侧是空的
         assert!(!inside(&pts, Pos2::new(rect.left() + 2.0, rect.bottom() - 2.0)));
+    }
+}
+
+#[cfg(test)]
+mod ring_shadow_tests {
+    use super::*;
+    // 采样 shadow_ring 生成的所有 mesh 顶点，确认没有任何顶点落进本体内部——
+    // 这是「环形阴影不盖岛体」的几何本质：影子只在外扩环带里。
+    fn ring_vertices(rect: Rect, flare: f32, flare_h: f32, radius: f32) -> Vec<Pos2> {
+        let ctx = egui::Context::default();
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            shadow_ring(&ui.ctx().layer_painter(egui::LayerId::background()),
+                        rect, Dock::Top, flare, flare_h, radius, 1.0);
+        });
+        out.shapes.into_iter()
+            .filter_map(|s| if let egui::Shape::Mesh(m) = s.shape { Some(m) } else { None })
+            .flat_map(|m| m.vertices.iter().map(|v| v.pos).collect::<Vec<_>>())
+            .collect()
+    }
+
+    // 岛体「正中心」矩形：左右各缩 18%、上下各缩 28%，远离圆角/肩部/贴边。
+    // 旧实现（每层整块实心圆角矩形）的阴影会填满这里，环形阴影的顶点绝不会进这里。
+    // 用中心矩形而非轮廓边界判断，避免肩部 wing 采样误差带来的脆弱性。
+    fn center_of(rect: Rect) -> Rect {
+        let pad_x = rect.width() * 0.18;
+        let pad_y = rect.height() * 0.28;
+        Rect::from_min_max(
+            Pos2::new(rect.left() + pad_x, rect.top() + pad_y),
+            Pos2::new(rect.right() - pad_x, rect.bottom() - pad_y))
+    }
+
+    #[test]
+    fn ring_shadow_never_covers_the_body_center() {
+        let rect = Rect::from_min_size(Pos2::new(110.0, 0.0), Vec2::new(419.0, 140.0));
+        let verts = ring_vertices(rect, 17.6, 16.0, 33.0);
+        assert!(!verts.is_empty(), "环形阴影必须生成几何");
+        let center = center_of(rect);
+        for p in &verts {
+            assert!(!center.contains(*p),
+                    "阴影顶点 {p:?} 落进岛体中心，会盖住玻璃：{center:?}");
+        }
+        // 但轮廓外必须有影子（左右两侧最外层外扩 10*0.6=6 点）。
+        assert!(verts.iter().any(|p| p.x < rect.left() - 3.0), "左侧要有外扩阴影");
+        assert!(verts.iter().any(|p| p.x > rect.right() + 3.0), "右侧要有外扩阴影");
+        assert!(verts.iter().any(|p| p.y > rect.bottom() + 3.0), "底部要有外扩阴影");
+    }
+
+    #[test]
+    fn ring_shadow_pill_shape_leaves_center_clean() {
+        // 收起态胶囊（flare=0）是最常见形态，中心同样不能被阴影盖住。
+        let rect = Rect::from_min_size(Pos2::new(110.0, 0.0), Vec2::new(160.0, 30.0));
+        let verts = ring_vertices(rect, 0.0, 0.0, 15.0);
+        assert!(!verts.is_empty());
+        let center = center_of(rect);
+        for p in &verts {
+            assert!(!center.contains(*p),
+                    "胶囊阴影顶点 {p:?} 落进中心，会盖住玻璃：{center:?}");
+        }
+    }
+
+    #[test]
+    fn ring_shadow_respects_dock_mapping() {
+        let rect = Rect::from_min_size(Pos2::new(0.0, 100.0), Vec2::new(419.0, 140.0));
+        let ctx = egui::Context::default();
+        let out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            shadow_ring(&ui.ctx().layer_painter(egui::LayerId::background()),
+                        rect, Dock::Left, 17.6, 16.0, 33.0, 1.0);
+        });
+        let verts: Vec<Pos2> = out.shapes.into_iter()
+            .filter_map(|s| if let egui::Shape::Mesh(m) = s.shape { Some(m) } else { None })
+            .flat_map(|m| m.vertices.iter().map(|v| v.pos).collect::<Vec<_>>())
+            .collect();
+        assert!(!verts.is_empty());
+        // 左侧停靠：外扩后的影子应出现在屏幕左边缘之外（x<0）。
+        assert!(verts.iter().any(|p| p.x < -1.0), "左侧停靠时阴影要沿屏幕左沿外扩");
     }
 }
 

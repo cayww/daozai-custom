@@ -88,6 +88,15 @@ pub fn set_liquid_optics(refract_px: f32, chroma_px: f32) {
 pub fn set_liquid_look(blur: f32, band: f32, edge: f32, op: f32) {
     if let Ok(mut u) = UNIFORMS.lock() { u.blur = blur; u.band = band; u.edge_w = edge; u.edge_op = op; }
 }
+/// 高光跟随鼠标强度（0~1）→ HLSL `lightcfg.x`。
+///
+/// 迁移到 D3D11 时漏接了这条线：`GlassUniforms.light_follow` 一直是初始的 0，
+/// 于是 shader 里 `follow = saturate(lightcfg.x) = 0`，`Ld` 恒为固定左上光
+/// `normalize(-0.45,-0.65)`——设置里的「高光跟随鼠标」滑杆怎么拖都没反应。
+/// app 每帧从 `settings.liquid_light_follow` 同步到这里。
+pub fn set_light_follow(v: f32) {
+    if let Ok(mut u) = UNIFORMS.lock() { u.light_follow = v.clamp(0.0, 1.0); }
+}
 pub fn set_direct_composition(_active: bool) {}
 
 pub fn frame_for(
@@ -204,5 +213,20 @@ mod tests {
         assert_eq!(shape_params(), [17.6, 16.0, 1.0]);
         set_shape(0.0, 8.0, false);
         assert_eq!(shape_params(), [0.0, 8.0, 0.0]);
+    }
+
+    #[test]
+    fn light_follow_is_wired_and_clamped() {
+        // 回归锁：迁移期漏接这条线曾导致「高光跟随鼠标」滑杆完全无效（恒 0）。
+        set_light_follow(0.0);
+        assert_eq!(uniforms().light_follow, 0.0);
+        set_light_follow(0.65);
+        assert!((uniforms().light_follow - 0.65).abs() < 1e-6);
+        // 越界值要夹到 0..=1，否则 shader 里 saturate 之外的地方可能算出怪方向。
+        set_light_follow(3.0);
+        assert_eq!(uniforms().light_follow, 1.0);
+        set_light_follow(-1.0);
+        assert_eq!(uniforms().light_follow, 0.0);
+        set_light_follow(1.0);
     }
 }
