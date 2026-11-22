@@ -15,7 +15,7 @@ cbuffer U : register(b0) {
     float4 misc;            // xy=pointer(px), z=refract strength, w=flat mode(0/1/2)
     float4 crect[MAX_CTL];  // (x, y, w, h) per control, capture-device px
     float4 cprm[MAX_CTL];   // (radius, enabled, magnify, refract) per control
-    float4 cstyle[MAX_CTL]; // (style, -, -, -) per control: 0=普通 1=分栏容器(暗) 2=分栏指示器(亮)
+    float4 cstyle[MAX_CTL]; // (style, -, -, -) per control: 0=普通 1=分栏容器(磨砂) 2=分栏指示器(亮)
     float4 look;            // x=blur, y=band, z=edge width, w=edge opacity
     float4 notch;           // x=flare, y=fh, z=isNotch, w=isDComp
     float4 lightcfg;        // x=follow strength
@@ -144,6 +144,24 @@ float3 tap5(float2 px, float2 ca, float blur) {
         s += float3(sample_px(q + ca).r, sample_px(q).g, sample_px(q - ca).b);
     }
     return s / 5.0;
+}
+
+// 高斯模糊采样（容器磨砂玻璃用）：中心 + 内环4点 + 外环8点，共13点，
+// 高斯权重 exp(-r²/2σ²)。radius 为模糊半径(device px)。
+float3 gauss_blur(float2 px, float radius) {
+    float sigma = max(radius * 0.5, 1.0);
+    float w2 = exp(-1.0 / (2.0 * sigma * sigma));
+    float w4 = exp(-2.0 / (2.0 * sigma * sigma));
+    float3 s = sample_px(px);                                  // 中心 w=1
+    float2 n[4] = { float2(1,0), float2(-1,0), float2(0,1), float2(0,-1) };
+    float2 d[4] = { float2(1,1), float2(-1,1), float2(1,-1), float2(-1,-1) };
+    for (int i = 0; i < 4; i++) {
+        s += sample_px(px + n[i] * radius) * w2;              // 内环 (距离 r)
+        s += sample_px(px + d[i] * radius * 0.707) * w2;      // 对角 (距离 r)
+        s += sample_px(px + n[i] * radius * 2.0) * w4;        // 外环 (距离 2r)
+    }
+    float wsum = 1.0 + 8.0 * w2 + 4.0 * w4;
+    return s / wsum;
 }
 
 // Control hit test: later control overwrites earlier (volume overlay over lyrics).
@@ -376,11 +394,20 @@ float4 fs(VSOut i) : SV_TARGET {
         float4 cr = crect[cs.idx];
         float4 ce = ctrl_glass(p, p - cr.xy - cr.zw*0.5, cs.hs, cs.r, cs.d,
                                mat, Ld, edge_bg, cs.mag, cs.refr);
-        // 分栏标签栏层次（资料包）：容器暗磨砂+细白边，指示器亮玻璃+强白边。
-        // 样式由 cstyle[槽位].x 传入（槽位是 pick_ctl 命中的紧凑索引，不是 Ctl 枚举 idx）。
+        // 分栏标签栏层次（资料包）：容器高斯模糊磨砂+细白边（不压暗），
+        // 指示器清晰折射的亮玻璃+强白边。样式由 cstyle[槽位].x 传入
+        // （槽位是 pick_ctl 命中的紧凑索引，不是 Ctl 枚举 idx）。
         float style = cstyle[cs.idx].x;
         if (style > 0.5 && style < 1.5) {
-            ce.rgb = ce.rgb * 0.55 + float3(0.010,0.014,0.022);  // 压暗成深色磨砂
+            // 容器：13 点高斯模糊背景；边缘保留 ctrl_glass 的白边/倒角，内部换成磨砂底。
+            // 用户明确不要暗底——不做 ×0.55 压暗、不加深色 tint。
+            float inner = smoothstep(0.0, 7.0, -cs.d);
+            float3 frost = gauss_blur(p, 6.0);
+            // 与 ctrl_glass 相同的浅材质补偿，避免模糊底偏色；不叠加 scrim 压暗。
+            float fl = dot(frost, float3(0.299,0.587,0.114));
+            frost = frost * (1.0 + lerp(0.045,-0.035,smoothstep(0.42,0.88,fl))) * 1.010
+                  + float3(0.004,0.006,0.010);
+            ce.rgb = lerp(ce.rgb, frost, inner * 0.85);
         } else if (style > 1.5) {
             // 指示器更亮：提亮主体 + 按 SDF 边缘加强白边高光。
             ce.rgb = ce.rgb * 1.10 + float3(0.02,0.02,0.03);

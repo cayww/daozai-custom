@@ -3873,7 +3873,7 @@ impl App {
             let rect=if tx!=0.0 && !matches!(ctl,Ctl::Gear|Ctl::NavL|Ctl::NavR) {
                 rect.translate(egui::vec2(tx,0.0))
             }else{rect};
-            // 材质样式: 分栏容器压暗(1)、指示器提亮(2)，其余普通(0)。
+            // 材质样式: 分栏容器高斯模糊磨砂(1，不压暗)、指示器提亮(2)，其余普通(0)。
             let style=match ctl { Ctl::ShelfTabBar=>1, Ctl::ShelfTab=>2, _=>0 };
             out.push(crate::gpu_glass::Ctl {
                 rect:Rect::from_center_size(rect.center(),rect.size()*s).translate(origin.to_vec2()),
