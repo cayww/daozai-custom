@@ -1,0 +1,740 @@
+//! 面板内绘制：局部坐标画布 `Card`。
+//!
+//! `Card` 把「面板局部逻辑点」映射到屏幕，并自带裁剪、整体透明度与可交互开关：
+//! 切页时旧页用 `live = false` 的画布绘制，只画不响应点击，也不会和新页抢 id。
+//!
+//! 子模块：[`icons`] 全部矢量图标、[`chase`] 进度条追光 mesh。两者都用
+//! `pub use` 重新导出，调用方仍写 `paint::battery(...)`。
+
+use crate::theme::{font, W};
+use eframe::egui::{self, Color32, FontId, Id, Pos2, Rect, Response, Sense, Stroke, Vec2};
+use eframe::egui::epaint::Shape;
+use eframe::egui::emath::TSTransform;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
+use std::sync::Arc;
+
+/// 文字缩放死区：卡片弹簧缩放倍率在 1±6% 以内时，文字按基准字号画，
+/// 不继承尾振。按下时 14% 的放大仍然保留（超过死区）。见 `Card::paint_galley`。
+const TEXT_SCALE_DEADZONE: f32 = 0.06;
+
+/// 死区之外文字缩放比的量化步长（1/64）。
+///
+/// 文字是位图字形 + 线性过滤：缩放比每帧连续变化，重采样相位就每帧变化，
+/// 视觉上像「呼吸」。量化到 1/64 后同一档内字形完全静止，只在跨档时变一次；
+/// 在 13px 字号上每档约 0.1px，肉眼不可见。只作用于 [`TextScale::Damped`]。
+const TEXT_SCALE_QUANTUM: f32 = 1.0 / 64.0;
+
+/// 文字缩放策略。由 [`Card::scaled`] 自动选择 `Auto`，需要时可用
+/// [`Card::text_scale`] 显式指定。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TextScale {
+    /// 默认：没有发生 `scaled()` 时跟随卡片缩放，发生了就按 [`Self::Damped`]。
+    #[default]
+    Auto,
+    /// 完全跟随卡片 `s`（包括弹簧尾振）。截图/整体 zoom 时用。
+    Follow,
+    /// 隔离弹簧尾振：以最近一次 `scaled()` 之前的字号为基准，
+    /// 尾振落在死区内时把文字锁回基准字号；死区外按 1/64 量化。
+    Damped,
+    /// 冻结在基准字号：入场动画里只让容器动，文字不参与缩放。
+    Frozen,
+}
+
+/// 把文字 mesh 的 UV 向每个字形 quad 中心内缩半像素。
+///
+/// 弹簧缩放文字时，mesh 顶点被放大但 UV 不变，GPU 线性采样会在字形 quad 边缘
+/// 采到图集里相邻的空白/黑色像素，表现为「1」顶上或长按按钮文字上方的小黑线。
+/// 字体图集的 UV 是 texel 坐标，所以 1.0  texel 就是 `1/atlas_size`。
+fn inset_text_uv(shape: &mut Shape, atlas_size: [usize; 2]) {
+    let Shape::Text(text_shape) = shape else { return };
+    if atlas_size[0] == 0 || atlas_size[1] == 1 { return }
+    let texel_u = 1.0 / atlas_size[0] as f32;
+    let texel_v = 1.0 / atlas_size[1] as f32;
+    let galley = Arc::make_mut(&mut text_shape.galley);
+    for placed in &mut galley.rows {
+        let row = Arc::make_mut(&mut placed.row);
+        let range = row.visuals.glyph_vertex_range.clone();
+        let vertices = &mut row.visuals.mesh.vertices;
+        for quad in vertices[range].chunks_exact_mut(4) {
+            let min_u = quad.iter().map(|v| v.uv.x).fold(f32::INFINITY, f32::min);
+            let max_u = quad.iter().map(|v| v.uv.x).fold(f32::NEG_INFINITY, f32::max);
+            let min_v = quad.iter().map(|v| v.uv.y).fold(f32::INFINITY, f32::min);
+            let max_v = quad.iter().map(|v| v.uv.y).fold(f32::NEG_INFINITY, f32::max);
+            let span_u = max_u - min_u;
+            let span_v = max_v - min_v;
+            if span_u <= 0.0 || span_v <= 0.0 { continue }
+            let fx = ((span_u - texel_u) / span_u).max(0.0);
+            let fy = ((span_v - texel_v) / span_v).max(0.0);
+            let cu = (min_u + max_u) * 0.5;
+            let cv = (min_v + max_v) * 0.5;
+            for v in quad {
+                v.uv.x = cu + (v.uv.x - cu) * fx;
+                v.uv.y = cv + (v.uv.y - cv) * fy;
+            }
+        }
+    }
+}
+
+/// `Damped` 模式下由卡片缩放比 `k` 求文字缩放比。
+///
+/// - `|k-1| < 死区`：返回 1（冻结，隔离弹簧尾振）；
+/// - `[死区, 2×死区]`：smoothstep 过渡，避免在死区边界把字号硬跳 6%；
+/// - 更远：跟随 `k`（按压缩放 14% 完整保留），再量化到 1/64，
+///   避免逐帧改变字形重采样相位。
+fn damped_text_scale(k: f32) -> f32 {
+    let d = k - 1.0;
+    let ad = d.abs();
+    let dead = TEXT_SCALE_DEADZONE;
+    let blended = if ad <= dead {
+        1.0
+    } else {
+        let t = ((ad - dead) / dead).min(1.0);
+        let t = t * t * (3.0 - 2.0 * t);
+        1.0 + d * t
+    };
+    (blended / TEXT_SCALE_QUANTUM).round() * TEXT_SCALE_QUANTUM
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum H {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone)]
+pub struct Card<'a> {
+    pub ui: &'a egui::Ui,
+    pub painter: egui::Painter,
+    pub origin: Pos2,
+    pub s: f32,
+    pub live: bool,
+    /// 构造时的设备像素比。`fill/stroke/rect` 用它把屏幕坐标对齐到物理像素。
+    ppp: f32,
+    /// 文字缩放策略，默认 `Auto`。
+    text_scale: TextScale,
+    /// `scaled()` 写入：(不动点局部坐标, 缩放前基准 s)。后写的缩放覆盖先写的，
+    /// 即死区只补偿**最内层**那次弹簧（外层翻页缩放仍跟随）。`paint_galley` 用。
+    text_anchor: Option<(Pos2, f32)>,
+}
+
+impl<'a> Card<'a> {
+    pub fn new(ui: &'a egui::Ui, origin: Pos2, clip: Rect) -> Self {
+        let painter = ui.painter().with_clip_rect(clip);
+        let ppp = ui.ctx().pixels_per_point().max(0.1);
+        Self {
+            ui,
+            painter,
+            origin,
+            s: 1.0,
+            live: true,
+            ppp,
+            text_scale: TextScale::Auto,
+            text_anchor: None,
+        }
+    }
+
+    pub fn pos(&self, x: f32, y: f32) -> Pos2 {
+        self.origin + Vec2::new(x, y) * self.s
+    }
+    /// 逻辑矩形 → 屏幕矩形，并把边缘对齐到物理像素边界。
+    ///
+    /// 填充块/分隔线在任意 `s` 下都落半像素，是控件「边缘闪烁」的主因：
+    /// 同一条边在相邻两帧分别占 1 个像素和 2×50%，渲染出来就忽粗忽细。
+    pub fn rect(&self, x: f32, y: f32, w: f32, h: f32) -> Rect {
+        let r = Rect::from_min_size(self.pos(x, y), Vec2::new(w, h) * self.s);
+        self.snap_rect(r, w > 0.0, h > 0.0)
+    }
+    /// 屏幕坐标 → 最近的像素边界（整像素对齐，用于填充/裁剪）。
+    pub fn snap(&self, v: f32) -> f32 {
+        (v * self.ppp).round() / self.ppp
+    }
+    /// 屏幕坐标 → 最近的像素中心（1px 描边落在这里才不会被两个像素各吃一半）。
+    pub fn snap_center(&self, v: f32) -> f32 {
+        ((v * self.ppp - 0.5).round() + 0.5) / self.ppp
+    }
+    fn snap_rect(&self, r: Rect, keep_w: bool, keep_h: bool) -> Rect {
+        let px = 1.0 / self.ppp;
+        let (x0, y0) = (self.snap(r.min.x), self.snap(r.min.y));
+        let (mut x1, mut y1) = (self.snap(r.max.x), self.snap(r.max.y));
+        // 细到不足一个像素的填充（入场动画里的小控件）不能被对齐吞成 0 宽。
+        if keep_w && x1 <= x0 + px * 0.5 {
+            x1 = x0 + px;
+        }
+        if keep_h && y1 <= y0 + px * 0.5 {
+            y1 = y0 + px;
+        }
+        Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1))
+    }
+    /// 局部坐标 → 屏幕坐标，再对齐到像素边界。
+    pub fn snapped_pos(&self, x: f32, y: f32) -> Pos2 {
+        let p = self.pos(x, y);
+        Pos2::new(self.snap(p.x), self.snap(p.y))
+    }
+    pub fn to_local(&self, p: Pos2) -> Pos2 {
+        let v = (p - self.origin) / self.s;
+        Pos2::new(v.x, v.y)
+    }
+
+    // ---------- 派生画布 ----------
+    pub fn faded(&self, alpha: f32) -> Self {
+        let mut c = self.clone();
+        c.painter.multiply_opacity(alpha.clamp(0.0, 1.0));
+        c
+    }
+    pub fn shifted(&self, dx: f32, dy: f32) -> Self {
+        let mut c = self.clone();
+        c.origin += Vec2::new(dx, dy) * self.s;
+        c
+    }
+    /// 以局部点 (cx, cy) 为中心整体缩放（按钮按下的回弹）。
+    /// 记录不动点与基准 s：文字绘制时按 [`TextScale::Auto`] 对小幅弹簧尾振加死区，
+    /// 避免 damping ζ 通过 s 把振荡写进字形（用户实测 ζ 调大文字就不抖）。
+    pub fn scaled(&self, cx: f32, cy: f32, k: f32) -> Self {
+        let mut c = self.clone();
+        let center = self.pos(cx, cy);
+        c.origin = center + (self.origin - center) * k;
+        c.s = self.s * k;
+        c.text_anchor = Some((Pos2::new(cx, cy), self.s));
+        c
+    }
+    /// 显式指定文字缩放策略（默认 `Auto`，见 [`TextScale`]）。
+    pub fn text_scale(&self, mode: TextScale) -> Self {
+        let mut c = self.clone();
+        c.text_scale = mode;
+        c
+    }
+    pub fn ghost(&self) -> Self {
+        let mut c = self.clone();
+        c.live = false;
+        c
+    }
+    pub fn clipped(&self, x: f32, y: f32, w: f32, h: f32) -> Self {
+        let mut c = self.clone();
+        let r = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
+        c.painter.set_clip_rect(r);
+        c
+    }
+
+    // ---------- 文字（y 一律是基线，跨字体对齐稳定） ----------
+    //
+    // 字体缩放策略（2026-11-22 重构，彻底解决液态皮肤弹簧动画文字抖动）：
+    // galley 一律按固定字号 `size` 排版（不含 s），字形只栅格化一次、缓存稳定；
+    // 卡片缩放 s 由 Shape::transform 在绘制时缩放 mesh 顶点承担，不重新排版。
+    // 因此 galley.size()/mesh_bounds 天然是「局部单位」，调用方无需再 /s。
+    // 参考：egui#3197、Bevy B0005「If you need to smoothly scale font size,
+    // use Transform::scale」。
+    pub fn font(&self, size: f32, w: W) -> FontId {
+        font(size, w)
+    }
+    pub fn galley(&self, t: &str, size: f32, w: W, color: Color32) -> std::sync::Arc<egui::Galley> {
+        self.painter.layout_no_wrap(crate::rtl_text::display(t).into_owned(), font(size, w), color)
+    }
+    /// 在局部坐标 p（未缩放）绘制已排版的 galley：先缩放 mesh 到屏幕，再平移 origin。
+    ///
+    /// 缩放策略见 [`TextScale`]：默认 `Auto` 在 `scaled()` 之后等价于 `Damped` ——
+    /// 弹簧尾振（|k-1| < 死区）时文字锁回基准缩放、但保持不动点的屏幕位置不变，
+    /// 于是玻璃/卡片仍随阻尼比弹，文字不再跟着胀缩。死区外把缩放比量化到 1/64，
+    /// 避免逐帧改变字形重采样相位。
+    pub fn paint_galley(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) {
+        let (mut origin, mut s) = (self.origin.to_vec2(), self.s);
+        let mode = match self.text_scale {
+            TextScale::Auto if self.text_anchor.is_some() => TextScale::Damped,
+            TextScale::Auto => TextScale::Follow,
+            explicit => explicit,
+        };
+        if let (Some((pivot, base_s)), true) =
+            (self.text_anchor, matches!(mode, TextScale::Damped | TextScale::Frozen))
+        {
+            let base_s = base_s.max(1e-6);
+            let k = s / base_s;
+            let k_text = match mode {
+                TextScale::Frozen => 1.0,
+                TextScale::Damped => damped_text_scale(k),
+                _ => k,
+            };
+            if (k_text - k).abs() > 1e-6 {
+                let pv = origin + pivot.to_vec2() * s;
+                s = base_s * k_text;
+                origin = pv - pivot.to_vec2() * s;
+            }
+        }
+        let mut shape = Shape::galley(p, g, color);
+        shape.transform(TSTransform::new(origin, s));
+        // 只在发生非整数缩放时内缩 UV：s≈1 时字形按原始尺寸采样，不需要动。
+        if (s - 1.0).abs() > 0.01 {
+            let atlas = self.ui.ctx().fonts(|f| f.font_image_size());
+            inset_text_uv(&mut shape, atlas);
+        }
+        self.painter.add(shape);
+    }
+    pub fn text_w(&self, t: &str, size: f32, w: W) -> f32 {
+        self.galley(t, size, w, Color32::WHITE).size().x
+    }
+    /// 返回局部坐标下的文字宽度。
+    pub fn text(&self, x: f32, base: f32, t: &str, size: f32, w: W, color: Color32, h: H) -> f32 {
+        let g = self.galley(t, size, w, color);
+        let gw = g.size().x;
+        let asc = g.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size);
+        let mut p = Pos2::new(x, base) - Vec2::new(0.0, asc);
+        match h {
+            H::Left => {}
+            H::Center => p.x -= gw / 2.0,
+            H::Right => p.x -= gw,
+        }
+        self.paint_galley(p, g, color);
+        gw
+    }
+    /// 以字形的实际可见范围对齐垂直中心，保持中英文状态文字居中。
+    pub fn centered_text(&self, x:f32, cy:f32, t:&str, size:f32, w:W, color:Color32, h:H) {
+        if t.is_empty(){return;}
+        let g=self.galley(t,size,w,color);
+        let dx=match h {H::Left=>0.0,H::Center=>g.size().x/2.0,H::Right=>g.size().x};
+        let pos=Pos2::new(x,cy)-Vec2::new(dx,g.mesh_bounds.center().y);
+        self.paint_galley(pos,g,color);
+    }
+    /// 超宽时末尾加省略号。
+    pub fn fit(&self, t: &str, size: f32, w: W, max_w: f32) -> String {
+        if self.text_w(t, size, w) <= max_w {
+            return t.to_owned();
+        }
+        let chars: Vec<char> = t.chars().collect();
+        let (mut low, mut high) = (0, chars.len().saturating_sub(1));
+        while low < high {
+            let n = low + (high - low + 1) / 2;
+            let s: String = chars[..n].iter().collect::<String>() + "…";
+            if self.text_w(&s, size, w) <= max_w {
+                low = n;
+            } else {
+                high = n - 1;
+            }
+        }
+        chars[..low].iter().collect::<String>() + "…"
+    }
+
+    /// 按宽度折行，最多 `max_lines` 行，还有剩余内容时最后一行加省略号。
+    pub fn wrap(&self, t: &str, size: f32, w: W, max_w: f32, max_lines: usize) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        let mut used = 0usize;
+        let mut total = 0usize;
+        for ch in t.chars() {
+            total += 1;
+            if ch == '\n' {
+                used = total;
+                out.push(std::mem::take(&mut cur));
+            } else {
+                cur.push(ch);
+                if self.text_w(&cur, size, w) > max_w && cur.chars().count() > 1 {
+                    cur.pop();
+                    used = total - 1;
+                    out.push(std::mem::take(&mut cur));
+                    cur.push(ch);
+                }
+            }
+            if out.len() == max_lines {
+                break;
+            }
+        }
+        if out.len() < max_lines && !cur.is_empty() {
+            used = total;
+            out.push(cur);
+        }
+        if out.len() == max_lines && used < t.chars().count() {
+            if let Some(last) = out.last_mut() {
+                *last = self.fit(last, size, w, max_w);
+            }
+        }
+        out
+    }
+
+    // ---------- 图形 ----------
+    pub fn fill(&self, x: f32, y: f32, w: f32, h: f32, r: f32, color: Color32) {
+        self.painter.rect_filled(self.rect(x, y, w, h), r * self.s, color);
+    }
+    pub fn stroke(&self, x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, color: Color32) {
+        let wd = width * self.s;
+        let mut rc = self.rect(x, y, w, h);
+        // 1~2 物理像素的细线：路径落到像素中心，线才正好盖满一整行/列像素。
+        // 更粗的线保持边界对齐，避免整条边凭空偏半像素。
+        if wd * self.ppp <= 2.0 {
+            rc = Rect::from_min_max(
+                Pos2::new(self.snap_center(rc.min.x), self.snap_center(rc.min.y)),
+                Pos2::new(self.snap_center(rc.max.x), self.snap_center(rc.max.y)),
+            );
+        }
+        self.painter.rect_stroke(rc, r * self.s, Stroke::new(wd, color), egui::StrokeKind::Middle);
+    }
+    pub fn circle(&self, x: f32, y: f32, r: f32, color: Color32) {
+        self.painter.circle_filled(self.pos(x, y), r * self.s, color);
+    }
+    pub fn ring(&self, x: f32, y: f32, r: f32, width: f32, color: Color32) {
+        self.painter.circle_stroke(self.pos(x, y), r * self.s, Stroke::new(width * self.s, color));
+    }
+    pub fn seg(&self, a: (f32, f32), b: (f32, f32), width: f32, color: Color32) {
+        self.painter.line_segment([self.pos(a.0, a.1), self.pos(b.0, b.1)], Stroke::new(width * self.s, color));
+    }
+    pub fn path(&self, pts: &[(f32, f32)], width: f32, color: Color32) {
+        let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.pos(x, y)).collect();
+        self.painter.add(egui::Shape::line(v, Stroke::new(width * self.s, color)));
+    }
+    pub fn poly(&self, pts: &[(f32, f32)], color: Color32) {
+        let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.pos(x, y)).collect();
+        self.painter.add(egui::Shape::convex_polygon(v, color, Stroke::NONE));
+    }
+    /// 圆弧描边（角度单位弧度，0 = 正右，顺时针为正）。
+    pub fn arc(&self, cx: f32, cy: f32, r: f32, a0: f32, a1: f32, width: f32, color: Color32) {
+        let n = (((a1 - a0).abs() / TAU) * 96.0).ceil().max(2.0) as usize;
+        let pts: Vec<(f32, f32)> = (0..=n)
+            .map(|i| {
+                let a = a0 + (a1 - a0) * i as f32 / n as f32;
+                (cx + r * a.cos(), cy + r * a.sin())
+            })
+            .collect();
+        self.path(&pts, width, color);
+    }
+    /// 径向柔光（中心 color → 边缘透明）。
+    pub fn glow(&self, cx: f32, cy: f32, r: f32, color: Color32) {
+        let mut mesh = egui::Mesh::default();
+        let c = self.pos(cx, cy);
+        mesh.colored_vertex(c, color);
+        let n = 48;
+        for i in 0..=n {
+            let a = i as f32 / n as f32 * TAU;
+            // 中间加一圈 45% 处的半透明，近似高斯衰减
+            mesh.colored_vertex(c + Vec2::angled(a) * r * 0.45 * self.s, color.gamma_multiply(0.45));
+            mesh.colored_vertex(c + Vec2::angled(a) * r * self.s, Color32::TRANSPARENT);
+        }
+        for i in 0..n as u32 {
+            let (m0, o0, m1, o1) = (1 + i * 2, 2 + i * 2, 3 + i * 2, 4 + i * 2);
+            mesh.add_triangle(0, m0, m1);
+            mesh.add_triangle(m0, o0, o1);
+            mesh.add_triangle(m0, o1, m1);
+        }
+        self.painter.add(egui::Shape::mesh(mesh));
+    }
+    /// 圆角竖直渐变，沿用 egui 的边缘抗锯齿。
+    pub fn vgrad(&self, x: f32, y: f32, w: f32, h: f32, radius:f32, top: Color32, bottom: Color32) {
+        let r = self.rect(x, y, w, h);
+        let shapes=vec![egui::epaint::ClippedShape{clip_rect:self.painter.clip_rect(),shape:egui::Shape::rect_filled(r,radius*self.s,Color32::WHITE)}];
+        for primitive in self.ui.ctx().tessellate(shapes,self.ui.ctx().pixels_per_point()) {
+            if let egui::epaint::Primitive::Mesh(mut mesh)=primitive.primitive {
+                mesh.texture_id=egui::TextureId::default();
+                for vertex in &mut mesh.vertices {
+                    let t=((vertex.pos.y-r.top())/r.height()).clamp(0.0,1.0);
+                    vertex.color=alpha(mix(top,bottom,t),vertex.color.a() as f32/255.0);
+                }
+                self.painter.add(egui::Shape::mesh(mesh));
+            }
+        }
+    }
+    /// 虚线圆角框；`phase` 让虚线沿边「流动」。
+    pub fn dashed(&self, x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, color: Color32, phase: f32) {
+        let mut pts = Vec::new();
+        let corner = |cx: f32, cy: f32, a0: f32, pts: &mut Vec<Pos2>| {
+            for i in 0..=8 {
+                let a = a0 + FRAC_PI_2 * i as f32 / 8.0;
+                pts.push(self.pos(cx + r * a.cos(), cy + r * a.sin()));
+            }
+        };
+        corner(x + w - r, y + r, -FRAC_PI_2, &mut pts);
+        corner(x + w - r, y + h - r, 0.0, &mut pts);
+        corner(x + r, y + h - r, FRAC_PI_2, &mut pts);
+        corner(x + r, y + r, PI, &mut pts);
+        pts.push(pts[0]);
+        let dash = 4.0 * self.s;
+        let gap = 3.5 * self.s;
+        let off = (phase * self.s).rem_euclid(dash + gap);
+        let shapes = egui::Shape::dashed_line_with_offset(&pts, Stroke::new(width * self.s, color), &[dash], &[gap], off);
+        self.painter.extend(shapes);
+    }
+
+    // ---------- 交互 ----------
+    pub fn hit(&self, x: f32, y: f32, w: f32, h: f32, id: impl std::hash::Hash + std::fmt::Debug) -> Response {
+        let rect = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
+        let sense = if self.live { Sense::click() } else { Sense::hover() };
+        let id = Id::new(("card", self.live, id));
+        self.ui.interact(rect, id, sense)
+    }
+
+    pub fn hit_drag(&self,x:f32,y:f32,w:f32,h:f32,id:impl std::hash::Hash+std::fmt::Debug)->Response {
+        let rect=self.rect(x,y,w,h).intersect(self.painter.clip_rect());
+        self.ui.interact(rect,Id::new(("card-drag",self.live,id)),if self.live{Sense::click_and_drag()}else{Sense::hover()})
+    }
+    /// 悬停 / 按下的平滑过渡量（0..1）。
+    pub fn hover_t(&self, r: &Response) -> (f32, f32) {
+        let ctx = self.ui.ctx();
+        let h = ctx.animate_bool_with_time(r.id.with("h"), self.live && r.hovered(), 0.14);
+        let p = ctx.animate_bool_with_time(r.id.with("p"), self.live && r.is_pointer_button_down_on(), 0.07);
+        (h, p)
+    }
+
+    /// 按钮按压弹簧（k=300 ζ=0.5：按下冲过头、松手晃回来）。
+    /// 弹簧状态按 `id` 存在 egui 的临时数据里，跨帧保留速度与位置；非 live
+    /// （截图/录制）时直接吸附到目标，不产生动画。返回当前位移 0..≈1.3。
+    pub fn press_spring(&self, id: egui::Id, down: bool, k: f32, zeta: f32) -> f32 {
+        let ctx = self.ui.ctx();
+        let sid = id.with("glass-press-spring");
+        // `unstable_dt` 是这一帧的真实间隔（`stable_dt` 会做平滑，弹簧会慢半拍）；
+        // 上限 50ms 防止掉帧后弹簧积分爆掉。
+        let dt = self.ui.input(|i| i.unstable_dt.min(0.05));
+        let mut s = ctx.data_mut(|d| {
+            d.get_temp::<crate::anim::Spring>(sid).unwrap_or_else(|| {
+                crate::anim::Spring::new(if down { 1.0 } else { 0.0 }, k, zeta)
+            })
+        });
+        s.tune(k, zeta);
+        s.target = if self.live && down { 1.0 } else { 0.0 };
+        if !self.live { s.snap(s.target); }
+        s.step(dt);
+        let pos = s.pos;
+        ctx.data_mut(|d| d.insert_temp(sid, s));
+        pos
+    }
+}
+
+pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgba_premultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
+}
+
+pub fn alpha(c: Color32, a: f32) -> Color32 {
+    c.gamma_multiply(a.clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod gradient_tests {
+    use super::*;
+    #[test]
+    fn regression_play_icon_has_no_internal_seam() {
+        for ppp in [1.0,1.25,1.5,2.0] {
+            for scale in [0.9,1.0,1.4] {
+                for offset in [0.0,0.25,0.5,0.75] {
+                    for (size,color) in [11.0,15.0].into_iter().flat_map(|size|[Color32::WHITE,Color32::from_gray(22),Color32::from_white_alpha(128)].map(|color|(size,color))) {
+                        let ctx=egui::Context::default();ctx.set_zoom_factor(ppp);
+                        let center=Pos2::new(30.0+offset,26.0+offset);
+                        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(64.0))),..Default::default()};
+                        let output=ctx.run_ui(raw, |ui|{
+                            let card=Card::new(ui,Pos2::ZERO,ui.max_rect()).scaled(center.x,center.y,scale);
+                            play_pause(&card,center.x,center.y,size,0.0,color);
+                        });
+                        let mut raster=crate::preview_raster::Raster::new((64.0*ppp) as usize,(64.0*ppp) as usize);
+                        raster.update_textures(&output.textures_delta);
+                        raster.draw(&ctx.tessellate(output.shapes,ppp),ppp);
+                        let y=(center.y*ppp).floor() as usize;
+                        for dx in [-0.5,0.0,0.5,1.0,1.5] {
+                            let x=((center.x+dx*scale)*ppp).floor() as usize;
+                            let expected=color.a() as f32/255.0;
+                            assert!((raster.buf[y*raster.w+x][3]-expected).abs()<0.02,"播放三角形内部应连续：ppp={ppp}, scale={scale}, offset={offset}, dx={dx}, alpha={}",raster.buf[y*raster.w+x][3]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn long_email_links_do_not_create_hundreds_of_layouts() {
+        let ctx=egui::Context::default();
+        let text=format!("https://example.com/{}","newsletter-link-".repeat(40));
+        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(500.0))),..Default::default()};
+        let _=ctx.run_ui(raw, |ui|{
+            egui::CentralPanel::default().show(ui,|ui|{
+                let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
+                let before=ui.ctx().fonts(|f|f.num_galleys_in_cache());
+                let fitted=c.fit(&text,10.5,W::Regular,180.0);
+                assert!(fitted.ends_with('…'));
+                assert!(c.text_w(&fitted,10.5,W::Regular)<=180.0);
+                let layouts=ui.ctx().fonts(|f|f.num_galleys_in_cache())-before;
+                assert!(layouts<=20,"长邮件链接只需少量排版，不应逐字重排：{layouts}");
+                println!("长链接排版次数：{layouts}");
+            });
+        });
+    }
+    #[test]
+    fn text_fitting_preserves_short_text_and_unicode_results() {
+        let ctx=egui::Context::default();
+        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(500.0))),..Default::default()};
+        let _=ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{
+            let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
+            for text in ["", "a", "收到新的邮件与验证码", "会议提醒 🌴 完整标题", "https://example.com/short"] {
+                for width in [0.0,10.0,40.0,80.0,300.0] {
+                    let expected=if c.text_w(text,10.5,W::Regular)<=width{text.into()}else{
+                        let chars:Vec<_>=text.chars().collect();(1..chars.len()).rev().map(|n|chars[..n].iter().collect::<String>()+"…").find(|s|c.text_w(s,10.5,W::Regular)<=width).unwrap_or_else(||"…".into())
+                    };
+                    assert_eq!(c.fit(text,10.5,W::Regular,width),expected,"宽度 {width} 的文字裁剪应保持原来的显示结果");
+                }
+            }
+        });});
+    }
+    #[test]
+    fn cover_gradient_keeps_all_four_corners_clear() {
+        let ctx=egui::Context::default();
+        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(100.0))),..Default::default()};
+        let output=ctx.run_ui(raw, |ui|{
+                let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
+                c.vgrad(20.0,20.0,62.0,62.0,13.0,Color32::RED,Color32::BLUE);
+            });
+        let meshes:Vec<_>=output.shapes.into_iter().filter_map(|s|if let egui::Shape::Mesh(m)=s.shape{Some(m)}else{None}).collect();
+        let covers=|point:Pos2|meshes.iter().any(|m|m.indices.chunks_exact(3).any(|tri|{
+            let [a,b,c]=[m.vertices[tri[0] as usize].pos,m.vertices[tri[1] as usize].pos,m.vertices[tri[2] as usize].pos];
+            let cross=|a:Pos2,b:Pos2|(b.x-a.x)*(point.y-a.y)-(b.y-a.y)*(point.x-a.x);
+            let signs=[cross(a,b),cross(b,c),cross(c,a)];
+            signs.iter().all(|s|*s>=0.0)||signs.iter().all(|s|*s<=0.0)
+        }));
+        assert!(covers(Pos2::new(51.0,51.0)),"封面中心需要被绘制");
+        for (x,y) in [(20.5,20.5),(81.5,20.5),(20.5,81.5),(81.5,81.5)] {
+            assert!(!covers(Pos2::new(x,y)),"渐变不能覆盖圆角之外的区域");
+        }
+    }
+    #[test]
+    fn text_scale_damps_tail_without_boundary_jump() {
+        // 死区内冻结在基准字号。
+        assert_eq!(damped_text_scale(1.0), 1.0);
+        assert_eq!(damped_text_scale(1.0 + TEXT_SCALE_DEADZONE * 0.9), 1.0);
+        assert_eq!(damped_text_scale(1.0 - TEXT_SCALE_DEADZONE * 0.9), 1.0);
+        // 死区边界连续：不能从 1.0 硬跳到 1.06。
+        let lo = damped_text_scale(1.0 + TEXT_SCALE_DEADZONE - 1e-4);
+        let hi = damped_text_scale(1.0 + TEXT_SCALE_DEADZONE + 1e-4);
+        assert!((lo - hi).abs() <= TEXT_SCALE_QUANTUM + 1e-4, "死区边界跳变：{lo} → {hi}");
+        // 按压缩放（14%）必须完整保留，不被死区吞掉。
+        assert!((damped_text_scale(1.14) - 1.14).abs() < 1e-3);
+        assert!(damped_text_scale(0.82) < 0.9);
+    }
+}
+
+// ======================= 玻璃控件（液态玻璃皮肤） =======================
+//
+// 小控件（30~40 点的按钮、胶囊、进度槽）不走 GPU 透镜：这个尺寸上的折射位移
+// 只有 1~2px，肉眼分辨不出来，白烧一遍纹理采样。这里用「同一套视觉语言」的
+// 矢量近似做出玻璃片：极淡的填充 + 顶部内高光（厚度）+ 细白边 + 底部内暗边。
+//
+// 颜色一律按「深色玻璃上的样子」给（白/黑半透明），浅色皮肤由 skin_paint
+// 统一换色（白→墨、黑→纸），所以这里不需要判断深/浅。
+
+/// 一小片玻璃（胶囊、圆角按钮的底）。
+///
+/// `level`：0 = 静止，1 = 悬停/按下。只影响填充与白边的强度。
+/// 玻璃控件的「材质」标记：从这里开始画的图形自带配色，换肤时不跟着换。
+///
+/// GPU 玻璃的描边在着色器里恒为白线，所以矢量回退版也必须保持白边 ——
+/// 否则翻页过渡（控件走不了 GPU 的那半秒）会从黑边跳回白边。
+pub(crate) fn chrome_mark(c: &Card) -> usize {
+    crate::skin_paint::shape_count(c.ui.ctx(), c.painter.layer_id())
+}
+
+/// 把 `from` 起画的图形登记为「玻璃材质」：浅材质下不再被映射成暗雾
+/// （white_alpha 的 premultiplied 亮度很低，通用换色会把它当成深色压成墨雾）。
+pub(crate) fn chrome_since(c: &Card, from: usize) {
+    crate::skin_paint::tone_since(c.ui.ctx(), c.painter.layer_id(), from,
+                                  crate::skin_paint::keep_glass_chrome);
+}
+
+pub fn glass_chip(c: &Card, x: f32, y: f32, w: f32, h: f32, r: f32, level: f32) {
+    if w < 2.0 || h < 2.0 {
+        return;
+    }
+    let from = chrome_mark(c);
+    let lv = level.clamp(0.0, 1.0);
+    let r = r.min(w.min(h) * 0.5);
+    // 主体：极淡的白。静止时几乎只有一圈边，悬停才「亮起来」。
+    c.fill(x, y, w, h, r, Color32::from_white_alpha((10.0 + 30.0 * lv) as u8));
+    // 顶部内高光：玻璃厚度的来源。整块高度做渐变，越往下越透明，
+    // 这样不会切出一条和圆角对不上的横边。
+    c.vgrad(x, y, w, h, r, Color32::from_white_alpha((22.0 + 24.0 * lv) as u8), Color32::TRANSPARENT);
+    // 底部内暗边：下缘「实」一点，不然整片会飘。
+    if h >= 8.0 {
+        let inset = r * 0.8;
+        c.fill(x + inset, y + h - 1.0, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_black_alpha(28));
+    }
+    // 白边 1.5px：液态玻璃要细、要亮，粗了就成描边贴纸。
+    c.stroke(x + 0.75, y + 0.75, w - 1.5, h - 1.5, (r - 0.75).max(0.0), 1.5,
+             Color32::from_white_alpha((120.0 + 60.0 * lv) as u8));
+    chrome_since(c, from);
+}
+
+/// 圆形玻璃片：播放控制、齿轮、翻页箭头。
+pub fn glass_disc(c: &Card, cx: f32, cy: f32, r: f32, level: f32) {
+    if r < 2.0 {
+        return;
+    }
+    let from = chrome_mark(c);
+    let lv = level.clamp(0.0, 1.0);
+    c.circle(cx, cy, r, Color32::from_white_alpha((10.0 + 28.0 * lv) as u8));
+    // 上半圈内高光（光源在上方，和 GPU 那边的 line/rim 同一个约定）。
+    c.arc(cx, cy, r - 0.8, PI * 1.12, PI * 1.88, 1.1, Color32::from_white_alpha((26.0 + 30.0 * lv) as u8));
+    c.ring(cx, cy, (r - 0.75).max(0.5), 1.5, Color32::from_white_alpha((110.0 + 60.0 * lv) as u8));
+    chrome_since(c, from);
+}
+
+/// 玻璃凹槽：进度条底槽用（竖向滑槽也能用）。
+/// 黑 46% 的底 + 上缘阴影 + 下缘 1px 反光，读出「凹进去」的玻璃感。
+/// 曾经用在进度条上失败过（浅色皮肤换色把压暗翻成提亮），液态皮肤改成恒 GLASS_DARK
+/// 调色板之后这个问题不存在了，所以现在正式启用。
+pub fn glass_groove(c: &Card, x: f32, y: f32, w: f32, h: f32) {
+    if w < 2.0 || h < 1.5 {
+        return;
+    }
+    let from = chrome_mark(c);
+    let r = h * 0.5;
+    c.fill(x, y, w, h, r, Color32::from_black_alpha(46));
+    if h >= 6.0 {
+        // 上缘阴影（光被槽壁挡掉）
+        let inset = (r * 0.9).min(w * 0.4);
+        c.fill(x + inset, y, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_black_alpha(56));
+    }
+    // 下缘反光：只有 1px，多一道就脏
+    let inset = (r * 0.9).min(w * 0.4);
+    c.fill(x + inset, y + h - 1.0, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_white_alpha(26));
+    chrome_since(c, from);
+}
+
+
+/// 胶囊按钮：悬停提亮、按下轻微缩小，返回 (响应, 内容画布)。
+pub fn capsule<'a>(
+    c: &Card<'a>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    id: &str,
+    base: Color32,
+    hover: Color32,
+) -> (Response, Card<'a>) {
+    let r = c.hit(x, y, w, h, id);
+    let (ht, pt) = c.hover_t(&r);
+    let k = 1.0 - 0.05 * pt;
+    let inner = c.scaled(x + w / 2.0, y + h / 2.0, k);
+    inner.fill(x, y, w, h, h / 2.0, mix(base, hover, ht));
+    (r, inner)
+}
+
+/// 液态玻璃皮肤下的胶囊按钮：hit / 悬停 / 按压缩放与 [`capsule`] 完全一致，
+/// 填充换成玻璃层。`level` 是静止亮度（0=只剩一圈边），悬停时按 `hover_boost` 提亮。
+/// 选中态由调用方自己表达（更高 level 或文字色）。
+pub fn glass_capsule<'a>(
+    c: &Card<'a>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    id: &str,
+    level: f32,
+    hover_boost: f32,
+) -> (Response, Card<'a>) {
+    let r = c.hit(x, y, w, h, id);
+    let (ht, pt) = c.hover_t(&r);
+    let k = 1.0 - 0.05 * pt;
+    let inner = c.scaled(x + w / 2.0, y + h / 2.0, k);
+    glass_chip(&inner, x, y, w, h, h / 2.0, (level + ht * hover_boost).clamp(0.0, 1.0));
+    (r, inner)
+}
+
+// ---------- 子模块 ----------
+// 图标与追光 mesh 拆到同级文件；`pub use` 保持 `paint::battery(...)` 等调用路径不变。
+mod chase;
+mod icons;
+pub use chase::chase;
+pub use icons::*;
+
