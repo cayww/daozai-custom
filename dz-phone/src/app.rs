@@ -1218,8 +1218,6 @@ pub struct App {
     pub(crate) quota_alerted: std::collections::HashSet<(String,String)>,
     /// 上次检查额度阈值的时刻（每 30 秒一次）。
     pub(crate) quota_checked_at: f64,
-    /// 设置页的最近通知缓存：(上次读取时刻, 列表)，避免每帧读盘。
-    pub(crate) notice_cache:(f64,Vec<(String,String,String)>),
     /// 还没凑满一分钟的专注秒数，攒够就写进 focus-stats.json。
     pub(crate) focus_pending:f32,
     /// 今日专注分钟数与连续天数（每分钟更新一次，别每帧读盘）。
@@ -1517,7 +1515,6 @@ impl App {
             meeting_checked_at:0.0,
             meeting_plan:(String::new(),f64::MIN,Vec::new()),
             snoozed:Vec::new(),
-            notice_cache:(0.0,Vec::new()),
             focus_pending:0.0,
             focus_today_min:focus_today,
             focus_streak_days:focus_streak,
@@ -1572,6 +1569,7 @@ impl App {
     }
 
     /// 设置窗口是独立窗口，主岛的提示它看不到：给它取一份当前提示与已显示时长。
+    #[cfg_attr(not(test), allow(dead_code))] // 仅设置窗口/测试读取；production 构建未接线时保留
     pub(crate) fn toast_now(&self)->Option<(String,f32)>{
         let (message,at)=self.toast.as_ref()?;
         let elapsed=(self.t-at) as f32;

@@ -1159,41 +1159,6 @@ impl App {
         self.say("会议开始，自动勿扰到散会");
     }
 
-    /// 把配置与状态复制到 `backups/<时间戳>/`：只复制文件、不递归子目录，不动原配置。
-    pub(crate) fn backup_settings(&mut self) {
-        let Some(base) = std::env::var_os("APPDATA") else {
-            self.say("找不到 APPDATA，无法备份");
-            return;
-        };
-        let root = std::path::PathBuf::from(base).join("Daozai");
-        let Some(backups) = backup_root() else {
-            self.say("找不到 APPDATA，无法备份");
-            return;
-        };
-        let dest = backups.join(chrono::Local::now().format("%Y%m%d-%H%M%S").to_string());
-        if std::fs::create_dir_all(&dest).is_err() {
-            self.say("备份失败：建不了目录");
-            return;
-        }
-        let mut count = 0;
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    continue;
-                }
-                let Some(name) = path.file_name() else {
-                    continue;
-                };
-                if std::fs::copy(&path, dest.join(name)).is_ok() {
-                    count += 1;
-                }
-            }
-        }
-        self.say(format!("已备份 {count} 个文件"));
-        self.pending.push(Cmd::Open(dest));
-    }
-
     /// AI 额度阈值：任一窗口剩余 ≤ 阈值时提醒一次；回到阈值以上后重新武装。
     /// 每 30 秒看一次内存里的快照，不额外请求接口。
     pub(crate) fn quota_threshold_alert(&mut self) {
@@ -1221,14 +1186,6 @@ impl App {
         }
     }
 
-    /// 设置页用的最近通知：2 秒缓存一次，别每帧读盘。
-    pub(crate) fn recent_notices(&mut self) -> Vec<(String, String, String)> {
-        if self.notice_cache.0 <= 0.0 || self.t - self.notice_cache.0 > 2.0 {
-            self.notice_cache = (self.t.max(0.001), notice_history());
-        }
-        self.notice_cache.1.clone()
-    }
-
     /// 把一条历史通知重新弹出来（「稍后提醒」用）。
     pub(crate) fn replay_notice(&mut self, title: String, body: String) {
         self.enqueue_alert(
@@ -1249,6 +1206,7 @@ impl App {
     }
 
     /// 稍后提醒：`minutes` 分钟后再弹一次。
+    #[cfg_attr(not(test), allow(dead_code))] // 由测试覆盖，production 未接线时保留
     pub(crate) fn snooze_notice(&mut self, minutes: f64, title: String, body: String) {
         self.snoozed.push((self.t + minutes * 60.0, title, body));
         self.say(format!("{minutes:.0} 分钟后再提醒"));
@@ -1796,16 +1754,6 @@ mod notice_duration_tests {
             "普通通知不受验证码设置影响"
         );
     }
-}
-
-/// 备份目录：`%APPDATA%\Daozai\backups`，每次备份一个时间戳子目录。
-pub(crate) fn backup_root() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("APPDATA")?;
-    Some(
-        std::path::PathBuf::from(base)
-            .join("Daozai")
-            .join("backups"),
-    )
 }
 
 /// 番茄统计：`%APPDATA%\Daozai\focus-stats.json`，只记「今天多少分钟」。
@@ -4345,83 +4293,6 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
     app.liquid_cfg_open = open;
 }
 
-/// 可折叠的设置分区：标题右侧给一句摘要，点标题展开 / 收起。
-/// 状态存在 egui 的临时数据里，当前运行内记住，重启后回到 default_open。
-/// 用它把低频配置收起来，避免通知、邮箱、日程三页一路滚到底。
-fn settings_section(
-    ui: &mut egui::Ui,
-    key: &str,
-    title: &str,
-    summary: &str,
-    default_open: bool,
-) -> bool {
-    // 已有的设置页 UI 测试会直接点表单里的按钮；测试构建下全部展开，
-    // 让这些交互断言继续覆盖原来的控件，生产版仍按 default_open 折叠。
-    if cfg!(test) {
-        return true;
-    }
-    let ctx = ui.ctx().clone();
-    let id = egui::Id::new(("settings-section", key));
-    let open = ctx.data(|data| data.get_temp::<bool>(id).unwrap_or(default_open));
-    let mut clicked = false;
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        // 折叠指示画成三角（展开 ▼ / 收起 ▶）：默认字体里 ▾/▸ 缺字形，
-        // 显示成空心方块，完全看不出「能展开」的意思，所以直接用 painter 画。
-        let (tri_rect, tri) = ui.allocate_exact_size(egui::vec2(14.0, 16.0), egui::Sense::click());
-        let hit = ui
-            .add(
-                egui::Label::new(egui::RichText::new(title).size(13.5).strong().color(
-                    settings_color(&ctx, Color32::from_gray(225), Color32::from_rgb(30, 34, 41)),
-                ))
-                .sense(egui::Sense::click()),
-            )
-            .on_hover_text(if open { "点击收起" } else { "点击展开" });
-        if tri.clicked() || hit.clicked() {
-            clicked = true;
-        }
-        let c = tri_rect.center();
-        let col = settings_color(&ctx, Color32::from_gray(225), Color32::from_rgb(30, 34, 41));
-        let pts: Vec<egui::Pos2> = if open {
-            vec![
-                egui::pos2(c.x - 6.0, c.y - 3.0),
-                egui::pos2(c.x + 6.0, c.y - 3.0),
-                egui::pos2(c.x, c.y + 4.5),
-            ]
-        } else {
-            vec![
-                egui::pos2(c.x - 2.0, c.y - 5.5),
-                egui::pos2(c.x + 5.0, c.y),
-                egui::pos2(c.x - 2.0, c.y + 5.5),
-            ]
-        };
-        ui.painter()
-            .add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
-        if !summary.is_empty() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(summary)
-                        .size(11.0)
-                        .color(settings_color(
-                            &ctx,
-                            Color32::from_gray(148),
-                            Color32::from_gray(105),
-                        )),
-                );
-            });
-        }
-    });
-    if clicked {
-        ctx.data_mut(|data| data.insert_temp(id, !open));
-    }
-    ui.add_space(4.0);
-    if clicked {
-        !open
-    } else {
-        open
-    }
-}
-
 fn island_size_slider(ui: &mut egui::Ui, value: &mut u32) -> egui::Response {
     let id = ui.make_persistent_id("island-size-draft");
     let mut draft = ui.data(|d| d.get_temp::<u32>(id)).unwrap_or(*value);
@@ -4489,6 +4360,7 @@ pub(crate) fn settings_card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) 
         });
 }
 /// 设置分页对应的功能模块（页面序号）；常规、通知、关于、页面管理不属于任何模块。
+#[cfg_attr(not(test), allow(dead_code))] // 由设置页 UI 测试覆盖
 pub(crate) fn settings_tab_module(tab: usize) -> Option<usize> {
     use crate::app::*;
     match tab {
