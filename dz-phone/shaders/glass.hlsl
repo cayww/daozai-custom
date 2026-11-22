@@ -210,9 +210,19 @@ float4 fs(VSOut i) : SV_TARGET {
     float mat = saturate(params.w);
 
     // Outside the island: paint the desktop back (or stay transparent under DComp).
+    // 液态玻璃的投影就画在这里——D3D11 是「先玻璃、后 egui」，egui 侧阴影会盖住
+    // 折射玻璃（迁移前 wgpu 顺序相反才没事）。shader 用岛体 SDF 的高斯衰减画外阴影，
+    // 形状/位置/方向自动跟随刘海或胶囊、任意停靠方向都对，且只画在 d>0 的外围。
+    // 资料包 8 件套同款：shadow = 0.5*exp(-sd²/2σ²)，再用 SDF 把内部裁掉。
     float thresh = (notch.w > 0.5) ? 1.0 : (inset - 0.25);
     if (d > thresh) {
-        if (notch.w > 0.5) return float4(0,0,0,0);
+        if (notch.w > 0.5) {
+            // DComp 逐像素 alpha：输出预乘的黑色阴影，越靠近岛体越浓、向外衰减到透明。
+            float sigma = 5.0;
+            float shadow = exp(-pow(max(d - 1.0, 0.0), 2.0) / (2.0 * sigma * sigma));
+            shadow *= lightcfg.z;   // 岛体投影开关（0=关，1=开）
+            return float4(0, 0, 0, saturate(shadow) * 0.28);
+        }
         float3 bgcol = sample_px(p);
         float sh = (1.0 - smoothstep(0.0, 7.0, d - 1.0)) * lerp(0.06, 0.02, mat);
         return float4(bgcol * (1.0 - sh) + float3(0.05,0.06,0.07) * sh, 1.0);

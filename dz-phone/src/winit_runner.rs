@@ -413,7 +413,8 @@ fn build_glass_params(ppp: f32, liquid: bool, dock: daozai::model::Dock) -> Glas
     p.params = [u.chroma * ppp, ppp, u.morph, u.material];
     p.misc = [u.pointer[0] * ppp, h - u.pointer[1] * ppp, u.refract * ppp, 0.0];
     p.look = [u.blur * ppp, u.band * ppp, u.edge_w * ppp, u.edge_op];
-    p.lightcfg = [u.light_follow, 0.0, 0.0, 0.0];
+    // x=高光跟随, z=岛体投影开关（shader 在玻璃 pass 里画外阴影）
+    p.lightcfg = [u.light_follow, 0.0, u.shadow, 0.0];
     // 控件玻璃透镜在 D3d11Runtime::render 里、run_ui 之后填充——
     // app 的控件快照由 run_ui 当帧写入，在这里填会读到上一帧，展开/收起动画时差一帧
     // 会在宠物与时间之间留下一条残留透镜白边。见 refresh_control_uniforms。

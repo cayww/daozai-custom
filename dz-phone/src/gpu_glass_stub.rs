@@ -97,6 +97,10 @@ pub fn set_liquid_look(blur: f32, band: f32, edge: f32, op: f32) {
 pub fn set_light_follow(v: f32) {
     if let Ok(mut u) = UNIFORMS.lock() { u.light_follow = v.clamp(0.0, 1.0); }
 }
+/// 岛体投影开关 → HLSL lightcfg.z。投影由 shader 在玻璃 pass 里画（egui 侧画会盖住玻璃）。
+pub fn set_shadow(enabled: bool) {
+    if let Ok(mut u) = UNIFORMS.lock() { u.shadow = if enabled { 1.0 } else { 0.0 }; }
+}
 pub fn set_direct_composition(_active: bool) {}
 
 pub fn frame_for(
@@ -138,13 +142,15 @@ pub struct GlassUniforms {
     pub edge_op: f32,
     pub pointer: [f32; 2],
     pub light_follow: f32,
+    /// 岛体投影开关（设置「岛体投影」）→ shader lightcfg.z。投影由 HLSL 画在玻璃 pass。
+    pub shadow: f32,
     pub active: bool,
 }
 
 static UNIFORMS: std::sync::Mutex<GlassUniforms> = std::sync::Mutex::new(GlassUniforms {
     body_rect: [0.0; 4], radius: 0.0, chroma: 0.0, refract: 0.0, morph: 0.0, material: 0.0,
     blur: 0.0, band: 0.0, edge_w: 0.0, edge_op: 0.0, pointer: [0.0; 2],
-    light_follow: 0.0, active: false,
+    light_follow: 0.0, shadow: 1.0, active: false,
 });
 
 pub fn uniforms() -> GlassUniforms {

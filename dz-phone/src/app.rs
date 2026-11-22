@@ -2455,6 +2455,8 @@ impl App {
         // 高光跟随鼠标：迁移到 D3D11 时漏接的线——之前 shader 的 lightcfg.x 恒为 0，
         // 滑杆怎么拖都只出固定左上光。每帧同步，拖滑杆立即生效。
         crate::gpu_glass::set_light_follow(self.settings.liquid_light_follow);
+        // 岛体投影开关：投影已移到 HLSL 玻璃 pass 里画，egui 侧不再画。
+        crate::gpu_glass::set_shadow(self.settings.liquid_shadow);
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
         self.window_origin=env.window_origin;
@@ -2750,13 +2752,16 @@ impl App {
         // 会跳过全部 4 层；玻璃内部的接触阴影在 shader 侧，不受这里影响。
         let shadow_k = glass::shadow_alpha(0.0, thick) / 0.12 * skin_shadow
             * if self.settings.skin==model::Skin::Liquid && !self.settings.liquid_shadow {0.0} else {1.0};
-        // 液态玻璃用环形落影：只在岛体轮廓外画影子，本体不盖黑。旧的全屏实心阴影在
-        // D3D11 栈里会盖在先画的折射玻璃上，整个岛体发灰（资料包苹果液态玻璃做法：
-        // 阴影用元素自身 SDF 把内部裁掉）。其他皮肤维持原有实心阴影观感。
+        // 液态玻璃的投影由 HLSL 在玻璃 pass 里画（见 glass.hlsl 的 outside 分支）：
+        // D3D11 栈是「先画玻璃、后画 egui」，egui 侧任何阴影都会盖在折射玻璃上——
+        // 迁移前 wgpu 是反过来（阴影先画、paint callback 的玻璃后画），所以那套
+        // pill_shadow/shadow_docked 在迁移后全部失效。液态皮肤这里直接不画，
+        // 交给 shader 按岛体 SDF 画外阴影，形状/位置/方向天然与玻璃一致。
+        // 其他皮肤维持原有 egui 实心阴影观感。
         let liquid_skin = self.settings.skin==model::Skin::Liquid;
         let island_shadow=|r:Rect,flare:f32,flare_h:f32,radius:f32,strength:f32| {
             if liquid_skin {
-                shape::shadow_ring(&painter,r,dock,flare,flare_h,radius,strength);
+                // 投影已移到 shader，egui 不画（liquid_shadow 开关在 shader 侧生效）。
             } else if pill {
                 pill_shadow(&painter,r,radius,strength);
             } else if side {
@@ -3731,8 +3736,11 @@ impl App {
         // 而不是像旧迁移版那样透镜整层缺失、只剩 egui 边框突然消失。
         crate::gpu_glass::set_controls(&self.glass_controls(origin));
         let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
+        // 只画一层几乎透明的兜底底色，让 HLSL 折射透出来。
+        // 迁移前这里**没有** rect_stroke 白边——shader 自己画刘海/胶囊的轮廓白边（rim）。
+        // 迁移时多加的圆角矩形白边与 shader 的刘海肩部形状不一致，实机表现为
+        // 「又有胶囊又有刘海、两个轮廓有位置差」。白边交给 shader，这里绝不重复画。
         painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,20));
-        painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
     }
 
     /// 悬浮云主体：轮廓交给 `RectShape` 的精确圆角，流动颜色做成一张固定尺寸的小纹理。
