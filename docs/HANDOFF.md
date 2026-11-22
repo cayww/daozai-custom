@@ -1749,3 +1749,20 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - `amount<=1e-3` 直接跳过，避免 `Arc::make_mut` 的无谓深拷贝。
 - 新增测试 `text_uv_inset_is_one_sided_and_continuous`：`k=0.9` 时 UV 与 `k=1.0` 完全相同；`k=1.01` 只内缩一点点（相对 <2%），`1.02` 比 `1.01` 更收，单调。
 - 验证：paint 测试 19 passed；release 构建 2m59s；exe sha256 前 16 位 `37378ea0fbe42150`，PID 32748；预览目录同步，备份 `daozai.exe.prev-before-uvinset`。
+
+### 7.0zzw 文字缩放与按压弹簧解耦（2026-11-22 22:20–22:26）
+- A/B 结论：把「＋ 新增」的 GPU 透镜换成矢量胶囊、文字仍由 `ctl_scale` 驱动 → **照样抖**。
+  非液态皮肤不抖是因为 `paint::capsule` 按压缩放只有 5%，落在 6% 死区内文字根本不重排，
+  不是有效对照。
+- 机制：`TextShape::transform` 只缩顶点不改 UV，位图字形被每帧不同的 k 重采样，
+  边缘覆盖率连续变化 → 9pt 小字看起来上下抽。
+- 修法：
+  - `Card` 新增私有 `text_k: Option<f32>` 与 `pub fn scaled_text(cx,cy,k_shape,k_text)`：
+    玻璃按 `k_shape` 缩放，文字按显式 `k_text` 缩放；`scaled()` 仍写 `None`（跟随 s）。
+  - `galley_shape` 取值顺序：`Frozen`→1.0；`Some(explicit)`→explicit；`Damped`→死区函数；否则 k。
+  - `app.rs` 新增 `ctl_text_scale(ctl)` = `0.82+0.18*appear`（只跟入场，不含按压果冻）。
+  - `calendar_ui.rs` 的「＋ 新增」改用 `scaled_text(ctl_scale, ctl_text_scale)`：玻璃照旧弹 14%，
+    文字按压时 k=1、字形 mesh 逐帧一致。
+- 测试 `scaled_text_ignores_press_spring_when_text_k_fixed`：k_shape 1.0/1.14/0.9 且 k_text=1.0
+  时行 pos 与全部顶点逐位相同；k_text=1.08 时必须不同。paint 测试 20 passed。
+- 部署 exe `41ab30c53797941d`，PID 33296，备份 `daozai.exe.prev-before-statictext`。
