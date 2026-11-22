@@ -2747,11 +2747,10 @@ impl App {
         let mut keep_colors:Vec<(usize,usize)>=Vec::new();
         // 毛玻璃：真实模糊下保留柔和投影增加层次；无模糊时阴影再减淡一些，保持轻盈。
         let skin_shadow = if !glass_skin {1.0} else if env.glass_blur {0.75} else {0.7};
-        // 液态玻璃可关掉胶囊外围的多层落影（设置 → 液态玻璃 → 岛体投影）：
-        // shadow_k 归零后 shadow_ring / pill_shadow 的 strength<=0.01 早退
-        // 会跳过全部 4 层；玻璃内部的接触阴影在 shader 侧，不受这里影响。
-        let shadow_k = glass::shadow_alpha(0.0, thick) / 0.12 * skin_shadow
-            * if self.settings.skin==model::Skin::Liquid && !self.settings.liquid_shadow {0.0} else {1.0};
+        // 阴影强度：非液态皮肤走 egui 的 pill_shadow / shadow_docked（strength<=0.01 早退）；
+        // 液态皮肤的投影已移到 HLSL 玻璃 pass，开关通过 set_shadow → lightcfg.z 传递，
+        // 这里的 shadow_k 对液态皮肤不再使用（island_shadow 闭包里直接跳过）。
+        let shadow_k = glass::shadow_alpha(0.0, thick) / 0.12 * skin_shadow;
         // 液态玻璃的投影由 HLSL 在玻璃 pass 里画（见 glass.hlsl 的 outside 分支）：
         // D3D11 栈是「先画玻璃、后画 egui」，egui 侧任何阴影都会盖在折射玻璃上——
         // 迁移前 wgpu 是反过来（阴影先画、paint callback 的玻璃后画），所以那套

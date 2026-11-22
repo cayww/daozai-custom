@@ -55,7 +55,9 @@ float notch_sdf(float2 p, float2 b, float r, float flare, float fh) {
     // 迁移后 bounds 做了 h-by-bh 翻转，底原点系里底部是 p.y=-b.y，故改这里。
     if (p.y < -(b.y - r)) {
         float qx = max(abs(p.x) - (b.x - r), 0.0);
-        float qy = abs(p.y) + (b.y - r);
+        // qy = 底部圆角圆心(p.y=-(b.y-r)) 到当前点的距离，必须是减号；
+        // 写成 abs(p.y)+(b.y-r) 会让底部整条 SDF 变正 → 判成岛体外 → 玻璃铺不满。
+        float qy = -(p.y) - (b.y - r);
         return length(float2(qx, max(qy, 0.0))) - r;
     }
     return max(abs(p.x) - hx, abs(p.y) - b.y);
