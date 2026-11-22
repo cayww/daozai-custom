@@ -10,6 +10,10 @@ use eframe::egui::emath::TSTransform;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::Arc;
 
+/// 文字缩放死区：卡片弹簧缩放倍率在 1±6% 以内时，文字按基准字号画，
+/// 不继承尾振。按下时 14% 的放大仍然保留（超过死区）。见 `Card::paint_galley`。
+const TEXT_SCALE_DEADZONE: f32 = 0.06;
+
 /// 把文字 mesh 的 UV 向每个字形 quad 中心内缩半像素。
 ///
 /// 弹簧缩放文字时，mesh 顶点被放大但 UV 不变，GPU 线性采样会在字形 quad 边缘
@@ -59,12 +63,15 @@ pub struct Card<'a> {
     pub origin: Pos2,
     pub s: f32,
     pub live: bool,
+    /// `scaled()` 写入：(不动点局部坐标, 缩放前基准 s)。`paint_galley` 用它
+    /// 在弹簧尾振时把文字锁回基准字号，同时保持中心与卡片对齐。
+    text_pivot: Option<(Pos2, f32)>,
 }
 
 impl<'a> Card<'a> {
     pub fn new(ui: &'a egui::Ui, origin: Pos2, clip: Rect) -> Self {
         let painter = ui.painter().with_clip_rect(clip);
-        Self { ui, painter, origin, s: 1.0, live: true }
+        Self { ui, painter, origin, s: 1.0, live: true, text_pivot: None }
     }
 
     pub fn pos(&self, x: f32, y: f32) -> Pos2 {
@@ -90,11 +97,14 @@ impl<'a> Card<'a> {
         c
     }
     /// 以局部点 (cx, cy) 为中心整体缩放（按钮按下的回弹）。
+    /// 记录不动点与基准 s：文字绘制时对小幅弹簧尾振加死区，避免 damping ζ
+    /// 通过 s 把振荡写进字形（用户实测 ζ 调大文字就不抖）。
     pub fn scaled(&self, cx: f32, cy: f32, k: f32) -> Self {
         let mut c = self.clone();
         let center = self.pos(cx, cy);
         c.origin = center + (self.origin - center) * k;
         c.s = self.s * k;
+        c.text_pivot = Some((Pos2::new(cx, cy), self.s));
         c
     }
     pub fn ghost(&self) -> Self {
@@ -124,11 +134,22 @@ impl<'a> Card<'a> {
         self.painter.layout_no_wrap(crate::rtl_text::display(t).into_owned(), font(size, w), color)
     }
     /// 在局部坐标 p（未缩放）绘制已排版的 galley：先缩放 mesh 到屏幕，再平移 origin。
+    /// 弹簧尾振（|k-1| < 死区）时文字锁回基准缩放，但保持不动点的屏幕位置不变，
+    /// 这样玻璃/卡片仍随阻尼比弹，文字不再跟着胀缩。
     pub fn paint_galley(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) {
+        let (mut origin, mut s) = (self.origin.to_vec2(), self.s);
+        if let Some((pivot, base_s)) = self.text_pivot {
+            let k = s / base_s.max(1e-6);
+            if (k - 1.0).abs() < TEXT_SCALE_DEADZONE {
+                let pv = origin + pivot.to_vec2() * s;
+                s = base_s;
+                origin = pv - pivot.to_vec2() * s;
+            }
+        }
         let mut shape = Shape::galley(p, g, color);
-        shape.transform(TSTransform::new(self.origin.to_vec2(), self.s));
+        shape.transform(TSTransform::new(origin, s));
         // 只在发生非整数缩放时内缩 UV：s≈1 时字形按原始尺寸采样，不需要动。
-        if (self.s - 1.0).abs() > 0.01 {
+        if (s - 1.0).abs() > 0.01 {
             let atlas = self.ui.ctx().fonts(|f| f.font_image_size());
             inset_text_uv(&mut shape, atlas);
         }
