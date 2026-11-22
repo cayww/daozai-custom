@@ -107,6 +107,8 @@ pub struct FrameStats {
     /// 由 winit_runner 应用到对应子窗口。immediate viewport 的 UI 在主窗口跑，
     /// 命令也在主窗口 output 里，必须传出去否则设置页永远 invisible。
     pub viewport_commands: Vec<(egui::ViewportId, Vec<egui::ViewportCommand>)>,
+    /// 本帧仍活跃的 viewport id（app 不再 show_viewport 的窗口要销毁，否则关不掉）。
+    pub active_viewports: Vec<egui::ViewportId>,
 }
 
 /// 渲染运行时。持有窗口生命周期内不能重建的 D3D/DComp 状态。
@@ -390,8 +392,9 @@ impl D3d11Runtime {
                 .filter(|(id, _)| **id != egui::ViewportId::ROOT)
                 .map(|(id, vo)| (*id, vo.commands.clone()))
                 .collect();
+            let active = viewports.keys().copied().collect();
             self.egui_winit.as_mut().unwrap().handle_platform_output(window, po);
-            (ro, child_cmds)
+            (ro, child_cmds, active)
         };
         // 帧率统计
         self.frames += 1;
@@ -414,7 +417,7 @@ impl D3d11Runtime {
             unsafe { let _ = self.dcomp._device.Commit(); }
         }
         FrameStats { fps: self.fps, wgc_live: self.wgc_ever_frame,
-                     viewport_commands: platform.1 }
+                     viewport_commands: platform.1, active_viewports: platform.2 }
     }
 
     fn draw_glass(&mut self, win_w: u32, win_h: u32, u: &GlassParams) {

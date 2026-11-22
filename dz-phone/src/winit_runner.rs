@@ -30,6 +30,9 @@ thread_local! {
     /// 子窗口的输入（含鼠标/键盘事件）：window_event 累积，draw_main 前取出交给
     /// immediate 回调（回调在主窗口 draw 上下文执行，拿不到 sub.renderer）。
     static VIEWPORT_INPUTS: RefCell<HashMap<egui::ViewportId, egui::RawInput>> = RefCell::new(HashMap::new());
+    /// 子窗口右上角 X 的关闭请求（ViewportId）：window_event 记录，immediate 回调
+    /// 转成 ViewportInfo.events[Close]，让设置页 UI 的 close_requested() 读到并自行关闭。
+    static CLOSE_REQ: RefCell<Vec<egui::ViewportId>> = RefCell::new(Vec::new());
     /// 照搬 eframe 0.35：回调在 draw 上下文执行但 create_window 需要 &ActiveEventLoop，
     /// 用 thread_local 存当前 event loop（guard 保证生命周期）。
     static CURRENT_EVENT_LOOP: std::cell::Cell<Option<*const ActiveEventLoop>> = const { std::cell::Cell::new(None) };
@@ -127,6 +130,19 @@ impl DaozaiApp {
                 }
             }
         }
+        // app 不再 show_viewport 的子窗口（如设置页 settings_open=false）必须销毁，
+        // 否则窗口对象残留、右上角 X 关不掉（eframe remove_viewports_not_in 同款）。
+        let stale: Vec<egui::ViewportId> = self.sub_ids.keys()
+            .filter(|vid| !stats.active_viewports.contains(vid))
+            .copied().collect();
+        for vid in stale {
+            if let Some(wid) = self.sub_ids.remove(&vid) {
+                self.subs.remove(&wid);
+                self.pending_close.retain(|w| *w != wid);
+                VIEWPORT_WINDOWS.with(|m| { m.borrow_mut().remove(&vid); });
+                VIEWPORT_INPUTS.with(|m| { m.borrow_mut().remove(&vid); });
+            }
+        }
         self.drain_viewports();
         // immediate viewport 由父窗口驱动重绘：父每帧 draw 时通过回调拿到子窗口 output，
         // 这里统一画所有子窗口（含可见的）。原来的"只画 invisible"是内嵌 workaround，
@@ -219,6 +235,17 @@ impl ApplicationHandler<()> for DaozaiApp {
                 });
             }
             if input.time.is_none() { input.time = Some(egui_ctx.input(|i| i.time)); }
+            // 右上角 X：把 CloseRequested 转成 egui ViewportEvent::Close，
+            // 设置页 UI 的 viewport().close_requested() 读到后置 settings_open=false。
+            let close_now = CLOSE_REQ.with(|q| {
+                let mut q = q.borrow_mut();
+                let hit = q.iter().position(|&v| v == id);
+                hit.map(|i| { q.remove(i); })
+            });
+            if close_now.is_some() {
+                input.viewports.entry(id).or_default()
+                    .events.push(egui::ViewportEvent::Close);
+            }
             // 同步跑子窗口 UI（viewport_ui_cb 借用 app，只能在此调用，不能跨帧存）。
             let output = egui_ctx.run_ui(input, |ui| viewport_ui_cb(ui));
             VIEWPORT_REQ.with(|q| q.borrow_mut().push((id, window, output)));
@@ -279,6 +306,10 @@ impl ApplicationHandler<()> for DaozaiApp {
         // 子 viewport 窗口
         if let Some(sub) = self.subs.get_mut(&id) {
             if event == WindowEvent::CloseRequested {
+                // 转成 egui 的 Close 事件喂给设置页 UI（它读 viewport().close_requested()
+                // 自行把 settings_open 置 false，下一帧不再 show_viewport 窗口即关闭）。
+                let vid = sub.id;
+                CLOSE_REQ.with(|q| q.borrow_mut().push(vid));
                 self.pending_close.push(id);
                 return;
             }
