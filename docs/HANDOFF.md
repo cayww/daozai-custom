@@ -1648,3 +1648,6 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   6. `PlainWindow::paint_output`（只画 output 命令+render，不再 run_ui）+ 每帧绘制**所有**子窗口（原"只画 invisible"是内嵌 workaround，独立窗口后必须每帧画，否则内容区白屏）。
 - **验证**：实机截图确认设置页独立窗口正常显示（侧栏通用/外观/位置/音乐… + 右侧设置项），点击"外观"成功切换内容。全量 `cargo test --locked --release --lib -- --test-threads=1` = 1385 passed / 0 failed / 131 ignored。诊断开关全清。诊断版 last-error 曾报 `raw_input.rs:110`（RawInput 缺 viewports 里的当前 viewport），已修（回调 input 填 viewports[id] ViewportInfo）。
 - **状态**：提交 `9ebb6c0`（分支 research/egui035-migration）。未部署、未打包、main 不动。其他 3 个 `show_viewport_immediate`（邮件阅读器/更新/天气教程）同样受益于该机制，未逐一实机验证。
+
+- **【后续修复】右上角 X 关不掉（提交 `bf6f177`）**：上版窗口能开能交互，但 X 无效。诊断证实事件链全通（CloseRequested→注入 ViewportEvent::Close→设置页 `close_requested()` 读到并置 `settings_open=false`），但窗口对象仍残留。根因两层：①`window_event` 的 CloseRequested 只 push 到**从未消费**的 `pending_close`，没转成 egui close 事件；②`settings_open=false` 后不再 show_viewport，但 `subs`/`VIEWPORT_WINDOWS` 里的窗口对象没销毁。修复：CloseRequested → thread_local `CLOSE_REQ` → immediate 回调注入 `ViewportInfo.events[Close]`；`FrameStats.active_viewports` 传出本帧活跃 viewport，不活跃的窗口销毁并清理缓存（eframe `remove_viewports_not_in` 同款）。实测 WM_CLOSE 后窗口销毁、进程存活，全量 1385 passed。
+
