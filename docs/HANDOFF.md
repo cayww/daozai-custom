@@ -1723,3 +1723,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **新增测试** `pixel_snapping_lands_on_device_pixels`（ppp 1.0/1.25/1.5/2.0）：矩形四边落在设备像素网格、最小 1px 不被吞成 0、薄描边落像素中心、垂直细线中心对齐而斜线端点不动。
 - **验证**：`cargo test --lib paint:: -- --test-threads=1` = **17 passed**；`compact_` 像素回归 3 个测试仍通过（73.75s，共 8 passed）；release 构建成功；exe sha256 前 16 位 `10d7734798ff3394`，新进程 PID 17428；桌面预览目录同步，旧版备份 `daozai.exe.prev-before-snap2`。
 - **剩余**：`vgrad` 预烘焙、`inset_text_uv` 每帧 deep copy galley 缓存、MSDF/DirectWrite（阶段③）。
+
+### 7.0zzt 锁定「量化格内字形不动」不变量（2026-11-22 21:52–21:54，提交随后）
+- `paint_galley` 拆成 `paint_galley` + 纯函数 `galley_shape(pos, galley, color) -> Shape`：后者返回已按当前 `s`/`TextScale` 变形（含 `inset_text_uv`）的图元，绘制函数只剩 `painter.add`。
+- 新增测试 `scaled_text_mesh_holds_still_inside_one_quantum_cell`（ppp 1.0/1.5，中英混排文本）：
+  - 死区内 `k=1.0` 与 `k=1.0+死区/2` 的行网格/顶点逐位相同；
+  - 同一量化格内 `k=1.2` 与 `k=1.2+1/256` 逐位相同；
+  - 跨两格 `k=1.2+1/32` 必须不同（防止死区+量化把动画吞掉）。
+  - 这是抖动的可执行定义：**相邻帧同一段文字生成了不同顶点**。
+- 验证：`cargo test --lib paint:: -- --test-threads=1` = **18 passed**；release 构建 2m47s；exe sha256 前 16 位 `205b1e2375b4c578`，PID 26072；预览目录同步，旧版备份 `daozai.exe.prev-before-galley-shape`。
