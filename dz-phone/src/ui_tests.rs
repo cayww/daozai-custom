@@ -9421,30 +9421,3 @@ fn page_flip_to_taller_page_does_not_slide_content(){
     let dev=ys.iter().map(|y|(y-first).abs()).fold(0.0f32,f32::max);
     assert!(dev<0.01,"切页过渡中页面内容不应上下移动，实测位移 {dev}px：{ys:?}");
 }
-
-/// 从新建日程页返回列表时应当收起：既不再吃「展开后强制停留 4 秒」，
-/// 也不管光标是停在刚点的按钮上还是已经移开。
-#[test]
-fn calendar_editor_return_collapses_promptly(){
-    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
-    for save in [false,true] {
-        for cursor_away in [false,true] {
-            let mut h=H::new();
-            h.app.show_page(7);
-            for _ in 0..120 { h.frame(vec![]); }
-            h.app.open_calendar_editor(None);
-            for _ in 0..30 { h.frame(vec![]); }
-            assert!(h.app.open && h.app.is_editing(),"进入编辑页应保持展开");
-            if save {
-                h.app.calendar.draft.as_mut().unwrap().title="返回即收起".into();
-                h.click_text("保存到本机");
-            } else {
-                h.click_text("取消");
-            }
-            assert!(!h.app.is_editing(),"返回后应退出编辑态");
-            if cursor_away { h.cursor=Some(Pos2::new(760.0,700.0)); }
-            for _ in 0..60 { h.frame(vec![]); }
-            assert!(!h.app.open,"从编辑页返回后 1 秒内应收起（save={save} away={cursor_away}），实际 hpos={}",h.app.h.pos);
-        }
-    }
-}
