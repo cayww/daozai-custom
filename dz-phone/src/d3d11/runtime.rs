@@ -82,6 +82,24 @@ fn refresh_control_uniforms(u: &mut GlassParams) {
     }
 }
 
+/// 主窗口「岛体大小」缩放：把 egui 输出的 IME 位置从放大后的逻辑点换回原生逻辑点。
+/// 与 winit_runner::scale_root_input 成对，子窗口不参与。
+fn scale_root_platform_output(output: &mut egui::PlatformOutput, scale: f32) {
+    if !scale.is_finite() || (scale - 1.0).abs() < 1e-4 {
+        return;
+    }
+    let rect = |r: egui::Rect| {
+        egui::Rect::from_min_max(
+            egui::pos2(r.min.x * scale, r.min.y * scale),
+            egui::pos2(r.max.x * scale, r.max.y * scale),
+        )
+    };
+    if let Some(ime) = output.ime.as_mut() {
+        ime.rect = rect(ime.rect);
+        ime.cursor_rect = rect(ime.cursor_rect);
+    }
+}
+
 struct GlassPipeline {
     vs: ID3D11VertexShader,
     ps: ID3D11PixelShader,
@@ -336,9 +354,10 @@ impl D3d11Runtime {
     }
 
     /// 渲染一帧：clear 透明 → 抓屏 → HLSL 玻璃 → egui → Present → Commit。
-    /// `run_ui` 回调里调用岛仔的 Shell 绘制逻辑。
+    /// `run_ui` 回调里调用岛仔的 Shell 绘制逻辑。`root_scale` 只作用于主窗口的
+    /// 输入/输出换算（设置里的「岛体大小」），不碰全局 zoom。
     pub fn render(&mut self, window: &winit::window::Window, origin: (f32, f32),
-                  params: &GlassParams, input: egui::RawInput,
+                  params: &GlassParams, input: egui::RawInput, root_scale: f32,
                   mut run_ui: impl FnMut(&egui::Context, &mut egui::Ui)) -> FrameStats {
         // WGC 抓屏（GPU 侧 CopyResource）
         if let Some(wgc) = self.wgc.as_ref() {
@@ -385,7 +404,9 @@ impl D3d11Runtime {
         // 会在宠物与时间之间闪一条竖线，多帧后才随弹簧收敛消失。
         refresh_control_uniforms(&mut u);
         let platform = {
-            let (ro, po, viewports) = super::renderer::split_output(egui_output);
+            let (ro, mut po, viewports) = super::renderer::split_output(egui_output);
+            // egui 输出在放大后的逻辑点里；egui_winit 期待原生逻辑点，换回去。
+            scale_root_platform_output(&mut po, root_scale);
             // 记录 egui 请求的重绘间隔（岛仔隐藏态 1fps、常态按设置 fps）
             let mut d = std::time::Duration::ZERO;
             for (_, vo) in viewports.iter() { d = d.max(vo.repaint_delay); }

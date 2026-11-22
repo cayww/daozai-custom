@@ -34,8 +34,6 @@ struct Shell {
     placed: bool,
     placement_at: PollClock,
     placement_scale: f32,
-    /// 已应用到根 viewport 的岛体缩放（设置里的「大小」）；变化时才下发，避免每帧重排。
-    applied_zoom: f32,
     /// 上次定位时的目标屏幕、水平位置与 OLED 像素偏移；变化后立即重新定位，不等下一次轮询。
     placement_key: (String, i32, daozai::model::Dock, bool, (i32, i32)),
     /// OLED 像素偏移当前实际使用的位移；展开、拖拽、隐藏时保持不变。
@@ -180,8 +178,8 @@ impl Shell {
         #[cfg(windows)] let system_state=daozai::system::Snapshot::default();
         #[cfg(windows)] let system_rx=daozai::system::observe(egui_ctx.clone(),system_state.clone(),initial_input);
         // 岛体大小只作用于主窗口，在首帧之前生效，避免启动时先按 100% 闪一下。
-        let applied_zoom = app.settings.island_scale();
-        egui_ctx.set_zoom_factor(applied_zoom);
+        // 实现见 winit_runner::scale_root_input：只换算主 viewport 输入，
+        // 不能用 Context::set_zoom_factor（那是全局缩放，会把设置页一起放大）。
         Self {
             app,
             t0: Instant::now(),
@@ -201,7 +199,6 @@ impl Shell {
             placed: false,
             placement_at: PollClock::default(),
             placement_scale: 0.0,
-            applied_zoom,
             placement_key: (String::new(), 0, daozai::model::Dock::Top, true, (0, 0)),
             #[cfg(windows)]
             oled_shift: (0, 0),
@@ -385,12 +382,8 @@ impl Shell {
         self.media_enabled.store(self.app.settings.visible_pages[0] && !guarded,std::sync::atomic::Ordering::Relaxed);
         if self.media_fast_until.is_some_and(|until|Instant::now()>=until){self.media_fast_until=None;}
         self.media_enabled.set_interval(if self.media_fast_until.is_some(){smtc::POLL_FAST}else{self.app.media_poll_interval()});
-        // 设置里改了岛体大小：下一帧起主窗口按新倍率栅格化，定位逻辑随像素比变化同步调整画布。
-        let want_zoom = self.app.settings.island_scale();
-        if (self.applied_zoom - want_zoom).abs() > 1e-3 {
-            ui.ctx().set_zoom_factor(want_zoom);
-            self.applied_zoom = want_zoom;
-        }
+        // 设置里改了岛体大小：主窗口输入每帧按 island_scale 换算（见 winit_runner），
+        // 这里不再动全局 zoom——那会连设置页一起放大并让定位按错误的 ppp 计算。
         #[cfg(windows)]
         {
             // 用帧间隔限制刷新，绕过部分 Intel 驱动在垂直同步中的忙等待。

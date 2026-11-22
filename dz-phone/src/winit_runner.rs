@@ -110,11 +110,16 @@ impl DaozaiApp {
     fn draw_main(&mut self) {
         let Some(w) = self.window.as_ref() else { return };
         let origin = w.inner_position().map(|p| (p.x as f32, p.y as f32)).unwrap_or((0.0, 0.0));
-        let ppp = self.runtime.as_ref().unwrap().egui_ctx.pixels_per_point();
+        // 「岛体大小」旧语义：只缩放主 viewport 输入，不能动全局 zoom（会把设置页一起放大）。
+        let scale = self.shell.as_ref()
+            .map(|s| s.app.settings.island_scale())
+            .unwrap_or(1.0);
+        let ppp = w.scale_factor() as f32 * scale;
         let liquid = self.shell.as_ref()
             .is_some_and(|s| s.app.settings.skin == daozai::model::Skin::Liquid);
         let params = build_glass_params(ppp, liquid);
-        let input = { let w = self.window.as_ref().unwrap(); self.runtime.as_mut().unwrap().take_input(w) };
+        let mut input = { let w = self.window.as_ref().unwrap(); self.runtime.as_mut().unwrap().take_input(w) };
+        scale_root_input(&mut input, scale, w.scale_factor() as f32);
         // 收集子窗口输入（含鼠标/键盘事件）供 immediate 回调使用。
         for sub in self.subs.values_mut() {
             let sin = sub.renderer.egui_winit.take_egui_input(&sub.window);
@@ -123,7 +128,7 @@ impl DaozaiApp {
         let window = self.window.as_ref().unwrap();
         let rt = self.runtime.as_mut().unwrap();
         let sh = self.shell.as_mut().unwrap();
-        let stats: FrameStats = rt.render(window, origin, &params, input, |_ctx, ui| sh.draw(ui));
+        let stats: FrameStats = rt.render(window, origin, &params, input, scale, |_ctx, ui| sh.draw(ui));
         // 把主窗口 output 里子 viewport 的窗口命令（Visible(true)/位置/大小）应用到子窗口。
         for (vid, cmds) in stats.viewport_commands {
             if let Some(&wid) = self.sub_ids.get(&vid) {
@@ -224,15 +229,17 @@ impl ApplicationHandler<()> for DaozaiApp {
             // 否则设置页 ctx.input(|i| i.viewport()) 会 panic（egui RawInput::viewport）。
             let mut input = VIEWPORT_INPUTS.with(|m| m.borrow_mut().remove(&id)).unwrap_or_default();
             input.viewport_id = id;
-            let ppp = egui_ctx.pixels_per_point();
+            // 子窗口永远用自己窗口的原生 DPI，不能读 egui_ctx.pixels_per_point() /
+            // native_pixels_per_point()——那是主 viewport 按「岛体大小」放大后的值。
+            let native_ppp = window.scale_factor() as f32;
             if input.screen_rect.is_none() {
                 let size = window.inner_size();
                 input.screen_rect = Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0),
-                    egui::vec2(size.width as f32 / ppp, size.height as f32 / ppp)));
+                    egui::vec2(size.width as f32 / native_ppp, size.height as f32 / native_ppp)));
             }
             if !input.viewports.contains_key(&id) {
                 input.viewports.insert(id, egui::ViewportInfo {
-                    native_pixels_per_point: Some(egui_ctx.native_pixels_per_point().unwrap_or(ppp)),
+                    native_pixels_per_point: Some(native_ppp),
                     inner_rect: input.screen_rect,
                     ..Default::default()
                 });
@@ -324,6 +331,39 @@ impl ApplicationHandler<()> for DaozaiApp {
 }
 
 /// 从 app 当前状态构造 HLSL 玻璃 uniform（岛体胶囊布局）。
+/// 只把主窗口输入换算到放大/缩小后的逻辑点（复刻旧 vendor eframe 的
+/// `scale_root_input`）。`Context::set_zoom_factor` 是全局的，会把设置页一起放大；
+/// 这里只改 ROOT viewport 的 ppp/矩形/指针事件，子 viewport 完全不受影响。
+fn scale_root_input(raw: &mut egui::RawInput, scale: f32, native_ppp: f32) {
+    if !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    // egui-winit 的 screen_rect / pointer 事件用的是窗口原生 DPI（window.scale_factor），
+    // 不受我们写进 ViewportInfo 的 native_pixels_per_point 影响；所以每帧都固定除一次
+    // scale，正好把原生逻辑点换成放大/缩小后的 UI 点。
+    let inv = 1.0 / scale;
+    let pos = |p: egui::Pos2| egui::pos2(p.x * inv, p.y * inv);
+    let rect = |r: egui::Rect| egui::Rect::from_min_max(pos(r.min), pos(r.max));
+    if let Some(r) = raw.screen_rect.as_mut() {
+        *r = rect(*r);
+    }
+    if let Some(info) = raw.viewports.get_mut(&egui::ViewportId::ROOT) {
+        info.native_pixels_per_point = Some(native_ppp * scale);
+        info.inner_rect = info.inner_rect.map(rect);
+        info.outer_rect = info.outer_rect.map(rect);
+        info.monitor_size = info.monitor_size.map(|s| s * inv);
+    }
+    for event in &mut raw.events {
+        match event {
+            egui::Event::PointerMoved(p) => *p = pos(*p),
+            egui::Event::PointerButton { pos: p, .. } => *p = pos(*p),
+            egui::Event::Touch { pos: p, .. } => *p = pos(*p),
+            egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, .. } => *delta *= inv,
+            _ => {}
+        }
+    }
+}
+
 ///
 /// 坐标系（移植自旧 wgpu 栈 gpu_glass::build_uniform）：app/egui 传进来的几何和
 /// 光学强度全是「逻辑点 / CSS px」，而 shader 的全屏三角形铺的是「物理像素」渲染
@@ -382,4 +422,44 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = DaozaiApp::new(attrs);
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod root_scale_tests {
+    use super::*;
+
+    #[test]
+    fn root_scale_only_touches_root_viewport() {
+        let mut raw = egui::RawInput::default();
+        raw.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(960.0, 270.0),
+        ));
+        let root = &mut raw.viewports.get_mut(&egui::ViewportId::ROOT).unwrap();
+        root.native_pixels_per_point = Some(1.0);
+        root.inner_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 270.0)));
+        let child = egui::ViewportId::from_hash_of("settings");
+        raw.viewports.insert(child, egui::ViewportInfo {
+            native_pixels_per_point: Some(1.0),
+            ..Default::default()
+        });
+        raw.events.push(egui::Event::PointerMoved(egui::pos2(100.0, 50.0)));
+
+        scale_root_input(&mut raw, 1.25, 1.0);
+
+        assert_eq!(raw.screen_rect.unwrap().width(), 768.0);
+        assert_eq!(raw.viewports[&egui::ViewportId::ROOT].native_pixels_per_point, Some(1.25));
+        assert_eq!(raw.viewports[&child].native_pixels_per_point, Some(1.0));
+        assert!(matches!(raw.events[0], egui::Event::PointerMoved(p) if p == egui::pos2(80.0, 40.0)));
+
+        // egui-winit 每帧都用窗口原生 DPI 产生输入，所以第二帧同样要除一次 scale。
+        let mut next = egui::RawInput::default();
+        next.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(960.0, 270.0)));
+        next.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().native_pixels_per_point = Some(1.0);
+        next.events.push(egui::Event::PointerMoved(egui::pos2(100.0, 50.0)));
+        scale_root_input(&mut next, 1.25, 1.0);
+        assert_eq!(next.screen_rect.unwrap().width(), 768.0);
+        assert_eq!(next.viewports[&egui::ViewportId::ROOT].native_pixels_per_point, Some(1.25));
+        assert!(matches!(next.events[0], egui::Event::PointerMoved(p) if p == egui::pos2(80.0, 40.0)));
+    }
 }
