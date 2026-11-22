@@ -9235,7 +9235,8 @@ fn liquid_config_button_lives_in_appearance_tab_and_only_for_liquid_skin(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let mut h=H::new();
     h.app.settings_open=true;
-    h.app.settings.render_compat=true;
+    // 液态玻璃配置与 D3D12 兼容渲染开关解绑：即便 render_compat=false 也能打开弹窗。
+    h.app.settings.render_compat=false;
     // 外观页 + 液态皮肤：皮肤与形状之间应有「配置液态玻璃」入口，弹窗里有「预览形态」开关。
     h.app.settings.skin=crate::model::Skin::Liquid;
     h.app.settings_tab=crate::extras::SETTINGS_TAB_APPEARANCE;

@@ -4195,9 +4195,11 @@ pub(crate) fn settings_control_row_right(
 /// 调参时的取景形态（展开/收起）由弹窗里的「预览形态」开关决定，逻辑在 app 的状态机里
 /// （设置页开着 + 外观页 + 玻璃皮肤 + 弹窗开着）；离开外观页或关掉设置窗就自动收起弹窗。
 fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
+    // 液态玻璃参数与「兼容渲染（Direct3D 12）」无关：D3D11 自绘栈下也要能调。
+    // 只按入口按钮的显示条件收起弹窗（设置页 + 外观页 + 液态皮肤）。
     if !(app.settings_open
         && app.settings_tab == SETTINGS_TAB_APPEARANCE
-        && app.settings.render_compat)
+        && app.settings.skin == crate::model::Skin::Liquid)
     {
         app.liquid_cfg_open = false;
     }
@@ -4220,7 +4222,7 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 setting_row(ui,"优先独立显卡","让液态玻璃尽量使用独显，重启生效",&mut app.settings.liquid_prefer_dgpu);
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
                                 settings_hint(ui,"混合显卡机器建议开启；当前 D3D11 栈的选卡策略仍在完善");
-                                // 与 D3D12 那处一致：改了启动期生效的开关就直接给「立即重启」。
+                                // 与启动期开关一致：改了重启才生效的设置就直接给「立即重启」。
                                 // 启动值由 main.rs 写进环境变量（建窗前快照），无需额外字段。
                                 let dgpu_boot=std::env::var("DAOZAI_LIQUID_PREFER_DGPU").map(|v|v!="0").unwrap_or(app.settings.liquid_prefer_dgpu);
                                 if app.settings.liquid_prefer_dgpu!=dgpu_boot {
