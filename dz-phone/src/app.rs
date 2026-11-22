@@ -3689,21 +3689,54 @@ impl App {
                 self.liquid_search_last_ptr = self.liquid_search_ptr;
             }
             2 => {
-                // CAPSULE：目标 = 胶囊几何（面板内搜索框 327×20，中心 x=209.5,y=42）。
+                // CAPSULE 成形：分两阶段，让「融球水滴从岛顶长出 → 拉丝 → 摊成胶囊」肉眼可见。
+                // 弹簧放慢（k=36≈ω6, ζ0.7），约 1 秒完成；默认 121 太快(~0.3s)抓不到。
+                self.ls_cx.tune(36.0, 0.7);
+                self.ls_cy.tune(36.0, 0.7);
+                self.ls_bx.tune(30.0, 0.75);
+                self.ls_by.tune(36.0, 0.7);
+                self.ls_k.tune(40.0, 0.7);
+                self.ls_cont.tune(36.0, 0.7);
                 self.ls_cx.target = 209.5;
-                self.ls_cy.target = 42.0;
-                self.ls_bx.target = 163.5;
-                self.ls_by.target = 10.0;
-                self.ls_k.target = 10.0;
+                // 阶段A(圆球下落)：cy 先到 34，bx/by 维持圆球(r≈11)、颈部粗(k=64)。
+                // 阶段B(摊开)：cy 过了 30 后，bx 才摊到 163.5、by 收到 10、颈部收紧。
+                if self.ls_cy.pos < 30.0 {
+                    self.ls_cy.target = 34.0;
+                    self.ls_bx.target = 11.0;
+                    self.ls_by.target = 11.0;
+                    self.ls_k.target = 64.0;
+                } else {
+                    self.ls_cy.target = 42.0;
+                    self.ls_bx.target = 163.5;
+                    self.ls_by.target = 10.0;
+                    self.ls_k.target = 10.0;
+                }
                 self.ls_cont.target = 0.5;
             }
             3 => {
-                // RETRACT：缩回顶部一个小点。
-                self.ls_cx.target = self.liquid_search_ptr.x;
-                self.ls_cy.target = 7.8;
-                self.ls_bx.target = 1.0;
-                self.ls_by.target = 1.0;
-                self.ls_k.target = 64.0;
+                // RETRACT：展开的逆过程，原路返回。
+                // 阶段A(收回圆球)：扁胶囊 bx 163.5→11、by 10→11、cy 42→34，颈部重新涨粗。
+                // 阶段B(升回岛顶)：圆球 cy 34→8、bx/by→1，回到岛顶中间消失。
+                self.ls_cx.tune(36.0, 0.7);
+                self.ls_cy.tune(36.0, 0.7);
+                self.ls_bx.tune(30.0, 0.75);
+                self.ls_by.tune(36.0, 0.7);
+                self.ls_k.tune(40.0, 0.7);
+                self.ls_cont.tune(36.0, 0.7);
+                self.ls_cx.target = 209.5;
+                if self.ls_bx.pos > 20.0 {
+                    // 还没收成圆球：先收回圆球态（展开阶段B的逆）。
+                    self.ls_cy.target = 34.0;
+                    self.ls_bx.target = 11.0;
+                    self.ls_by.target = 11.0;
+                    self.ls_k.target = 64.0;
+                } else {
+                    // 已成圆球：升回岛顶并收成小点（展开阶段A的逆）。
+                    self.ls_cy.target = 8.0;
+                    self.ls_bx.target = 1.0;
+                    self.ls_by.target = 1.0;
+                    self.ls_k.target = 64.0;
+                }
                 self.ls_cont.target = 0.0;
                 // 半高弹簧降到 2.5 以下 → 回 IDLE（资料包 retract 判定）。
                 if self.ls_by.pos < 2.5 {
@@ -3776,26 +3809,8 @@ impl App {
                 refract:(short/70.0).clamp(0.30,1.0),
             });
         }
-        // 液态水滴搜索：飞行/成形途中把水滴作为一块动态控件透镜注入，
-        // 让 HLSL 画真折射+色散+白边。egui 侧不再画矢量玻璃，避免双层。
-        // 只在剪贴板页、水滴可见时注入（正常页的 Ctl 已满也不会超 13）。
-        if self.page == 3 && self.shelf_tab == 1
-            && (self.liquid_search_state == 2 || self.liquid_search_state == 3) {
-            let hw = self.ls_bx.pos.max(1.0);
-            let hh = self.ls_by.pos.max(1.0);
-            if hw > 3.0 && hh > 3.0 {
-                let local = Rect::from_center_size(
-                    Pos2::new(self.ls_cx.pos, self.ls_cy.pos),
-                    Vec2::new(hw * 2.0, hh * 2.0),
-                );
-                out.push(crate::gpu_glass::Ctl {
-                    rect: local.translate(origin.to_vec2()),
-                    radius: hw.min(hh),
-                    mag: 1.0,
-                    refract: 0.9,
-                });
-            }
-        }
+        // 融球水滴由 shader 的 meta/meta2 uniform 直接画（见 paint_gpu_glass），
+        // 不再作为控件透镜注入——否则和融球形状双层。
         out
     }
 
@@ -3831,6 +3846,17 @@ impl App {
         // glass_controls 已含展开入场弹簧 ctl_scale —— 白边会随展开连续变细，
         // 而不是像旧迁移版那样透镜整层缺失、只剩 egui 边框突然消失。
         crate::gpu_glass::set_controls(&self.glass_controls(origin));
+        // 融球水滴搜索：把弹簧几何写进 shader uniform。中心/半宽高是面板局部逻辑点，
+        // 加上 content_origin 换成窗口内逻辑点（runtime 再 ×ppp）。锚点=面板上沿 y=8。
+        // 只在剪贴板页、水滴成形/缩回途中打开开关。
+        let mb_on = self.page == 3 && self.shelf_tab == 1
+            && (self.liquid_search_state == 2 || self.liquid_search_state == 3)
+            && self.ls_bx.pos > 3.0 && self.ls_by.pos > 3.0;
+        crate::gpu_glass_stub::set_metaball(
+            self.ls_cx.pos + origin.x, self.ls_cy.pos + origin.y,
+            self.ls_bx.pos, self.ls_by.pos,
+            self.ls_k.pos, 8.0 + origin.y, mb_on,
+        );
         // 液态玻璃的本体完全由 HLSL pass 绘制（折射 + 色散 + 白边 rim + 投影）。
         // 迁移时这里曾多画一笔 alpha=20 的 rect_filled 圆角矩形兜底底色：
         // 它和 shader 的 notch_sdf 刘海是两种形状，叠在一起会在刘海外露出一圈

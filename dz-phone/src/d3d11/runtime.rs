@@ -48,6 +48,10 @@ pub struct GlassParams {
     pub notch: [f32; 4],
     /// 光源配置
     pub lightcfg: [f32; 4],
+    /// 融球水滴: xy=中心(capture px,顶原点), zw=半宽半高
+    pub meta: [f32; 4],
+    /// 融球: x=k, y=锚点y, z=开关, w=保留
+    pub meta2: [f32; 4],
 }
 
 /// 把 app 本帧写入的控件玻璃快照（egui 逻辑点、y 从顶）同步到 shader uniform。
@@ -395,6 +399,17 @@ impl D3d11Runtime {
         u.quad[1] = origin.0;
         u.quad[2] = origin.1;
         u.notch[3] = 1.0; // DComp 逐像素 alpha
+
+        // 融球水滴：app 写窗口内逻辑点（顶原点），这里换成画布 device px。
+        // 关键：shader 的 p.y 从底原点算（bounds 也做了 h-by 翻转），必须把 y 翻过来：
+        //   dev_y = extra.z(画布物理高) - logic_y * ppp
+        // 之前漏翻导致融球被画到窗口下方，屏幕上完全看不到。
+        let (mb, mb2) = crate::gpu_glass_stub::metaball_snapshot();
+        let mb_ppp = if u.params[1] > 0.0 { u.params[1] } else { 1.0 };
+        let canvas_h = u.extra[2];
+        u.meta = [mb[0] * mb_ppp, canvas_h - mb[1] * mb_ppp,
+                  mb[2] * mb_ppp, mb[3] * mb_ppp];
+        u.meta2 = [mb2[0] * mb_ppp, canvas_h - mb2[1] * mb_ppp, mb2[2], mb2[3]];
 
         // 更新窗口信息（位置/尺寸/DPI），供 egui 生成正确的 ViewportCommand。
         egui_winit::update_viewport_info(&mut self.viewport_info, &self.egui_ctx, window, false);

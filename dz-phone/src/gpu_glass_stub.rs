@@ -25,6 +25,22 @@ impl Default for Ctl {
     fn default() -> Self { Self::none() }
 }
 
+/// 融球水滴搜索的 shader 参数：xy=中心(capture px,顶原点), zw=半宽半高；
+/// k=融合半径, anchor_y=岛体上沿锚点 y, on=开关。app 每帧写，runtime 读进 uniform。
+static METABALL: std::sync::Mutex<([f32; 4], [f32; 4])> =
+    std::sync::Mutex::new(([0.0; 4], [0.0; 4]));
+
+pub fn set_metaball(cx: f32, cy: f32, hw: f32, hh: f32, k: f32, anchor_y: f32, on: bool) {
+    if let Ok(mut g) = METABALL.lock() {
+        g.0 = [cx, cy, hw, hh];
+        g.1 = [k, anchor_y, if on { 1.0 } else { 0.0 }, 0.0];
+    }
+}
+
+pub fn metaball_snapshot() -> ([f32; 4], [f32; 4]) {
+    METABALL.lock().map(|g| *g).unwrap_or(([0.0; 4], [0.0; 4]))
+}
+
 /// 本帧的岛内控件玻璃列表，由 app::paint_gpu_glass 每帧写入，
 /// winit_runner::build_glass_params 读出转成 shader 的 crect/cprm。
 /// 用固定数组避免每帧分配；MAX_CTL = shader cbuffer 的槽位数。

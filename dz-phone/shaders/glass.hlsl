@@ -18,6 +18,8 @@ cbuffer U : register(b0) {
     float4 look;            // x=blur, y=band, z=edge width, w=edge opacity
     float4 notch;           // x=flare, y=fh, z=isNotch, w=isDComp
     float4 lightcfg;        // x=follow strength
+    float4 meta;            // 融球水滴: xy=中心(capture px, 顶原点), zw=半宽半高
+    float4 meta2;           // x=smooth-min 半径 k, y=锚点 y(capture px), z=开关(0=关), w=保留
 };
 
 Texture2D<float4> bg : register(t0);
@@ -41,6 +43,18 @@ VSOut vs(uint id : SV_VertexID) {
 float rr_sdf(float2 p, float2 b, float r) {
     float2 q = abs(p) - b + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, float2(0,0))) - r;
+}
+
+// 梯度感知 smooth-union (Apple QuartzCore sdf_union / IQ 多项式 smin)。
+// a=vec3(d, gx, gy), b 同理。k 越大颈部越粗。返回一个新的 (d, g)。
+float3 sdf_union3(float3 a, float3 b, float k) {
+    float2 ga = normalize(a.yz + float2(1e-6, 1e-6));
+    float2 gb = normalize(b.yz + float2(1e-6, 1e-6));
+    float kEff = k * saturate(0.5 - 0.5 * dot(ga, gb)) + 1e-4;
+    float h = saturate(0.5 + 0.5 * (b.x - a.x) / kEff);
+    float d = lerp(b.x, a.x, h) - kEff * h * (1.0 - h);
+    float2 g = normalize(lerp(b.yz, a.yz, h) + float2(1e-6, 1e-6));
+    return float3(d, g);
 }
 
 // Notch (Liu Hai) outline SDF: shoulders flare outward near the top, matching
@@ -200,6 +214,53 @@ float4 ctrl_glass(float2 p, float2 local, float2 hs, float radius, float d,
     return float4(col, saturate(max(aa, line_v*edge_a)));
 }
 
+// 液态玻璃「融球水滴」：锚点扁带 + 水滴圆角矩形 smooth-union，带真折射/色散/白边。
+// meta.xy=水滴中心(device px,底原点), zw=半宽半高; meta2.x=k, y=锚点y(底原点), z=开关。
+float4 metaball_glass(float2 p, float mat, float2 Ld, float3 edge_bg) {
+    float e = 1.0;
+    float2 dropB = max(meta.zw, float2(1.0,1.0));
+    float dropR = min(dropB.x, dropB.y);
+    float2 dl = p - meta.xy;
+    float dgx = rr_sdf(dl + float2(e,0), dropB, dropR) - rr_sdf(dl - float2(e,0), dropB, dropR);
+    float dgy = rr_sdf(dl + float2(0,e), dropB, dropR) - rr_sdf(dl - float2(0,e), dropB, dropR);
+    // 融球本体 = 水滴圆角矩形。不再叠一条可见的锚点扁带——之前那条在岛仔里
+    // 变成面板顶部突兀的横线，且和水滴离太远长不出颈部。拉丝感交给 app 侧的
+    // 速度拉伸（bx/by 随速度放大）承担。
+    float d = rr_sdf(dl, dropB, dropR);
+    float2 g = normalize(float2(dgx, dgy) + float2(1e-6,1e-6));
+
+    // 折射/色散/白边：用融球自己的 SDF 梯度 g，按短边自适应带深。
+    float short_side = max(min(dropB.x, dropB.y), 2.0);
+    float band = clamp(short_side * 1.3, 8.0, 60.0);
+    float t = saturate(-d / band);
+    float kk = pow(1.0 - pow(t, 0.30), 2.0);
+    // 融球折射比岛体更强，让它从底下那层玻璃里"凸"出来。
+    float strength = max(misc.z, 0.0) * 0.90;
+    float chroma = max(params.x, 0.0) * 0.85;
+    float2 bp = p - g * kk * strength;
+    float3 col = tap5(bp, -g * kk * chroma, look.x * 0.8 + kk * 1.2);
+    float lum_c = dot(col, float3(0.299,0.587,0.114));
+    col *= (1.0 + lerp(0.045,-0.035,smoothstep(0.42,0.88,lum_c)));
+    float bg_l = dot(edge_bg, float3(0.299,0.587,0.114));
+    col = lerp(col, float3(0.30,0.30,0.30), smoothstep(0.48,0.96,bg_l)*0.16*mat);
+    // 材质压暗加深：融球是一颗"实体玻璃珠"，比底下的岛体玻璃更实。
+    float matdark = (1.0-mat)*0.70 + 0.12;
+    col = lerp(col, col*0.52 + float3(0.010,0.014,0.020), float3(matdark,matdark,matdark));
+    // 内侧暗边(bevel)：沿边缘内 2~5px 压一道暗环，制造厚度与体积感，
+    // 这是让融球"浮"在岛体玻璃之上、肉眼可辨的关键。
+    float bevel = exp(-pow((d + 3.0)/2.5, 2.0));
+    col *= (1.0 - bevel * 0.30);
+    // 白边加强：比岛体 rim 更亮更宽一点。
+    float sigma_c = max(look.z, 0.5) * 0.52;
+    float rim = exp(-pow((d + sigma_c*0.6)/sigma_c, 2.0));
+    float dirw = lerp(0.62,1.0,pow(max(dot(g,Ld),0.0),1.3));
+    float line_v = rim * dirw;
+    float edge_a = saturate(look.w) * 1.15;
+    col = lerp(col, float3(1,1,1), saturate(line_v*edge_a));
+    float aa = 1.0 - smoothstep(-1.2, 1.2, d);
+    return float4(col, saturate(max(aa, line_v*edge_a)));
+}
+
 float4 fs(VSOut i) : SV_TARGET {
     float2 tex = float2(extra.y, extra.z);
     float2 p = i.uv * tex;
@@ -354,6 +415,14 @@ float4 fs(VSOut i) : SV_TARGET {
 
     // Blend edge with the (unrefracted) desktop so no black halo; dither.
     float cov = saturate(max(aa, line_v * edge_a));
+
+    // 液态玻璃融球水滴：作为独立玻璃层浮在岛体之上（不合并进岛体 SDF）。
+    if (meta2.z > 0.5) {
+        float4 mb = metaball_glass(p, mat, Ld, edge_bg);
+        col = lerp(col, mb.rgb, mb.a);
+        cov = saturate(max(cov, mb.a));
+    }
+
     float dth = (hash21(p) - 0.5) * (1.7 / 255.0);
     float3 outc = lerp(edge_bg, col, float3(cov,cov,cov)) + float3(dth,dth,dth);
     if (notch.w > 0.5) return float4(outc * cov, cov);

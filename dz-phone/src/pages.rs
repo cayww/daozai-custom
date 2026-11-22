@@ -971,9 +971,10 @@ impl App {
         if glassy && icon.clicked() {
             match self.liquid_search_state {
                 0 | 3 => {
-                    // 从放大镜位置 snap 成一颗小水滴，随后交给弹簧飞向胶囊目标（state=2）。
-                    self.ls_cx.snap(397.0);
-                    self.ls_cy.snap(115.0);
+                    // 从岛体顶部中间 snap 成一颗小融球水滴（资料包：从顶部黑边长出），
+                    // 随后交给弹簧向下展开到搜索框位置（state=2 的目标 209.5,42）。
+                    self.ls_cx.snap(209.5);
+                    self.ls_cy.snap(8.0);
                     self.ls_bx.snap(2.0);
                     self.ls_by.snap(2.0);
                     self.ls_k.snap(64.0);
@@ -1037,7 +1038,8 @@ impl App {
             cmds.push(Cmd::Focus);
         }
         self.clip_typing=resp.has_focus();
-        if resp.has_focus() { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
+        // 液态皮肤下白边由 GPU 玻璃透镜画；再叠一圈静态蓝边会和它错位不同步。
+        if resp.has_focus() && !glassy { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
         // Esc 退出搜索：清空关键词并收起输入框。液态胶囊态一并缩回。
         if resp.has_focus() && c.ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
             self.clip_query.clear();
@@ -1129,7 +1131,14 @@ impl App {
             return;
         }
 
-        if glassy { paint::glass_chip(c, 42.0, 31.0, 335.0, 93.0, 12.0, 0.05); } else { c.fill(42.0, 31.0, 335.0, 93.0, 12.0, theme::CARD); }
+        // 搜索框 GPU 玻璃透镜到位后（盖在卡片顶边上）才抑制卡片白边，避免双层不同步；
+        // 飞行途中透镜还在移动，保留卡片原有白边，不然会闪。
+        let drop_landed = glassy && self.liquid_search_state == 2 && self.ls_bx.pos >= 150.0;
+        if glassy && !drop_landed {
+            paint::glass_chip(c, 42.0, 31.0, 335.0, 93.0, 12.0, 0.05);
+        } else if !glassy {
+            c.fill(42.0, 31.0, 335.0, 93.0, 12.0, theme::CARD);
+        }
         // 超过一屏时右侧细滚动条，滚轮查看。
         if n > rows {
             let (top, track) = (38.0, 79.0);
