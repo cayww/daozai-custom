@@ -51,9 +51,11 @@ float notch_sdf(float2 p, float2 b, float r, float flare, float fh) {
     float t = saturate((b.y - p.y) / max(fh, 1.0));
     float wing = flare * pow(1.0 - t, 2.4);
     float hx = b.x + wing;
-    if (p.y > b.y - r) {
+    // 圆角在底部（-b.y 侧），不是顶部。迁移前 bounds 是顶原点、写 p.y > b.y-r；
+    // 迁移后 bounds 做了 h-by-bh 翻转，底原点系里底部是 p.y=-b.y，故改这里。
+    if (p.y < -(b.y - r)) {
         float qx = max(abs(p.x) - (b.x - r), 0.0);
-        float qy = abs(p.y) - (b.y - r);
+        float qy = abs(p.y) + (b.y - r);
         return length(float2(qx, max(qy, 0.0))) - r;
     }
     return max(abs(p.x) - hx, abs(p.y) - b.y);
