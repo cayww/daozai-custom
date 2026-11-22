@@ -954,19 +954,100 @@ impl App {
     /// 表头其余元素又随内容动态排布，没有稳定空位，所以移到卡片外侧。
     /// 点开后输入框浮在列表上方（盖住第一行），Esc 或小叉收起。
     /// 过滤只作用于显示，索引仍指向同一份历史，复制/固定/删除的行为不变。
+    /// 画液态玻璃「水滴」：胶囊本体（弹簧驱动的圆角矩形）+ 从面板顶边到水滴的融合颈。
+    /// egui 没有 SDF smooth-union，颈部用一条渐窄的梯形近似（资料包融球的视觉近似）。
+    fn paint_liquid_drop(&self, c: &Card) {
+        let bx = self.ls_cx.pos;
+        let by = self.ls_cy.pos;
+        let hw = self.ls_bx.pos.max(1.0);
+        let hh = self.ls_by.pos.max(1.0);
+        let r = hw.min(hh);
+        // 融合颈：从顶边 y=8 到水滴上沿，宽度从 hw*k比例 收到 hw。k 越大颈越宽。
+        let k = self.ls_k.pos.clamp(10.0, 64.0);
+        let neck_w = (hw * 0.55 + k * 0.06).min(hw * 0.9);
+        let top = 8.0;
+        let bot = (by - hh * 0.4).max(top + 1.0);
+        if bot > top {
+            let segs = 8usize;
+            for i in 0..segs {
+                let t0 = i as f32 / segs as f32;
+                let t1 = (i + 1) as f32 / segs as f32;
+                let y0 = top + (bot - top) * t0;
+                let y1 = top + (bot - top) * t1;
+                let w0 = neck_w + (hw - neck_w) * t0;
+                c.fill(bx - w0, y0, w0 * 2.0, (y1 - y0) + 0.6, 1.0,
+                       Color32::from_white_alpha((16.0 + 10.0 * self.ls_cont.pos) as u8));
+            }
+        }
+        // 本体：极淡白 + 细白边（液态要细），圆角=min(hw,hh)。
+        paint::glass_chip(c, bx - hw, by - hh, hw * 2.0, hh * 2.0, r, 0.45 + 0.2 * self.ls_cont.pos);
+    }
+
     fn clip_search(&mut self, c: &Card, cmds: &mut Vec<Cmd>) {
         // 右下侧空白带：x 377..419 不画列表，y 在箭头(≤101)与页码豆(≈131)之间。
-        let icon = c.hit(384.0, 105.0, 26.0, 20.0, "clip-search-open");
+        // 液态皮肤下：拖动放大镜可「拉出水滴」，松手弹成搜索胶囊（资料包交互）；
+        // 单击仍是原来的展开/收起。
+        let glassy = self.glassy();
+        let icon = if glassy {
+            c.hit_drag(384.0, 105.0, 26.0, 20.0, "clip-search-open")
+        } else {
+            c.hit(384.0, 105.0, 26.0, 20.0, "clip-search-open")
+        };
         let (h, _) = c.hover_t(&icon);
         if h > 0.01 { c.circle(397.0, 115.0, 10.5, Color32::from_white_alpha((22.0 * h) as u8)); }
         let ink = if self.clip_search_open { theme::BLUE } else { paint::mix(theme::GRAY, theme::WHITE, h) };
         c.ring(395.2, 113.2, 4.4, 1.3, ink);
         c.seg((398.6, 116.6), (402.4, 120.4), 1.3, ink);
-        let icon = icon.on_hover_text(if self.clip_search_open { "收起搜索" } else { "搜索剪贴板" });
-        if icon.clicked() {
+
+        // ---- 液态玻璃水滴搜索交互 ----
+        if glassy {
+            if icon.drag_started() && self.liquid_search_state == 0 {
+                // 从放大镜位置起一滴：cx/cy 吸附到按下点，bx/by 收到 2，速度清零。
+                let p = c.ui.ctx().input(|i| i.pointer.interact_pos().unwrap_or(icon.rect.center()));
+                let lp = c.to_local(p);
+                self.liquid_search_ptr = lp;
+                self.liquid_search_last_ptr = lp;
+                for s in [&mut self.ls_cx, &mut self.ls_cy] { s.snap(lp.x.min(420.0).max(20.0)); }
+                self.ls_cy.snap(lp.y.max(13.0));
+                self.ls_bx.snap(2.0); self.ls_by.snap(2.0);
+                self.ls_k.snap(64.0); self.ls_cont.snap(0.0);
+                self.liquid_search_state = 1;
+            }
+            if icon.dragged() && self.liquid_search_state == 1 {
+                let p = c.ui.ctx().input(|i| i.pointer.interact_pos().unwrap_or(icon.rect.center()));
+                self.liquid_search_ptr = c.to_local(p);
+            }
+            if icon.drag_stopped() && self.liquid_search_state == 1 {
+                // 成形阈值：拖过内容区高度 32%（面板约 115 → ≈37px）弹成胶囊，否则缩回。
+                if self.liquid_search_ptr.y > 37.0 {
+                    self.liquid_search_state = 2;
+                    self.clip_search_open = true;
+                    self.clip_query.clear();
+                    self.clip_search_focus = false;
+                } else {
+                    self.liquid_search_state = 3;
+                }
+            }
+            // 水滴/缩回态绘制玻璃轮廓；胶囊态交给下面的搜索框（叠在玻璃胶囊上）。
+            if self.liquid_search_state == 1 || self.liquid_search_state == 3 {
+                self.paint_liquid_drop(c);
+            }
+            if self.liquid_search_state == 2 {
+                // 胶囊玻璃底：弹簧几何已收敛到搜索框位置，画一层液态玻璃胶囊。
+                let bx = self.ls_cx.pos; let by = self.ls_cy.pos;
+                let bw = self.ls_bx.pos * 2.0; let bh = self.ls_by.pos * 2.0;
+                if bw > 4.0 && bh > 4.0 {
+                    paint::glass_chip(c, bx - bw / 2.0, by - bh / 2.0, bw, bh, bh / 2.0, 0.55);
+                }
+            }
+        }
+
+        let icon = icon.on_hover_text(if self.clip_search_open { "收起搜索" } else { "拖动拉出 / 点击搜索" });
+        if icon.clicked() && self.liquid_search_state != 2 {
             self.clip_search_open = !self.clip_search_open;
             self.clip_query.clear();
             self.clip_search_focus = false;
+            if !self.clip_search_open && self.liquid_search_state == 2 { self.liquid_search_state = 3; }
         }
         if !self.clip_search_open { return; }
         // 输入框浮在列表卡片的上沿，比卡片亮一档 + 一圈描边，聚焦时描边变蓝。
@@ -998,11 +1079,12 @@ impl App {
         }
         self.clip_typing=resp.has_focus();
         if resp.has_focus() { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
-        // Esc 退出搜索：清空关键词并收起输入框。
+        // Esc 退出搜索：清空关键词并收起输入框。液态胶囊态一并缩回。
         if resp.has_focus() && c.ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
             self.clip_query.clear();
             self.clip_search_open = false;
             resp.surrender_focus();
+            if self.liquid_search_state == 2 { self.liquid_search_state = 3; }
         }
         let x = c.hit(352.0, 34.0, 18.0, 16.0, "clip-search-close").on_hover_text(if self.clip_query.is_empty() { "关闭搜索" } else { "清空并关闭" });
         paint::close(c, 361.0, 42.0, 2.6, if x.hovered() { theme::BLUE } else { Color32::from_gray(190) });
@@ -1010,6 +1092,7 @@ impl App {
             self.clip_query.clear();
             self.clip_search_open = false;
             resp.surrender_focus();
+            if self.liquid_search_state == 2 { self.liquid_search_state = 3; }
         }
     }
 

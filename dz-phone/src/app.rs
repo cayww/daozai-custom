@@ -1008,6 +1008,21 @@ pub struct App {
     /// 键盘选中的行（过滤后列表的下标）。
     pub(crate) clip_sel: usize,
 
+    // ---- 液态玻璃「水滴搜索框」交互状态（资料包 MetaballSearchRunner 移植）----
+    // 状态：0=IDLE 1=DRAG 2=CAPSULE 3=RETRACT。
+    pub(crate) liquid_search_state: u8,
+    /// 拖拽指针在面板局部坐标的位置（cx/cy 弹簧的目标）。
+    pub(crate) liquid_search_ptr: Pos2,
+    /// 松手瞬间的指针 y（用于过冲手感判定，记录速度用）。
+    pub(crate) liquid_search_last_ptr: Pos2,
+    // 七个几何/材质弹簧：cx,cy=水滴中心；bx,by=半宽半高（圆角=min）；k=融合；cont=压暗。
+    pub(crate) ls_cx: Spring,
+    pub(crate) ls_cy: Spring,
+    pub(crate) ls_bx: Spring,
+    pub(crate) ls_by: Spring,
+    pub(crate) ls_k: Spring,
+    pub(crate) ls_cont: Spring,
+
     // 饮水
     pub(crate) water_ring: Spring,
     pub(crate) water_ml: f32,
@@ -1358,6 +1373,16 @@ impl App {
             clip_search_open: false,
             clip_typing: false,
             clip_sel: 0,
+            liquid_search_state: 0,
+            liquid_search_ptr: Pos2::ZERO,
+            liquid_search_last_ptr: Pos2::ZERO,
+            // ω=11 → k=121，ζ=0.72（资料包 DEFAULT_PARAMS）。初值收起态：半宽半高=1。
+            ls_cx: Spring::new(0.0, 121.0, 0.72),
+            ls_cy: Spring::new(0.0, 121.0, 0.72),
+            ls_bx: Spring::new(1.0, 121.0, 0.72),
+            ls_by: Spring::new(1.0, 121.0, 0.72),
+            ls_k: Spring::new(64.0, 121.0, 0.72),
+            ls_cont: Spring::new(0.0, 121.0, 0.72),
             water_ring: Spring::new(0.0, 120.0, 0.9),
             water_ml: 0.0,
             water_view: 0,
@@ -2802,6 +2827,7 @@ impl App {
         let reveal = if self.open { smoothstep(0.50, 0.97, p) } else { smoothstep(0.55, 0.92, p) };
         self.reveal = reveal;
         self.update_ctl_springs(origin, env);
+        self.update_liquid_search();
         self.paint_body(&painter, body, flare, flare_h, radius, feather, origin);
         if lifted > 0.01 {self.paint_lift_halo(&painter, body, flare, flare_h, radius, lifted.min(1.0));}
         let content_from=crate::skin_paint::shape_count(&ctx,layer);
@@ -3641,6 +3667,57 @@ impl App {
         }
     }
 
+    /// 液态玻璃水滴搜索框：每帧推进七个弹簧 + 状态机。
+    /// 资料包 MetaballSearchRunner 移植：ω=11(k=121) ζ=0.72，半隐式欧拉，
+    /// 松手保留速度 → 带过冲冲向胶囊/缩回目标。指针目标由 pages.rs 的拖拽写入
+    /// `liquid_search_ptr`，这里只做「按状态设目标 + 积分 + 缩回完成判定」。
+    fn update_liquid_search(&mut self) {
+        let dt = self.dt.clamp(0.0, 1.0 / 30.0);
+        match self.liquid_search_state {
+            1 => {
+                // DRAG：中心跟手（cy 有下限 13，防止拉出面板顶），半宽半高按速度拉伸（+22 上限）。
+                let vx = (self.liquid_search_ptr.x - self.liquid_search_last_ptr.x).abs();
+                let vy = (self.liquid_search_ptr.y - self.liquid_search_last_ptr.y).abs();
+                self.ls_cx.target = self.liquid_search_ptr.x;
+                self.ls_cy.target = self.liquid_search_ptr.y.max(13.0);
+                let stretch_x = 2.0 + vx.min(26.0);
+                let stretch_y = 2.0 + vy.min(26.0);
+                self.ls_bx.target = 6.0 + stretch_x;
+                self.ls_by.target = 6.0 + stretch_y;
+                self.ls_k.target = 64.0;
+                self.ls_cont.target = 0.0;
+                self.liquid_search_last_ptr = self.liquid_search_ptr;
+            }
+            2 => {
+                // CAPSULE：目标 = 胶囊几何（面板内搜索框 327×20，中心 x=209.5,y=42）。
+                self.ls_cx.target = 209.5;
+                self.ls_cy.target = 42.0;
+                self.ls_bx.target = 163.5;
+                self.ls_by.target = 10.0;
+                self.ls_k.target = 10.0;
+                self.ls_cont.target = 0.5;
+            }
+            3 => {
+                // RETRACT：缩回顶部一个小点。
+                self.ls_cx.target = self.liquid_search_ptr.x;
+                self.ls_cy.target = 7.8;
+                self.ls_bx.target = 1.0;
+                self.ls_by.target = 1.0;
+                self.ls_k.target = 64.0;
+                self.ls_cont.target = 0.0;
+                // 半高弹簧降到 2.5 以下 → 回 IDLE（资料包 retract 判定）。
+                if self.ls_by.pos < 2.5 {
+                    self.liquid_search_state = 0;
+                }
+            }
+            _ => {}
+        }
+        for s in [&mut self.ls_cx, &mut self.ls_cy, &mut self.ls_bx, &mut self.ls_by,
+                  &mut self.ls_k, &mut self.ls_cont] {
+            s.step(dt);
+        }
+    }
+
     /// 指针是不是正按在这块矩形上。用真实指针位置算，而不是 egui 的 response ——
     /// GPU pass 在页面绘制**之前**跑，那时候 response 还不存在。
     fn pointer_down_on(&self,rect:Rect,env:&Env)->bool{
@@ -3719,7 +3796,7 @@ impl App {
 
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
-    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,origin:Pos2){
+    fn paint_gpu_glass(&self,_painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,origin:Pos2){
         // Liquid glass optics are drawn by the HLSL layer in the D3D11 render loop,
         // BEFORE egui (see d3d11::runtime). Publish the real island geometry so the
         // shader refracts exactly this rect; keep this body nearly transparent so the
@@ -3734,12 +3811,10 @@ impl App {
         // glass_controls 已含展开入场弹簧 ctl_scale —— 白边会随展开连续变细，
         // 而不是像旧迁移版那样透镜整层缺失、只剩 egui 边框突然消失。
         crate::gpu_glass::set_controls(&self.glass_controls(origin));
-        let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
-        // 只画一层几乎透明的兜底底色，让 HLSL 折射透出来。
-        // 迁移前这里**没有** rect_stroke 白边——shader 自己画刘海/胶囊的轮廓白边（rim）。
-        // 迁移时多加的圆角矩形白边与 shader 的刘海肩部形状不一致，实机表现为
-        // 「又有胶囊又有刘海、两个轮廓有位置差」。白边交给 shader，这里绝不重复画。
-        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,20));
+        // 液态玻璃的本体完全由 HLSL pass 绘制（折射 + 色散 + 白边 rim + 投影）。
+        // 迁移时这里曾多画一笔 alpha=20 的 rect_filled 圆角矩形兜底底色：
+        // 它和 shader 的 notch_sdf 刘海是两种形状，叠在一起会在刘海外露出一圈
+        // 「浅胶囊」轮廓。shader 已画完整玻璃，这笔纯属残留，已去除。
     }
 
     /// 悬浮云主体：轮廓交给 `RectShape` 的精确圆角，流动颜色做成一张固定尺寸的小纹理。
