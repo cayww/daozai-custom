@@ -313,34 +313,48 @@ impl<'a> Card<'a> {
     }
 
     /// 按宽度折行，最多 `max_lines` 行，还有剩余内容时最后一行加省略号。
+    ///
+    /// 每一行用**二分查找**定位折行点（每行 O(log n) 次排版），而不是逐字符
+    /// 把整行反复重排（旧实现每加一个字符就测一次整行宽度，长错误信息是 O(n²)）。
+    /// 贪心语义不变：行内尽量放满、单字符超宽时也至少保留一个字符，
+    /// `\n` 强制换行且保留空行，被 `max_lines` 截断时最后一行走 `fit`。
     pub fn wrap(&self, t: &str, size: f32, w: W, max_w: f32, max_lines: usize) -> Vec<String> {
+        if max_lines == 0 {
+            return Vec::new();
+        }
+        let chars: Vec<char> = t.chars().collect();
+        let total = chars.len();
         let mut out: Vec<String> = Vec::new();
-        let mut cur = String::new();
-        let mut used = 0usize;
-        let mut total = 0usize;
-        for ch in t.chars() {
-            total += 1;
-            if ch == '\n' {
-                used = total;
-                out.push(std::mem::take(&mut cur));
-            } else {
-                cur.push(ch);
-                if self.text_w(&cur, size, w) > max_w && cur.chars().count() > 1 {
-                    cur.pop();
-                    used = total - 1;
-                    out.push(std::mem::take(&mut cur));
-                    cur.push(ch);
+        let mut start = 0usize;
+        while start < total && out.len() < max_lines {
+            if chars[start] == '\n' {
+                out.push(String::new());
+                start += 1;
+                continue;
+            }
+            // 本行最远到下一个换行为止（换行符本身不占行宽）。
+            let limit = chars[start..]
+                .iter()
+                .position(|&c| c == '\n')
+                .map_or(total, |i| start + i);
+            // 二分最大的「宽度仍 ≤ max_w」前缀；至少保留 1 个字符。
+            let (mut lo, mut hi) = (start + 2, limit);
+            let mut n = start + 1;
+            while lo <= hi {
+                let mid = lo + (hi - lo) / 2;
+                let line: String = chars[start..mid].iter().collect();
+                if self.text_w(&line, size, w) <= max_w {
+                    n = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
                 }
             }
-            if out.len() == max_lines {
-                break;
-            }
+            out.push(chars[start..n].iter().collect());
+            start = if n == limit && limit < total { limit + 1 } else { n };
         }
-        if out.len() < max_lines && !cur.is_empty() {
-            used = total;
-            out.push(cur);
-        }
-        if out.len() == max_lines && used < t.chars().count() {
+        // 行数用尽仍有剩余内容（含刚被挤出的换行）：最后一行加省略号。
+        if out.len() == max_lines && start < total {
             if let Some(last) = out.last_mut() {
                 *last = self.fit(last, size, w, max_w);
             }
@@ -601,6 +615,77 @@ mod gradient_tests {
         // 按压缩放（14%）必须完整保留，不被死区吞掉。
         assert!((damped_text_scale(1.14) - 1.14).abs() < 1e-3);
         assert!(damped_text_scale(0.82) < 0.9);
+    }
+
+    #[test]
+    fn wrap_matches_char_by_char_reference() {
+        // 旧的逐字符算法：只作为新二分折行的行为基准。
+        fn reference(c: &Card, t: &str, size: f32, w: W, max_w: f32, max_lines: usize) -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            let mut cur = String::new();
+            let mut used = 0usize;
+            let mut total = 0usize;
+            for ch in t.chars() {
+                total += 1;
+                if ch == '\n' {
+                    used = total;
+                    out.push(std::mem::take(&mut cur));
+                } else {
+                    cur.push(ch);
+                    if c.text_w(&cur, size, w) > max_w && cur.chars().count() > 1 {
+                        cur.pop();
+                        used = total - 1;
+                        out.push(std::mem::take(&mut cur));
+                        cur.push(ch);
+                    }
+                }
+                if out.len() == max_lines {
+                    break;
+                }
+            }
+            if out.len() < max_lines && !cur.is_empty() {
+                used = total;
+                out.push(cur);
+            }
+            if out.len() == max_lines && used < t.chars().count() {
+                if let Some(last) = out.last_mut() {
+                    *last = c.fit(last, size, w, max_w);
+                }
+            }
+            out
+        }
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(500.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+                let texts = [
+                    "收到新的邮件与验证码",
+                    "https://example.com/very-long/path?query=1&x=2",
+                    "a\n\nb\nc",
+                    "\nabc",
+                    "换行测试：第一行\n第二行很长很长很长很长的内容",
+                    "🎵🌊 表情与中文混排测试",
+                    "",
+                    "x",
+                    "长链接 https://example.com/a/b/c/d/e/f/g 混排中文与英文和数字 1234567890",
+                ];
+                for t in texts {
+                    for max_w in [1.0f32, 20.0, 40.0, 80.0, 160.0, 400.0] {
+                        for max_lines in [1usize, 2, 3, 5] {
+                            assert_eq!(
+                                c.wrap(t, 10.5, W::Regular, max_w, max_lines),
+                                reference(&c, t, 10.5, W::Regular, max_w, max_lines),
+                                "文本 {t:?} 宽 {max_w} 行 {max_lines} 的折行结果应与逐字算法一致"
+                            );
+                        }
+                    }
+                }
+            });
+        });
     }
 }
 

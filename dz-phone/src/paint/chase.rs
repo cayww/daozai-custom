@@ -1,11 +1,35 @@
-﻿//! 进度条追光 mesh（`paint` 子模块）。
+//! 进度条追光 mesh（`paint` 子模块）。
 
 use super::{mix, Card};
-use eframe::egui::{self, Color32};
+use eframe::egui::{self, Color32, Pos2};
 const CHASE_ROWS: [f32; 23] = [
     -16.0, -11.0, -8.2, -6.2, -4.6, -3.4, -2.4, -1.5, -1.0, -0.65, -0.32, 0.0, 0.32, 0.65, 1.0, 1.5, 2.4, 3.4, 4.6, 6.2,
     8.2, 11.0, 16.0,
 ];
+
+/// 追光 mesh 的缓存键：只有这些参数变化才需要重新计算整片彩色顶点。
+#[derive(Clone, PartialEq)]
+struct ChaseKey {
+    x0: f32,
+    head: f32,
+    y: f32,
+    thick: f32,
+    tint: Color32,
+    hot: f32,
+    s: f32,
+    origin: Pos2,
+    ppp: f32,
+}
+
+#[derive(Clone)]
+struct ChaseCache {
+    key: ChaseKey,
+    mesh: egui::Mesh,
+}
+
+/// 播放头位置的量化步长：播放时每帧只前进零点几 DIP，量化到 0.25 DIP 后
+/// 十几帧才变一次，整片 mesh 可以复用；0.25 DIP 的位移在亚像素抗锯齿下不可见。
+const HEAD_QUANTUM: f32 = 0.25;
 
 /// 进度条追光：**一片**解析式彗尾，不是「光带 + 亮珠 + 几层光晕」的叠罗汉。
 ///
@@ -22,11 +46,35 @@ const CHASE_ROWS: [f32; 23] = [
 /// 头前只有约 3 DIP 的收边（两头一阶导都为 0，接得上，不会顿一下）。
 ///
 /// `hot`：暂停 0.45 / 播放 0.62 / 按住拖动 1.0，只影响亮度与尾巴长度。
+///
+/// 播放头每帧只挪零点几 DIP，所以结果按 `ChaseKey` 缓存：头部量化到
+/// [`HEAD_QUANTUM`]、`hot` 量化到 1/256，参数没跨格就整片复用 mesh。
 pub fn chase(c: &Card, x0: f32, head: f32, y: f32, thick: f32, tint: Color32, hot: f32) {
     let th = thick.max(1.0);
-    let hot = hot.clamp(0.0, 1.0);
+    let hot = (hot.clamp(0.0, 1.0) * 256.0).round() / 256.0;
+    let head = (head / HEAD_QUANTUM).round() * HEAD_QUANTUM;
     let span = head - x0;
     if span < 0.5 {
+        return;
+    }
+    let key = ChaseKey {
+        x0,
+        head,
+        y,
+        thick: th,
+        tint,
+        hot,
+        s: c.s,
+        origin: c.origin,
+        ppp: c.ui.ctx().pixels_per_point(),
+    };
+    let cache_id = egui::Id::new(("paint::chase", c.ui.id()));
+    let cached = c.ui.ctx().data_mut(|d| {
+        d.get_temp::<ChaseCache>(cache_id)
+            .and_then(|c| if c.key == key { Some(c.mesh) } else { None })
+    });
+    if let Some(mesh) = cached {
+        c.painter.add(egui::Shape::mesh(mesh));
         return;
     }
     // 拖尾特征长度：播放约 46 DIP，拖动时拉长到 56 DIP（越用力尾巴越长）。
@@ -141,6 +189,40 @@ pub fn chase(c: &Card, x0: f32, head: f32, y: f32, thick: f32, tint: Color32, ho
             mesh.add_triangle(a, e, d);
         }
     }
+    c.ui.ctx().data_mut(|d| d.insert_temp(cache_id, ChaseCache { key, mesh: mesh.clone() }));
     c.painter.add(egui::Shape::mesh(mesh));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::{Color32, Pos2, Rect, Vec2};
+
+    fn draw(ctx: &egui::Context, head: f32) -> Vec<egui::epaint::Vertex> {
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(240.0, 40.0))),
+            ..Default::default()
+        };
+        let out = ctx.run_ui(raw, |ui| {
+            let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+            chase(&c, 10.0, head, 20.0, 4.0, Color32::from_rgb(200, 120, 60), 0.62);
+        });
+        out.shapes
+            .into_iter()
+            .find_map(|s| if let egui::Shape::Mesh(m) = s.shape { Some(m.vertices.clone()) } else { None })
+            .expect("追光应生成 mesh")
+    }
+
+    #[test]
+    fn chase_mesh_cache_reuses_subpixel_steps() {
+        let ctx = egui::Context::default();
+        let a = draw(&ctx, 100.0);
+        let b = draw(&ctx, 100.1); // 与 100.0 同一量化格
+        assert_eq!(a, b, "0.1 DIP 内应命中缓存，mesh 不变");
+        let c = draw(&ctx, 100.6); // 跨过量化格 → 重建
+        assert_ne!(a, c, "跨格后 mesh 应随之更新");
+        let fresh = draw(&egui::Context::default(), 100.6);
+        assert_eq!(c, fresh, "缓存命中的 mesh 必须与冷重建完全一致");
+    }
 }
 
