@@ -238,18 +238,22 @@ float4 metaball_glass(float2 p, float mat, float2 Ld, float3 edge_bg) {
     float strength = max(misc.z, 0.0) * 0.90;
     float chroma = max(params.x, 0.0) * 0.85;
     float2 bp = p - g * kk * strength;
-    float3 col = tap5(bp, -g * kk * chroma, look.x * 0.8 + kk * 1.2);
-    float lum_c = dot(col, float3(0.299,0.587,0.114));
-    col *= (1.0 + lerp(0.045,-0.035,smoothstep(0.42,0.88,lum_c)));
-    float bg_l = dot(edge_bg, float3(0.299,0.587,0.114));
-    col = lerp(col, float3(0.30,0.30,0.30), smoothstep(0.48,0.96,bg_l)*0.16*mat);
-    // 材质压暗加深：融球是一颗"实体玻璃珠"，比底下的岛体玻璃更实。
-    float matdark = (1.0-mat)*0.70 + 0.12;
-    col = lerp(col, col*0.52 + float3(0.010,0.014,0.020), float3(matdark,matdark,matdark));
-    // 内侧暗边(bevel)：沿边缘内 2~5px 压一道暗环，制造厚度与体积感，
-    // 这是让融球"浮"在岛体玻璃之上、肉眼可辨的关键。
+    float3 bg = tap5(bp, -g * kk * chroma, look.x * 0.8 + kk * 1.2);
+    // 固定深色玻璃珠：不随壁纸亮度变浅。用户壁纸接近纯白，折射白=白、压暗被浅材质
+    // 抵消，导致玻璃质感几乎看不见。这里强制深蓝黑半透明底 + 保留少量折射背景，
+    // 在白壁纸上形成强对比，白边/高光/暗芯清晰可见。
+    float3 deep = float3(0.045, 0.055, 0.085);   // 深蓝黑
+    float3 col = lerp(bg * 0.35, deep, 0.72);
+    // 体积明暗：上缘偏亮(受光)、下缘偏暗，制造玻璃珠的立体感。
+    float2 dl_norm = dl / max(dropB, float2(1.0,1.0));   // -1..1
+    float shade = 0.5 - 0.5 * dl_norm.y;                 // 上亮下暗 (D3D11 +y 向上)
+    col *= lerp(0.75, 1.35, shade);
+    // 内侧暗边(bevel)：沿边缘内 2~5px 压一道暗环，强化厚度与体积感。
     float bevel = exp(-pow((d + 3.0)/2.5, 2.0));
-    col *= (1.0 - bevel * 0.30);
+    col *= (1.0 - bevel * 0.22);
+    // 内部高光：一道斜向的柔和高光带，玻璃珠的"反光点"。
+    float hl = exp(-pow((dl_norm.x + dl_norm.y * 0.6 + 0.25) / 0.55, 2.0)) * saturate(-d / 8.0);
+    col += float3(0.55, 0.62, 0.72) * hl * 0.42;
     // 白边加强：比岛体 rim 更亮更宽一点。
     float sigma_c = max(look.z, 0.5) * 0.52;
     float rim = exp(-pow((d + sigma_c*0.6)/sigma_c, 2.0));
