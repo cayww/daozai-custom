@@ -274,7 +274,8 @@ impl App {
         let (add,b)=if self.glassy() && self.ctl_on_gpu(Ctl::CalAdd) {
             let add=c.hit(101.0,9.0,46.0,18.0,"calendar-add-local");
             let (hover,_)=c.hover_t(&add);
-            let b=c.scaled(124.0,18.0,self.ctl_scale(Ctl::CalAdd));
+            // 玻璃吃满按压果冻，文字只跟入场：按压时 k_text 恒为 1，字形不重采样。
+            let b=c.scaled_text(124.0,18.0,self.ctl_scale(Ctl::CalAdd),self.ctl_text_scale(Ctl::CalAdd));
             if hover>0.01 {
                 let from=paint::chrome_mark(c);
                 b.fill(101.0,9.0,46.0,18.0,9.0,Color32::from_white_alpha((12.0+hover*16.0) as u8));

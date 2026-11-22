@@ -119,6 +119,9 @@ pub struct Card<'a> {
     /// `scaled()` 写入：(不动点局部坐标, 缩放前基准 s)。后写的缩放覆盖先写的，
     /// 即死区只补偿**最内层**那次弹簧（外层翻页缩放仍跟随）。`paint_galley` 用。
     text_anchor: Option<(Pos2, f32)>,
+    /// `scaled_text()` 写入：文字**显式**缩放比。按压果冻这类会来回振的弹簧只放大
+    /// 玻璃、不写进字形时用它；`None` 表示文字跟随卡片 `s`（`Auto` 再叠加死区）。
+    text_k: Option<f32>,
 }
 
 impl<'a> Card<'a> {
@@ -134,6 +137,7 @@ impl<'a> Card<'a> {
             ppp,
             text_scale: TextScale::Auto,
             text_anchor: None,
+            text_k: None,
         }
     }
 
@@ -199,6 +203,22 @@ impl<'a> Card<'a> {
         c.origin = center + (self.origin - center) * k;
         c.s = self.s * k;
         c.text_anchor = Some((Pos2::new(cx, cy), self.s));
+        c.text_k = None;
+        c
+    }
+    /// 卡片按 `k_shape` 缩放，但文字只按 `k_text` 缩放。
+    ///
+    /// 按压果冻（14%、ζ≈0.5）会让文字 mesh 每帧被不同的 `k` 重采样一遍，
+    /// 位图字形在连续缩放下的边缘覆盖率一直在变，肉眼就是「上下抖」。
+    /// 所以让玻璃吃满弹簧、文字只跟入场这类单次、无回振的动画：
+    /// `k_text` 通常直接传入场缩放，按压时恒为 1，字形 mesh 逐帧完全一致。
+    pub fn scaled_text(&self, cx: f32, cy: f32, k_shape: f32, k_text: f32) -> Self {
+        let mut c = self.clone();
+        let center = self.pos(cx, cy);
+        c.origin = center + (self.origin - center) * k_shape;
+        c.s = self.s * k_shape;
+        c.text_anchor = Some((Pos2::new(cx, cy), self.s));
+        c.text_k = Some(k_text);
         c
     }
     /// 显式指定文字缩放策略（默认 `Auto`，见 [`TextScale`]）。
@@ -264,9 +284,10 @@ impl<'a> Card<'a> {
         {
             let base_s = base_s.max(1e-6);
             let k = s / base_s;
-            let k_text = match mode {
-                TextScale::Frozen => 1.0,
-                TextScale::Damped => damped_text_scale(k),
+            let k_text = match (mode, self.text_k) {
+                (TextScale::Frozen, _) => 1.0,
+                (_, Some(explicit)) => explicit,
+                (TextScale::Damped, None) => damped_text_scale(k),
                 _ => k,
             };
             if (k_text - k).abs() > 1e-6 {
@@ -717,6 +738,45 @@ mod gradient_tests {
                 // 而不是「同格完全相等、跨格整档跳」。
                 assert_ne!(at(1.2), at(1.2 + 0.002), "ppp={ppp} 死区外应连续跟随缩放");
                 assert_ne!(at(1.2), at(1.24), "ppp={ppp} 更大缩放应有更大差异");
+            });
+        }
+    }
+
+    /// `scaled_text()`：玻璃吃满弹簧、文字只跟 `k_text` —— 按压缩放变化时字形必须逐位不变。
+    #[test]
+    fn scaled_text_ignores_press_spring_when_text_k_fixed() {
+        fn coords(shape: &Shape) -> Vec<[i64; 2]> {
+            let Shape::Text(t) = shape else {
+                panic!("期望文字图元")
+            };
+            let q = |v: f32| (v as f64 * 4096.0).round() as i64;
+            let mut out = Vec::new();
+            for row in &t.galley.rows {
+                out.push([q(row.pos.x), q(row.pos.y)]);
+                for v in &row.visuals.mesh.vertices {
+                    out.push([q(v.pos.x), q(v.pos.y)]);
+                }
+            }
+            out
+        }
+        for ppp in [1.0f32, 1.5] {
+            let ctx = egui::Context::default();
+            ctx.set_zoom_factor(ppp);
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(200.0))),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(raw, |ui| {
+                let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+                let g = c.galley("＋ 新增", 9.0, W::Regular, Color32::WHITE);
+                // 按压弹簧从 1.0 涨到 1.14、再回 0.9：文字 k 固定 1.0，字形必须一格不动。
+                let at = |k_shape: f32, k_text: f32| {
+                    let cc = c.scaled_text(124.0, 18.0, k_shape, k_text);
+                    coords(&cc.galley_shape(Pos2::new(4.0, 14.0), g.clone(), Color32::WHITE))
+                };
+                assert_eq!(at(1.0, 1.0), at(1.14, 1.0), "ppp={ppp} 按压放大不应写进字形");
+                assert_eq!(at(1.14, 1.0), at(0.9, 1.0), "ppp={ppp} 回弹缩小同样不写字形");
+                assert_ne!(at(1.0, 1.0), at(1.0, 1.08), "ppp={ppp} 显式 k_text 仍要放大文字");
             });
         }
     }
