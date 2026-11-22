@@ -1131,12 +1131,11 @@ impl App {
             return;
         }
 
-        // 搜索框 GPU 玻璃透镜到位后（盖在卡片顶边上）才抑制卡片白边，避免双层不同步；
-        // 飞行途中透镜还在移动，保留卡片原有白边，不然会闪。
-        let drop_landed = glassy && self.liquid_search_state == 2 && self.ls_bx.pos >= 150.0;
-        if glassy && !drop_landed {
+        // 卡片白边始终保留。融球材质已与其他控件统一，展开后叠在卡片顶边也不会
+        // 出现"双层不同步"——之前抑制卡片白边反而让剪贴板整块丢了轮廓。
+        if glassy {
             paint::glass_chip(c, 42.0, 31.0, 335.0, 93.0, 12.0, 0.05);
-        } else if !glassy {
+        } else {
             c.fill(42.0, 31.0, 335.0, 93.0, 12.0, theme::CARD);
         }
         // 超过一屏时右侧细滚动条，滚轮查看。
