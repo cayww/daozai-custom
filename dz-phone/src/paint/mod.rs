@@ -17,13 +17,6 @@ use std::sync::Arc;
 /// 不继承尾振。按下时 14% 的放大仍然保留（超过死区）。见 `Card::paint_galley`。
 const TEXT_SCALE_DEADZONE: f32 = 0.06;
 
-/// 死区之外文字缩放比的量化步长（1/64）。
-///
-/// 文字是位图字形 + 线性过滤：缩放比每帧连续变化，重采样相位就每帧变化，
-/// 视觉上像「呼吸」。量化到 1/64 后同一档内字形完全静止，只在跨档时变一次；
-/// 在 13px 字号上每档约 0.1px，肉眼不可见。只作用于 [`TextScale::Damped`]。
-const TEXT_SCALE_QUANTUM: f32 = 1.0 / 64.0;
-
 /// 文字缩放策略。由 [`Card::scaled`] 自动选择 `Auto`，需要时可用
 /// [`Card::text_scale`] 显式指定。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -34,7 +27,7 @@ pub enum TextScale {
     /// 完全跟随卡片 `s`（包括弹簧尾振）。截图/整体 zoom 时用。
     Follow,
     /// 隔离弹簧尾振：以最近一次 `scaled()` 之前的字号为基准，
-    /// 尾振落在死区内时把文字锁回基准字号；死区外按 1/64 量化。
+    /// 尾振落在死区内时把文字锁回基准字号；死区外连续跟随卡片缩放。
     Damped,
     /// 冻结在基准字号：入场动画里只让容器动，文字不参与缩放。
     Frozen,
@@ -79,20 +72,22 @@ fn inset_text_uv(shape: &mut Shape, atlas_size: [usize; 2]) {
 ///
 /// - `|k-1| < 死区`：返回 1（冻结，隔离弹簧尾振）；
 /// - `[死区, 2×死区]`：smoothstep 过渡，避免在死区边界把字号硬跳 6%；
-/// - 更远：跟随 `k`（按压缩放 14% 完整保留），再量化到 1/64，
-///   避免逐帧改变字形重采样相位。
+/// - 更远：连续跟随 `k`（按压缩放 14% 完整保留）。
+///
+/// 早期版本在死区外把缩放比量化到 1/64，想让同一档内字形完全静止；但按压松开时
+/// 弹簧会在 1.16 → 0.84 之间来回摆，量化让它一档一档跳（60fps 下几乎每帧跨档），
+/// 文字看起来上下抽动。量化换来的「静止」只在死区附近有意义，死区本身已经覆盖；
+/// 死区外连续跟随是正常缩放，不会再被当成抖动。
 fn damped_text_scale(k: f32) -> f32 {
     let d = k - 1.0;
     let ad = d.abs();
     let dead = TEXT_SCALE_DEADZONE;
-    let blended = if ad <= dead {
-        1.0
-    } else {
-        let t = ((ad - dead) / dead).min(1.0);
-        let t = t * t * (3.0 - 2.0 * t);
-        1.0 + d * t
-    };
-    (blended / TEXT_SCALE_QUANTUM).round() * TEXT_SCALE_QUANTUM
+    if ad <= dead {
+        return 1.0;
+    }
+    let t = ((ad - dead) / dead).min(1.0);
+    let t = t * t * (3.0 - 2.0 * t);
+    1.0 + d * t
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -234,8 +229,8 @@ impl<'a> Card<'a> {
     ///
     /// 缩放策略见 [`TextScale`]：默认 `Auto` 在 `scaled()` 之后等价于 `Damped` ——
     /// 弹簧尾振（|k-1| < 死区）时文字锁回基准缩放、但保持不动点的屏幕位置不变，
-    /// 于是玻璃/卡片仍随阻尼比弹，文字不再跟着胀缩。死区外把缩放比量化到 1/64，
-    /// 避免逐帧改变字形重采样相位。
+    /// 于是玻璃/卡片仍随阻尼比弹，文字不再跟着胀缩。死区外连续跟随卡片缩放
+    /// （不做量化——量化会让松手回弹变成一格一格跳，看起来像文字上下抽动）。
     pub fn paint_galley(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) {
         let shape = self.galley_shape(p, g, color);
         self.painter.add(shape);
@@ -651,15 +646,23 @@ mod gradient_tests {
         // 死区边界连续：不能从 1.0 硬跳到 1.06。
         let lo = damped_text_scale(1.0 + TEXT_SCALE_DEADZONE - 1e-4);
         let hi = damped_text_scale(1.0 + TEXT_SCALE_DEADZONE + 1e-4);
-        assert!((lo - hi).abs() <= TEXT_SCALE_QUANTUM + 1e-4, "死区边界跳变：{lo} → {hi}");
+        assert!((lo - hi).abs() <= 1e-3, "死区边界跳变：{lo} → {hi}");
         // 按压缩放（14%）必须完整保留，不被死区吞掉。
         assert!((damped_text_scale(1.14) - 1.14).abs() < 1e-3);
         assert!(damped_text_scale(0.82) < 0.9);
+        // 死区外必须连续单调：松手回弹时一档一档跳会被看成文字上下抽动。
+        let steps: Vec<f32> = (0..60)
+            .map(|i| 1.06 + 0.14 * i as f32 / 59.0)
+            .map(damped_text_scale)
+            .collect();
+        for pair in steps.windows(2) {
+            assert!((pair[1] - pair[0]).abs() <= 0.01, "缩放比应连续：{pair:?}");
+        }
     }
 
-    /// 同一量化格内，字形 mesh 必须逐位不变——相邻帧顶点不同=每帧重采样=抖动。
+    /// 死区内，字形 mesh 必须逐位不变——相邻帧顶点不同=每帧重采样=抖动。
     #[test]
-    fn scaled_text_mesh_holds_still_inside_one_quantum_cell() {
+    fn scaled_text_mesh_holds_still_inside_deadzone() {
         fn mesh_coords(shape: &Shape) -> Vec<[i64; 2]> {
             // 行内顶点坐标（已含缩放）转定点，避开浮点相等噪声。
             let Shape::Text(t) = shape else {
@@ -698,16 +701,10 @@ mod gradient_tests {
                     at(1.0 + TEXT_SCALE_DEADZONE * 0.5),
                     "ppp={ppp} 死区内字形不应变化"
                 );
-                assert_eq!(
-                    at(1.2),
-                    at(1.2 + TEXT_SCALE_QUANTUM * 0.25),
-                    "ppp={ppp} 同一量化格内字形不应变化"
-                );
-                assert_ne!(
-                    at(1.2),
-                    at(1.2 + TEXT_SCALE_QUANTUM * 2.0),
-                    "ppp={ppp} 跨格必须变化（否则缩放被吞掉）"
-                );
+                // 死区外连续跟随：更小的弹簧相位差对应更小的顶点位移，
+                // 而不是「同格完全相等、跨格整档跳」。
+                assert_ne!(at(1.2), at(1.2 + 0.002), "ppp={ppp} 死区外应连续跟随缩放");
+                assert_ne!(at(1.2), at(1.24), "ppp={ppp} 更大缩放应有更大差异");
             });
         }
     }
