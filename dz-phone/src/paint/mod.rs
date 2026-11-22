@@ -367,26 +367,53 @@ impl<'a> Card<'a> {
         self.painter.rect_filled(self.rect(x, y, w, h), r * self.s, color);
     }
     pub fn stroke(&self, x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, color: Color32) {
+        let rc = self.stroke_rect(x, y, w, h, width);
+        self.painter.rect_stroke(rc, r * self.s, Stroke::new(width * self.s, color), egui::StrokeKind::Middle);
+    }
+    /// 描边路径矩形：1~2 物理像素的细线落到像素中心（线才正好盖满一整行/列像素），
+    /// 更粗的线保持边界对齐，避免整条边凭空偏半像素。
+    fn stroke_rect(&self, x: f32, y: f32, w: f32, h: f32, width: f32) -> Rect {
         let wd = width * self.s;
-        let mut rc = self.rect(x, y, w, h);
-        // 1~2 物理像素的细线：路径落到像素中心，线才正好盖满一整行/列像素。
-        // 更粗的线保持边界对齐，避免整条边凭空偏半像素。
+        let rc = self.rect(x, y, w, h);
         if wd * self.ppp <= 2.0 {
-            rc = Rect::from_min_max(
+            Rect::from_min_max(
                 Pos2::new(self.snap_center(rc.min.x), self.snap_center(rc.min.y)),
                 Pos2::new(self.snap_center(rc.max.x), self.snap_center(rc.max.y)),
-            );
+            )
+        } else {
+            rc
         }
-        self.painter.rect_stroke(rc, r * self.s, Stroke::new(wd, color), egui::StrokeKind::Middle);
     }
     pub fn circle(&self, x: f32, y: f32, r: f32, color: Color32) {
-        self.painter.circle_filled(self.pos(x, y), r * self.s, color);
+        self.painter.circle_filled(self.snapped_pos(x, y), r * self.s, color);
     }
     pub fn ring(&self, x: f32, y: f32, r: f32, width: f32, color: Color32) {
-        self.painter.circle_stroke(self.pos(x, y), r * self.s, Stroke::new(width * self.s, color));
+        // 圆心对齐到像素中心：静态圆点/圆环在不同缩放下的覆盖比例才稳定。
+        // 半径保持连续，动画中的进度圆环不会被量化成 1px 台阶。
+        self.painter.circle_stroke(self.snapped_pos(x, y), r * self.s, Stroke::new(width * self.s, color));
+    }
+    /// 线段端点：轴对齐且 ≤2 物理像素宽时，横向坐标落到像素中心，
+    /// 1px 分隔线/图标竖笔正好盖满一整列像素；斜线原样保留（硬对齐会破坏斜率）。
+    fn seg_points(&self, a: (f32, f32), b: (f32, f32), width: f32) -> [Pos2; 2] {
+        let mut p0 = self.pos(a.0, a.1);
+        let mut p1 = self.pos(b.0, b.1);
+        if width * self.s * self.ppp <= 2.0 {
+            if (p0.x - p1.x).abs() < 0.01 {
+                let x = self.snap_center((p0.x + p1.x) * 0.5);
+                p0.x = x;
+                p1.x = x;
+            }
+            if (p0.y - p1.y).abs() < 0.01 {
+                let y = self.snap_center((p0.y + p1.y) * 0.5);
+                p0.y = y;
+                p1.y = y;
+            }
+        }
+        [p0, p1]
     }
     pub fn seg(&self, a: (f32, f32), b: (f32, f32), width: f32, color: Color32) {
-        self.painter.line_segment([self.pos(a.0, a.1), self.pos(b.0, b.1)], Stroke::new(width * self.s, color));
+        let [p0, p1] = self.seg_points(a, b, width);
+        self.painter.line_segment([p0, p1], Stroke::new(width * self.s, color));
     }
     pub fn path(&self, pts: &[(f32, f32)], width: f32, color: Color32) {
         let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.pos(x, y)).collect();
@@ -686,6 +713,49 @@ mod gradient_tests {
                 }
             });
         });
+    }
+
+    #[test]
+    fn pixel_snapping_lands_on_device_pixels() {
+        for ppp in [1.0f32, 1.25, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.set_zoom_factor(ppp);
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(200.0))),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(raw, |ui| {
+                let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+                let on_grid = |v: f32| {
+                    let f = (v * c.ppp).fract().abs();
+                    f < 1e-3 || 1.0 - f < 1e-3
+                };
+                for (x, y, w, h) in [(0.3, 0.7, 10.1, 6.2), (12.34, 5.67, 33.3, 4.4), (-2.2, 8.8, 7.7, 7.7)] {
+                    let r = c.rect(x, y, w, h);
+                    for e in [r.min.x, r.max.x, r.min.y, r.max.y] {
+                        assert!(on_grid(e), "ppp={ppp} 矩形边 {e} 应落在设备像素边界");
+                    }
+                    assert!(r.width() >= 1.0 / c.ppp - 1e-6 && r.height() >= 1.0 / c.ppp - 1e-6);
+                }
+                // 入场动画里薄到不足 1px 的填充不能被对齐吞成 0 宽。
+                let thin = c.rect(5.0, 5.0, 0.01, 0.01);
+                assert!((thin.width() * c.ppp - 1.0).abs() < 1e-4);
+                // 1~2 物理像素的描边路径落在像素中心。
+                let sr = c.stroke_rect(1.0, 2.0, 20.0, 9.0, 1.0);
+                for e in [sr.min.x, sr.max.x, sr.min.y, sr.max.y] {
+                    let v = e * c.ppp - 0.5;
+                    assert!((v - v.round()).abs() < 1e-3, "ppp={ppp} 细描边 {e} 应在像素中心");
+                }
+                // 轴对齐细线对齐到像素中心，斜线端点保持原位。
+                let [a, b] = c.seg_points((1.3, 1.0), (1.3, 8.0), 1.0);
+                assert_eq!(a.x, b.x);
+                let v = a.x * c.ppp - 0.5;
+                assert!((v - v.round()).abs() < 1e-3);
+                let [p, q] = c.seg_points((1.3, 1.0), (9.7, 8.2), 1.0);
+                assert_eq!(p, c.pos(1.3, 1.0));
+                assert_eq!(q, c.pos(9.7, 8.2));
+            });
+        }
     }
 }
 
