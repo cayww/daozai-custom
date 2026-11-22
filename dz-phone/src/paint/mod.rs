@@ -237,6 +237,19 @@ impl<'a> Card<'a> {
     /// 于是玻璃/卡片仍随阻尼比弹，文字不再跟着胀缩。死区外把缩放比量化到 1/64，
     /// 避免逐帧改变字形重采样相位。
     pub fn paint_galley(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) {
+        let shape = self.galley_shape(p, g, color);
+        self.painter.add(shape);
+    }
+    /// [`Self::paint_galley`] 的纯函数版本：返回已按当前 `s` 变形的文字图元。
+    ///
+    /// 拆出来是为了让测试能逐位比较「不同弹簧相位下字形 mesh 是否稳定」——
+    /// 抖动的本质就是同一段文字在相邻帧生成了不同顶点。
+    pub fn galley_shape(
+        &self,
+        p: Pos2,
+        g: std::sync::Arc<egui::Galley>,
+        color: Color32,
+    ) -> Shape {
         let (mut origin, mut s) = (self.origin.to_vec2(), self.s);
         let mode = match self.text_scale {
             TextScale::Auto if self.text_anchor.is_some() => TextScale::Damped,
@@ -266,7 +279,7 @@ impl<'a> Card<'a> {
             let atlas = self.ui.ctx().fonts(|f| f.font_image_size());
             inset_text_uv(&mut shape, atlas);
         }
-        self.painter.add(shape);
+        shape
     }
     pub fn text_w(&self, t: &str, size: f32, w: W) -> f32 {
         self.galley(t, size, w, Color32::WHITE).size().x
@@ -642,6 +655,61 @@ mod gradient_tests {
         // 按压缩放（14%）必须完整保留，不被死区吞掉。
         assert!((damped_text_scale(1.14) - 1.14).abs() < 1e-3);
         assert!(damped_text_scale(0.82) < 0.9);
+    }
+
+    /// 同一量化格内，字形 mesh 必须逐位不变——相邻帧顶点不同=每帧重采样=抖动。
+    #[test]
+    fn scaled_text_mesh_holds_still_inside_one_quantum_cell() {
+        fn mesh_coords(shape: &Shape) -> Vec<[i64; 2]> {
+            // 行内顶点坐标（已含缩放）转定点，避开浮点相等噪声。
+            let Shape::Text(t) = shape else {
+                panic!("期望文字图元")
+            };
+            let q = |v: f32| (v as f64 * 4096.0).round() as i64;
+            let mut out = Vec::new();
+            for row in &t.galley.rows {
+                out.push([q(row.pos.x), q(row.pos.y)]);
+                out.push([
+                    q(row.visuals.mesh_bounds.min.x),
+                    q(row.visuals.mesh_bounds.min.y),
+                ]);
+                for v in &row.visuals.mesh.vertices {
+                    out.push([q(v.pos.x), q(v.pos.y)]);
+                }
+            }
+            out
+        }
+        for ppp in [1.0f32, 1.5] {
+            let ctx = egui::Context::default();
+            ctx.set_zoom_factor(ppp);
+            let raw = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(200.0))),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(raw, |ui| {
+                let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+                let g = c.galley("岛仔 daozai 12:34", 18.0, W::Regular, Color32::WHITE);
+                let at = |k: f32| {
+                    let cc = c.scaled(40.0, 24.0, k);
+                    mesh_coords(&cc.galley_shape(Pos2::new(4.0, 14.0), g.clone(), Color32::WHITE))
+                };
+                assert_eq!(
+                    at(1.0),
+                    at(1.0 + TEXT_SCALE_DEADZONE * 0.5),
+                    "ppp={ppp} 死区内字形不应变化"
+                );
+                assert_eq!(
+                    at(1.2),
+                    at(1.2 + TEXT_SCALE_QUANTUM * 0.25),
+                    "ppp={ppp} 同一量化格内字形不应变化"
+                );
+                assert_ne!(
+                    at(1.2),
+                    at(1.2 + TEXT_SCALE_QUANTUM * 2.0),
+                    "ppp={ppp} 跨格必须变化（否则缩放被吞掉）"
+                );
+            });
+        }
     }
 
     #[test]
