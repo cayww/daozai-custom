@@ -92,7 +92,8 @@ impl DaozaiApp {
                 continue;
             }
             let Some(rt) = self.runtime.as_ref() else { continue };
-            let renderer = match PlainWindow::new(&window, &rt.egui_ctx, false) {
+            let renderer = match PlainWindow::new(&window, &rt.egui_ctx, false,
+                rt.device(), rt.device_context(), rt.shared_renderer()) {
                 Ok(r) => r, Err(e) => { eprintln!("[d3d11] PlainWindow failed: {e}"); continue; }
             };
             eprintln!("[winit] sub viewport {id:?} -> window {wid:?}");

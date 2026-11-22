@@ -6,7 +6,9 @@
 
 use super::renderer::Renderer;
 use super::wgc_capture::WgcCapture;
+use std::cell::RefCell;
 use std::ptr;
+use std::rc::Rc;
 use windows::core::Interface;
 use windows::Win32::{
     Foundation::{BOOL, HMODULE, HWND, RECT},
@@ -122,7 +124,9 @@ pub struct D3d11Runtime {
     wgc: Option<WgcCapture>,
     wgc_ever_frame: bool,
     pub egui_ctx: egui::Context,
-    egui_renderer: Renderer,
+    /// 所有 viewport 共用同一个 Renderer/TexturePool：egui 字体图集是 Context 级单例，
+    /// 各窗口各自 Renderer 会导致 partial 纹理更新 pos 套到旧图集上越界（文字错乱+闪退）。
+    egui_renderer: Rc<RefCell<Renderer>>,
     egui_winit: Option<egui_winit::State>,
     frames: u64,
     last_report: std::time::Instant,
@@ -135,6 +139,11 @@ pub struct D3d11Runtime {
 }
 
 impl D3d11Runtime {
+    /// 子 viewport 必须复用主窗口的 device/context/Renderer：egui 字体图集是
+    /// Context 级单例，各窗口独立 Renderer 会让 partial 纹理更新越界闪退。
+    pub fn device(&self) -> ID3D11Device { self.device.clone() }
+    pub fn device_context(&self) -> ID3D11DeviceContext { self.ctx.clone() }
+    pub fn shared_renderer(&self) -> Rc<RefCell<Renderer>> { self.egui_renderer.clone() }
     pub fn new(window: &winit::window::Window) -> windows::core::Result<Self> {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let RawWindowHandle::Win32(h) = window.window_handle().unwrap().as_raw() else {
@@ -161,7 +170,7 @@ impl D3d11Runtime {
         let rt = Self::create_rt(&device, &swap)?;
 
         let egui_ctx = egui::Context::default();
-        let egui_renderer = Renderer::new(&device)?;
+        let egui_renderer = Rc::new(RefCell::new(Renderer::new(&device)?));
         let egui_winit = egui_winit::State::new(
             egui_ctx.clone(), egui_ctx.viewport_id(), window, None, None, None);
 
@@ -412,7 +421,7 @@ impl D3d11Runtime {
                 self.ctx.OMSetRenderTargets(Some(&[Some(rt.clone())]), None);
             }
             self.draw_glass(size.width, size.height, &u);
-            let _ = self.egui_renderer.render(&self.ctx, &rt, &self.egui_ctx, platform.0);
+            let _ = self.egui_renderer.borrow_mut().render(&self.ctx, &rt, &self.egui_ctx, platform.0);
             unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
             unsafe { let _ = self.dcomp._device.Commit(); }
         }
@@ -461,28 +470,26 @@ pub struct PlainWindow {
     swap: IDXGISwapChain1,
     rt: Option<ID3D11RenderTargetView>,
     pub egui_winit: egui_winit::State,
-    renderer: Renderer,
+    /// 与主窗口共享（字体图集单例）；每窗口独立 Renderer 会导致纹理越界闪退。
+    renderer: Rc<RefCell<Renderer>>,
     pub transparent: bool,
     pub viewport_info: egui::ViewportInfo,
     pub actions: Vec<egui_winit::ActionRequested>,
 }
 
 impl PlainWindow {
-    pub fn new(window: &winit::window::Window, egui_ctx: &egui::Context, transparent: bool) -> windows::core::Result<Self> {
+    pub fn new(window: &winit::window::Window, egui_ctx: &egui::Context, transparent: bool,
+               device: ID3D11Device, ctx: ID3D11DeviceContext,
+               renderer: Rc<RefCell<Renderer>>) -> windows::core::Result<Self> {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let RawWindowHandle::Win32(h) = window.window_handle().unwrap().as_raw() else {
             return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL));
         };
         let size = window.inner_size();
-        let factory: IDXGIFactory2 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }?;
-        let adapter: IDXGIAdapter = unsafe { factory.EnumAdapters(0) }?;
-        let mut device = None; let mut ctx = None;
-        unsafe {
-            D3D11CreateDevice(&adapter, D3D_DRIVER_TYPE_UNKNOWN, HMODULE(ptr::null_mut()),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, Some(&[D3D_FEATURE_LEVEL_11_0]),
-                D3D11_SDK_VERSION, Some(&mut device), None, Some(&mut ctx))?;
-        }
-        let device = device.unwrap(); let ctx = ctx.unwrap();
+        // 从共享 device 取它所属的 factory，保证 swapchain 与主窗口同 adapter。
+        let dxgi_device: IDXGIDevice = device.cast()?;
+        let adapter: IDXGIAdapter = unsafe { dxgi_device.GetAdapter()? };
+        let factory: IDXGIFactory2 = unsafe { adapter.GetParent()? };
         let desc = DXGI_SWAP_CHAIN_DESC1 {
             Width: size.width, Height: size.height,
             Format: DXGI_FORMAT_R8G8B8A8_UNORM, Stereo: BOOL(0),
@@ -498,7 +505,6 @@ impl PlainWindow {
         let tex = unsafe { swap.GetBuffer::<ID3D11Texture2D>(0)? };
         let mut rt = None;
         unsafe { device.CreateRenderTargetView(&tex, None, Some(&mut rt))? };
-        let renderer = Renderer::new(&device)?;
         let egui_winit = egui_winit::State::new(egui_ctx.clone(), egui_ctx.viewport_id(), window, None, None, None);
         Ok(Self { device, ctx, swap, rt, egui_winit, renderer, transparent, viewport_info: egui::ViewportInfo::default(), actions: Vec::new() })
     }
@@ -540,7 +546,7 @@ impl PlainWindow {
                 let clear = if self.transparent { [0.0, 0.0, 0.0, 0.0] } else { [0.1, 0.1, 0.12, 1.0] };
                 self.ctx.ClearRenderTargetView(&rt, &clear);
             }
-            let _ = self.renderer.render(&self.ctx, &rt, egui_ctx, ro);
+            let _ = self.renderer.borrow_mut().render(&self.ctx, &rt, egui_ctx, ro);
             unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
         }
     }
@@ -566,7 +572,7 @@ impl PlainWindow {
                 let clear = if self.transparent { [0.0, 0.0, 0.0, 0.0] } else { [0.1, 0.1, 0.12, 1.0] };
                 self.ctx.ClearRenderTargetView(&rt, &clear);
             }
-            let _ = self.renderer.render(&self.ctx, &rt, egui_ctx, ro);
+            let _ = self.renderer.borrow_mut().render(&self.ctx, &rt, egui_ctx, ro);
             unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
         }
         let _ = size;
