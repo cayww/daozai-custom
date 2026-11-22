@@ -2770,6 +2770,21 @@ impl App {
         let volume_dragging=self.music_volume_open && ctx.is_being_dragged(egui::Id::new(("card-drag",true,"m-volume-track")));
         let want = (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (self.is_editing() && self.open);
         self.morph(want, inside, env.t, dt);
+        // 收起判定靠「离开延迟到了」/「强制停留到点了」，两者都发生在未来某一帧；
+        // 而窗口没有输入事件时会睡死，鼠标移开后再没有事件，岛仔就一直停在展开态。
+        // 这里替它把下一帧约到状态真会改变的时刻（没人悬停时不白转）。
+        if self.open {
+            let wake = if !want {
+                self.t + LEAVE_DELAY + 0.02
+            } else if self.t < self.forced_open_until {
+                self.forced_open_until + 0.02
+            } else {
+                0.0
+            };
+            if wake > 0.0 {
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64((wake - self.t).max(0.01)));
+            }
+        }
         self.update_pet(env, cx);
 
         // ---------- 绘制 ----------

@@ -1262,6 +1262,8 @@ struct H {
     file_drop_zone:Option<Rect>,
     hovered_files:Vec<egui::HoveredFile>,
     dropped_files:Vec<egui::DroppedFile>,
+    /// 本帧向宿主预约的下一帧间隔（没有预约就是 `Duration::MAX`）。
+    repaint: std::time::Duration,
 }
 
 impl H {
@@ -1270,7 +1272,7 @@ impl H {
         std::env::set_var("DAOZAI_DATA_DIR", &dir);
         let ctx = egui::Context::default();
         let app = App::new(&ctx, Options { fetch_lyrics: false, pet_idle: 1e9 });
-        Self { ctx, app, t: 0.0, cursor: None,cmds:vec![],region:Rect::NOTHING,hit:Rect::NOTHING,animating:false,shapes:Vec::new(), bt:Vec::new(),media:Default::default(),power:(None,false),network:None,system_idle:None,screen_locked:false,fullscreen:false,browser_at_top:None,file_drop_zone:None,hovered_files:vec![],dropped_files:vec![] }
+        Self { ctx, app, t: 0.0, cursor: None,cmds:vec![],region:Rect::NOTHING,hit:Rect::NOTHING,animating:false,shapes:Vec::new(), bt:Vec::new(),media:Default::default(),power:(None,false),network:None,system_idle:None,screen_locked:false,fullscreen:false,browser_at_top:None,file_drop_zone:None,hovered_files:vec![],dropped_files:vec![],repaint:std::time::Duration::MAX }
     }
     fn frame(&mut self, events: Vec<egui::Event>) {
         self.t += 1.0 / 60.0;
@@ -1313,6 +1315,7 @@ impl H {
                 let frame=app.frame(ui, win, &env);*region=frame.region;*hit=frame.hit;*animating=frame.animating;*file_drop_zone=frame.file_drop_zone;cmds.extend(frame.cmds);
             });
         self.shapes=output.shapes;
+        self.repaint=output.viewport_output.values().map(|v|v.repaint_delay).min().unwrap_or(std::time::Duration::MAX);
     }
     fn hover(&mut self, p: Pos2, secs: f64) {
         self.cursor = Some(p);
@@ -9420,4 +9423,27 @@ fn page_flip_to_taller_page_does_not_slide_content(){
     let first=ys[0];
     let dev=ys.iter().map(|y|(y-first).abs()).fold(0.0f32,f32::max);
     assert!(dev<0.01,"切页过渡中页面内容不应上下移动，实测位移 {dev}px：{ys:?}");
+}
+
+/// 没有输入事件时窗口会睡死：展开态必须自己预约「状态该变」的那一帧，
+/// 否则鼠标移开后再没有任何事件，岛仔就一直不收（表现为「4 秒过了也不收」）。
+#[test]
+fn open_island_schedules_its_own_wakeup(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    use std::time::Duration;
+    // 静止的岛仔不预约任何重绘（跑动画时由动画自己约 0）。
+    let mut h=H::new();
+    h.hover(Pos2::new(WIN_W/2.0,12.0),1.0);
+    assert!(h.app.open,"悬停应展开");
+    for _ in 0..120 { h.frame(vec![]); }
+    assert_eq!(h.repaint,Duration::MAX,"静止时不该空转");
+    // 强制停留期间光标已离开：必须在停留结束那一刻约一帧，否则窗口睡死就再也不收。
+    h.app.show_page(1);                        // 刷新「强制停留 4 秒」
+    h.cursor=Some(Pos2::new(760.0,700.0));
+    let mut woke=Duration::MAX;
+    for _ in 0..200 {
+        h.frame(vec![]);
+        if h.repaint>Duration::from_millis(1) { woke=h.repaint; break; }
+    }
+    assert!(woke>=Duration::from_secs_f64(0.5)&&woke<=Duration::from_secs_f64(4.2),"停留期应约到停留结束，实际 {woke:?}");
 }
