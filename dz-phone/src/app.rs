@@ -959,6 +959,10 @@ pub struct App {
     pub(crate) open: bool,
     hover_since: Option<f64>,
     leave_since: Option<f64>,
+    /// 上一帧是否处于编辑态：从编辑退回列表时要撤掉「展开后强制停留」的计时。
+    was_editing: bool,
+    /// 上一帧是否在新建/编辑日程页：返回列表时直接收起。
+    was_draft: bool,
     /// 前台切换导致的强制收起：光标离开前不再自动展开。
     pub hover_lock: bool,
     pub(crate) reveal: f32,
@@ -1359,6 +1363,8 @@ impl App {
             open: false,
             hover_since: None,
             leave_since: None,
+            was_editing: false,
+            was_draft: false,
             hover_lock: false,
             reveal: 0.0,
             position_drag: None,
@@ -2768,7 +2774,20 @@ impl App {
             }
         } else {self.wheel_delta=0.0;}
         let volume_dragging=self.music_volume_open && ctx.is_being_dragged(egui::Id::new(("card-drag",true,"m-volume-track")));
-        let want = (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (self.is_editing() && self.open);
+        let editing=self.is_editing();
+        // 关掉新建日程/待办等编辑页、退回列表时，不该继续吃「展开后强制停留 4 秒」的计时：
+        // 光标若已经在外面，应当立刻（0.45s 离开延迟后）收起，而不是再等几秒。
+        if self.was_editing && !editing { self.forced_open_until = 0.0; }
+        self.was_editing = editing;
+        // 从新建/编辑日程页返回列表时直接收起：不保留强制停留，也不因光标还停在面板上而保持展开
+        //（hover_lock 在光标离开面板后自动解除，之后再悬停照常展开）。
+        let draft_open = self.calendar.draft.is_some();
+        if self.was_draft && !draft_open {
+            self.forced_open_until = 0.0;
+            self.hover_lock = true;
+        }
+        self.was_draft = draft_open;
+        let want = (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (editing && self.open);
         self.morph(want, inside, env.t, dt);
         self.update_pet(env, cx);
 
