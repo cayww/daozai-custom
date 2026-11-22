@@ -214,55 +214,16 @@ float4 ctrl_glass(float2 p, float2 local, float2 hs, float radius, float d,
     return float4(col, saturate(max(aa, line_v*edge_a)));
 }
 
-// 液态玻璃「融球水滴」：锚点扁带 + 水滴圆角矩形 smooth-union，带真折射/色散/白边。
-// meta.xy=水滴中心(device px,底原点), zw=半宽半高; meta2.x=k, y=锚点y(底原点), z=开关。
+// 液态玻璃「水滴」：直接复用其他控件的玻璃管线 ctrl_glass，材质天然一致（无特殊底色）。
+// meta.xy=水滴中心(device px,底原点), zw=半宽半高; meta2.z=开关。
 float4 metaball_glass(float2 p, float mat, float2 Ld, float3 edge_bg) {
-    float e = 1.0;
     float2 dropB = max(meta.zw, float2(1.0,1.0));
     float dropR = min(dropB.x, dropB.y);
     float2 dl = p - meta.xy;
-    float dgx = rr_sdf(dl + float2(e,0), dropB, dropR) - rr_sdf(dl - float2(e,0), dropB, dropR);
-    float dgy = rr_sdf(dl + float2(0,e), dropB, dropR) - rr_sdf(dl - float2(0,e), dropB, dropR);
-    // 融球本体 = 水滴圆角矩形。不再叠一条可见的锚点扁带——之前那条在岛仔里
-    // 变成面板顶部突兀的横线，且和水滴离太远长不出颈部。拉丝感交给 app 侧的
-    // 速度拉伸（bx/by 随速度放大）承担。
     float d = rr_sdf(dl, dropB, dropR);
-    float2 g = normalize(float2(dgx, dgy) + float2(1e-6,1e-6));
-
-    // 折射/色散/白边：用融球自己的 SDF 梯度 g，按短边自适应带深。
-    float short_side = max(min(dropB.x, dropB.y), 2.0);
-    float band = clamp(short_side * 1.3, 8.0, 60.0);
-    float t = saturate(-d / band);
-    float kk = pow(1.0 - pow(t, 0.30), 2.0);
-    // 融球折射比岛体更强，让它从底下那层玻璃里"凸"出来。
-    float strength = max(misc.z, 0.0) * 0.90;
-    float chroma = max(params.x, 0.0) * 0.85;
-    float2 bp = p - g * kk * strength;
-    float3 bg = tap5(bp, -g * kk * chroma, look.x * 0.8 + kk * 1.2);
-    // 固定深色玻璃珠：不随壁纸亮度变浅。用户壁纸接近纯白，折射白=白、压暗被浅材质
-    // 抵消，导致玻璃质感几乎看不见。这里强制深蓝黑半透明底 + 保留少量折射背景，
-    // 在白壁纸上形成强对比，白边/高光/暗芯清晰可见。
-    float3 deep = float3(0.045, 0.055, 0.085);   // 深蓝黑
-    float3 col = lerp(bg * 0.35, deep, 0.72);
-    // 体积明暗：上缘偏亮(受光)、下缘偏暗，制造玻璃珠的立体感。
-    float2 dl_norm = dl / max(dropB, float2(1.0,1.0));   // -1..1
-    float shade = 0.5 - 0.5 * dl_norm.y;                 // 上亮下暗 (D3D11 +y 向上)
-    col *= lerp(0.75, 1.35, shade);
-    // 内侧暗边(bevel)：沿边缘内 2~5px 压一道暗环，强化厚度与体积感。
-    float bevel = exp(-pow((d + 3.0)/2.5, 2.0));
-    col *= (1.0 - bevel * 0.22);
-    // 内部高光：一道斜向的柔和高光带，玻璃珠的"反光点"。
-    float hl = exp(-pow((dl_norm.x + dl_norm.y * 0.6 + 0.25) / 0.55, 2.0)) * saturate(-d / 8.0);
-    col += float3(0.55, 0.62, 0.72) * hl * 0.42;
-    // 白边加强：比岛体 rim 更亮更宽一点。
-    float sigma_c = max(look.z, 0.5) * 0.52;
-    float rim = exp(-pow((d + sigma_c*0.6)/sigma_c, 2.0));
-    float dirw = lerp(0.62,1.0,pow(max(dot(g,Ld),0.0),1.3));
-    float line_v = rim * dirw;
-    float edge_a = saturate(look.w) * 1.15;
-    col = lerp(col, float3(1,1,1), saturate(line_v*edge_a));
-    float aa = 1.0 - smoothstep(-1.2, 1.2, d);
-    return float4(col, saturate(max(aa, line_v*edge_a)));
+    // 和其他控件一模一样的液态玻璃：折射/色散/压暗/白边全走 ctrl_glass。
+    // mag=1 不放大, refr=1 标准折射强度（与多数控件默认值一致）。
+    return ctrl_glass(p, dl, dropB, dropR, d, mat, Ld, edge_bg, 1.0, 1.0);
 }
 
 float4 fs(VSOut i) : SV_TARGET {

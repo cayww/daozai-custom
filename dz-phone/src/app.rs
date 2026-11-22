@@ -3689,18 +3689,18 @@ impl App {
                 self.liquid_search_last_ptr = self.liquid_search_ptr;
             }
             2 => {
-                // CAPSULE 成形：分两阶段，让「融球水滴从岛顶长出 → 拉丝 → 摊成胶囊」肉眼可见。
-                // 弹簧放慢（k=36≈ω6, ζ0.7），约 1 秒完成；默认 121 太快(~0.3s)抓不到。
-                self.ls_cx.tune(36.0, 0.7);
-                self.ls_cy.tune(36.0, 0.7);
-                self.ls_bx.tune(30.0, 0.75);
-                self.ls_by.tune(36.0, 0.7);
-                self.ls_k.tune(40.0, 0.7);
-                self.ls_cont.tune(36.0, 0.7);
+                // CAPSULE 成形：资料包默认弹簧 ω=11(k=121) ζ=0.72，约 0.3s 快速成形。
+                // 保留两阶段"先球后摊"的形态变化，但阈值降低让它快速跨过。
+                self.ls_cx.tune(121.0, 0.72);
+                self.ls_cy.tune(121.0, 0.72);
+                self.ls_bx.tune(100.0, 0.72);
+                self.ls_by.tune(121.0, 0.72);
+                self.ls_k.tune(121.0, 0.72);
+                self.ls_cont.tune(121.0, 0.72);
                 self.ls_cx.target = 209.5;
-                // 阶段A(圆球下落)：cy 先到 34，bx/by 维持圆球(r≈11)、颈部粗(k=64)。
-                // 阶段B(摊开)：cy 过了 30 后，bx 才摊到 163.5、by 收到 10、颈部收紧。
-                if self.ls_cy.pos < 30.0 {
+                // 阶段A(圆球下落)：cy 先到 34，bx/by 维持圆球(r≈11)。
+                // 阶段B(摊开)：cy 过了 22 后，bx 摊到 163.5、by 收到 10。
+                if self.ls_cy.pos < 22.0 {
                     self.ls_cy.target = 34.0;
                     self.ls_bx.target = 11.0;
                     self.ls_by.target = 11.0;
@@ -3714,15 +3714,15 @@ impl App {
                 self.ls_cont.target = 0.5;
             }
             3 => {
-                // RETRACT：展开的逆过程，原路返回。
-                // 阶段A(收回圆球)：扁胶囊 bx 163.5→11、by 10→11、cy 42→34，颈部重新涨粗。
+                // RETRACT：展开的逆过程，原路返回（同样用 ω=11 快速收起）。
+                // 阶段A(收回圆球)：扁胶囊 bx 163.5→11、by 10→11、cy 42→34。
                 // 阶段B(升回岛顶)：圆球 cy 34→8、bx/by→1，回到岛顶中间消失。
-                self.ls_cx.tune(36.0, 0.7);
-                self.ls_cy.tune(36.0, 0.7);
-                self.ls_bx.tune(30.0, 0.75);
-                self.ls_by.tune(36.0, 0.7);
-                self.ls_k.tune(40.0, 0.7);
-                self.ls_cont.tune(36.0, 0.7);
+                self.ls_cx.tune(121.0, 0.72);
+                self.ls_cy.tune(121.0, 0.72);
+                self.ls_bx.tune(100.0, 0.72);
+                self.ls_by.tune(121.0, 0.72);
+                self.ls_k.tune(121.0, 0.72);
+                self.ls_cont.tune(121.0, 0.72);
                 self.ls_cx.target = 209.5;
                 if self.ls_bx.pos > 20.0 {
                     // 还没收成圆球：先收回圆球态（展开阶段B的逆）。
