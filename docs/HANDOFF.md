@@ -1739,3 +1739,13 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 根因：`CTL_PRESS=(300,0.5)` 欠阻尼 + `CTL_PRESS_SCALE=0.14*sk`，松手时 k 在 1.16 ↔ 0.84 之间摆；`Damped` 里我加的 1/64 量化每档 ≈0.016 缩放比，回弹一次跨 ~20 档，60fps 下几乎每帧跳一档 → 文字逐帧整档变大变小，看起来就是上下抽动。量化只在死区附近有意义，而死区本来就把那一带锁死了。
 - 修法：`damped_text_scale` 只保留 `|k-1|<6% → 1.0` + `[6%,12%]` smoothstep 过渡 + 更远**连续跟随** k；删掉 `TEXT_SCALE_QUANTUM`。同步更新测试：`text_scale_damps_tail_without_boundary_jump` 增加「死区外连续单调、相邻采样差 ≤0.01」；`scaled_text_mesh_holds_still_inside_deadzone` 改为「死区内逐位相同、死区外连续变化」。
 - 验证：paint 测试 18 passed；release 构建 2m45s；exe sha256 前 16 位 `e2b83718140d08da`，PID 11536；预览目录同步，备份 `daozai.exe.prev-before-noquant`。
+
+### 7.0zzv 文字 UV 内缩硬开关 → 连续内缩（2026-11-22 22:07–22:12）
+- 用户反馈去掉量化后「还是一样的」：说明抽动不是量化造成的。
+- 第二嫌疑：`inset_text_uv` 原先按 `|s-1|>1%` **硬开关**，每次内缩整整 1 texel（每边 0.5 texel）。弹簧回弹时 s 在 1.16↔0.84 间反复穿过阈值，每次穿过字形都突然缩瘦一圈又恢复——正好表现成文字上下抽动。
+- 修法：
+  - 只在放大侧（`s>1`）触发，缩小不再动 UV（缩小时本来就不会采到相邻 texel）；
+  - 内缩量 `amount=((s-1)/0.12).clamp(0,1)` 连续增长，`inset_text_uv(shape, atlas, amount)` 按 amount 缩放每边 0.5 texel；
+  - `amount<=1e-3` 直接跳过，避免 `Arc::make_mut` 的无谓深拷贝。
+- 新增测试 `text_uv_inset_is_one_sided_and_continuous`：`k=0.9` 时 UV 与 `k=1.0` 完全相同；`k=1.01` 只内缩一点点（相对 <2%），`1.02` 比 `1.01` 更收，单调。
+- 验证：paint 测试 19 passed；release 构建 2m59s；exe sha256 前 16 位 `37378ea0fbe42150`，PID 32748；预览目录同步，备份 `daozai.exe.prev-before-uvinset`。
