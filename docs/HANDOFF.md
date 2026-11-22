@@ -1714,3 +1714,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 新增测试 `wrap_matches_char_by_char_reference`：把旧逐字符算法留在测试里当基准，对 9 段文本（中文/长 URL/连续换行/表情/混排）× 5 种宽度 × 4 种行数断言结果**完全一致**。
 - **验证**：`cargo test --lib paint:: -- --test-threads=1` = **16 passed**（paint 7 个 + skin_paint 9 个，0.92s）；`cargo check --lib` paint 无警告；`compact_` 像素回归 3 个测试在阶段①后已通过（本轮仅改折行/网格缓存，未再跑）。release 构建成功，exe sha256 前 16 位 `dd4ce428b646eb17`；旧进程停止后新 exe 启动（PID 32032），桌面预览目录已同步（旧版备份 `daozai.exe.prev-before-phase2`）。
 - **剩余（阶段③）**：`vgrad` 预烘焙、`circle/ring/seg` 像素对齐、`inset_text_uv` 每帧深拷贝 galley、MSDF / DirectWrite 矢量文字（真无损）。
+
+### 7.0zzs paint 像素对齐补全：圆点/圆环/轴对齐细线（2026-11-22 21:44–21:50，提交 `2f95230`）
+- **背景**：阶段①只对齐了矩形填充与描边，圆形与斜线当时判断「硬对齐会破坏图标形状」而跳过；用户继续推进后，只补安全的那一半：
+  - `circle`/`ring`：圆心走 `snapped_pos`（像素中心），**半径保持连续**——静态圆点覆盖比例稳定，进度圆环动画不会被量化成 1px 台阶。
+  - `seg`：新增 `seg_points()`，仅当线段轴对齐（端点差 <0.01）且 `width*s*ppp<=2` 时把横向坐标放到像素中心；斜线端点原样返回（不影响图标斜率）。
+  - `stroke`：抽成 `stroke_rect()`，语义未变（薄线中心、粗线边界），便于测试。
+- **新增测试** `pixel_snapping_lands_on_device_pixels`（ppp 1.0/1.25/1.5/2.0）：矩形四边落在设备像素网格、最小 1px 不被吞成 0、薄描边落像素中心、垂直细线中心对齐而斜线端点不动。
+- **验证**：`cargo test --lib paint:: -- --test-threads=1` = **17 passed**；`compact_` 像素回归 3 个测试仍通过（73.75s，共 8 passed）；release 构建成功；exe sha256 前 16 位 `10d7734798ff3394`，新进程 PID 17428；桌面预览目录同步，旧版备份 `daozai.exe.prev-before-snap2`。
+- **剩余**：`vgrad` 预烘焙、`inset_text_uv` 每帧 deep copy galley 缓存、MSDF/DirectWrite（阶段③）。
