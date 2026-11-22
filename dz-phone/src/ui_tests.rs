@@ -9318,16 +9318,17 @@ fn control_scale_follows_spring_for_appear_and_press(){
     let ctl=crate::app::Ctl::Play;
     let i=ctl.idx();
     h.app.ctl_appear[i].snap(0.0);h.app.ctl_press[i].snap(0.0);
-    assert!((h.app.ctl_scale(ctl)-0.82).abs()<0.005,"入场从 0.82 开始张开");
+    assert!((h.app.ctl_scale(ctl)-0.94).abs()<0.005,"入场从 0.94 开始张开（6% 文字死区内）");
     h.app.ctl_appear[i].snap(1.0);
     assert!((h.app.ctl_scale(ctl)-1.0).abs()<0.005,"展开到位后回到原尺寸");
     h.app.ctl_press[i].snap(1.0);
-    assert!(h.app.ctl_scale(ctl)>1.1,"按下要胀起来");
+    let pressed=h.app.ctl_scale(ctl);
+    assert!(pressed>1.02 && pressed<1.06,"按下要胀起来，且幅度压在 6% 死区以内：{pressed}");
 }
 
 #[test]
 fn control_press_spring_overshoots_before_settling(){
-    // 参数表：按钮按压 k=300、ζ=0.5 —— 必须冲过头再晃回来。
+    // 积分器本身的欠阻尼行为（按压已固定 ζ=1.0，这里只验 Spring 的实现）。
     let mut s=crate::anim::Spring::new(0.0,300.0,0.5);
     s.target=1.0;
     let mut peak=0.0f32;

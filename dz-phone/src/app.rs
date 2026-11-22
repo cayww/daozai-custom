@@ -3838,14 +3838,16 @@ impl App {
         self.ctl_down && env.cursor.is_some_and(|p|rect.contains(p))
     }
 
-    /// 控件的绘制缩放：入场（0.86 → 1，会冲过头一点）+ 按压果冻（默认 ×1.14，
-    /// 幅度随「弹簧强度」设置缩放）。圆钮的拖动放大（×1.9）由 `ctl_geom` 的胶囊
-    /// 尺寸承担，这里只叠**一半幅度**的按压果冻：按住进度条时圆钮在放大镜尺寸上
-    /// 带一点回弹（峰值 ≈×2.0，此前完全不弹，用户反馈「弹簧效果不强」）。
+    /// 控件的绘制缩放：入场 + 按压。
+    ///
+    /// 两个幅度都压在 6% 的文字死区内（入场 0.94→1.00、按压 +4%），所以控件里的
+    /// 文字全程保持原生字号、不做位图重采样——按 Apple/M3 的分档，缩放属于空间层，
+    /// 文字属于内容层，内容层不该跟着重栅格化（Flutter #162949 就是同一类抖）。
+    /// 更大的入场幅度（旧版 0.82）会把 9pt 的字一路拉大 18%，看起来就是文字上下抖。
     pub(crate) fn ctl_scale(&self,ctl:Ctl)->f32{
         let i=ctl.idx();
         let sk=self.settings.liquid_spring.clamp(0.2,3.0);
-        let appear=0.82+0.18*self.ctl_appear[i].pos.clamp(0.0,1.15);
+        let appear=0.94+0.06*self.ctl_appear[i].pos.clamp(0.0,1.15);
         let press=CTL_PRESS_SCALE*sk*self.ctl_press[i].pos.clamp(0.0,1.3);
         if ctl==Ctl::Seek {return appear*(1.0+press*0.5);}
         appear*(1.0+press)
