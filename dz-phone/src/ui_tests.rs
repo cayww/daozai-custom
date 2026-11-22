@@ -8150,9 +8150,10 @@ fn calendar_add_button_does_not_overlap_the_battery_ring(){
         image::imageops::crop_imm(&image,200,0,880,470).to_image().save(path).unwrap();
     }
     let text=shapes.iter().find_map(|shape|match &shape.shape{egui::Shape::Text(text) if text.galley.text()=="＋ 新增"=>Some(text.visual_bounding_rect()),_=>None}).unwrap();
-    let button=shapes.iter().find_map(|shape|match &shape.shape{egui::Shape::Rect(rect) if rect.rect.contains(text.center()) && (rect.rect.width()-46.0).abs()<0.1 && (rect.rect.height()-18.0).abs()<0.1=>Some(rect.rect),_=>None}).unwrap();
+    let button=shapes.iter().find_map(|shape|match &shape.shape{egui::Shape::Rect(rect) if rect.rect.contains(text.center()) && (rect.rect.width()-46.0).abs()<0.85 && (rect.rect.height()-18.0).abs()<0.85=>Some(rect.rect),_=>None}).unwrap();
     if battery.is_some(){
-        let ring=shapes.iter().find_map(|shape|match &shape.shape{egui::Shape::Circle(circle) if (circle.radius-6.56).abs()<0.1 && (circle.center.y-button.center().y-0.6).abs()<0.1=>Some(Rect::from_center_size(circle.center,Vec2::splat(circle.radius*2.0+circle.stroke.width))),_=>None}).unwrap();
+        // 圆心会按物理像素对齐（`Card::circle`），1px 以内都算同一行。
+        let ring=shapes.iter().find_map(|shape|match &shape.shape{egui::Shape::Circle(circle) if (circle.radius-6.56).abs()<0.1 && (circle.center.y-button.center().y-0.6).abs()<0.85=>Some(Rect::from_center_size(circle.center,Vec2::splat(circle.radius*2.0+circle.stroke.width))),_=>None}).unwrap();
         assert!(!button.expand(3.0).intersects(ring),"日程新增按钮与电量圆环应留有间距：按钮 {button:?}，圆环 {ring:?}");
     }
     let clock=h.app.settings.clock_text("17:43:00");

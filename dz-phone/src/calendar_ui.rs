@@ -270,14 +270,13 @@ impl App {
         source_icon(c,Source::Calendar(None),43.0,13.0,10.0);
         c.centered_text(69.0,18.0,"日程",10.0,W::Semibold,theme::WHITE,H::Center);
         if c.hit(37.0,9.0,54.0,18.0,"calendar-today").on_hover_text("回到今天").clicked(){self.select_calendar_day(today);}
-        // GPU 玻璃分支：透镜由着色器画，这里只留命中区、悬停反馈和文字。
+        // 与日历编辑页《不提醒》逐行同构：透镜由着色器画（ctl_geom 已注册几何），
+        // 这里只留命中区、悬停白罩和文字；文字跟 `ctl_scale` 一起缩（Damped 死区
+        // 会吞掉 6% 以内的尾振）。非液态皮肤下退回矢量胶囊。
         let (add,b)=if self.glassy() && self.ctl_on_gpu(Ctl::CalAdd) {
             let add=c.hit(101.0,9.0,46.0,18.0,"calendar-add-local");
             let (hover,_)=c.hover_t(&add);
-            // 玻璃吃满按压果冻，文字完全不缩放（k_text 恒 1）。
-            // 文字跟入场弹簧也会抖：翻到日程页时高度弹簧换目标、`reveal` 跟着回振，
-            // 文字每帧被不同的 k 重采样就是上下抽。玻璃的「弹」足够表达按压/入场。
-            let b=c.scaled_text(124.0,18.0,self.ctl_scale(Ctl::CalAdd),1.0);
+            let b=c.scaled(124.0,18.0,self.ctl_scale(Ctl::CalAdd));
             if hover>0.01 {
                 let from=paint::chrome_mark(c);
                 b.fill(101.0,9.0,46.0,18.0,9.0,Color32::from_white_alpha((12.0+hover*16.0) as u8));
