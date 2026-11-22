@@ -9448,19 +9448,3 @@ fn calendar_editor_return_collapses_promptly(){
         }
     }
 }
-
-/// 「展开后强制停留」不能比光标在面板上的时间更久：切页会刷新 4 秒计时，
-/// 光标一移开就应当按正常的离开延迟收起，而不是继续被撑住。
-#[test]
-fn forced_open_pin_never_outlives_the_pointer(){
-    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
-    let mut h=H::new();
-    h.app.show_page(1);
-    h.hover(H::local(210.0,60.0),1.0);
-    assert!(h.app.open,"悬停应展开");
-    h.app.show_page(7);              // 切页 → show_page 刷新「强制停留 4 秒」
-    for _ in 0..10 { h.frame(vec![]); }
-    h.cursor=Some(Pos2::new(760.0,700.0));  // 光标移到面板外
-    for _ in 0..60 { h.frame(vec![]); }     // 1 秒
-    assert!(!h.app.open,"光标离开面板后不该再被强制停留撑住，实际 hpos={}",h.app.h.pos);
-}

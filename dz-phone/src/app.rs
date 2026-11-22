@@ -963,8 +963,6 @@ pub struct App {
     was_editing: bool,
     /// 上一帧是否在新建/编辑日程页：返回列表时直接收起。
     was_draft: bool,
-    /// 上一帧光标是否在面板上：光标一旦移开就撤掉「展开后强制停留」。
-    was_inside: bool,
     /// 前台切换导致的强制收起：光标离开前不再自动展开。
     pub hover_lock: bool,
     pub(crate) reveal: f32,
@@ -1367,7 +1365,6 @@ impl App {
             leave_since: None,
             was_editing: false,
             was_draft: false,
-            was_inside: false,
             hover_lock: false,
             reveal: 0.0,
             position_drag: None,
@@ -2790,10 +2787,6 @@ impl App {
             self.hover_lock = true;
         }
         self.was_draft = draft_open;
-        // 强制停留只服务于「程序主动把面板叫出来」那一下：光标一旦离开面板，就不该再被它撑住。
-        // 否则切页/通知留下的 4 秒计时会让岛仔在光标早就移开后仍然不收。
-        if !inside && self.was_inside { self.forced_open_until = 0.0; }
-        self.was_inside = inside;
         let want = (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (editing && self.open);
         self.morph(want, inside, env.t, dt);
         self.update_pet(env, cx);
