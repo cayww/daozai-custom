@@ -3776,6 +3776,26 @@ impl App {
                 refract:(short/70.0).clamp(0.30,1.0),
             });
         }
+        // 液态水滴搜索：飞行/成形途中把水滴作为一块动态控件透镜注入，
+        // 让 HLSL 画真折射+色散+白边。egui 侧不再画矢量玻璃，避免双层。
+        // 只在剪贴板页、水滴可见时注入（正常页的 Ctl 已满也不会超 13）。
+        if self.page == 3 && self.shelf_tab == 1
+            && (self.liquid_search_state == 2 || self.liquid_search_state == 3) {
+            let hw = self.ls_bx.pos.max(1.0);
+            let hh = self.ls_by.pos.max(1.0);
+            if hw > 3.0 && hh > 3.0 {
+                let local = Rect::from_center_size(
+                    Pos2::new(self.ls_cx.pos, self.ls_cy.pos),
+                    Vec2::new(hw * 2.0, hh * 2.0),
+                );
+                out.push(crate::gpu_glass::Ctl {
+                    rect: local.translate(origin.to_vec2()),
+                    radius: hw.min(hh),
+                    mag: 1.0,
+                    refract: 0.9,
+                });
+            }
+        }
         out
     }
 
