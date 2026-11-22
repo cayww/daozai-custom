@@ -8,6 +8,42 @@ use eframe::egui::{self, Color32, FontId, Id, Pos2, Rect, Response, Sense, Strok
 use eframe::egui::epaint::Shape;
 use eframe::egui::emath::TSTransform;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
+use std::sync::Arc;
+
+/// 把文字 mesh 的 UV 向每个字形 quad 中心内缩半像素。
+///
+/// 弹簧缩放文字时，mesh 顶点被放大但 UV 不变，GPU 线性采样会在字形 quad 边缘
+/// 采到图集里相邻的空白/黑色像素，表现为「1」顶上或长按按钮文字上方的小黑线。
+/// 字体图集的 UV 是 texel 坐标，所以 1.0  texel 就是 `1/atlas_size`。
+fn inset_text_uv(shape: &mut Shape, atlas_size: [usize; 2]) {
+    let Shape::Text(text_shape) = shape else { return };
+    if atlas_size[0] == 0 || atlas_size[1] == 1 { return }
+    let texel_u = 1.0 / atlas_size[0] as f32;
+    let texel_v = 1.0 / atlas_size[1] as f32;
+    let galley = Arc::make_mut(&mut text_shape.galley);
+    for placed in &mut galley.rows {
+        let row = Arc::make_mut(&mut placed.row);
+        let range = row.visuals.glyph_vertex_range.clone();
+        let vertices = &mut row.visuals.mesh.vertices;
+        for quad in vertices[range].chunks_exact_mut(4) {
+            let min_u = quad.iter().map(|v| v.uv.x).fold(f32::INFINITY, f32::min);
+            let max_u = quad.iter().map(|v| v.uv.x).fold(f32::NEG_INFINITY, f32::max);
+            let min_v = quad.iter().map(|v| v.uv.y).fold(f32::INFINITY, f32::min);
+            let max_v = quad.iter().map(|v| v.uv.y).fold(f32::NEG_INFINITY, f32::max);
+            let span_u = max_u - min_u;
+            let span_v = max_v - min_v;
+            if span_u <= 0.0 || span_v <= 0.0 { continue }
+            let fx = ((span_u - texel_u) / span_u).max(0.0);
+            let fy = ((span_v - texel_v) / span_v).max(0.0);
+            let cu = (min_u + max_u) * 0.5;
+            let cv = (min_v + max_v) * 0.5;
+            for v in quad {
+                v.uv.x = cu + (v.uv.x - cu) * fx;
+                v.uv.y = cv + (v.uv.y - cv) * fy;
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum H {
@@ -91,6 +127,11 @@ impl<'a> Card<'a> {
     pub fn paint_galley(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) {
         let mut shape = Shape::galley(p, g, color);
         shape.transform(TSTransform::new(self.origin.to_vec2(), self.s));
+        // 只在发生非整数缩放时内缩 UV：s≈1 时字形按原始尺寸采样，不需要动。
+        if (self.s - 1.0).abs() > 0.01 {
+            let atlas = self.ui.ctx().fonts(|f| f.font_image_size());
+            inset_text_uv(&mut shape, atlas);
+        }
         self.painter.add(shape);
     }
     pub fn text_w(&self, t: &str, size: f32, w: W) -> f32 {
