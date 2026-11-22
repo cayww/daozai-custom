@@ -196,6 +196,10 @@ fn log(msg: &str) {
 
 /// 当前 WGC 会话绑定的拓扑签名；变化后立即登记稳定期。
 static TOPO_SIG: AtomicU64 = AtomicU64::new(0);
+/// 拓扑变化代数（单调递增）。D3D11 抓屏栈据此判断「当前 WGC 会话/背景纹理已过期，
+/// 必须重建」——换分辨率/换显示模式后 item.Size() 和主屏 HMONITOR 都会变，
+/// 旧会话继续 CopyResource 到旧尺寸纹理会静默失败，表现为玻璃永久定格。
+static TOPO_EPOCH: AtomicU64 = AtomicU64::new(0);
 /// 拓扑变化后的稳定期：这段时间内液态玻璃回退纯色，不抓过渡帧。
 static SETTLE_UNTIL: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 /// 拓扑查询降频计数器：EnumDisplayMonitors 不便宜，约每 100ms 查一次足够。
@@ -294,10 +298,17 @@ pub fn poll_topology() -> bool {
         // 岛仔通常是收起态，抓到中间态会让玻璃永久发黑。
         *SETTLE_UNTIL.lock().unwrap_or_else(|e| e.into_inner()) =
             Some(std::time::Instant::now() + std::time::Duration::from_millis(SETTLE_MS));
-        log(&format!("desktop: 显示器拓扑变化，等待 {}ms 稳定后重抓背景", SETTLE_MS));
+        // 递增代数：D3D11 抓屏栈据此重建 WGC 会话 + 背景纹理。顺序上先 bump epoch
+        // 再登记稳定期，抓屏栈读到的新 epoch 会让它丢掉旧会话、等稳定期过再抓新帧。
+        TOPO_EPOCH.fetch_add(1, Ordering::SeqCst);
+        log(&format!("desktop: 显示器拓扑变化 epoch={}，等待 {}ms 稳定后重建抓屏会话并重抓背景",
+                     TOPO_EPOCH.load(Ordering::Relaxed), SETTLE_MS));
     }
     changed
 }
+
+/// 当前拓扑代数。D3D11 抓屏栈记录自己会话创建时的代数，不等就重建。
+pub fn topo_epoch() -> u64 { TOPO_EPOCH.load(Ordering::SeqCst) }
 
 /// 桌面拓扑刚变过、还在等 DWM 稳定：这段时间内**既不抓屏也不重建底片**。
 /// 液态皮肤在 `paint_body` 里据此临时回退纯色，比继续用旧画面花掉要好。

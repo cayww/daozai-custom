@@ -151,6 +151,10 @@ pub struct D3d11Runtime {
     glass: GlassPipeline,
     wgc: Option<WgcCapture>,
     wgc_ever_frame: bool,
+    /// 创建当前 WGC 会话时的桌面拓扑代数。与 `wgc::topo_epoch()` 不等说明
+    /// 换过分辨率/显示模式：会话绑定的主屏/帧尺寸已失效，必须重建（社区标准做法：
+    /// item size 变化时对 frame pool 做 Recreate；这里整个会话重建，等价且更简单）。
+    wgc_epoch: u64,
     pub egui_ctx: egui::Context,
     /// 所有 viewport 共用同一个 Renderer/TexturePool：egui 字体图集是 Context 级单例，
     /// 各窗口各自 Renderer 会导致 partial 纹理更新 pos 套到旧图集上越界（文字错乱+闪退）。
@@ -217,7 +221,8 @@ impl D3d11Runtime {
 
         Ok(Self {
             device, ctx, swap, rt: Some(rt), dcomp, glass, wgc,
-            wgc_ever_frame: false, egui_ctx, egui_renderer, egui_winit: Some(egui_winit),
+            wgc_ever_frame: false, wgc_epoch: crate::wgc::topo_epoch(),
+            egui_ctx, egui_renderer, egui_winit: Some(egui_winit),
             frames: 0, last_report: std::time::Instant::now(), fps: 0.0,
             repaint_delay: std::time::Duration::ZERO,
             viewport_info: egui::ViewportInfo::default(), actions: Vec::new(),
@@ -340,6 +345,56 @@ impl D3d11Runtime {
         }
     }
 
+    /// 换分辨率/显示模式后重建 WGC 抓屏会话 + 背景纹理。
+    ///
+    /// 微软官方（screen-capture）与主线 `recreate_after_device_lost()` 的标准做法：
+    /// item 尺寸变化时对 frame pool 做 Recreate、丢弃旧帧。这里直接 drop 旧会话再
+    /// `WgcCapture::new`：new 内部重新取当前主屏 HMONITOR + item.Size() 建 pool/session，
+    /// 覆盖「换分辨率」和「主屏互换/扩展复制」两种情形，且旧帧一并丢弃。
+    /// bg_tex 尺寸必须跟着新帧走——D3D11 CopyResource 要求 src/dst 尺寸一致，
+    /// 否则静默失败、一直拿旧纹理画 = 玻璃永久定格（用户实测的故障）。
+    fn rebuild_wgc(&mut self) {
+        let epoch = crate::wgc::topo_epoch();
+        let fresh = WgcCapture::new(&self.device).ok();
+        let (bw, bh) = fresh.as_ref().map(|c| c.size()).unwrap_or((1920, 1080));
+        eprintln!("[d3d11] topology epoch={} rebuild WGC {}x{} (was {}x{})",
+                  epoch, bw, bh, self.glass.bg_w, self.glass.bg_h);
+        // 尺寸没变也重建会话（主屏 monitor 可能换了、item 失效），但纹理可复用。
+        if bw != self.glass.bg_w || bh != self.glass.bg_h {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: bw, Height: bh, MipLevels: 1, ArraySize: 1,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                CPUAccessFlags: 0, MiscFlags: 0,
+            };
+            let built = unsafe {
+                let mut tex = None;
+                if self.device.CreateTexture2D(&desc, None, Some(&mut tex)).is_err() { None } else {
+                    let tex = tex.unwrap();
+                    let mut srv = None;
+                    if self.device.CreateShaderResourceView(&tex, None, Some(&mut srv)).is_err() { None }
+                    else { Some((tex, srv.unwrap())) }
+                }
+            };
+            if let Some((tex, srv)) = built {
+                self.glass.bg_tex = tex;
+                self.glass.bg_srv = srv;
+                self.glass.bg_w = bw;
+                self.glass.bg_h = bh;
+            } else {
+                // 新纹理创建失败：宁可保留旧纹理也别把管线留在半重建态；下一帧 epoch
+                // 仍不等会再试一次（自愈），而不是永久放弃。
+                eprintln!("[d3d11] rebuild bg texture failed, retry next frame");
+                return;
+            }
+        }
+        self.wgc = fresh;
+        self.wgc_ever_frame = false;
+        self.wgc_epoch = epoch;
+    }
+
     /// 窗口尺寸变化：重建 RT（swap 由 DComp 持有，ResizeBuffers 即可）。
     pub fn resize(&mut self, w: u32, h: u32) {
         if w == 0 || h == 0 { return; }
@@ -369,9 +424,18 @@ impl D3d11Runtime {
     pub fn render(&mut self, window: &winit::window::Window, origin: (f32, f32),
                   params: &GlassParams, input: egui::RawInput, root_scale: f32,
                   mut run_ui: impl FnMut(&egui::Context, &mut egui::Ui)) -> FrameStats {
-        // WGC 抓屏（GPU 侧 CopyResource）
-        if let Some(wgc) = self.wgc.as_ref() {
-            if wgc.grab_into(&self.ctx, &self.glass.bg_tex) { self.wgc_ever_frame = true; }
+        // 拓扑变化（换分辨率 / 切显示模式）后重建抓屏会话 + 背景纹理。
+        // epoch 由 App::frame 每帧的 poll_topology 递增；稳定期内 DWM 还在播
+        // 「收拢→发黑→复原」动画，先重建会话但跳过抓屏，等稳定期过再抓新帧。
+        if self.wgc_epoch != crate::wgc::topo_epoch() {
+            self.rebuild_wgc();
+        }
+        // WGC 抓屏（GPU 侧 CopyResource）。稳定期内不抓过渡帧，沿用旧纹理；
+        // app 层 paint_gpu_glass 同期回退纯色，看不到旧拓扑画面。
+        if !crate::wgc::settling() {
+            if let Some(wgc) = self.wgc.as_ref() {
+                if wgc.grab_into(&self.ctx, &self.glass.bg_tex) { self.wgc_ever_frame = true; }
+            }
         }
         // 主题亮度：从刚抓到的全屏帧里取「玻璃背后那块桌面」的实时亮度，
         // 500ms 节流读回。旧 wgpu 栈每帧抓屏时算，迁移后 D3D11 栈需在这里接上，
