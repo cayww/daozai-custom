@@ -789,7 +789,16 @@ impl App {
         let font = 12.0;
         let widths: Vec<f32> = labels.iter().map(|l| c.text_w(l, font, W::Bold) + 14.0).collect();
         let total = widths.iter().sum::<f32>() + 4.0;
-        if glassy { paint::glass_chip(c, x, 9.5, total, 21.0, 10.5, 0.12); } else { c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN); }
+        // 容器几何供 ctl_geom 用（资料包 containerScale：切换时容器也放大）。
+        self.shelf_tab_bar = (x + total / 2.0, total, 21.0);
+        let bar_on_gpu = glassy && self.ctl_on_gpu(Ctl::ShelfTabBar);
+        if bar_on_gpu {
+            // 容器由 GPU 玻璃透镜画（真折射，随 press 放大），egui 侧不画矢量底。
+        } else if glassy {
+            paint::glass_chip(c, x, 9.5, total, 21.0, 10.5, 0.12);
+        } else {
+            c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN);
+        }
         let mut left = x + 2.0;
         // 选中透镜由 GPU 画时，egui 侧跳过选中胶囊的矢量填充，避免双层；
         // 但文字/命中区照常。

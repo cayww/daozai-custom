@@ -193,7 +193,7 @@ mod pill_still_tests {
 /// 只有「像玻璃」的配色，没有真折射。现在全部走真折射，矢量玻璃片只在
 /// 没有 wgpu 设备（没开兼容渲染）时兜底。
 /// 控件玻璃的槽位数（= `Ctl::ALL` 的长度；**同时可见数** ≤ `gpu_glass::MAX_CTL`）。
-pub(crate) const CTL_N: usize = 27;
+pub(crate) const CTL_N: usize = 28;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ctl {
@@ -230,12 +230,14 @@ pub(crate) enum Ctl {
     MailAccount,
     /// 邮件页无账号时的「去添加」引导按钮（pages.rs page_mail 空态，quota_ui 的 QuotaAdd 同款）。
     MailSetup,
+    /// 置物架页分栏的容器胶囊（资料包 containerScale：切换时容器也跟着放大）。
+    ShelfTabBar,
     /// 置物架页「置物架/剪贴板」分栏的滑动指示器（资料包标签栏：单透镜随弹簧滑动+拉伸）。
     ShelfTab,
 }
 
 impl Ctl {
-    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount, Ctl::MailSetup, Ctl::ShelfTab];
+    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount, Ctl::MailSetup, Ctl::ShelfTabBar, Ctl::ShelfTab];
     pub(crate) fn idx(self) -> usize { self as usize }
     /// 日程编辑器提醒分段的槽位下标（CalRem0..4）。
     pub(crate) fn rem_index(self) -> usize { self as usize - Ctl::CalRem0 as usize }
@@ -1005,6 +1007,8 @@ pub struct App {
     pub(crate) shelf_tab_pressing: bool,
     /// 两个分栏选中胶囊的几何 [(中心x, 宽)]，由 shelf_tabs 绘制时写入供 ctl_geom 用。
     pub(crate) shelf_tab_layout: [(f32, f32); 2],
+    /// 分栏容器胶囊几何 (中心x, 宽, 高)，由 shelf_tabs 写入供 ctl_geom 用。
+    pub(crate) shelf_tab_bar: (f32, f32, f32),
     pub clipboard: crate::clipboard::Shared,
     pub(crate) clip_first: usize,
     pub(crate) clip_confirm_clear: Option<f64>,
@@ -1379,6 +1383,7 @@ impl App {
             shelf_tab_press: Spring::new(0.0, 250.0, 0.6),
             shelf_tab_pressing: false,
             shelf_tab_layout: [(0.0, 0.0); 2],
+            shelf_tab_bar: (0.0, 0.0, 0.0),
             clipboard: crate::clipboard::Shared::new(clipboard_on),
             clip_first: 0,
             clip_confirm_clear: None,
@@ -3622,6 +3627,16 @@ impl App {
             Ctl::MailSetup=>{
                 if self.page!=5 || self.subpage.is_some() || !self.mail.accounts.is_empty() {return None;}
                 (Rect::from_min_size(Pos2::new(42.0,88.0),Vec2::new(84.0,26.0)),13.0)
+            }
+            // 置物架分栏容器胶囊（资料包 containerScale）：切换时容器也放大 1+16dp/w*press。
+            Ctl::ShelfTabBar=>{
+                if self.page!=3 || self.subpage.is_some() {return None;}
+                let (bx,bw,bh)=self.shelf_tab_bar;
+                if bw<2.0 {return None;}
+                let press=self.shelf_tab_press.pos.clamp(0.0,1.2);
+                let sc=1.0+16.0/bw*press;   // 资料包: 1 + 16dp/containerW * pressProgress
+                let r=bh*0.5;
+                (Rect::from_center_size(Pos2::new(bx,20.0),Vec2::new(bw*sc,bh)),r)
             }
             // 置物架分栏滑动指示器（资料包标签栏同 MailTab）：单透镜在两段间滑，
             // 滑动横向拉伸 st、按压果冻 sc。几何由 shelf_tabs 绘制时写入 layout。
