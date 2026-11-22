@@ -1703,3 +1703,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   3. **文字缩放**：新增 `pub enum TextScale { Auto, Follow, Damped, Frozen }` + `Card::text_scale(mode)`；默认 `Auto`（发生过 `scaled()` 时等价 `Damped`，行为与旧 6% 死区一致）。旧实现在死区边界从 1.0 硬跳回 k（字号瞬跳 6%），现改为 `damped_text_scale()`：死区内冻结；`[死区,2×死区]` smoothstep 平滑过渡；更远处跟随 k（按压 14% 完整保留）并量化到 1/64，稳定重采样相位。`text_pivot` 更名 `text_anchor`，语义不变（后写覆盖=只补偿最内层弹簧）。
 - **验证**：`cargo check --lib` 通过（paint 无新增警告）；`cargo test --lib paint::gradient_tests -- --test-threads=1` = **5 passed**（新增 `text_scale_damps_tail_without_boundary_jump`）；`cargo build --release` 成功，exe sha256 前 16 位 `66cd6f33540c2a91`。旧进程（PID 12784，构建时锁住 exe 导致首次 remove 失败）停止后，用新 exe 启动（PID 31496，`target\release\daozai.exe`）。**按用户要求未跑全量测试**，视觉待实机确认。
 - **风险/后续**：像素对齐会让绘制位置移动 ≤0.5 物理像素，布局类 UI 测试未跑；若实机发现整体偏半像素，先检查 `snap`/`snap_center` 的选择。`chase` 每帧重建 mesh、`vgrad` 每帧 `tessellate`、`wrap` O(n²) 未动（阶段②）；无损缩放需 MSDF/DirectWrite（阶段③）。
+
+### 7.0zzr paint 阶段②：追光缓存 + 折行二分（2026-11-22 21:36–21:42，提交 `ad04048`）
+- **背景**：阶段①合入后用户「继续」，按既定阶段②处理 paint 内的两处热点；`vgrad` 每帧 `ctx.tessellate` 经评估只对可见渐变块调用一次，未改（避免为不可测量收益引入回归）。
+- **追光 mesh 缓存**（`src/paint/chase.rs`）：
+  - 新增 `ChaseKey{x0,head,y,thick,tint,hot,s,origin,ppp}` + `ChaseCache{key,mesh}`，存 `ctx.data`（id = `("paint::chase", ui.id())`）。
+  - 播放头量化 `HEAD_QUANTUM=0.25` DIP、`hot` 量化 1/256 后再**同时用于缓存键和建 mesh**——命中与冷重建的顶点完全一致（有测试 `chase_mesh_cache_reuses_subpixel_steps`：0.1 DIP 命中、跨格重建、冷热 mesh 相等）。
+  - 收益：播放时头部每帧只走 ~0.02 DIP，原来每帧重算 ~7000 顶点 × 8 个 `exp/powf`；现在每跨 0.25 DIP 才重建一次，其余帧只克隆已有 mesh。
+- **折行改二分**（`src/paint/mod.rs` `wrap`）：每行二分定位折行点（O(log n) 次排版/行），旧实现每加一个字符重排整行，长错误信息 O(n²)。贪心语义逐条保持（行内尽量满、单字符超宽保留、`\n` 保留空行、`max_lines` 截断走 `fit`）；`max_lines==0` 显式返回空。
+  - 新增测试 `wrap_matches_char_by_char_reference`：把旧逐字符算法留在测试里当基准，对 9 段文本（中文/长 URL/连续换行/表情/混排）× 5 种宽度 × 4 种行数断言结果**完全一致**。
+- **验证**：`cargo test --lib paint:: -- --test-threads=1` = **16 passed**（paint 7 个 + skin_paint 9 个，0.92s）；`cargo check --lib` paint 无警告；`compact_` 像素回归 3 个测试在阶段①后已通过（本轮仅改折行/网格缓存，未再跑）。release 构建成功，exe sha256 前 16 位 `dd4ce428b646eb17`；旧进程停止后新 exe 启动（PID 32032），桌面预览目录已同步（旧版备份 `daozai.exe.prev-before-phase2`）。
+- **剩余（阶段③）**：`vgrad` 预烘焙、`circle/ring/seg` 像素对齐、`inset_text_uv` 每帧深拷贝 galley、MSDF / DirectWrite 矢量文字（真无损）。
