@@ -999,6 +999,10 @@ pub struct App {
     pub(crate) shelf_tab: usize,
     /// 分栏滑动指示器弹簧（资料包标签栏：单透镜随弹簧滑动+拉伸）。
     shelf_tab_spring: Spring,
+    /// 分栏切换的"放大-移动-缩回"press 弹簧（资料包 gooseTab Sel press-release）。
+    pub(crate) shelf_tab_press: Spring,
+    /// press-release 是否已经触发（切换后置 true，到位后缩回并复位）。
+    pub(crate) shelf_tab_pressing: bool,
     /// 两个分栏选中胶囊的几何 [(中心x, 宽)]，由 shelf_tabs 绘制时写入供 ctl_geom 用。
     pub(crate) shelf_tab_layout: [(f32, f32); 2],
     pub clipboard: crate::clipboard::Shared,
@@ -1372,6 +1376,8 @@ impl App {
             confirm_clear: None,
             shelf_tab: 0,
             shelf_tab_spring: Spring::new(0.0, 300.0, 0.5),
+            shelf_tab_press: Spring::new(0.0, 250.0, 0.6),
+            shelf_tab_pressing: false,
             shelf_tab_layout: [(0.0, 0.0); 2],
             clipboard: crate::clipboard::Shared::new(clipboard_on),
             clip_first: 0,
@@ -3628,7 +3634,10 @@ impl App {
                 if w0<2.0 || w1<2.0 {return None;}
                 let s=self.shelf_tab_spring.pos.clamp(-0.25,1.25);
                 let st=(self.shelf_tab_spring.vel.abs()*0.06).min(0.5);
-                let sc=1.0+0.3*self.ctl_press[Ctl::ShelfTab.idx()].pos.clamp(0.0,1.3);
+                // 资料包：切换瞬间 press 放大到 78/56≈1.393，到位后缩回 1。
+                // press 用独立弹簧(切换时主动触发)，不走按住驱动的 ctl_press。
+                let press=self.shelf_tab_press.pos.clamp(0.0,1.2);
+                let sc=1.0+(78.0/56.0-1.0)*press;
                 let cx=x0+(x1-x0)*s;
                 let w=(w0+(w1-w0)*s)*(1.0+st)*sc;
                 let h=(17.0*(1.0-st*0.35)*sc).min(19.0);
@@ -3680,9 +3689,19 @@ impl App {
             }
             if ctl==Ctl::ShelfTab {
                 // 分栏指示器滑到当前分栏（0=置物架，1=剪贴板）。
-                self.shelf_tab_spring.target=if self.shelf_tab==1 {1.0}else{0.0};
-                self.shelf_tab_spring.tune(300.0*sk,zt);
+                let target=if self.shelf_tab==1 {1.0}else{0.0};
+                self.shelf_tab_spring.target=target;
+                self.shelf_tab_spring.tune(1000.0*sk,0.7);  // 资料包 TOGGLE_VALUE_K=1000
                 self.shelf_tab_spring.step(dt);
+                // 资料包 press-release：切换触发 press=1(放大)，滑动到位后 press=0(缩回)。
+                if self.shelf_tab_pressing {
+                    if (self.shelf_tab_spring.pos-target).abs()<0.02 && self.shelf_tab_spring.vel.abs()<0.1 {
+                        self.shelf_tab_pressing=false;
+                        self.shelf_tab_press.target=0.0;
+                    }
+                }
+                self.shelf_tab_press.tune(250.0*sk,0.6);     // 资料包 TOGGLE_SCALE_X_K=250 ζ=0.6
+                self.shelf_tab_press.step(dt);
             }
             // 圆钮的拖动放大弹簧：按在进度条上就进入放大镜态（尺寸与 mag 同步 ×1.9）。
             // 圆钮的拖动放大弹簧：target 直接用 pages.rs 写入的 egui 真实拖动状态

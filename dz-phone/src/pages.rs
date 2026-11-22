@@ -813,6 +813,12 @@ impl App {
                 self.shelf_tab = i;
                 self.confirm_clear = None;
                 self.clip_confirm_clear = None;
+                // 资料包标签栏：切换瞬间触发 press(放大 78/56) → 滑动 → 到位缩回。
+                if glassy {
+                    self.shelf_tab_press.snap(0.0);
+                    self.shelf_tab_press.target = 1.0;
+                    self.shelf_tab_pressing = true;
+                }
             }
             left += w;
         }
