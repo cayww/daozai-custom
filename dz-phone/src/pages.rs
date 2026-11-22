@@ -1085,7 +1085,15 @@ impl App {
         let n = shown.len();
         let recent = items.iter().filter(|clip| !clip.pinned).count();
         // 搜索时输入框占掉卡片第一行，可见行数少一行。
-        let searching = self.clip_search_open || !self.clip_query.is_empty();
+        // 液态皮肤下要等融球水滴到位(drop_landed)才让位——否则点击放大镜的瞬间
+        // 内容就提前少一行,而水滴还在飞,视觉上"让位"跑在动画前面。
+        // 收起时融球一离开到位态(state!=2)内容立即恢复。
+        let drop_landed = self.liquid_search_state == 2 && self.ls_bx.pos >= 150.0;
+        let searching = if self.glassy() {
+            drop_landed || !self.clip_query.is_empty()
+        } else {
+            self.clip_search_open || !self.clip_query.is_empty()
+        };
         let rows = if searching { CLIP_ROWS - 1 } else { CLIP_ROWS };
         self.clip_first = self.clip_first.min(n.saturating_sub(rows));
 
