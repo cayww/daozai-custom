@@ -17,9 +17,11 @@ pub struct Ctl {
     pub radius: f32,
     pub mag: f32,
     pub refract: f32,
+    /// 材质样式: 0=普通, 1=分栏容器(暗), 2=分栏指示器(亮)。传给 shader 做层次区分。
+    pub style: u8,
 }
 impl Ctl {
-    const fn none() -> Self { Self { rect: Rect::ZERO, radius: 0.0, mag: 1.0, refract: 1.0 } }
+    const fn none() -> Self { Self { rect: Rect::ZERO, radius: 0.0, mag: 1.0, refract: 1.0, style: 0 } }
 }
 impl Default for Ctl {
     fn default() -> Self { Self::none() }

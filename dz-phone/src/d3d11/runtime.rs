@@ -42,6 +42,8 @@ pub struct GlassParams {
     pub crect: [[f32; 4]; MAX_CTL],
     /// 控件玻璃参数 [radius, enabled, magnify, refract]
     pub cprm: [[f32; 4]; MAX_CTL],
+    /// 控件材质样式 [style, -, -, -]（0普通 1分栏容器暗 2分栏指示器亮）
+    pub cstyle: [[f32; 4]; MAX_CTL],
     /// [blur, band, edge_width, edge_opacity]
     pub look: [f32; 4],
     /// [-, -, -, isDComp=1] 逐像素 alpha
@@ -80,11 +82,13 @@ fn refresh_control_uniforms(u: &mut GlassParams) {
         // y 从 egui 顶原点翻到 D3D11 底原点，画布高用 shader 的 extra[2]（=岛体 bounds 同基准）。
         u.crect[slot] = [rx, canvas_h - ry - rh, rw, rh];
         u.cprm[slot] = [ctl.radius * ppp, 1.0, ctl.mag.max(1.0), ctl.refract.max(0.05)];
+        u.cstyle[slot] = [ctl.style as f32, 0.0, 0.0, 0.0];
     }
     // 关键：本帧不用的槽必须清掉启用位，否则沿用上一帧的 cprm.y=1 会画出幽灵透镜
     // （收起后残留的竖白线正是这个）。
     for slot in n..slots {
         u.cprm[slot] = [0.0, 0.0, 1.0, 1.0];
+        u.cstyle[slot] = [0.0; 4];
     }
 }
 

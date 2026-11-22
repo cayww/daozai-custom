@@ -236,6 +236,13 @@ pub(crate) enum Ctl {
     ShelfTab,
 }
 
+// 分栏容器/指示器的材质样式通过 Ctl.style 字段传给 shader（不依赖枚举序号）。
+// 这里固定序号只是防止误改枚举顺序影响 ctl_geom 的其它硬编码索引。
+const _: () = {
+    assert!(Ctl::ShelfTabBar as usize == 26);
+    assert!(Ctl::ShelfTab as usize == 27);
+};
+
 impl Ctl {
     pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount, Ctl::MailSetup, Ctl::ShelfTabBar, Ctl::ShelfTab];
     pub(crate) fn idx(self) -> usize { self as usize }
@@ -3866,12 +3873,15 @@ impl App {
             let rect=if tx!=0.0 && !matches!(ctl,Ctl::Gear|Ctl::NavL|Ctl::NavR) {
                 rect.translate(egui::vec2(tx,0.0))
             }else{rect};
+            // 材质样式: 分栏容器压暗(1)、指示器提亮(2)，其余普通(0)。
+            let style=match ctl { Ctl::ShelfTabBar=>1, Ctl::ShelfTab=>2, _=>0 };
             out.push(crate::gpu_glass::Ctl {
                 rect:Rect::from_center_size(rect.center(),rect.size()*s).translate(origin.to_vec2()),
                 radius:radius*s,
                 mag,
                 // 短边相对原歌词卡（78px）缩放：27px 圆片 → 0.39，20px 胶囊 → 0.30。
                 refract:(short/70.0).clamp(0.30,1.0),
+                style,
             });
         }
         // 融球水滴由 shader 的 meta/meta2 uniform 直接画（见 paint_gpu_glass），

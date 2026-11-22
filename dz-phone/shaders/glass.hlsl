@@ -15,6 +15,7 @@ cbuffer U : register(b0) {
     float4 misc;            // xy=pointer(px), z=refract strength, w=flat mode(0/1/2)
     float4 crect[MAX_CTL];  // (x, y, w, h) per control, capture-device px
     float4 cprm[MAX_CTL];   // (radius, enabled, magnify, refract) per control
+    float4 cstyle[MAX_CTL]; // (style, -, -, -) per control: 0=普通 1=分栏容器(暗) 2=分栏指示器(亮)
     float4 look;            // x=blur, y=band, z=edge width, w=edge opacity
     float4 notch;           // x=flare, y=fh, z=isNotch, w=isDComp
     float4 lightcfg;        // x=follow strength
@@ -375,6 +376,18 @@ float4 fs(VSOut i) : SV_TARGET {
         float4 cr = crect[cs.idx];
         float4 ce = ctrl_glass(p, p - cr.xy - cr.zw*0.5, cs.hs, cs.r, cs.d,
                                mat, Ld, edge_bg, cs.mag, cs.refr);
+        // 分栏标签栏层次（资料包）：容器暗磨砂+细白边，指示器亮玻璃+强白边。
+        // 样式由 cstyle[槽位].x 传入（槽位是 pick_ctl 命中的紧凑索引，不是 Ctl 枚举 idx）。
+        float style = cstyle[cs.idx].x;
+        if (style > 0.5 && style < 1.5) {
+            ce.rgb = ce.rgb * 0.55 + float3(0.010,0.014,0.022);  // 压暗成深色磨砂
+        } else if (style > 1.5) {
+            // 指示器更亮：提亮主体 + 按 SDF 边缘加强白边高光。
+            ce.rgb = ce.rgb * 1.10 + float3(0.02,0.02,0.03);
+            float tabRim = exp(-pow((cs.d + 1.4) / 1.6, 2.0));
+            ce.rgb = lerp(ce.rgb, float3(1,1,1), saturate(tabRim * 0.75));
+            ce.a = saturate(max(ce.a, tabRim * 0.9));
+        }
         col = lerp(col, ce.rgb, ce.a);
     }
 
