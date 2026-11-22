@@ -111,7 +111,9 @@ impl DaozaiApp {
         let Some(w) = self.window.as_ref() else { return };
         let origin = w.inner_position().map(|p| (p.x as f32, p.y as f32)).unwrap_or((0.0, 0.0));
         let ppp = self.runtime.as_ref().unwrap().egui_ctx.pixels_per_point();
-        let params = build_glass_params(ppp);
+        let liquid = self.shell.as_ref()
+            .is_some_and(|s| s.app.settings.skin == daozai::model::Skin::Liquid);
+        let params = build_glass_params(ppp, liquid);
         let input = { let w = self.window.as_ref().unwrap(); self.runtime.as_mut().unwrap().take_input(w) };
         // 收集子窗口输入（含鼠标/键盘事件）供 immediate 回调使用。
         for sub in self.subs.values_mut() {
@@ -328,11 +330,12 @@ impl ApplicationHandler<()> for DaozaiApp {
 /// 目标（= 逻辑尺寸 × ppp，如 960×270 × 1.25 = 1200×338）。所有像素单位必须先乘
 /// ppp 转成设备像素——漏掉这步会让 shader 认为画布只有实际的 1/1.25，采到的桌面
 /// 区域随之缩小 1.25 倍，表现为「玻璃里的背景被放大一圈」（高 DPI 屏尤甚）。
-fn build_glass_params(ppp: f32) -> GlassParams {
+fn build_glass_params(ppp: f32, liquid: bool) -> GlassParams {
     let u = daozai::gpu_glass::uniforms();
     let mut p = GlassParams::default();
-    if !u.active {
-        // 液态皮肤未激活：不画玻璃（shader 的 bounds 设到窗口外）。
+    if !liquid || !u.active {
+        // 非液态皮肤 / 液态 pass 未激活：不画玻璃（shader 的 bounds 设到窗口外）。
+        // 只信当前皮肤，不信 u.active——切换皮肤时它可能有上一帧的残留值。
         p.bounds = [-10000.0, -10000.0, 1.0, 1.0];
         return p;
     }
@@ -358,7 +361,9 @@ fn build_glass_params(ppp: f32) -> GlassParams {
     // 会在宠物与时间之间留下一条残留透镜白边。见 refresh_control_uniforms。
     // 深浅材质的玻璃染色：暗色玻璃偏冷灰，浅色偏白。
     p.tint = if u.material > 0.5 { [0.96,0.97,1.0,0.10] } else { [0.55,0.72,0.90,0.10] };
-    p.notch = [0.0, 0.0, 0.0, 1.0]; // DComp 逐像素 alpha
+    // x=肩部外扩, y=肩部高度, z=刘海形状开关（0=胶囊）, w=DComp 逐像素 alpha。
+    let shape = daozai::gpu_glass::shape_params();
+    p.notch = [shape[0] * ppp, shape[1] * ppp, shape[2], 1.0];
     p
 }
 

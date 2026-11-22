@@ -3319,6 +3319,10 @@ impl App {
     /// 绘制岛体（或通知胶囊）的本体：经典皮肤为纯黑；毛玻璃为着色底 + 顶部柔光 + 边缘高光。
     fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32,origin:Pos2){
         let skin=self.settings.skin;
+        // 非液态皮肤不画 HLSL 玻璃：必须显式关掉，否则会沿用上一次液态皮肤
+        // 发布的 body_rect（通常是收起态），在悬浮云/毛玻璃背景里留下不会随展开
+        // 变大的折射残影。渲染循环的玻璃参数在 UI 之前构建，双保险见 winit_runner。
+        if skin!=model::Skin::Liquid {crate::gpu_glass::set_active(false);}
         if skin==model::Skin::Liquid {
             // 显示器拓扑刚变过（切扩展/复制/仅主屏）后的稳定期：桌面还在播重建动画，
             // 抓屏会拿到「向内收拢 + 四周发黑」的中间态，旧纹理也是旧拓扑的画面。
@@ -3694,12 +3698,16 @@ impl App {
 
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
-    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,_flare:f32,_flare_h:f32,radius:f32,origin:Pos2){
+    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,origin:Pos2){
         // Liquid glass optics are drawn by the HLSL layer in the D3D11 render loop,
         // BEFORE egui (see d3d11::runtime). Publish the real island geometry so the
         // shader refracts exactly this rect; keep this body nearly transparent so the
         // refracted desktop shows through, only the rim keeps the silhouette.
         let pointer=self.cursor_win.unwrap_or_else(||rect.center());
+        // 刘海/胶囊由设置决定；shader 的 notch.z 控制走 notch_sdf 还是圆角矩形 SDF。
+        // flare/flare_h 已在 paint_body 里按展开进度插值，迁移时漏传导致一直只有胶囊。
+        let is_notch=self.settings.island_shape!=model::IslandShape::Pill;
+        crate::gpu_glass::set_shape(flare,flare_h,is_notch);
         crate::gpu_glass::set_body(rect,radius,(pointer.x,pointer.y),self.liquid_k);
         // 岛内控件玻璃透镜：把本帧控件几何发布给 D3D11 渲染循环（crect/cprm）。
         // glass_controls 已含展开入场弹簧 ctl_scale —— 白边会随展开连续变细，

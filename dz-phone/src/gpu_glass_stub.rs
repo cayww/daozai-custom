@@ -153,11 +153,56 @@ pub fn set_body(rect: Rect, radius: f32, pointer: (f32, f32), material: f32) {
     }
 }
 
-/// 顶栏/刘海形状用的肩部参数（-1 表示胶囊/圆角矩形）。
-static SHAPE_PARAMS: std::sync::Mutex<[f32; 2]> = std::sync::Mutex::new([0.0; 2]);
-pub fn set_shape(flare: f32, flare_h: f32) {
-    if let Ok(mut s) = SHAPE_PARAMS.lock() { *s = [flare, flare_h]; }
+/// 非液态皮肤每帧关掉玻璃 pass。
+///
+/// `set_body` 只在 `Skin::Liquid` 的绘制路径里调用；如果切到悬浮云/毛玻璃后
+/// 不主动清掉 `active`，D3D11 每帧仍会拿最后一次（往往是收起态）的 body_rect
+/// 继续画折射，表现为其他皮肤背景里残留一块不会随展开放大的液态玻璃。
+pub fn set_active(active: bool) {
+    if let Ok(mut u) = UNIFORMS.lock() {
+        u.active = active;
+    }
 }
-pub fn shape_params() -> [f32; 2] {
-    SHAPE_PARAMS.lock().map(|s| *s).unwrap_or([0.0; 2])
+
+/// 顶栏/刘海形状参数：`[flare, flare_h, is_notch]`，第三项为 0 时画胶囊圆角矩形。
+static SHAPE_PARAMS: std::sync::Mutex<[f32; 3]> = std::sync::Mutex::new([0.0; 3]);
+pub fn set_shape(flare: f32, flare_h: f32, is_notch: bool) {
+    if let Ok(mut s) = SHAPE_PARAMS.lock() {
+        *s = [flare, flare_h, if is_notch { 1.0 } else { 0.0 }];
+    }
+}
+pub fn shape_params() -> [f32; 3] {
+    SHAPE_PARAMS.lock().map(|s| *s).unwrap_or([0.0; 3])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn liquid_geometry_can_be_deactivated() {
+        set_body(Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(180.0, 48.0)),
+                 24.0, (100.0, 44.0), 1.0);
+        assert!(uniforms().active);
+        assert_eq!(uniforms().body_rect, [10.0, 20.0, 180.0, 48.0]);
+
+        set_active(false);
+        assert!(!uniforms().active);
+        // 关掉后几何保留但不再被渲染循环使用；再开时由下一帧 set_body 覆盖。
+        assert_eq!(uniforms().body_rect, [10.0, 20.0, 180.0, 48.0]);
+
+        set_body(Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(320.0, 260.0)),
+                 12.0, (160.0, 130.0), 0.0);
+        assert!(uniforms().active);
+        assert_eq!(uniforms().body_rect, [0.0, 0.0, 320.0, 260.0]);
+        set_active(false);
+    }
+
+    #[test]
+    fn shape_params_carry_notch_flag() {
+        set_shape(17.6, 16.0, true);
+        assert_eq!(shape_params(), [17.6, 16.0, 1.0]);
+        set_shape(0.0, 8.0, false);
+        assert_eq!(shape_params(), [0.0, 8.0, 0.0]);
+    }
 }
