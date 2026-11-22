@@ -4320,7 +4320,7 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                         if ui.add_enabled((app.settings.liquid_zeta-0.5).abs()>0.005,egui::Button::new("恢复默认")).clicked(){app.settings.liquid_zeta=0.5;}
                                     }).response
                                 });
-                                settings_hint(ui,"回弹的「收劲」（默认 0.5）：调小会来回弹跳几下、更 Q 弹，1.0 = 不弹跳直接到位");
+                                settings_hint(ui,"入场回弹的「收劲」（默认 0.5）：调小会来回弹跳几下、更 Q 弹，1.0 = 不弹跳直接到位；按压反馈固定为不过冲，不受这里影响");
                                 ui.separator();
                                 settings_control_row(ui,"静止刷新率",56.0,|ui|{
                                     ui.horizontal(|ui|{

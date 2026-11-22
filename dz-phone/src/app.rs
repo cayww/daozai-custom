@@ -263,11 +263,19 @@ fn focus_tab_geom(focus:bool)->(Rect,f32){
 }
 
 /// 控件弹簧的档位（手感调参表）：
-/// 按压 / 指示器位置 300·0.5（会冲过头再晃回来），值类 1000·1.0（临界阻尼）。
-const CTL_PRESS: (f32, f32) = (300.0, 0.5);
+/// 按压 300·1.0（临界阻尼，松手不过冲）/ 指示器位置 300·0.5（会冲过头再晃回来）/
+/// 值类 1000·1.0（临界阻尼）。
+///
+/// 按压为什么是临界阻尼：Apple 把动效按「效果」与「空间」分档，颜色/亮度/按压缩放
+/// 属于效果型，标准阻尼比是 1.0（不回弹），约 0.8 才允许一点点回弹；M3 Expressive
+/// 同理——effect token 用 dampingRatio=1.0，只有 spatial token 才允许 overshoot。
+/// 用户可调的阻尼比只作用于入场（空间型），按压固定不吃它。
+const CTL_PRESS: (f32, f32) = (300.0, 1.0);
 const CTL_APPEAR: (f32, f32) = (320.0, 0.55);
-/// 按压时圆片胀到多大（×1.3 那档是给 58px 高的整格的，圆片小得多）。
-const CTL_PRESS_SCALE: f32 = 0.14;
+/// 按压时圆片胀到多大：Apple/M3 的按压缩放标准是 3~4%（0.96~0.97），
+/// 且是 paint-time 缩放、不动布局；这里取 4%，且在 6% 文字死区以内，
+/// 按压缩放不会再触发文字重采样。
+const CTL_PRESS_SCALE: f32 = 0.04;
 
 pub struct Options {
     /// 是否联网查歌词（录制/测试时关掉）。
@@ -3699,7 +3707,8 @@ impl App {
                 self.pointer_down_on(rect.translate(origin.to_vec2()),env)
             };
             self.ctl_press[i].target=if down {1.0}else{0.0};
-            self.ctl_press[i].tune(CTL_PRESS.0*sk,zt);
+            // 按压是效果型动效：固定临界阻尼，不跟用户设置的阻尼比走（那个只给入场）。
+            self.ctl_press[i].tune(CTL_PRESS.0*sk,CTL_PRESS.1);
             self.ctl_press[i].step(dt);
             self.ctl_appear[i].target=self.reveal;
             self.ctl_appear[i].tune(CTL_APPEAR.0*sk,zt);
