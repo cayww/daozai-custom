@@ -13,7 +13,7 @@
 |---|---|
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-134 已打包、未部署（最新，2026-11-19）**：`installer\daozai-setup-custom-134.exe`（11,109,904 B，包 sha `1f2f9df72d88b08d`，0.6.66，内含 exe `2ebc1313b2241ad6` + bridge `9832e44f133f5ac0`，构建自 main `912d636`= 在 950433b 基础上仅更新版本号；1373 passed；静默安装验证通过，详见 §7.0ad）。**custom-133**：`installer\daozai-setup-custom-133.exe`（11,241,513 B，包 sha `a9455e0ad655bb9f`，内含 exe `02786373d87ba563` + bridge `f1ae28626c9db18e`，构建自 main 工作树（告警清理 `2ea229a` + 液态玻璃按钮缩小 + 关配置弹窗收起 + INSTALL-NOTES 反馈日志说明，提交 `14bb37f`）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
-| **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。**【2026-11-21 16:00 更新】当前活跃分支=`research/egui035-migration`（egui 0.35 迁移研究线），HEAD=`6ca92e0`，本行上方旧值（2342d3c/merge-v0666-selective）是主线历史快照、非当前检出；研究分支 release exe sha `60ca4a035ec5eb10`（高 DPI 背景放大修复后，未部署）。详见 §7.0zzg.13。**|
+| **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。**【2026-11-21 16:00 更新】当前活跃分支=`research/egui035-migration`（egui 0.35 迁移研究线），HEAD=`6ca92e0`，本行上方旧值（2342d3c/merge-v0666-selective）是主线历史快照、非当前检出；研究分支 release exe sha `60ca4a035ec5eb10`（高 DPI 背景放大修复后，未部署）。详见 §7.0zzg.13。** **【2026-11-22 11:45 更新】同一研究分支 HEAD=`ccff129`（修设置大小/刘海形状/非液态皮肤玻璃残影，见 §7.0zzn），release exe sha `0f2dec64b11eb4c1`，全量 1389 passed；未部署。**|
 | 预览版（液态玻璃试验） | 桌面预览目录 `daozai-liquid-setup.exe` = **`liquid-test-62-two-modes`（包 sha `ddc1516892d83117`，9,295,747 B；内含 exe `91424b6863533eca` + bridge `859a91518af04c91`；安装到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，独立数据目录）**，**2026-11-21 00:02 打包，待实机验证**。构建自 main `7200ee7`（`fix/wgc-recreate` 合并）：取消 GDI 实验、只保留零拷贝/非零拷贝两模式（`liquid_gpu_share` 控制）、去掉 EVENT query 非法 Begin、device-lost 冷却退避。换分辨率问题实测用非零拷贝（`liquid_gpu_share=0`）解决；零拷贝独有的 event query 风暴保留此前修复。编译通过、全量测试未跑（用户要求）。此前 -61（彝语字体）、-60 等见 `_archive/README.md` 指纹表 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
@@ -859,6 +859,20 @@ Windows 自带 `C:\Windows\Fonts\msyi.ttf`（Microsoft Yi Baiti），实测 cmap
 
 ---
 
+### 7.0zzn 【已修复】设置大小/液态形状失效 + 非液态皮肤残留玻璃（2026-11-22 11:30–11:45，提交 `ccff129`）
+
+- **症状**：设置里的「大小」滑块无效；液态玻璃形状切换无效，只有胶囊没有刘海；切到悬浮云/毛玻璃后背景里仍有一块收起大小的液态折射。
+- **根因（都是 egui 0.35 自管 winit 栈迁移时的参数断线）**：
+  1. `Settings::island_scale()` 旧路径走 eframe `set_root_viewport_scale`，迁移后只剩 `// migration: viewport scale handled by new stack` 注释，从未实际下发缩放；
+  2. `paint_gpu_glass` 把 `flare/flare_h` 写成 `_flare/_flare_h` 直接忽略，`gpu_glass_stub::set_shape` 无任何调用，`build_glass_params` 里 `p.notch.z` 恒为 0 → HLSL 永远走圆角矩形（胶囊）SDF，不会进 `notch_sdf`；
+  3. `gpu_glass::set_body` 只把 `active` 置 true，切到非液态皮肤时没有清零 → 渲染循环继续拿最后一次（往往是收起态）的 `body_rect` 画折射。
+- **修复**：
+  - `main.rs`：启动即 `egui_ctx.set_zoom_factor(island_scale())`；每帧检测目标缩放变化后下发，用 `applied_zoom` 避免重复重排。
+  - `app.rs`：`paint_gpu_glass` 按 `settings.island_shape` 发布 `[flare, flare_h, is_notch]`；非液态皮肤每帧 `set_active(false)`。
+  - `gpu_glass_stub.rs`：新增 `set_active`，`set_shape` 带刘海标志，新增 2 个单元测试。
+  - `winit_runner.rs`：玻璃 pass 同时按「当前皮肤是 Liquid」和 `u.active` gate；shape 参数按 ppp 转物理像素写入 `p.notch`。
+- **验证**：`cargo check --all-targets --locked` 全绿；全量 `cargo test --locked --release --lib -- --test-threads=1` = **1389 passed / 0 failed / 131 ignored**；release exe sha `0f2dec64b11eb4c1`。未部署、未打包，main 不动。
+
 ## 8. 版本时间线
 
 | 版本 / 提交 | 内容 |
@@ -1002,9 +1016,15 @@ python <skill>/scripts/ui_probe.py click --x 1293 --y 72
 | 变量 | 作用 |
 |---|---|
 | `DAOZAI_DATA_DIR=<dir>` | **必带**，否则读写 `%APPDATA%\Daozai` 的正式设置 |
-| ~~`DAOZAI_LIQUID_FREEZE_BG` / `FLAT` / `NO_EXCLUDE` / `DUMP` / `MORPH_FORCE` / `CAPTURE_EVERY`~~ | 旧 wgpu 栈调试项；随孤立文件 `gpu_glass.rs` 删除（见 §7.0zzg.16） |
-| `DAOZAI_LIQUID_FORCE_LUMA=0.2` | 强制背景亮度（验证深色材质）——**保留**，现行 stub 仍读取 |
-| ~~`DAOZAI_SETTLE_MS`~~ | 已删除；稳定期固定 1000ms（见 §7.0zzg.16） |
+| `DAOZAI_LIQUID_FREEZE_BG=1` | 冻结背景 + 解除捕获排除（截图/录屏可见），预热 24 帧后自动切 |
+| `DAOZAI_LIQUID_FLAT=1` | 玻璃内原样输出背景（查抓屏对齐） |
+| `DAOZAI_LIQUID_FLAT=2` | 20px 网格 + AA 细线（查折射位移/色散） |
+| `DAOZAI_LIQUID_FORCE_LUMA=0.2` | 强制背景亮度（验证深色材质） |
+| `DAOZAI_LIQUID_NO_EXCLUDE=1` | 关闭 WDA 排除 |
+| `DAOZAI_LIQUID_DUMP=1` | 前 8 帧写 PPM |
+| `DAOZAI_LIQUID_MORPH_FORCE=1` | 把 morph 钉成常数，做确定性 A/B |
+| `DAOZAI_LIQUID_CAPTURE_EVERY=<1~4>` | 抓屏节流，默认 1；设 2 省 34% CPU |
+| `DAOZAI_SETTLE_MS=<毫秒>` | 覆盖切换显示模式后的稳定期（优先级最高，0~30000）。不设则用自学习值（首次 500） |
 
 液态玻璃设置项（`settings.txt`，界面在「外观 → 大小」下方，仅液态皮肤显示）：
 
@@ -1019,9 +1039,10 @@ python <skill>/scripts/ui_probe.py click --x 1293 --y 72
 | 形变强度 | `liquid_morph` | 0~3 | 1.0 |
 | **优先独立显卡** | `liquid_prefer_dgpu` | 0/1 | 1（开） |
 
-> `liquid_prefer_dgpu` 是**启动期**设置，改后需重启；研究分支已移除 wgpu 选卡逻辑，新 D3D11 栈尚未实现该偏好（见 §7.0zzg.16 遗留项）。
+> `liquid_prefer_dgpu` 是**启动期**生效（wgpu 适配器只选一次），改后必须重启岛仔。
 >
-> 稳定期曾使用自学习值（`settle-learned.txt`），已移除；现在固定 1000ms。
+> 稳定期学习值存在 `data\diagnostics\settle-learned.txt`（纯数字，毫秒）。删掉它即回到 500ms 重新学。
+> 关掉 = 回到 eframe/wgpu 默认策略（混合显卡机器可能落核显，省电但更占内存）。
 
 日志关键字（`data\diagnostics\liquid-glass.log`）：
 
@@ -1480,6 +1501,24 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 只改文案（extras.rs）：标题「切换分辨率/显示器模式后自动重启」；说明加"切换显示器模式（复制/扩展/仅单屏）约2秒后自动重启一次"；提示补"不开时切换分辨率可能导致玻璃卡住/背景不更新（需手动重启岛仔）"。
 - 新 exe `cfd17f60fccfafb0`，已部署。编译通过、测试未跑。未重新打包（预览包仍 -62）。
 
+### 7.0zzg 社区方案研究分支（2026-11-21 00:32–00:40）
+- 用户要求单开分支重新研究社区方案（重点 fence），不动 main。分支 **`research/community-fence`**（从 main `65d7380` 分出），研究文档 `docs/research-fence-device-lost.md`（桌面副本 `岛仔-fence与device-lost社区方案研究.md`），提交 `b1b7361`。**研究分支只有文档，无代码改动；main 不受影响。**
+- 核心结论：
+  1. **fence 不解决 device-lost**：fence 是 CPU/GPU 同步（替 event query CPU spin），device-lost 时 fence 调用照样返回 0x887A0005（Rive Flutter issue #86 佐证）。
+  2. **wgpu-scry**（与本项目链路几乎一样：WGC+D3D11共享纹理→wgpu D3D12）把 explicit D3D12 fence 从 future work 升级为 shipped：host 创建 fence→producer D3D11 OpenSharedFence→每帧 `Signal(n+1)` + **新纹理**→consumer `Queue.Wait(n+1)`；每帧 fresh resource + fence_value + fail-fast + fallback。
+  3. scrying/微软**都没有会话内 device-lost 恢复银弹**；健壮性来自每帧新资源 + stale/dim-match guard + 可诊断 metrics。微软 robmikh 承认 WGC 内部 device-lost bug。
+  4. 结论：保持 main 的自动重启 workaround（进程级重建能同时重建 D3D11+D3D12，最可靠）；可选增强 A=stale/dim-match guard（低风险）、B=fence 替 event query（中风险、消除主线程空转）；不建议继续堆会话内恢复机制。
+
+### 7.0zzg.1 【重要更正】社区确有成功案例——OBS Studio（2026-11-21 00:45）
+- 用户追问"有没有人用新建 device + 重建资源 + frame pool.Recreate 成功过"。深挖确认：**有，生产级——OBS Studio**（`libobs-winrt/winrt-capture.cpp` + `libobs-d3d11/d3d11-subsystem.cpp`，2016 年起稳定多年）。
+- **成功要素**（我们缺的）：
+  1. **统一 D3D device 所有者**（OBS graphics subsystem `gs_get_device_obj`）：device lost 时统一重建 device + `gs_register_loss_callbacks` 回调所有消费者。我们的 wgpu(D3D12) 与 WGC(D3D11) 各自独立、无统一重建 → D3D11 重建了 D3D12 没跟上，共享纹理句柄失效（印证"双 device"怀疑）。
+  2. **两段式** `device_loss_release`（撤销事件 + Close pool/session + 清空 COM 引用）→ 重建 device → `device_loss_rebuild`。
+  3. **rebuild 时重建 `GraphicsCaptureItem`**（用保存的 window/monitor 重新 CreateForWindow/CreateForMonitor），不复用旧 item；再 `FramePool::Create` + `CreateCaptureSession` + 重注册 FrameArrived + `StartCapture`。我们 Recreate 保留旧 item，可能帧不到达。
+  4. **do-while 重试直到拿到可用 device**（微软 ScreenCapturePlayer 示例同款）；我们重建一次失败就冷却/放弃。
+- **结论更正**：之前"没有银弹"过于悲观。进程重启 workaround 本质=强制统一重建两侧 device，方向正确；进程内做对需模仿 OBS 统一 device 管理（大改）；低风险改进=重启前先试一次 OBS 式完整会话重建（Close→重建item→新device→Create pool→StartCapture）+重试，失败再重启。
+- 研究文档 `docs/research-fence-device-lost.md` §6（研究分支 commit `4f764e8`），桌面副本同步。
+
 ### 7.0zzg.2 egui-directx11 最新版本实证（2026-11-21 10:07–10:15，研究分支）
 - 用户要求"继续 egui-directx11 尝试 + 直接拉最新代码/读最新 commit/用最新版本"。已 clone `nekomaru-pku/egui-directx11` 到 `D:\code\egui-directx11`，最新 commit **`38201f9`**（2026-07-17，版本 `0.13.0+egui-0.35.0`，egui 0.35 + windows 0.62 + edition 2024；无 GitHub Release、tag 止于 0.12.1）。比 §20 推测的 0.7.0/egui0.31 又跨 4 个大版本，**版本差更大**。
 - **实证通过**：`cargo build --locked --release --examples` 44s 全过；D3D11 渲染 egui UI 正常；新增 `examples/desktop_spike.rs`（独立工程，不碰岛仔主项目/Cargo.lock）验证单 D3D11 device 抓屏→`CopyResource`→`register_user_texture`→egui Image。本机 Desktop Duplication 返回 `0x80070005`（管理员权限仍拒绝，远程/虚拟会话常见，与库无关；岛仔用 WGC 不走 DDU）；改用官方 `user_texture` example 实证 **D3D11 纹理经 register_user_texture 完整显示为 egui Image**（exe sha `6ea18259e61a19ac`）。即"单 device 零拷贝展示"链路 100% 可用，可根治换分辨率 device-lost。
@@ -1526,26 +1565,19 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 剩余：①测试代码 207 个 cfg(test) 错误（171 处 ctx.run→ctx.run_ui + 36 零散）；②把 WGC+HLSL+DComp 真正接入岛仔替换 stub。main 不动。详见 docs/research-fence-device-lost.md §28。
 
 ### 7.0zzg.10 测试代码适配 egui 0.35：77 编译错误清零 + 行为回归修复（2026-11-21 11:31–12:20，接手续做）
-- 背景：前一个 agent（ctx.run→run_ui 转换脚本）余额耗尽，遗留 22 文件未提交改动 + 报告"lib test 应已能编译"。接手实测 `cargo test --lib --no-run` 仍有 **77 个编译错误**，判断过于乐观。
-- 编译修复（77→0，三轮脚本逐类断言命中）：viewport_ui_cb 由 `Fn(&Context)` 改 `Fn(&mut Ui)` 故 `(ui.ctx())`→`(ui)`（53 处）；ColorImage::new→filled（Vec<Color32>）+ source_size + ImageData::Font 变体删除 + Event::MouseWheel.phase + load_svg 双参 + style_mut→all_styles_mut + fonts_mut（has_glyph 需 &mut）+ ctx 引用/作用域。脚本固化在 egui-directx11 `tools/fix_test_compile_egui035.py`、`fix_round2_egui035.py`（commit 本地）。
-- **关键语义回归（探针漏报的 0.31→0.35 行为差）**：① 0.35 移除 `raw_scroll_delta` 改逐帧平滑 `smooth_scroll_delta`，自定义翻页/音量/列表滚动单帧只拿约 10% delta → 翻页失效；新增 `app::raw_scroll_y()` 从 `i.events` 复刻旧 raw 语义，覆盖 app/pages/extras/task_picker 全部 7 处（wheel 测试 11→0 失败）。② theme/style 按 Theme 分离且全局，设置窗口 `set_style` 被降级为 `Ui::set_style` → 浅色主题失效；改 set_theme + set_style_of + `settings_color(ctx.theme())`。③ memory popup API 私有化，用 `Popup::open_id/is_id_open/open_memory/SetOpenCommand` 恢复天气城市下拉（生产功能同步修复）。④ 0.35 RichText 拆多 Text shape，测试 helper 按 y 分组拼回整行匹配。
-- 实证：`cargo check --all-targets` 全过（lib+bin+examples+tests）；`cargo test --lib -- --test-threads=1` 从 **19 failed 降到 8 failed**（1377 passed / 131 ignored）。全程修 CRLF 噪音，diff 34k→420 行。commit `d522521`（35 files +420/-351）。
-- 剩余 8 个：2 个 native 黑底裁剪（glow stub 预期降级）+ 6 个 0.35 深度交互差（DragValue Esc/加号即时生效、tooltip 长路径省略号、qweather ComboBox 独立 viewport 点击），属研究分支后续。main 不动。详见 docs/research-fence-device-lost.md §29。
+- 前 agent 余额耗尽，报告"lib test 应已能编译"——实测仍有 **77 个编译错误**。三轮脚本逐类修到 0（viewport_ui_cb 改 &mut Ui 53 处、ColorImage new→filled/source_size、ImageData::Font 删除、MouseWheel.phase、load_svg 双参、style_mut→all_styles_mut、fonts_mut 等；examples 去 wgpu）。
+- **四类 0.31→0.35 行为回归（探针漏报）**：①`raw_scroll_delta` 移除改逐帧平滑→新增 `app::raw_scroll_y()` 复刻旧语义覆盖 7 处（wheel 11→0 失败）；②theme/style 按 Theme 分离且全局→设置窗口 set_theme+set_style_of+settings_color(ctx.theme())；③popup memory API 私有化→`Popup::open_id/is_id_open/open_memory`，天气城市下拉生产功能同步恢复；④RichText 拆多 Text shape→测试 helper 按 y 分组拼接匹配。
+- 实证：`cargo check --all-targets` 全过；`cargo test --lib` 从 19 failed 降到 **8 failed / 1377 passed / 131 ignored**。commit `d522521`（35 files +420/-351）+ 文档 `a5cec4c`；egui-directx11 工具脚本 3 个已提交。main 不动，未部署（研究分支渲染层仍 glow stub）。
+- 剩余 8 个：2 native 黑底裁剪（glow stub 预期）+ 6 个 0.35 深度交互差（DragValue Esc/加号、tooltip 长路径省略、qweather ComboBox 点击路由）。详见 docs/research-fence-device-lost.md §29。
 
 ### 7.0zzg.11 渲染接线落地：WGC+HLSL+DComp 接进岛仔替换 glow stub（2026-11-21 12:30–14:15，用户"下一步完成渲染接线"）
 - 用户选"直接完整接线 + 保持 windows 0.58 移植渲染代码"（避免升 0.62 动 6 万行 native/wgc）。
 - 移植 egui-directx11 到主项目：`src/d3d11/{renderer,texture,wgc_capture,runtime}.rs` + `shaders/*.bin/hlsl`（整块复制，仅适配 0.58 的 `D3D11CreateDevice` 泛型差异、`BOOL` 路径）；新增 `egui`/`egui-winit`/`winit` 依赖（lock 只 +4 行，无版本漂移）。
-- 新 `src/winit_runner.rs`：winit 0.30 事件循环替换 `eframe::run_native`；`Shell::new(egui_ctx,hwnd)` 取代 CreationContext（`native::Window::new`、`diagnostics::graphics` 同步适配，examples 加 `from_cc` 兼容入口）；每帧 WGC CopyResource→HLSL 玻璃→egui→Present→DComp Commit。
-- 实机验证：`cargo build --release` 通过、`cargo test --lib` 无回归；启动日志 `WGC OK 1920x1080` + `got first frame OK`，截图确认透明胶囊（时间 13:01/天气 17°、白边高光、下方桌面透出），FPS 正常。commit 待补。
-- **已知限制：设置页仍内嵌本体**（用户观察到"设置页跑到本体"）。尝试 `set_embed_viewports(false)` + `set_immediate_viewport_renderer` 独立窗口时踩 egui 官方已知坑：issue #5229（Windows 不可见窗口收不到 RedrawRequested，Visible(true) 命令卡住）、#8326（Poll 空转 CPU）、#7776。按官方 `event_loop_context` 模式实现后，在 draw 上下文 create_window 仍导致 winit 事件循环卡在第二帧，故回退内嵌保证稳定。**功能完整可用**，仅窗口不独立；后续接 eframe 完整 `new_events/check_redraw_requests` 调度后可解。
-- 详见 docs/research-fence-device-lost.md §30。main 不动。
+- 新 `src/winit_runner.rs`：winit 0.30 事件循环替换 `eframe::run_native`；`Shell::new(egui_ctx,hwnd)` 取代 CreationContext；每帧 WGC CopyResource→HLSL 玻璃→egui→Present→DComp Commit。commit `d6d7800`。
+- **已知限制：设置页仍内嵌本体**（用户观察到"设置页跑到本体"）。尝试独立窗口踩 egui 官方已知坑 issue #5229/#8326/#7776，在 draw 上下文 create_window 会让事件循环卡在第二帧，回退内嵌保稳定。功能完整可用。详见 docs/research-fence-device-lost.md §30。main 不动。
 
 ### 7.0zzg.12 液态玻璃接通（2026-11-21 14:20–15:15，用户"液态玻璃效果没有"→"岛仔把自己采样进去了"）
-- commit `1fad5e0`。承接 d6d7800 的渲染栈，把 HLSL 玻璃真正显示出来。
-- 四个根因（用户三次关键观察定位）：①stub 底色 alpha=225 遮住玻璃→20；②默认 Classic 皮肤未启用液态→测试数据设 liquid_glass；③egui(顶原点) 与 D3D11(底原点) Y 相反——bounds.y/pointer.y 翻转 + shader sample_px 按 extra.z 翻正；④WGC CreateForMonitor 抓整屏时把岛仔自己抓进去（递归自采样）→ SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)，与旧 wgc.rs 同策略。
-- 另修：gpu_glass stub 的 set_* 全改成真实桥接（app 每帧写 rect/参数）；extra.yz 传窗口尺寸（否则全岛采样同一点）；quad.x flip 关掉（WGC 与 D3D11 纹理同向）。
-- 用户观察链（很有价值）："设置页跑本体" → "玻璃没效果" → "玻璃在下方冒头" → "采样在屏幕正下方对称" → "任务栏上下颠倒" → "岛仔把自己采样进去"，逐层剥出坐标系+自采样问题。
-- 验证：test --lib 1379/6/131（无回归）；液态皮肤展开态玻璃折射正确、任务栏不再入镜、窗口仍可见。副作用：GDI 截图工具抓不到岛仔（与原版 wgc 一致）。
+- commit `1fad5e0`。承接 d6d7800 的渲染栈，把 HLSL 玻璃真正显示出来。四个根因（用户观察链定位）：①stub 底色 alpha=225 遮住玻璃→20；②默认 Classic 皮肤未启用液态→测试数据设 liquid_glass；③egui(顶原点) 与 D3D11(底原点) Y 相反——bounds.y/pointer.y 翻转；④WGC 抓整屏把岛仔自己抓进去（递归自采样）→ SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)。另修 stub 的 set_* 全改真实桥接、extra.yz 传窗口尺寸、quad.x flip 关掉。验证 test --lib 1379/6/131 无回归。副作用：GDI 截图工具抓不到岛仔（与原版 wgc 一致）。
 
 ### 7.0zzg.13 接手收尾：亮度播种修复 + 高 DPI 背景放大修复（2026-11-21 15:20–16:00，用户"继续完成"→"背景被放大一倍多"）
 - 接手时状态：`research/egui035-migration` 分支，HEAD `3d9268c`（7.0zzg.12 文档），工作树有 1 处未提交改动（gpu_glass_stub.rs 亮度播种真实实现），release exe sha `14fd6c6563a7f131`（含该改动，15:23 编译）。
@@ -1606,7 +1638,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 两版用**完全相同的字体加载**：`segoeui.ttf`(index 0) + `msyh.ttc`(index 1)，`FontData::from_owned` + `d.index`，与岛仔 `theme.rs` 一致。
   - 两版画**完全相同的文本**（"不提醒 专注时间 2026年-11月-21日" / 14号正文 / 12号小字 / 28号 "25:00"），同样 `CentralPanel` + 白底、**离屏 RTV 渲染 → CopyResource 读回 → 自写 24bit BMP**（绕开手机拍屏摩尔纹，直接取 GPU 像素）。
   - 坑：字体图集纹理 delta 只在第 0 帧产生，必须**每帧都跑 `renderer.render`**（含 clear）才能把字体纹理灌进 pool；只 render 最后一帧 → 文字全丢（首次跑出全白 BMP，已修正）。
-  - 产物：`egui-directx11\fontcmp-035.bmp` 与 `egui031-test\fontcmp-031.bmp`、**`cmp-side-by-side.png` / `cmp-side-by-side-3x.png`（严格同条件：两版同背景 RGB(27,27,27)、同字色、同裁剪 (0,0)-(820,180)、左右并排，最终采用的公平对比图）**；早期 `fontcmp-compare.png` 因 0.35 那版当时未套 CentralPanel（白底 vs 深底）不公平，已弃用。`line-031/035.png`、`diff-x8.png` 为辅助。
+  - 产物：`egui-directx11ontcmp-035.bmp` 与 `egui031-testontcmp-031.bmp`、**`cmp-side-by-side.png` / `cmp-side-by-side-3x.png`（严格同条件：两版同背景 RGB(27,27,27)、同字色、同裁剪 (0,0)-(820,180)、左右并排，最终采用的公平对比图）**；早期 `fontcmp-compare.png` 因 0.35 那版当时未套 CentralPanel（白底 vs 深底）不公平，已弃用。`line-031/035.png`、`diff-x8.png` 为辅助。
 - **结论（确定性）**：
   1. **两版字形都清晰锐利，0.35 不比 0.31 糊**。放大4倍肉眼无可见差异；0.35 那组甚至略锐。
   2. **逐像素 diff**：平均通道差 1.58/255，仅 4.58% 像素有差异，`diff-x8` 显示差异只落在文字笔画轮廓上、背景全一致、**无整行重影/偏移**。属 hinting/subpixel 灰阶微观差别，不是字形或几何问题。
@@ -1634,6 +1666,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **社区更优方案（技术债，暂不采纳）**：egui 官方讨论 #3197、Bevy 警告 B0005 都指出正解是**固定字号排版 + 用 Transform::scale 缩放 mesh 顶点**，而非改字号。我试过用 `Shape::scale`，但 `clock`/`weather_ui` 大量依赖 `galley.mesh_bounds`（与字号成正比）做垂直对齐，只改 text 会破坏对齐测试；统一改造需动 paint.rs/weather_ui.rs 等多文件，风险大于当前收益。当前 1/8pt 量化是"廉价版 transform"，抓住同一根因，已验证有效。将来若系统重构文字系统可切换至官方方案。
 - **验证**：全量 `cargo test --locked --release --lib -- --test-threads=1` = **1385 passed / 0 failed / 131 ignored**（两处修复均 cfg(not(test))，测试构建=基线）。exe sha（量化版）`3a4e68c885940a22`。未部署、未打包、main 不动（在 research/egui035-migration 分支提交 `7a579d2`）。
 
+
 ### 7.0zzm 【已修复】设置页串渲染到岛仔本体 → 独立原生窗口（2026-11-22 01:05–02:32，提交 `9ebb6c0`）
 - **症状**：打开设置页后，设置内容画在岛仔本体小窗上（肉眼看屏幕，非抓屏问题）。用户明确要独立窗口。
 - **根因**：迁移 D3D11 自绘（d6d7800）时漏接多窗口。`winit_runner.rs:137` 原注释写明"因担心 draw 上下文 create_window 死锁，暂保持 egui 默认内嵌：设置页画在本体"。两层原因：①egui 0.35 `embed_viewports` **默认 true**（eframe 会设 false，我们自己管却没设）；②未注册 `set_immediate_viewport_renderer`。两者叠加 → `show_viewport_immediate` 走 `show_embedded_viewport`，把设置页当 egui Window 画进主岛 RT。
@@ -1649,6 +1682,6 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **验证**：实机截图确认设置页独立窗口正常显示（侧栏通用/外观/位置/音乐… + 右侧设置项），点击"外观"成功切换内容。全量 `cargo test --locked --release --lib -- --test-threads=1` = 1385 passed / 0 failed / 131 ignored。诊断开关全清。诊断版 last-error 曾报 `raw_input.rs:110`（RawInput 缺 viewports 里的当前 viewport），已修（回调 input 填 viewports[id] ViewportInfo）。
 - **状态**：提交 `9ebb6c0`（分支 research/egui035-migration）。未部署、未打包、main 不动。其他 3 个 `show_viewport_immediate`（邮件阅读器/更新/天气教程）同样受益于该机制，未逐一实机验证。
 
-- **【后续修复】右上角 X 关不掉（提交 `bf6f177`）**：上版窗口能开能交互，但 X 无效。诊断证实事件链全通（CloseRequested→注入 ViewportEvent::Close→设置页 `close_requested()` 读到并置 `settings_open=false`），但窗口对象仍残留。根因两层：①`window_event` 的 CloseRequested 只 push 到**从未消费**的 `pending_close`，没转成 egui close 事件；②`settings_open=false` 后不再 show_viewport，但 `subs`/`VIEWPORT_WINDOWS` 里的窗口对象没销毁。修复：CloseRequested → thread_local `CLOSE_REQ` → immediate 回调注入 `ViewportInfo.events[Close]`；`FrameStats.active_viewports` 传出本帧活跃 viewport，不活跃的窗口销毁并清理缓存（eframe `remove_viewports_not_in` 同款）。实测 WM_CLOSE 后窗口销毁、进程存活，全量 1385 passed。
+**【后续修复】右上角 X 关不掉（提交 `bf6f177`）**：上版窗口能开能交互，但 X 无效。诊断证实事件链全通（CloseRequested→注入 ViewportEvent::Close→设置页 `close_requested()` 读到并置 `settings_open=false`），但窗口对象仍残留。根因两层：①`window_event` 的 CloseRequested 只 push 到**从未消费**的 `pending_close`，没转成 egui close 事件；②`settings_open=false` 后不再 show_viewport，但 `subs`/`VIEWPORT_WINDOWS` 里的窗口对象没销毁。修复：CloseRequested → thread_local `CLOSE_REQ` → immediate 回调注入 `ViewportInfo.events[Close]`；`FrameStats.active_viewports` 传出本帧活跃 viewport，不活跃的窗口销毁并清理缓存（eframe `remove_viewports_not_in` 同款）。实测 WM_CLOSE 后窗口销毁、进程存活，全量 1385 passed。
 
 - **【后续修复】打开设置页后文字错乱+收起展开闪退（提交 `ab2d67d`）**：last-error 定位 `texture.rs:171` `panic_bounds_check`（图集 partial 更新越界）。根因：egui 字体图集是 Context 级单例，但主窗口与每个 PlainWindow 各自建了独立 device + Renderer + TexturePool。设置页栅格化新字形扩展图集 → egui 给所有 viewport 发 partial TexturesDelta → 主窗口旧图集尺寸小、pos 套上去越界。修复：主窗口 egui_renderer 改 `Rc<RefCell<Renderer>>`，新增 device()/device_context()/shared_renderer()；PlainWindow::new 接收共享 device/ctx/renderer（从 device 取所属 factory 建 swapchain，不再自建），render 走 borrow_mut。实测设置页文字正常、20 次展开/收起无崩溃、全量 1385 passed。经验：egui 多 viewport 必须共用一个 Renderer/TexturePool（eframe 同款），各建一个是隐患。
