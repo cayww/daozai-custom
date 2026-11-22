@@ -117,7 +117,10 @@ impl DaozaiApp {
         let ppp = w.scale_factor() as f32 * scale;
         let liquid = self.shell.as_ref()
             .is_some_and(|s| s.app.settings.skin == daozai::model::Skin::Liquid);
-        let params = build_glass_params(ppp, liquid);
+        let dock = self.shell.as_ref()
+            .map(|s| s.app.settings.dock)
+            .unwrap_or(daozai::model::Dock::Top);
+        let params = build_glass_params(ppp, liquid, dock);
         let mut input = { let w = self.window.as_ref().unwrap(); self.runtime.as_mut().unwrap().take_input(w) };
         scale_root_input(&mut input, scale, w.scale_factor() as f32);
         // 收集子窗口输入（含鼠标/键盘事件）供 immediate 回调使用。
@@ -370,7 +373,7 @@ fn scale_root_input(raw: &mut egui::RawInput, scale: f32, native_ppp: f32) {
 /// 目标（= 逻辑尺寸 × ppp，如 960×270 × 1.25 = 1200×338）。所有像素单位必须先乘
 /// ppp 转成设备像素——漏掉这步会让 shader 认为画布只有实际的 1/1.25，采到的桌面
 /// 区域随之缩小 1.25 倍，表现为「玻璃里的背景被放大一圈」（高 DPI 屏尤甚）。
-fn build_glass_params(ppp: f32, liquid: bool) -> GlassParams {
+fn build_glass_params(ppp: f32, liquid: bool, dock: daozai::model::Dock) -> GlassParams {
     let u = daozai::gpu_glass::uniforms();
     let mut p = GlassParams::default();
     if !liquid || !u.active {
@@ -381,8 +384,15 @@ fn build_glass_params(ppp: f32, liquid: bool) -> GlassParams {
     }
     let ppp = ppp.max(0.1);
     // 画布物理尺寸 = egui 逻辑画布 × ppp（与 D3D11 RT / swap 的真实尺寸一致）。
-    let cw = crate::app::CANVAS_W * ppp;
-    let h = crate::app::WIN_H * ppp;
+    // 左右停靠时 native.rs 会把窗口 resize 成 SIDE_W×SIDE_H（500×600），
+    // 不能再用顶部的 CANVAS_W×WIN_H——否则 y 翻转基准全长短不一，玻璃被翻到窗口外。
+    let (canvas_w, canvas_h) = if dock.is_side() {
+        (daozai::side_dock::SIDE_W, daozai::side_dock::SIDE_H)
+    } else {
+        (crate::app::CANVAS_W, crate::app::WIN_H)
+    };
+    let cw = canvas_w * ppp;
+    let h = canvas_h * ppp;
     // 岛体矩形、指针：逻辑点 → 设备像素。y 从 egui(顶原点) 翻到 D3D11(底原点)。
     let b = u.body_rect;
     let bx = b[0] * ppp;
@@ -390,7 +400,13 @@ fn build_glass_params(ppp: f32, liquid: bool) -> GlassParams {
     let bw = b[2] * ppp;
     let bh = b[3] * ppp;
     p.bounds = [bx, h - by - bh, bw, bh];
-    p.extra = [u.radius * ppp, cw, h, 0.0];
+    // extra.w = 停靠方向（0=Top, 1=Left, 2=Right），shader 用它把刘海肩部旋到贴边侧。
+    let dock_code = match dock {
+        daozai::model::Dock::Top => 0.0,
+        daozai::model::Dock::Left => 1.0,
+        daozai::model::Dock::Right => 2.0,
+    };
+    p.extra = [u.radius * ppp, cw, h, dock_code];
     // 光学强度（折射/色散/模糊，单位 CSS px）同样转设备像素；morph/material 无量纲不缩放。
     p.params = [u.chroma * ppp, 0.0, u.morph, u.material];
     p.misc = [u.pointer[0] * ppp, h - u.pointer[1] * ppp, u.refract * ppp, 0.0];

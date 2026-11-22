@@ -9,7 +9,7 @@
 cbuffer U : register(b0) {
     float4 bounds;          // xy = top-left (device px), zw = size (device px)
     float4 params;          // x=chroma, y=unused, z=morph, w=material(0..1)
-    float4 extra;           // x=radius, y=texW, z=texH, w=morphAmt
+    float4 extra;           // x=radius, y=texW, z=texH, w=dock(0=top,1=left,2=right)
     float4 tint;            // rgb tint, a=strength
     float4 quad;            // unused (fullscreen triangle)
     float4 misc;            // xy=pointer(px), z=refract strength, w=flat mode(0/1/2)
@@ -45,8 +45,11 @@ float rr_sdf(float2 p, float2 b, float r) {
 
 // Notch (Liu Hai) outline SDF: shoulders flare outward near the top, matching
 // shape::sections. Bottom corners rounded, top edge straight where shoulders extend.
+// p 是 D3D11 局部坐标（y 向上为正）：+b.y 是岛体顶、-b.y 是底。egui::sections 的
+// 肩部 t=0 在顶、wing=flare*(1-t)^2.4 顶部最宽——这里必须让 t=0 也在顶，
+// 否则肩部翻到底部（实机表现：岛体下方多出两个向下伸的尖角）。
 float notch_sdf(float2 p, float2 b, float r, float flare, float fh) {
-    float t = saturate((p.y + b.y) / max(fh, 1.0));
+    float t = saturate((b.y - p.y) / max(fh, 1.0));
     float wing = flare * pow(1.0 - t, 2.4);
     float hx = b.x + wing;
     if (p.y > b.y - r) {
@@ -55,6 +58,29 @@ float notch_sdf(float2 p, float2 b, float r, float flare, float fh) {
         return length(float2(qx, max(qy, 0.0))) - r;
     }
     return max(abs(p.x) - hx, abs(p.y) - b.y);
+}
+
+// 岛体 SDF：把屏幕局部坐标按停靠方向旋到「贴顶坐标系」再算形状。
+// extra.w = dock（0=Top 不旋转；1=Left 肩部朝屏幕左；2=Right 肩部朝屏幕右）。
+// 左右停靠时岛体 rect 是竖向窄条（36 x 长），half_size 需交换宽高，局部坐标也旋转 90°。
+float island_sdf(float2 local, float2 b, float r) {
+    if (extra.w < 0.5) {
+        return (notch.z > 0.5)
+            ? notch_sdf(local, b, r, notch.x, notch.y)
+            : rr_sdf(local, b, r);
+    }
+    float2 q;
+    float2 hb = b.yx;
+    if (extra.w < 1.5) {
+        // Left：肩部（贴顶系的 +y）要落在屏幕 -x（左边）。
+        q = float2(local.y, -local.x);
+    } else {
+        // Right：肩部要落在屏幕 +x（右边）。
+        q = float2(-local.y, local.x);
+    }
+    return (notch.z > 0.5)
+        ? notch_sdf(q, hb, r, notch.x, notch.y)
+        : rr_sdf(q, hb, r);
 }
 
 float hash21(float2 p) {
@@ -178,9 +204,7 @@ float4 fs(VSOut i) : SV_TARGET {
     float2 half_size = max(bounds.zw * 0.5 - inset, float2(2,2));
     float2 local = p - bounds.xy - bounds.zw * 0.5;
     float radius = max(min(extra.x - inset, min(half_size.x, half_size.y)), 0.0);
-    float d = (notch.z > 0.5)
-            ? notch_sdf(local, half_size, radius, notch.x, notch.y)
-            : rr_sdf(local, half_size, radius);
+    float d = island_sdf(local, half_size, radius);
     float mat = saturate(params.w);
 
     // Outside the island: paint the desktop back (or stay transparent under DComp).
@@ -222,20 +246,27 @@ float4 fs(VSOut i) : SV_TARGET {
         return float4(flat_col * a, a);
     }
 
-    // SDF gradient points outward.
+    // SDF gradient points outward. 用 island_sdf 保证左右停靠时法线跟着形状一起旋转。
     float e = 1.0;
-    float gx = rr_sdf(local + float2(e,0), half_size, radius)
-             - rr_sdf(local - float2(e,0), half_size, radius);
-    float gy = rr_sdf(local + float2(0,e), half_size, radius)
-             - rr_sdf(local - float2(0,e), half_size, radius);
+    float gx = island_sdf(local + float2(e,0), half_size, radius)
+             - island_sdf(local - float2(e,0), half_size, radius);
+    float gy = island_sdf(local + float2(0,e), half_size, radius)
+             - island_sdf(local - float2(0,e), half_size, radius);
     float2 g = normalize(float2(gx, gy) + float2(1e-6, 1e-6));
 
     // Refraction band: strongest at the edge, decays inward.
+    // 角部判定用旋转后的局部坐标，左右停靠（竖向岛体）才能正确识别四个圆角。
+    float2 edge_local = local;
+    float2 edge_half = half_size;
+    if (extra.w > 0.5) {
+        edge_local = (extra.w < 1.5) ? float2(local.y, -local.x) : float2(-local.y, local.x);
+        edge_half = half_size.yx;
+    }
     float band = max(look.y, 1.0);
     float t = saturate(-d / band);
     float k = pow(1.0 - pow(t, 0.30), 2.0);
-    float cxn = saturate((abs(local.x) - (half_size.x - radius)) / max(radius,1));
-    float cyn = saturate((abs(local.y) - (half_size.y - radius)) / max(radius,1));
+    float cxn = saturate((abs(edge_local.x) - (edge_half.x - radius)) / max(radius,1));
+    float cyn = saturate((abs(edge_local.y) - (edge_half.y - radius)) / max(radius,1));
     float chroma = max(params.x, 0.0) * lerp(0.60, 1.0, cxn * cyn);
     float strength = max(misc.z, 0.0);
     float2 refr = -g * k * strength;
