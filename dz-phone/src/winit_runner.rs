@@ -408,7 +408,9 @@ fn build_glass_params(ppp: f32, liquid: bool, dock: daozai::model::Dock) -> Glas
     };
     p.extra = [u.radius * ppp, cw, h, dock_code];
     // 光学强度（折射/色散/模糊，单位 CSS px）同样转设备像素；morph/material 无量纲不缩放。
-    p.params = [u.chroma * ppp, 0.0, u.morph, u.material];
+    // params.y = ppp，供 refresh_control_uniforms 反算控件透镜坐标（左右停靠画布高不同，
+    // 不能再用 canvas_h/WIN_H 反推）。shader 里 params.y 未参与光学计算，安全复用。
+    p.params = [u.chroma * ppp, ppp, u.morph, u.material];
     p.misc = [u.pointer[0] * ppp, h - u.pointer[1] * ppp, u.refract * ppp, 0.0];
     p.look = [u.blur * ppp, u.band * ppp, u.edge_w * ppp, u.edge_op];
     p.lightcfg = [u.light_follow, 0.0, 0.0, 0.0];

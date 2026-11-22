@@ -54,14 +54,16 @@ pub struct GlassParams {
 /// 必须在 `ctx.run_ui` 之后调用——app 的 paint_gpu_glass 在 run_ui 内发布控件，
 /// 提前读会拿到上一帧，展开/收起动画时残留透镜白边会闪一条竖线。
 ///
-/// 高度基准只用 `u.extra[2]`（= build_glass_params 写入、shader 全屏三角形实际使用的
-/// 画布物理高 WIN_H*ppp）。**不要**用 `window.inner_size().height`：那是窗口的物理像素
-/// 高（=WIN_H=270），高 DPI 下 WIN_H*ppp=337.5，两者差 67.5——控件 y 翻转用错基准会
-/// 让透镜整体偏移到面板外，表现为「控件只剩文字、没有玻璃」。岛体 bounds 用的正是
-/// extra[2]，控件必须与之同一坐标系。ppp 也从 extra[2] 反推，避免与 egui 的 ppp 漂移。
+/// 高度基准用 `u.extra[2]`（= build_glass_params 写入、shader 全屏三角形实际使用的
+/// 画布物理高）。**不要**用 `window.inner_size().height`：那是窗口的物理像素高，
+/// 高 DPI 下与 canvas_h 差一截——控件 y 翻转用错基准会让透镜偏移到面板外。
+///
+/// ppp 由 `params.y` 显式传入，**不要**再从 canvas_h 反推：过去用 `canvas_h / WIN_H`
+/// 在左右停靠时错了——那时画布高是 SIDE_H(600)*ppp 而非 WIN_H(270)*ppp，反推出 2.2 倍
+/// 的 ppp，控件透镜全部飞到面板外，表现为「左右停靠时控件没有玻璃效果」。
 fn refresh_control_uniforms(u: &mut GlassParams) {
     let canvas_h = u.extra[2];
-    let ppp = (canvas_h / crate::app::WIN_H).max(0.1);
+    let ppp = if u.params[1] > 0.0 { u.params[1] } else { (canvas_h / crate::app::WIN_H).max(0.1) };
     let (ctls, n) = crate::gpu_glass::controls_snapshot();
     let slots = u.cprm.len();
     let n = n.min(slots);

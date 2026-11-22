@@ -237,46 +237,37 @@ fn shadow_mapped(painter: &egui::Painter, rect: Rect, map: EdgeMap, flare: f32, 
     }
 }
 
-/// 液态玻璃的柔和外落影：只画岛体下半圈，顶部完全无影，岛体内部一根线都不画。
+/// 液态玻璃的柔和外落影：沿岛体四边羽化到透明，岛体内部一根线都不画。
 ///
-/// 苹果 Liquid Glass 的投影是高斯式、光源在上方：影子只在物体下方与两侧下部，上方没有。
-/// 岛仔贴屏幕顶，肩部两翼的外法线朝上、顶点落在屏幕外——任何「沿整圈轮廓画影」的做法，
-/// 上方都会只剩左右直边的一截，看起来像「矩形投影」（用户实机连续两次反馈的根因）。
+/// 根本教训（用户多轮实机反馈）：**投影绝不能带刘海肩部（flare）**。岛体贴屏幕边缘，
+/// 肩部外扩朝贴边侧会被屏幕裁掉，于是只剩另一半边的肩 → 「刘海/投影跑到错误一侧」，
+/// 且换停靠方向时错的方向跟着变。肩部是岛体与屏幕的「连接」，不该在屏幕上留下影子。
 ///
-/// 踩过的坑：① 旧 `shadow_mapped` 每层整块实心圆角矩形 → 4 层盖住玻璃、岛体发灰；
-/// ② 硬边环形带 → 轮廓处一圈「黑框」；③ 沿外法线羽化 + 向下偏移 → 肩翼影子仍在屏外，
-/// 左右上角依旧矩形。
-///
-/// 本版从根上解决：轮廓顶点的 alpha 随 y 渐变——顶部 30% 完全透明（不生成几何），
-/// 到 75% 高度渐增到满，再由外法线羽化到透明。光学上就是「上方无影、越往下越浓」的
-/// 落影，既没有矩形角，也贴回苹果液态玻璃的观感。
+/// 本版彻底不用肩部：`outline(frame, 0, 0, radius)` 画一个纯圆角矩形，四边均匀羽化
+/// （轮廓实色 → 沿外法线外扩透明）。任意停靠方向都是对称的柔和外影，既无「黑框」
+/// （顶点渐变而非硬边）、无「矩形角」（没有肩部被裁）、也不会偏向某一侧。
 #[allow(clippy::too_many_arguments)]
 pub fn shadow_ring(painter: &egui::Painter, rect: Rect, dock: Dock,
-                   flare: f32, flare_h: f32, radius: f32, strength: f32) {
+                   _flare: f32, _flare_h: f32, radius: f32, strength: f32) {
     if strength <= 0.01 { return; }
     let (map, frame) = EdgeMap::of(rect, dock);
-    let pts = outline(frame, flare, flare_h, radius);
+    // 关键：flare=0，纯圆角矩形轮廓，不带刘海肩部。
+    let pts = outline(frame, 0.0, 0.0, radius);
     let n = pts.len();
     if n < 2 { return; }
-    let h = frame.height().max(1.0);
-    // 顶部 30% 无影 → 75% 处到满：肩部两翼不投影，矩形角从根上消失。
-    let fade = |y: f32| (((y - frame.top()) / h - 0.30) / 0.45).clamp(0.0, 1.0);
     // (外扩宽度, 起始 alpha)：宽度递减、alpha 也递减，叠加后近浓远淡。
     for (width, a) in [(12.0f32, 0.030f32), (8.0, 0.034), (4.5, 0.038), (2.0, 0.042)] {
+        let color = Color32::from_black_alpha((255.0 * a * strength) as u8);
+        let clear = Color32::TRANSPARENT;
         let mut mesh = egui::Mesh::default();
         for i in 0..n - 1 {
             let (p, q) = (pts[i], pts[i + 1]);
-            let (fp, fq) = (fade(p.y), fade(q.y));
-            if fp <= 0.0 && fq <= 0.0 { continue; }   // 上半圈整段跳过
-            let cp = Color32::from_black_alpha((255.0 * a * strength * fp) as u8);
-            let cq = Color32::from_black_alpha((255.0 * a * strength * fq) as u8);
-            let clear = Color32::TRANSPARENT;
             let np = edge_normal(&pts, i);
             let nq = edge_normal(&pts, i + 1);
             let base = mesh.vertices.len() as u32;
-            mesh.colored_vertex(p, cp);                       // 轮廓：随高度渐变
-            mesh.colored_vertex(q, cq);
-            mesh.colored_vertex(q + nq * width, clear);       // 外扩 width：透明
+            mesh.colored_vertex(p, color);                       // 轮廓：实色
+            mesh.colored_vertex(q, color);
+            mesh.colored_vertex(q + nq * width, clear);          // 外扩：透明
             mesh.colored_vertex(p + np * width, clear);
             mesh.add_triangle(base, base + 1, base + 2);
             mesh.add_triangle(base, base + 2, base + 3);

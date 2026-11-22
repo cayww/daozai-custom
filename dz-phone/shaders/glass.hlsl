@@ -45,9 +45,8 @@ float rr_sdf(float2 p, float2 b, float r) {
 
 // Notch (Liu Hai) outline SDF: shoulders flare outward near the top, matching
 // shape::sections. Bottom corners rounded, top edge straight where shoulders extend.
-// p 是 D3D11 局部坐标（y 向上为正）：+b.y 是岛体顶、-b.y 是底。egui::sections 的
-// 肩部 t=0 在顶、wing=flare*(1-t)^2.4 顶部最宽——这里必须让 t=0 也在顶，
-// 否则肩部翻到底部（实机表现：岛体下方多出两个向下伸的尖角）。
+// p 是 D3D11 局部坐标：+b.y 是岛体顶、-b.y 是底（bounds 已做 h-by-bh 翻转）。
+// egui::sections 肩部 t=0 在顶、wing=flare*(1-t)^2.4 顶部最宽——t=0 也必须在顶。
 float notch_sdf(float2 p, float2 b, float r, float flare, float fh) {
     float t = saturate((b.y - p.y) / max(fh, 1.0));
     float wing = flare * pow(1.0 - t, 2.4);
@@ -69,14 +68,15 @@ float island_sdf(float2 local, float2 b, float r) {
             ? notch_sdf(local, b, r, notch.x, notch.y)
             : rr_sdf(local, b, r);
     }
+    // 映射经完整链路数值验证（egui y 顶原点 → bounds 的 h-y 翻转 → shader local → q）：
+    // Left  贴左边缘 local.x=-b.x → q=(local.y, -local.x) → q.y=+b.y → 肩部落在贴边侧 ✓
+    // Right 贴右边缘 local.x=+b.x → q=(-local.y, local.x) → q.y=+b.y → 肩部落在贴边侧 ✓
     float2 q;
     float2 hb = b.yx;
     if (extra.w < 1.5) {
-        // Left：肩部（贴顶系的 +y）要落在屏幕 -x（左边）。
-        q = float2(local.y, -local.x);
+        q = float2(local.y, -local.x);   // Left
     } else {
-        // Right：肩部要落在屏幕 +x（右边）。
-        q = float2(-local.y, local.x);
+        q = float2(-local.y, local.x);   // Right
     }
     return (notch.z > 0.5)
         ? notch_sdf(q, hb, r, notch.x, notch.y)
