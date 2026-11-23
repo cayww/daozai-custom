@@ -6872,7 +6872,16 @@ fn compact_font_atlas_preserves_settings_pixels_at_multiple_scales(){
         for (tab,(before,after)) in before.iter().zip(&after).enumerate(){
             // 图集坐标改变只允许少量通道有 1/255 的浮点采样舍入差异。
             let max=before.iter().zip(after).map(|(a,b)|a.abs_diff(*b)).max().unwrap_or(0);
-            let count=before.iter().zip(after).filter(|(a,b)|a!=b).count();assert!(max<=1 && count<before.len()/1000,"设置页 {tab} 在图集上限 {limit}、缩放 {scale} 下出现可见差异：{max}/{count}");
+            let count=before.iter().zip(after).filter(|(a,b)|a!=b).count();
+            if max>1 || count>=before.len()/1000 {
+                if let Some(dir)=std::env::var_os("DAOZAI_FONT_DEBUG_DIR") {
+                    let dir=std::path::PathBuf::from(dir);std::fs::create_dir_all(&dir).unwrap();
+                    let w=(690.0*scale) as u32;let h=(560.0*scale) as u32;
+                    image::save_buffer(dir.join(format!("tab{tab}-s{scale}-l{limit}-before.png")),before,w,h,image::ColorType::Rgba8).unwrap();
+                    image::save_buffer(dir.join(format!("tab{tab}-s{scale}-l{limit}-after.png")),after,w,h,image::ColorType::Rgba8).unwrap();
+                }
+            }
+            assert!(max<=1 && count<before.len()/1000,"设置页 {tab} 在图集上限 {limit}、缩放 {scale} 下出现可见差异：{max}/{count}");
         }}
     }
 }
