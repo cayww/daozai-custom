@@ -143,8 +143,8 @@ mod tests {
         for source in [Source::Mail("test"),Source::Calendar(Some(calendar::Provider::Feishu)),Source::Calendar(Some(calendar::Provider::WeCom))] {
         let ctx=egui::Context::default();egui_extras::install_image_loaders(&ctx);
         let raw=egui::RawInput{viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-        let output=ctx.run(raw,|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|{
+        let output=ctx.run_ui(raw, |ui|{
+            egui::CentralPanel::default().show(ui,|ui|{
                 let c=Card::new(ui,egui::Pos2::ZERO,ui.clip_rect());
                 source_icon(&c,source,0.0,0.0,13.0);
                 source_icon(&c,source,40.0,0.0,28.0);
@@ -157,9 +157,9 @@ mod tests {
     #[test]
     fn dingtalk_logo_rasterizes_at_screen_size_and_reuses_textures(){
         let ctx=egui::Context::default();egui_extras::install_image_loaders(&ctx);
-        let frame=|ctx:&egui::Context|ctx.run(egui::RawInput{
+        let frame=|ctx:&egui::Context|ctx.run_ui(egui::RawInput{
             viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()
-        },|ctx|{egui::CentralPanel::default().show(ctx,|ui|{
+        }, |ui|{egui::CentralPanel::default().show(ui,|ui|{
             let c=Card::new(ui,egui::Pos2::ZERO,ui.clip_rect());
             source_icon(&c,Source::Calendar(Some(calendar::Provider::DingTalk)),0.0,0.0,20.0);
             source_icon(&c.scaled(50.0,0.0,1.5),Source::Calendar(Some(calendar::Provider::DingTalk)),50.0,0.0,20.0);
@@ -270,7 +270,9 @@ impl App {
         source_icon(c,Source::Calendar(None),43.0,13.0,10.0);
         c.centered_text(69.0,18.0,"日程",10.0,W::Semibold,theme::WHITE,H::Center);
         if c.hit(37.0,9.0,54.0,18.0,"calendar-today").on_hover_text("回到今天").clicked(){self.select_calendar_day(today);}
-        // GPU 玻璃分支：透镜由着色器画，这里只留命中区、悬停反馈和文字。
+        // 与日历编辑页《不提醒》逐行同构：透镜由着色器画（ctl_geom 已注册几何），
+        // 这里只留命中区、悬停白罩和文字；文字跟 `ctl_scale` 一起缩（Damped 死区
+        // 会吞掉 6% 以内的尾振）。非液态皮肤下退回矢量胶囊。
         let (add,b)=if self.glassy() && self.ctl_on_gpu(Ctl::CalAdd) {
             let add=c.hit(101.0,9.0,46.0,18.0,"calendar-add-local");
             let (hover,_)=c.hover_t(&add);

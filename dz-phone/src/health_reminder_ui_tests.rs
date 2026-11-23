@@ -56,8 +56,8 @@ fn health_pending_survives_restart_and_day_change(){
     h.app=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9});h.frame(vec![]);
     h.t+=24.0*3600.0;
     let env=Env{t:h.t,clock:"09:41:00".into(),today:"2026-10-29".into(),..Default::default()};
-    let _=h.ctx.run(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(h.t),..Default::default()},|ctx|{
-        egui::CentralPanel::default().show(ctx,|ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
+    let _=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(h.t),..Default::default()}, |ui|{
+        egui::CentralPanel::default().show(ui,|ui|{h.app.frame(ui,Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),&env);});
     });
     assert_eq!(h.app.health_pending,[true,true]);h.frame(vec![]);
     assert!(badge(&h,"water").width()>10.0 && badge(&h,"sit").width()>10.0,"重启和跨天保留待处理提醒");

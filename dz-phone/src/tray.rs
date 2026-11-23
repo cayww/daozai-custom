@@ -33,8 +33,6 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// 原版的托盘回调消息。
 pub const WM_TRAY: u32 = WM_APP + 9;
-/// 仅构建并导出当前菜单状态，不弹出菜单（自动化取证用）。
-pub const WM_TRAY_DUMP: u32 = WM_APP + 2;
 /// 在屏幕坐标 (wparam, lparam) 弹出菜单（隐藏桌面取证用）。
 pub const WM_TRAY_MENU: u32 = WM_APP + 3;
 
@@ -201,6 +199,7 @@ fn popup_menu(state: State) -> windows::core::Result<HMENU> {
     }
 }
 
+#[cfg(test)]
 fn menu_items(menu: HMENU) -> Vec<(String, bool, bool)> {
     unsafe {
         let count = GetMenuItemCount(menu);
@@ -237,29 +236,8 @@ fn about() {
     }
 }
 
-fn dump_menu(hwnd: HWND, ctx: &Ctx, menu: HMENU) {
-    if let Ok(path) = std::env::var("DAOZAI_TRAY_DUMP") {
-        let state = ctx.state();
-        let mut body = String::new();
-        body.push_str(&format!("hwnd=0x{:X}\n", hwnd.0 as usize));
-        body.push_str(&format!("icon_added={}\n", ctx.added.load(Ordering::Relaxed)));
-        body.push_str(&format!("icon_adds={}\n", ctx.adds.load(Ordering::Relaxed)));
-        body.push_str(&format!("autostart={}\n", state.autostart));
-        body.push_str(&format!("pet={}\nminimal={}\n", state.pet, state.minimal));
-        for (i, (text, checked, sep)) in menu_items(menu).into_iter().enumerate() {
-            if sep {
-                body.push_str(&format!("item{}=(separator)\n", i + 1));
-            } else {
-                body.push_str(&format!("item{}={}|checked={}\n", i + 1, text, u8::from(checked)));
-            }
-        }
-        let _ = std::fs::write(path, body);
-    }
-}
-
 fn show_menu_at(hwnd: HWND, ctx: &Ctx, x: i32, y: i32) {
     let Ok(menu) = popup_menu(ctx.state()) else { return };
-    dump_menu(hwnd, ctx, menu);
     unsafe {
         // 不先给前台，菜单会因为焦点切换立刻消失
         let _ = SetForegroundWindow(hwnd);
@@ -324,15 +302,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     }
     if msg == WM_APP+4 {return LRESULT(ctx.tx.send(Event::OpenSettings).is_ok() as isize);}
     if msg == WM_APP+5 {return LRESULT(ctx.tx.send(Event::OpenCalendar).is_ok() as isize);}
-    if msg == WM_TRAY_DUMP {
-        if let Ok(menu) = popup_menu(ctx.state()) {
-            dump_menu(hwnd, ctx, menu);
-            unsafe {
-                let _ = DestroyMenu(menu);
-            }
-        }
-        return LRESULT(0);
-    }
     if msg == WM_TRAY_MENU {
         show_menu_at(hwnd, ctx, wp.0 as i32, lp.0 as i32);
         return LRESULT(0);

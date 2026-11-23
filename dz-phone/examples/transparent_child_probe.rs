@@ -7,7 +7,8 @@ fn main()->eframe::Result<()> {
     impl Drop for Probe {fn drop(&mut self){unsafe{if !self.back.0.is_null(){let _=DestroyWindow(self.back);}}}}
     impl eframe::App for Probe {
         fn clear_color(&self,_:&egui::Visuals)->[f32;4]{[0.0;4]}
-        fn update(&mut self,ctx:&egui::Context,_:&mut eframe::Frame){
+        fn ui(&mut self, ui:&mut egui::Ui,_:&mut eframe::Frame){
+        let ctx=ui.ctx().clone();
             ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("alpha-child"),egui::ViewportBuilder::default().with_title("透明子窗口检查").with_inner_size([320.0,160.0]).with_position([450.0,100.0]).with_decorations(false).with_transparent(true).with_active(false).with_always_on_top(),|child,_|{
                 egui::CentralPanel::default().frame(egui::Frame::NONE).show(child,|ui|{
                     ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(60.0,30.0),egui::pos2(260.0,130.0)),25.0,egui::Color32::BLACK);

@@ -1,6 +1,6 @@
 [package]
 name = "daozai"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2021"
 license = "MIT"
 description = "岛仔：Windows 顶部的桌面伙伴与信息岛"
@@ -36,17 +36,16 @@ memprof = ["dep:dhat"]
 [patch.crates-io]
 imap = { path = "vendor/imap" }
 imap-proto = { path = "vendor/imap-proto" }
-eframe = { path = "vendor/eframe" }
-egui = { path = "vendor/egui" }
-egui-winit = { path = "vendor/egui-winit" }
-egui-wgpu = { path = "vendor/egui-wgpu" }
-wgpu-hal = { path = "vendor/wgpu-hal" }
 ureq = { path = "vendor/ureq" }
+# egui/eframe/egui-winit vendor patches removed for egui 0.35.
+# The legacy wgpu/D3D12/WGSL stack is gone; rendering is D3D11 + winit only.
 
 [dependencies]
-eframe = { version = "0.31", default-features = false, features = ["glow", "wgpu", "default_fonts"] }
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts"] }
+egui = "0.35"
+log = "0.4"
 dhat = { version = "0.3", optional = true }
-egui_extras = { version = "0.31", default-features = false, features = ["svg", "image"] }
+egui_extras = { version = "0.35", default-features = false, features = ["svg", "image"] }
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -67,19 +66,22 @@ rquickjs = "0.8"
 
 # Linux 下 winit 至少要一个后端才能编译（只用于开发/录制，正式目标是 Windows）。
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts", "x11"] }
+eframe = { version = "0.35", default-features = false, features = ["glow", "default_fonts", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 clipboard-win = "5.4.3"
-wgpu = { version = "24", default-features = false, features = ["dx12"] }
 memmap2 = "0.9.12"
+# D3D11 自绘栈（从 egui-directx11 移植到 windows 0.58）：winit 事件循环 + egui 平台桥
+egui-winit = { version = "0.35", default-features = false }
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Devices_Display",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Dwm",
+  "Win32_Graphics_DirectComposition",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_System_Com",
@@ -94,6 +96,7 @@ windows = { version = "0.58", features = [
   "Win32_System_RemoteDesktop",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Diagnostics_Debug",
+  "Win32_System_Kernel",
   "Win32_Storage_FileSystem",
   "Win32_Storage_Packaging_Appx",
   "Win32_UI_Input_KeyboardAndMouse",
@@ -118,7 +121,7 @@ windows = { version = "0.58", features = [
   "Win32_Devices_Bluetooth",
   "Devices_Bluetooth", "Devices_Enumeration",
   "Graphics", "Graphics_Capture", "Graphics_DirectX", "Graphics_DirectX_Direct3D11",
-  "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D12",
+  "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11",
   "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common",
   "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture",
 ] }

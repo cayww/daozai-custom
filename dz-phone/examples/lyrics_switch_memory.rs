@@ -20,20 +20,21 @@ fn main()->eframe::Result<()> {
     }
     impl eframe::App for Probe {
         fn clear_color(&self,_:&egui::Visuals)->[f32;4]{[0.0;4]}
-        fn update(&mut self,ctx:&egui::Context,_:&mut eframe::Frame){
+        fn ui(&mut self, ui:&mut egui::Ui,_:&mut eframe::Frame){
+        let ctx=ui.ctx().clone();
             let delay=Duration::from_secs_f64(1.0/60.0).saturating_sub(self.frame_at.elapsed());
             if !delay.is_zero(){std::thread::sleep(delay);}self.frame_at=Instant::now();
             let t=self.start.elapsed().as_secs_f64();self.frames+=1;
             let song=(t/2.0)as usize;let changed=self.song!=song;
             if changed {
                 self.song=song;
-                self.artwork=Arc::new(egui::ColorImage::new([256,256],egui::Color32::from_rgb((song*37)as u8,(song*73)as u8,150)));
+                self.artwork=Arc::new(egui::ColorImage::filled([256,256],egui::Color32::from_rgb((song*37)as u8,(song*73)as u8,150)));
             }
             let title=format!("连续切歌检查 {song}");
             let env=Env{t,clock:"16:30:00".into(),today:"2026-11-04".into(),battery:Some(80),charging:true,
                 cursor:(self.mode=="expanded").then_some(egui::pos2(WIN_W/2.0,12.0)),
                 media:daozai::smtc::NowPlaying{source:"cloudmusic.exe".into(),title:title.clone(),artist:"测试".into(),song_id:Some(song as u64+1),duration:240.0,position:(t%2.0)*120.0,playing:true,artwork:Some(self.artwork.clone()),playback_type:daozai::smtc::MediaKind::Music,..Default::default()},..Default::default()};
-            egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx,|ui|{
+            egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui,|ui|{
                 let out=self.app.frame(ui,egui::Rect::from_min_size(ui.max_rect().min,egui::vec2(WIN_W,WIN_H)),&env);
                 if out.hit.width()>280.0{self.active_frames+=1;}
                 let r=|r:egui::Rect|(r.min.x,r.min.y,r.width(),r.height());
@@ -73,12 +74,12 @@ fn main()->eframe::Result<()> {
     std::fs::write(root.join("settings.txt"),format!("lyrics_enabled={}\nisland_lyrics={}\npet=1\n",u8::from(mode!="disabled"),u8::from(mode=="island"))).unwrap();
     std::env::set_var("DAOZAI_DATA_DIR",&root);
     let _monitor=daozai::resources::Monitor::start(root.join("diagnostics")).unwrap();
-    let options=eframe::NativeOptions{vsync:false,viewport:egui::ViewportBuilder::default().with_title("岛仔连续切歌检查").with_inner_size([daozai::app::CANVAS_W,WIN_H]).with_position([100.0,100.0]).with_decorations(false).with_transparent(true).with_active(false),..Default::default()};
+    let options=eframe::NativeOptions{viewport:egui::ViewportBuilder::default().with_title("岛仔连续切歌检查").with_inner_size([daozai::app::CANVAS_W,WIN_H]).with_position([100.0,100.0]).with_decorations(false).with_transparent(true).with_active(false),..Default::default()};
     eframe::run_native("岛仔连续切歌检查",options,Box::new(move|cc|{
         cc.egui_ctx.set_pixels_per_point(1.0);
         if let Some(gl)=&cc.gl{use eframe::glow::HasContext;println!("renderer={}",unsafe{gl.get_parameter_string(eframe::glow::RENDERER)});}
-        let app=App::new(&cc.egui_ctx,Options{fetch_lyrics:false,pet_idle:1e9});let native=daozai::native::Window::new(cc).unwrap();
-        Ok(Box::new(Probe{app,native,start:Instant::now(),frame_at:Instant::now(),lyrics,song:usize::MAX,artwork:Arc::new(egui::ColorImage::new([1,1],egui::Color32::WHITE)),mode,seconds,frames:0,next_sample:0.0,baseline:None,peak:0,active_frames:0}))
+        let app=App::new(&cc.egui_ctx,Options{fetch_lyrics:false,pet_idle:1e9});let native=daozai::native::Window::from_cc(cc).unwrap();
+        Ok(Box::new(Probe{app,native,start:Instant::now(),frame_at:Instant::now(),lyrics,song:usize::MAX,artwork:Arc::new(egui::ColorImage::filled([1,1],egui::Color32::WHITE)),mode,seconds,frames:0,next_sample:0.0,baseline:None,peak:0,active_frames:0}))
     }))
 }
 #[cfg(not(windows))]

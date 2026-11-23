@@ -335,7 +335,7 @@ mod tests {
     use super::*;
 
     fn image_of(color: Color32) -> ColorImage {
-        ColorImage { size: [8, 8], pixels: vec![color; 64] }
+        ColorImage { size: [8, 8], pixels: vec![color; 64], source_size: eframe::egui::vec2(8.0, 8.0) }
     }
 
     fn lum(c: Color32) -> u32 {

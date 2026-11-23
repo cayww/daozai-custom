@@ -10,7 +10,8 @@ use daozai::poll_clock::PollClock;
 use std::time::{Duration, Instant};
 
 mod diagnostics;
-mod graphics;
+#[cfg(windows)]
+mod winit_runner;
 
 struct Shell {
     app: App,
@@ -134,13 +135,13 @@ impl Shell {
         self.unread_at=PollClock::now();
     }
 
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        diagnostics::graphics(cc);
-        let running_compat=cc.wgpu_render_state.is_some();
+    /// D3D11 自绘栈构造：直接接收 egui Context 与窗口 HWND（不经 eframe CreationContext）。
+    fn new(egui_ctx: egui::Context, hwnd: windows::Win32::Foundation::HWND) -> Self {
+        diagnostics::graphics();
+        let running_compat=false; // migration: no wgpu render state
         diagnostics::startup("加载本地配置");
-        let mut app = App::new(&cc.egui_ctx, Options::default());
+        let mut app = App::new(&egui_ctx, Options::default());
         app.render_compat_running=running_compat;
-        app.wgpu_format=cc.wgpu_render_state.as_ref().map(|state|state.target_format);
         #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
         #[cfg(not(feature="record"))] let quota_demo=false;
         diagnostics::startup("初始化额度配置");
@@ -158,7 +159,7 @@ impl Shell {
         if let Ok(mode)=std::env::var("DAOZAI_QUOTA_DEMO"){app.quota_demo(&mode);}
         diagnostics::startup("初始化媒体和托盘");
         let media = smtc::shared();
-        let media_enabled=smtc::spawn_poller(media.clone(),cc.egui_ctx.clone());
+        let media_enabled=smtc::spawn_poller(media.clone(),egui_ctx.clone());
         media_enabled.store(app.settings.visible_pages[0],std::sync::atomic::Ordering::Relaxed);
         #[cfg(windows)]
         let autostart = daozai::tray::autostart_enabled();
@@ -170,14 +171,15 @@ impl Shell {
         });
         diagnostics::startup("初始化通知监听");
         #[cfg(windows)]
-        let incoming=if app.settings.read_notifications {match daozai::system::connect_with_settings(cc.egui_ctx.clone(),&app.settings){Ok(rx)=>Some(rx),Err(e)=>{app.listener_status=format!("Windows 无法读取通知：{}",e.code());None}}}else{None};
+        let incoming=if app.settings.read_notifications {match daozai::system::connect_with_settings(egui_ctx.clone(),&app.settings){Ok(rx)=>Some(rx),Err(e)=>{app.listener_status=format!("Windows 无法读取通知：{}",e.code());None}}}else{None};
         // 音频、网络与输入法查询由后台完成，避免首帧等待系统服务。
         diagnostics::startup("创建后台采样与窗口");
         let initial_input=None;
         #[cfg(windows)] let system_state=daozai::system::Snapshot::default();
-        #[cfg(windows)] let system_rx=daozai::system::observe(cc.egui_ctx.clone(),system_state.clone(),initial_input);
+        #[cfg(windows)] let system_rx=daozai::system::observe(egui_ctx.clone(),system_state.clone(),initial_input);
         // 岛体大小只作用于主窗口，在首帧之前生效，避免启动时先按 100% 闪一下。
-        #[cfg(windows)] eframe::set_root_viewport_scale(app.settings.island_scale());
+        // 实现见 winit_runner::scale_root_input：只换算主 viewport 输入，
+        // 不能用 Context::set_zoom_factor（那是全局缩放，会把设置页一起放大）。
         Self {
             app,
             t0: Instant::now(),
@@ -217,7 +219,7 @@ impl Shell {
             #[cfg(windows)] hidden:false,
             #[cfg(windows)] backdrop:None,
             #[cfg(windows)]
-            native: daozai::native::Window::new(cc),
+            native: daozai::native::Window::new(hwnd, egui_ctx.clone()),
             #[cfg(windows)]
             tray,
             #[cfg(windows)]
@@ -348,26 +350,10 @@ impl Shell {
     }
 }
 
-impl eframe::App for Shell {
-    fn raw_input_hook(&mut self,_ctx:&egui::Context,input:&mut egui::RawInput) {
-        if input.viewport_id==egui::ViewportId::ROOT {self.app.filter_todo_input(input);}
-    }
-
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        // DirectComposition 是逐像素 alpha：清屏必须全透明，否则整窗是一块不透明底色。
-        if eframe::egui_wgpu::winit::direct_composition_active() {
-            return [0.0; 4];
-        }
-        // 兼容渲染的窗口是不透明的：首帧清成黑色会「黑闪」一下。
-        // 液态玻璃皮肤下清成接近浅玻璃的灰白，等 GPU 内容覆盖，观感平滑很多。
-        if self.app.settings.skin == daozai::model::Skin::Liquid && self.app.wgpu_format.is_some() {
-            [0.93, 0.93, 0.94, 1.0]
-        } else {
-            [0.0; 4]
-        }
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl Shell {
+    /// 岛仔 UI 绘制主体（eframe 与新 winit 自绘循环共用）。
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
         let frame_start=Instant::now();
         // 内存剖析运行：DAOZAI_MEMPROF_EXIT=<秒> 到点后优雅退出（走 Drop 写 dhat 报告）。
         #[cfg(feature = "memprof")]
@@ -396,8 +382,8 @@ impl eframe::App for Shell {
         self.media_enabled.store(self.app.settings.visible_pages[0] && !guarded,std::sync::atomic::Ordering::Relaxed);
         if self.media_fast_until.is_some_and(|until|Instant::now()>=until){self.media_fast_until=None;}
         self.media_enabled.set_interval(if self.media_fast_until.is_some(){smtc::POLL_FAST}else{self.app.media_poll_interval()});
-        // 设置里改了岛体大小：下一帧起主窗口按新倍率栅格化，定位逻辑随像素比变化同步调整画布。
-        #[cfg(windows)] eframe::set_root_viewport_scale(self.app.settings.island_scale());
+        // 设置里改了岛体大小：主窗口输入每帧按 island_scale 换算（见 winit_runner），
+        // 这里不再动全局 zoom——那会连设置页一起放大并让定位按错误的 ppp 计算。
         #[cfg(windows)]
         {
             // 用帧间隔限制刷新，绕过部分 Intel 驱动在垂直同步中的忙等待。
@@ -496,7 +482,7 @@ impl eframe::App for Shell {
                 while let Ok(found)=service.rx.try_recv(){ self.bt=found; self.bt_ready=true; }
             }
             let previous_pending=self.app.pending_messengers.clone();
-            for event in self.messengers.poll_taskbar(ctx,&self.app.settings){match event{
+            for event in self.messengers.poll_taskbar(&ctx,&self.app.settings){match event{
                 TaskbarEvent::Status(client,status)=>self.app.set_messenger_status(client,status),
                 TaskbarEvent::Message(unread)=>{
                     if self.messengers.track_unread(unread)==Err(OpenError::Exited){continue;}
@@ -515,7 +501,7 @@ impl eframe::App for Shell {
                 }}
             }
             if self.app.pending_messengers!=previous_pending || self.unread_at.ready(Duration::from_secs(1)){
-                self.clear_exited_messengers(ctx);
+                self.clear_exited_messengers(&ctx);
             }
             if !self.app.pending_messengers.is_empty(){ctx.request_repaint_after(Duration::from_secs(1));}
             if foreground_changed || self.app.pending_messengers!=previous_pending {
@@ -573,8 +559,8 @@ impl eframe::App for Shell {
                 if !success{self.app.say(message);}
             }
         }
-        let env = self.env(ctx);
-        self.reconcile_modules(ctx);
+        let env = self.env(&ctx);
+        self.reconcile_modules(&ctx);
         // v0.5.5 邮件：开关 / 间隔 / 账号清单变了就重新对齐收信线程，再把事件交给界面。
         // 每帧只比较不复制，确有变化时才复制账号清单。
         if let Some(mail)=&self.mail {
@@ -617,7 +603,7 @@ impl eframe::App for Shell {
         let mut out = None;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 // 左右停靠时画布是竖向的 SIDE_W × SIDE_H。
                 let size=if self.app.settings.dock.is_side() {egui::vec2(daozai::side_dock::SIDE_W,daozai::side_dock::SIDE_H)} else {egui::vec2(app::WIN_W,app::WIN_H)};
                 let win = egui::Rect::from_min_size(ui.max_rect().min,size);
@@ -630,7 +616,7 @@ impl eframe::App for Shell {
             // 先处理本帧输入和动画，再决定是否移动，避免悬停或按下的首帧仍使用旧状态。
             let hovering=env.cursor.is_some_and(|p|out.hit.contains(p)||out.notice_hit.is_some_and(|r|r.contains(p)));
             let shift=if !self.app.settings.oled_shift {(0,0)}
-                else if !self.hidden && !hovering && self.app.oled_shift_idle(ctx) {
+                else if !self.hidden && !hovering && self.app.oled_shift_idle(&ctx) {
                     ctx.request_repaint_after(daozai::oled_shift::until_next_step(self.t0.elapsed()));
                     let target=daozai::oled_shift::shift(true,self.app.settings.dock,self.t0.elapsed());
                     daozai::oled_shift::toward(self.oled_shift,target)
@@ -703,7 +689,7 @@ impl eframe::App for Shell {
                 Cmd::ViewMessenger(unread)=>{
                     #[cfg(windows)] {
                         let was_pending=self.app.pending_messengers.contains(&unread);
-                        self.clear_exited_messengers(ctx);
+                        self.clear_exited_messengers(&ctx);
                         if !self.app.pending_messengers.contains(&unread){
                             if was_pending{
                                 messenger::windows::trace(format!("唤起 {} 账号 {}：未开始，账号进程已退出",unread.source.name(),unread.pid));
@@ -834,11 +820,11 @@ impl eframe::App for Shell {
 
         #[cfg(windows)] let autostart = self.autostart;
         #[cfg(not(windows))] let autostart = false;
-        self.app.settings_ui(ctx, autostart);
-        self.app.mail_reader_ui(ctx);
+        self.app.settings_ui(&ctx, autostart);
+        self.app.mail_reader_ui(&ctx);
         #[cfg(windows)] let repaint_after=if self.hidden{Duration::from_secs(1)}else{out.repaint_after};
         #[cfg(not(windows))] let repaint_after=out.repaint_after;
-        schedule_repaint(ctx,repaint_after);
+        schedule_repaint(&ctx,repaint_after);
         // 只记慢帧：卡顿反馈时能直接看出是渲染慢还是输入被吞（页面/展开状态一并记下）。
         let elapsed=frame_start.elapsed();
         if elapsed>=Duration::from_millis(60) {
@@ -847,6 +833,23 @@ impl eframe::App for Shell {
                 &format!("帧 {:.0} ms｜页面 {}｜展开 {}",elapsed.as_secs_f64()*1000.0,page,open));
         }
     }
+}
+
+impl eframe::App for Shell {
+    fn raw_input_hook(&mut self,_ctx:&egui::Context,input:&mut egui::RawInput) {
+        if input.viewport_id==egui::ViewportId::ROOT {self.app.filter_todo_input(input);}
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // D3D11 + DirectComposition 是逐像素 alpha：清屏必须全透明。
+        [0.0; 4]
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.draw(ui);
+    }
+
+
 }
 
 // ---------------- 额度线程对齐 ----------------
@@ -916,9 +919,9 @@ mod repaint_tests {
         let ctx=egui::Context::default();
         let mut delay=Duration::ZERO;
         for frame in 0..4 {
-            let output=ctx.run(egui::RawInput{time:Some(frame as f64),predicted_dt:1.0/60.0,..Default::default()},|ctx|{
-                if immediate{ctx.request_repaint();}
-                schedule_repaint(ctx,interval);
+            let output=ctx.run_ui(egui::RawInput{time:Some(frame as f64),predicted_dt:1.0/60.0,..Default::default()}, |ui|{
+                if immediate{ui.ctx().request_repaint();}
+                schedule_repaint(&ctx,interval);
             });
             delay=output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
         }
@@ -1082,7 +1085,7 @@ fn main() -> std::process::ExitCode {
             Err(error) => {diagnostics::report("诊断收集未完成。", &error); std::process::ExitCode::FAILURE}
         };
     }
-    // 内存剖析（--features memprof）：Profiler 在 run() 里创建、graphics::run 返回后 Drop，
+    // 内存剖析（--features memprof）：Profiler 在 run() 里创建、run() 返回后 Drop，
     // 写 dhat-heap.json 并挪进 data\diagnostics。不能用 taskkill /F（不走 Drop 没有报告），
     // 配合 DAOZAI_MEMPROF_EXIT=<秒> 让 Shell 自己发 ViewportCommand::Close 优雅退出。
     match run() {
@@ -1118,76 +1121,22 @@ fn run() -> eframe::Result<()> {
         .with_taskbar(false)
         .with_always_on_top()
         .with_visible(false);
-    let mut opts = eframe::NativeOptions { viewport, vsync: !cfg!(windows), ..Default::default() };
-    // 液态玻璃可选「优先独立显卡」。显卡是启动期决定的（wgpu 适配器只选一次），
-    // 所以在建窗前独立读一次设置；非液态皮肤、或用户关掉这项时完全不动 wgpu 的默认策略。
-    //
-    // 为什么要这项：egui-wgpu 的默认偏好虽是 HighPerformance，但混合显卡机器上仍可能
-    // 落到核显。核显没有独立显存，玻璃的纹理/帧缓冲会从系统内存分配 —— 实测同一构建包
-    // 核显 548MB、独显 274MB（工作集）。用 is_surface_supported 过滤，保证选中的卡
-    // 一定能呈现到本窗口，不会黑屏；另把虚拟/远程显示适配器垫底。
-    let boot = daozai::model::Settings::load();
-    // spike v1.0.1：零拷贝抓屏开关（设置页 → 环境变量 → wgc::gpu_share_enabled）。
-    // 必须在建窗 / 创建 wgpu device 之前设好：gpu_share_enabled 用 OnceLock 只读一次，
-    // 且 WGC 的 D3D11 设备要据此绑定到 wgpu 同卡。设置页为准，显式写 1/0。
-    // 这里无条件设置是无害的：非液态皮肤没有 GlassCallback，不会有人读这个变量；
-    // 液态皮肤 + glow 后端（无 wgpu）同样不注册回调，零副作用。
-    std::env::set_var("DAOZAI_LIQUID_GPU_SHARE", if boot.liquid_gpu_share { "1" } else { "0" });
-    // 换分辨率自动重启开关（零拷贝专用），同样启动期快照给 wgc::auto_restart_enabled。
-    std::env::set_var("DAOZAI_AUTO_RESTART_ON_RESOLUTION", if boot.liquid_auto_restart { "1" } else { "0" });
+    let _opts = eframe::NativeOptions { viewport, ..Default::default() };
     // 启动期快照：设置页用它与当前 settings 比较，判断"改了但未重启"以显示立即重启按钮。
+    // DGPU 偏好是产品设置；选卡逻辑目前由 D3D11 运行时决定（见 d3d11/runtime.rs）。
+    let boot = daozai::model::Settings::load();
     std::env::set_var("DAOZAI_LIQUID_PREFER_DGPU", if boot.liquid_prefer_dgpu { "1" } else { "0" });
-    if boot.skin == daozai::model::Skin::Liquid && boot.liquid_prefer_dgpu {
-        opts.wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(
-            eframe::egui_wgpu::WgpuSetupCreateNew {
-                native_adapter_selector: Some(std::sync::Arc::new(
-                    |adapters: &[eframe::wgpu::Adapter],
-                     surface: Option<&eframe::wgpu::Surface<'_>>|
-                     -> Result<eframe::wgpu::Adapter, String> {
-                        let score = |a: &eframe::wgpu::Adapter| -> i32 {
-                            let info = a.get_info();
-                            let name = info.name.to_lowercase();
-                            // 虚拟/远程/软件渲染一律垫底：它们比核显更慢、更占内存。
-                            if name.contains("virtual")
-                                || name.contains("display adapter")
-                                || name.contains("basic render")
-                                || name.contains("remote")
-                            {
-                                return -100;
-                            }
-                            match info.device_type {
-                                eframe::wgpu::DeviceType::DiscreteGpu => 100,
-                                eframe::wgpu::DeviceType::IntegratedGpu => 50,
-                                eframe::wgpu::DeviceType::VirtualGpu => 10,
-                                eframe::wgpu::DeviceType::Cpu => 0,
-                                _ => 20,
-                            }
-                        };
-                        let mut best: Option<&eframe::wgpu::Adapter> = None;
-                        for a in adapters {
-                            if let Some(s) = surface {
-                                if !a.is_surface_supported(s) {
-                                    continue;
-                                }
-                            }
-                            if best.map_or(true, |b| score(a) > score(b)) {
-                                best = Some(a);
-                            }
-                        }
-                        best.cloned().ok_or_else(|| "没有可用的 GPU 适配器".to_string())
-                    },
-                )),
-                ..Default::default()
-            },
-        );
-    }
-    // 内存剖析：包住整个 app 运行期，run 返回时 Drop 写报告到 data\diagnostics。
     // 注意：必须用 --profile memprof 构建（带符号，Rust 帧才能符号化）；taskkill /F 没有报告。
     #[cfg(feature = "memprof")]
     let memprof = {
         let path=daozai::model::config_dir().join("diagnostics").join("dhat-heap.json");
         dhat::Profiler::builder().file_name(path).build()
     };
-    let result=graphics::run(opts,|opts|eframe::run_native("岛仔", opts, Box::new(|cc| Ok(Box::new(Shell::new(cc))))));
-    result
+    #[cfg(windows)]
+    { winit_runner::run().map_err(|e| eframe::Error::AppCreation(Box::new(std::io::Error::other(e.to_string())))) }
+    #[cfg(not(windows))]
+    {
+        let _ = _opts;
+        Err(eframe::Error::AppCreation(Box::new(std::io::Error::other("非 Windows 无自绘栈"))))
+    }
 }

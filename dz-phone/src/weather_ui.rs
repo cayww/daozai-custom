@@ -90,9 +90,9 @@ fn temp_text(value: f32) -> String {
 /// 数字中线统一按「0」量取，所有温度共享同一条中线，零下与否都不会上下跳动。
 fn temp_ink(c: &Card, text: &str, size: f32, weight: W) -> (f32, f32) {
     let zero = c.galley("0", size, weight, theme::WHITE);
-    let asc = zero.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size * c.s);
-    let mid = (zero.mesh_bounds.center().y - asc) / c.s;
-    let ink = |t: &str| { let b = c.galley(t, size, weight, theme::WHITE).mesh_bounds; (b.width() / c.s, b.min.x / c.s) };
+    let asc = zero.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size);
+    let mid = zero.mesh_bounds.center().y - asc;
+    let ink = |t: &str| { let b = c.galley(t, size, weight, theme::WHITE).mesh_bounds; (b.width(), b.min.x) };
     match text.strip_prefix('-') {
         Some(rest) => { let (dash, _) = ink("-"); (dash + size * 0.07 + ink(rest).0, mid) }
         None => (ink(text).0, mid),
@@ -108,14 +108,14 @@ fn paint_temp(c: &Card, x: f32, base: f32, text: &str, size: f32, weight: W, col
         Some(rest) => {
             let dash = c.galley("-", size, weight, color).mesh_bounds;
             // 字形网格四周各带半个像素的抗锯齿留边，减掉才是连字符真实的长短与粗细。
-            let pad = 1.0 / c.ui.ctx().pixels_per_point();
-            let (len, thick) = ((dash.width() - pad) / c.s, ((dash.height() - pad) / c.s).max(1.2));
+            let pad = 1.0 / (c.ui.ctx().pixels_per_point() * c.s);
+            let (len, thick) = (dash.width() - pad, (dash.height() - pad).max(1.2));
             c.fill(left, base + mid - thick / 2.0, len, thick, thick * 0.3, color);
             (rest, left + len + size * 0.07)
         }
         None => (text, left),
     };
-    let bearing = c.galley(digits, size, weight, color).mesh_bounds.min.x / c.s;
+    let bearing = c.galley(digits, size, weight, color).mesh_bounds.min.x;
     c.text(start - bearing, base, digits, size, weight, color, H::Left);
     width
 }
@@ -558,14 +558,17 @@ fn paint_forecast(c: &Card, snapshot: &weather::Snapshot, t: f32, lift: f32, pre
     stat_tile(c, tx[1], 38.0, tw, "湿度", &snapshot.humidity.map(|v| format!("{v}%")).unwrap_or(dash.clone()), |c, x, y| paint::droplet(c, x, y, 11.0, RAIN));
     stat_tile(c, tx[0], 77.0, tw, "风速", &snapshot.wind.map(|v| format!("{v:.0} km/h")).unwrap_or(dash), |c, x, y| wind_glyph(c, x, y, theme::CYAN));
     // 第四张是日照入口：暖色底，箭头轻轻摆动提示可点；悬停时小太阳从地平线升起，按下时卡片微缩。
-    let entry = c.scaled(tx[1] + tw / 2.0, 94.0, 1.0 - 0.05 * press);
-    let c = &entry;
-    c.fill(tx[1], 77.0, tw, 34.0, 9.0, paint::alpha(SUN, 0.13 + 0.07 * lift));
-    sunrise_glyph(c, tx[1] + 14.0, 77.0 + 16.0, lift, SUN);
-    c.text(tx[1] + 27.0, 77.0 + 14.5, &format!("日出 {}", snapshot.sunrise.as_deref().unwrap_or("--:--")), 9.5, W::Regular, theme::GRAY, H::Left);
-    c.text(tx[1] + 27.0, 77.0 + 28.0, &format!("日落 {}", snapshot.sunset.as_deref().unwrap_or("--:--")), 9.5, W::Semibold, theme::WHITE, H::Left);
-    let nudge = (t * 3.0).sin() * 1.2;
-    c.path(&[(tx[1] + tw - 9.0 + nudge, 90.0), (tx[1] + tw - 6.0 + nudge, 94.0), (tx[1] + tw - 9.0 + nudge, 98.0)], 1.3, paint::alpha(SUN, 0.9));
+    // 缩放只作用于这张卡片本身：用局部作用域承载 entry，避免遮蔽外层 c 而把下方七日预报一起缩小。
+    {
+        let entry = c.scaled(tx[1] + tw / 2.0, 94.0, 1.0 - 0.05 * press);
+        let c = &entry;
+        c.fill(tx[1], 77.0, tw, 34.0, 9.0, paint::alpha(SUN, 0.13 + 0.07 * lift));
+        sunrise_glyph(c, tx[1] + 14.0, 77.0 + 16.0, lift, SUN);
+        c.text(tx[1] + 27.0, 77.0 + 14.5, &format!("日出 {}", snapshot.sunrise.as_deref().unwrap_or("--:--")), 9.5, W::Regular, theme::GRAY, H::Left);
+        c.text(tx[1] + 27.0, 77.0 + 28.0, &format!("日落 {}", snapshot.sunset.as_deref().unwrap_or("--:--")), 9.5, W::Semibold, theme::WHITE, H::Left);
+        let nudge = (t * 3.0).sin() * 1.2;
+        c.path(&[(tx[1] + tw - 9.0 + nudge, 90.0), (tx[1] + tw - 6.0 + nudge, 94.0), (tx[1] + tw - 9.0 + nudge, 98.0)], 1.3, paint::alpha(SUN, 0.9));
+    }
 
     // 下方七日预报：图标、降水概率，以及贯穿七天的高低温曲线。
     c.seg((24.0, 122.0), (395.0, 122.0), 0.8, Color32::from_white_alpha(16));
@@ -721,16 +724,17 @@ impl App {
         use crate::extras::{settings_control_row,settings_hint};
         let popup=egui::Id::new("weather-city-options");
         let mut enter=false;
+        let mut open_cmd:Option<egui::SetOpenCommand>=None;
         let response=settings_control_row(ui,"城市名称",80.0,|ui|{
             ui.horizontal(|ui|{
                 let input=ui.add_sized([ui.available_width()-38.0,32.0],egui::TextEdit::singleline(&mut self.weather.city_input)
                     .id_salt("weather-city-input").vertical_align(egui::Align::Center).margin(egui::vec2(10.0,7.0)).hint_text("输入城市名称搜索"));
                 let arrow=ui.add_sized([30.0,32.0],egui::Button::new("").corner_radius(7.0)).on_hover_text("选择具体地区");
                 let center=arrow.rect.center();ui.painter().add(egui::Shape::line(vec![center+egui::vec2(-4.0,-2.0),center+egui::vec2(0.0,2.0),center+egui::vec2(4.0,-2.0)],egui::Stroke::new(1.5_f32,ui.visuals().text_color())));
-                if input.changed() || input.clicked() {ui.memory_mut(|m|m.open_popup(popup));}
-                if arrow.clicked() {ui.memory_mut(|m|m.toggle_popup(popup));}
+                if input.changed() || input.clicked() {open_cmd=Some(egui::SetOpenCommand::Bool(true));};
+                if arrow.clicked() {open_cmd=Some(egui::SetOpenCommand::Toggle);};
                 enter=input.lost_focus() && ui.input(|i|i.key_pressed(egui::Key::Enter));
-                if enter && self.weather.draft_city().is_none() {ui.memory_mut(|m|m.open_popup(popup));}
+                if enter && self.weather.draft_city().is_none() {open_cmd=Some(egui::SetOpenCommand::Bool(true));};
                 input.union(arrow)
             }).inner
         });
@@ -738,7 +742,7 @@ impl App {
         if self.weather.cities.pending() && self.weather.city_input.trim().chars().count()>=2 {ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));}
         let mut selected=None;
         let saved=self.settings.weather_saved.clone();
-        egui::popup::popup_below_widget(ui,popup,&response,egui::popup::PopupCloseBehavior::CloseOnClickOutside,|ui|{
+        egui::Popup::from_response(&response).id(popup).open_memory(open_cmd).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui|{
             ui.spacing_mut().item_spacing.y=2.0;
             let weak=ui.visuals().weak_text_color();
             let note=|ui:&mut egui::Ui,text:&str|{ui.add_space(6.0);ui.label(egui::RichText::new(text).size(12.0).color(weak));ui.add_space(6.0);};
@@ -759,7 +763,7 @@ impl App {
         });
         if let Some(position)=selected {
             self.weather.city_input=position.label.clone();self.weather.selected_city=Some(position);
-            ui.memory_mut(|m|m.close_popup());
+            egui::Popup::close_id(ui.ctx(), popup);
         }
         if let Some(position)=self.weather.picked_city(){settings_hint(ui,&format!("已选择：{} · {}",position.label,position.region));}
         else {settings_hint(ui,"输入中英文城市名，从下拉列表选择具体地区，再点「添加」。");}
@@ -865,7 +869,7 @@ impl App {
         let text = pill_temp_text(snapshot);
         // 与绘制一致：按墨迹宽度计算（含手绘减号），不会额外撑出左侧空白。
         let size = theme::size::PILL_CLOCK;
-        let ink_w = |t: &str| ctx.fonts(|fonts| fonts.layout_no_wrap(t.to_string(), theme::font(size, W::Bold), theme::WHITE).mesh_bounds.width());
+        let ink_w = |t: &str| ctx.fonts_mut(|fonts| fonts.layout_no_wrap(t.to_string(), theme::font(size, W::Bold), theme::WHITE).mesh_bounds.width());
         let ink = match text.strip_prefix('-') { Some(rest) => ink_w("-") + size * 0.07 + ink_w(rest), None => ink_w(&text) }.ceil();
         let chip = PILL_ICON + PILL_GAP + ink + 2.0;
         Some(chip - crate::bar_layout::WEATHER_WIDTH)

@@ -193,7 +193,7 @@ mod pill_still_tests {
 /// 只有「像玻璃」的配色，没有真折射。现在全部走真折射，矢量玻璃片只在
 /// 没有 wgpu 设备（没开兼容渲染）时兜底。
 /// 控件玻璃的槽位数（= `Ctl::ALL` 的长度；**同时可见数** ≤ `gpu_glass::MAX_CTL`）。
-pub(crate) const CTL_N: usize = 26;
+pub(crate) const CTL_N: usize = 28;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Ctl {
@@ -230,10 +230,21 @@ pub(crate) enum Ctl {
     MailAccount,
     /// 邮件页无账号时的「去添加」引导按钮（pages.rs page_mail 空态，quota_ui 的 QuotaAdd 同款）。
     MailSetup,
+    /// 置物架页分栏的容器胶囊（资料包 containerScale：切换时容器也跟着放大）。
+    ShelfTabBar,
+    /// 置物架页「置物架/剪贴板」分栏的滑动指示器（资料包标签栏：单透镜随弹簧滑动+拉伸）。
+    ShelfTab,
 }
 
+// 分栏容器/指示器的材质样式通过 Ctl.style 字段传给 shader（不依赖枚举序号）。
+// 这里固定序号只是防止误改枚举顺序影响 ctl_geom 的其它硬编码索引。
+const _: () = {
+    assert!(Ctl::ShelfTabBar as usize == 26);
+    assert!(Ctl::ShelfTab as usize == 27);
+};
+
 impl Ctl {
-    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount, Ctl::MailSetup];
+    pub(crate) const ALL: [Ctl; CTL_N] = [Ctl::Gear, Ctl::Lyric, Ctl::Prev, Ctl::Play, Ctl::Next, Ctl::Volume, Ctl::IslandLyrics, Ctl::NavL, Ctl::NavR, Ctl::Seek, Ctl::Focus, Ctl::Rest, Ctl::QuotaAdd, Ctl::CalAdd, Ctl::CalAllDay, Ctl::CalRem0, Ctl::CalRem1, Ctl::CalRem2, Ctl::CalRem3, Ctl::CalRem4, Ctl::CalDelete, Ctl::CalCancel, Ctl::CalSave, Ctl::MailTab, Ctl::MailAccount, Ctl::MailSetup, Ctl::ShelfTabBar, Ctl::ShelfTab];
     pub(crate) fn idx(self) -> usize { self as usize }
     /// 日程编辑器提醒分段的槽位下标（CalRem0..4）。
     pub(crate) fn rem_index(self) -> usize { self as usize - Ctl::CalRem0 as usize }
@@ -252,11 +263,19 @@ fn focus_tab_geom(focus:bool)->(Rect,f32){
 }
 
 /// 控件弹簧的档位（手感调参表）：
-/// 按压 / 指示器位置 300·0.5（会冲过头再晃回来），值类 1000·1.0（临界阻尼）。
-const CTL_PRESS: (f32, f32) = (300.0, 0.5);
+/// 按压 300·1.0（临界阻尼，松手不过冲）/ 指示器位置 300·0.5（会冲过头再晃回来）/
+/// 值类 1000·1.0（临界阻尼）。
+///
+/// 按压为什么是临界阻尼：Apple 把动效按「效果」与「空间」分档，颜色/亮度/按压缩放
+/// 属于效果型，标准阻尼比是 1.0（不回弹），约 0.8 才允许一点点回弹；M3 Expressive
+/// 同理——effect token 用 dampingRatio=1.0，只有 spatial token 才允许 overshoot。
+/// 用户可调的阻尼比只作用于入场（空间型），按压固定不吃它。
+const CTL_PRESS: (f32, f32) = (300.0, 1.0);
 const CTL_APPEAR: (f32, f32) = (320.0, 0.55);
-/// 按压时圆片胀到多大（×1.3 那档是给 58px 高的整格的，圆片小得多）。
-const CTL_PRESS_SCALE: f32 = 0.14;
+/// 按压时圆片胀到多大：Apple/M3 的按压缩放标准是 3~4%（0.96~0.97），
+/// 且是 paint-time 缩放、不动布局；这里取 4%，且在 6% 文字死区以内，
+/// 按压缩放不会再触发文字重采样。
+const CTL_PRESS_SCALE: f32 = 0.04;
 
 pub struct Options {
     /// 是否联网查歌词（录制/测试时关掉）。
@@ -661,6 +680,26 @@ impl LyricLayoutCache {
 }
 
 /// 滚动速度：让整句尽量在本句时长内滚完，同时夹在可读区间。
+/// egui 0.35 移除了 raw_scroll_delta，只保留逐帧平滑的 smooth_scroll_delta。
+/// 岛仔的翻页/列表滚动是自定义交互，需要 0.31 的「本帧滚轮原始增量」语义：
+/// 从本帧事件里按 unit 换算后直接求和（等价旧 raw_scroll_delta.y）。
+pub(crate) fn raw_scroll_y(ctx: &egui::Context) -> f32 {
+    ctx.input(|i| {
+        i.events.iter().filter_map(|e| match e {
+            egui::Event::MouseWheel { unit, delta, modifiers, .. } => {
+                let mut d = match unit {
+                    egui::MouseWheelUnit::Point => *delta,
+                    egui::MouseWheelUnit::Line => 8.0 * *delta,
+                    egui::MouseWheelUnit::Page => i.viewport_rect().height() * *delta,
+                };
+                if modifiers.shift { d = egui::vec2(d.x + d.y, 0.0); }
+                Some(d.y)
+            }
+            _ => None,
+        }).sum()
+    })
+}
+
 fn lyric_scroll_speed(overflow:f32,window:f32)->f32 {
     let travel=(window-2.0*SCROLL_DWELL).max(0.8);
     (overflow/travel).clamp(SCROLL_MIN_SPEED,SCROLL_MAX_SPEED)
@@ -975,6 +1014,16 @@ pub struct App {
     pub(crate) confirm_clear: Option<f64>,
     /// 置物架页的两个分栏：0 = 文件，1 = 剪贴板。
     pub(crate) shelf_tab: usize,
+    /// 分栏滑动指示器弹簧（资料包标签栏：单透镜随弹簧滑动+拉伸）。
+    shelf_tab_spring: Spring,
+    /// 分栏切换的"放大-移动-缩回"press 弹簧（资料包 gooseTab Sel press-release）。
+    pub(crate) shelf_tab_press: Spring,
+    /// press-release 是否已经触发（切换后置 true，到位后缩回并复位）。
+    pub(crate) shelf_tab_pressing: bool,
+    /// 两个分栏选中胶囊的几何 [(中心x, 宽)]，由 shelf_tabs 绘制时写入供 ctl_geom 用。
+    pub(crate) shelf_tab_layout: [(f32, f32); 2],
+    /// 分栏容器胶囊几何 (中心x, 宽, 高)，由 shelf_tabs 写入供 ctl_geom 用。
+    pub(crate) shelf_tab_bar: (f32, f32, f32),
     pub clipboard: crate::clipboard::Shared,
     pub(crate) clip_first: usize,
     pub(crate) clip_confirm_clear: Option<f64>,
@@ -987,6 +1036,21 @@ pub struct App {
     pub(crate) clip_typing: bool,
     /// 键盘选中的行（过滤后列表的下标）。
     pub(crate) clip_sel: usize,
+
+    // ---- 液态玻璃「水滴搜索框」交互状态（资料包 MetaballSearchRunner 移植）----
+    // 状态：0=IDLE 1=DRAG 2=CAPSULE 3=RETRACT。
+    pub(crate) liquid_search_state: u8,
+    /// 拖拽指针在面板局部坐标的位置（cx/cy 弹簧的目标）。
+    pub(crate) liquid_search_ptr: Pos2,
+    /// 松手瞬间的指针 y（用于过冲手感判定，记录速度用）。
+    pub(crate) liquid_search_last_ptr: Pos2,
+    // 七个几何/材质弹簧：cx,cy=水滴中心；bx,by=半宽半高（圆角=min）；k=融合；cont=压暗。
+    pub(crate) ls_cx: Spring,
+    pub(crate) ls_cy: Spring,
+    pub(crate) ls_bx: Spring,
+    pub(crate) ls_by: Spring,
+    pub(crate) ls_k: Spring,
+    pub(crate) ls_cont: Spring,
 
     // 饮水
     pub(crate) water_ring: Spring,
@@ -1065,8 +1129,6 @@ pub struct App {
     fluid_title:String,
     /// 悬浮云每帧刷新的颜色纹理：低分辨率交给 GPU 双线性插值，避免每帧生成上万顶点。
     fluid_tex:Option<egui::TextureHandle>,
-    /// wgpu 目标格式；只有兼容渲染（Direct3D 12）后端才有，液态玻璃皮肤据此决定走不走 GPU。
-    pub wgpu_format:Option<eframe::egui_wgpu::wgpu::TextureFormat>,
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
     /// 液态玻璃的重绘档位：0=不管（交给原有节拍）、1=60fps（有动画/悬停/拖动）、
@@ -1156,8 +1218,6 @@ pub struct App {
     pub(crate) quota_alerted: std::collections::HashSet<(String,String)>,
     /// 上次检查额度阈值的时刻（每 30 秒一次）。
     pub(crate) quota_checked_at: f64,
-    /// 设置页的最近通知缓存：(上次读取时刻, 列表)，避免每帧读盘。
-    pub(crate) notice_cache:(f64,Vec<(String,String,String)>),
     /// 还没凑满一分钟的专注秒数，攒够就写进 focus-stats.json。
     pub(crate) focus_pending:f32,
     /// 今日专注分钟数与连续天数（每分钟更新一次，别每帧读盘）。
@@ -1256,10 +1316,21 @@ impl App {
         egui_extras::install_image_loaders(ctx);
         ctx.set_theme(egui::ThemePreference::Dark);
         ctx.set_visuals(egui::Visuals::dark());
-        ctx.style_mut(|s| {
+        ctx.all_styles_mut(|s| {
             s.interaction.selectable_labels = false;
             s.visuals.text_cursor.stroke = egui::Stroke::new(1.5_f32, theme::BLUE);
             s.visuals.selection.bg_fill = theme::alpha_blue(0.45);
+            // 0.35 字体栅格化退回 0.31 观感：新引入的 skrifa hinting 会把中文字形
+            // 垂直压小（实测 uv_h 14→12，表现为"字变小/高低不齐/笔画变形"），
+            // subpixel_binning 让笔画粗细不均。两者都是 0.35 新增、0.31 没有，
+            // 全部关闭以恢复迁移前用户熟悉的清晰度（2026-11-21 用户实机确认）。
+            // 测试构建保留 0.35 默认值：UI 测试大量断言具体坐标/文本边界，
+            // 字形变大后布局偏移会让这些断言失效；测试目的是逻辑而非字形像素。
+            #[cfg(not(test))]
+            {
+                s.visuals.text_options.font_hinting = false;
+                s.visuals.text_options.subpixel_binning = false;
+            }
         });
         let settings = model::Settings::load();
         // 专注统计只在启动和每分钟更新，构造前先取一次。
@@ -1321,6 +1392,11 @@ impl App {
             icons: Default::default(), avoidance: Default::default(),
             confirm_clear: None,
             shelf_tab: 0,
+            shelf_tab_spring: Spring::new(0.0, 300.0, 0.5),
+            shelf_tab_press: Spring::new(0.0, 250.0, 0.6),
+            shelf_tab_pressing: false,
+            shelf_tab_layout: [(0.0, 0.0); 2],
+            shelf_tab_bar: (0.0, 0.0, 0.0),
             clipboard: crate::clipboard::Shared::new(clipboard_on),
             clip_first: 0,
             clip_confirm_clear: None,
@@ -1329,6 +1405,16 @@ impl App {
             clip_search_open: false,
             clip_typing: false,
             clip_sel: 0,
+            liquid_search_state: 0,
+            liquid_search_ptr: Pos2::ZERO,
+            liquid_search_last_ptr: Pos2::ZERO,
+            // ω=11 → k=121，ζ=0.72（资料包 DEFAULT_PARAMS）。初值收起态：半宽半高=1。
+            ls_cx: Spring::new(0.0, 121.0, 0.72),
+            ls_cy: Spring::new(0.0, 121.0, 0.72),
+            ls_bx: Spring::new(1.0, 121.0, 0.72),
+            ls_by: Spring::new(1.0, 121.0, 0.72),
+            ls_k: Spring::new(64.0, 121.0, 0.72),
+            ls_cont: Spring::new(0.0, 121.0, 0.72),
             water_ring: Spring::new(0.0, 120.0, 0.9),
             water_ml: 0.0,
             water_view: 0,
@@ -1370,10 +1456,7 @@ impl App {
             seek_drag:anim::Spring::new(0.0,1000.0,1.0),
             ctl_gpu:[false; CTL_N],
             ctl_down:false,
-            // 排障开关：`DAOZAI_OPEN_SETTINGS=1` 启动即打开设置页。
-            // 设置页是第二个 OS 窗口（独立 surface），透明合成出问题时只有它能复现，
-            // 有了这个开关就能在无人点击的情况下自动回归。
-            settings_open:std::env::var_os("DAOZAI_OPEN_SETTINGS").is_some(),
+            settings_open:false,
             settings_window:std::sync::Arc::new(std::sync::Mutex::new(crate::settings_window::State::load())),
             displays:Vec::new(),
             browser_at_top:false,
@@ -1392,7 +1475,6 @@ impl App {
             subpage:None,
             task_dialog:None,
             fluid_tex:None,
-            wgpu_format:None,
             liquid_k:1.0,
             glass_tick:0,
             pill_still_since:None,
@@ -1433,7 +1515,6 @@ impl App {
             meeting_checked_at:0.0,
             meeting_plan:(String::new(),f64::MIN,Vec::new()),
             snoozed:Vec::new(),
-            notice_cache:(0.0,Vec::new()),
             focus_pending:0.0,
             focus_today_min:focus_today,
             focus_streak_days:focus_streak,
@@ -1488,6 +1569,7 @@ impl App {
     }
 
     /// 设置窗口是独立窗口，主岛的提示它看不到：给它取一份当前提示与已显示时长。
+    #[cfg_attr(not(test), allow(dead_code))] // 仅设置窗口/测试读取；production 构建未接线时保留
     pub(crate) fn toast_now(&self)->Option<(String,f32)>{
         let (message,at)=self.toast.as_ref()?;
         let elapsed=(self.t-at) as f32;
@@ -2095,10 +2177,10 @@ impl App {
     pub fn filter_todo_input(&mut self,input:&mut egui::RawInput) {
         self.todo_ime_frame=false;
         if !self.adding && self.editing.is_none(){self.todo_ime_active=false;return;}
-        self.todo_ime_frame=self.todo_ime_active || input.events.iter().any(|event|matches!(event,egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit(_)|egui::ImeEvent::Commit(_))));
+        self.todo_ime_frame=self.todo_ime_active || input.events.iter().any(|event|matches!(event,egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit { .. }|egui::ImeEvent::Commit(_))));
         for event in &input.events {
             match event {
-                egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit(_))=>self.todo_ime_active=true,
+                egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit { .. })=>self.todo_ime_active=true,
                 egui::Event::Ime(egui::ImeEvent::Commit(_)|egui::ImeEvent::Disabled)=>self.todo_ime_active=false,
                 _=>{},
             }
@@ -2232,7 +2314,7 @@ impl App {
             job.halign=if cfg!(test){egui::Align::Center}else{egui::Align::Min};
             job.wrap.break_anywhere=true;
             if title {job.wrap.max_rows=1;}
-            ctx.fonts(|fonts|fonts.layout_job(job))
+            ctx.fonts_mut(|fonts|fonts.layout_job(job))
         };
         // 单行不折行：横向滚动用，galley 宽度就是整句的真实宽度。
         let layout_single=|text:&str,size:f32| {
@@ -2240,7 +2322,7 @@ impl App {
             let mut job=egui::text::LayoutJob::simple(text,theme::font(size,W::Semibold),ink,f32::INFINITY);
             job.halign=egui::Align::Min;
             job.wrap.break_anywhere=false;
-            ctx.fonts(|fonts|fonts.layout_job(job))
+            ctx.fonts_mut(|fonts|fonts.layout_job(job))
         };
         let (galley,overflow)=match cached {
             Some(hit)=>hit,
@@ -2398,31 +2480,12 @@ impl App {
         self.current_hour=env.hour();
         self.system_idle=env.idle_seconds;
         self.dt = dt;
-        // 液态玻璃的背景来自实时抓屏：动态壁纸/视频一直在动，但 Windows 下 vsync 关闭、
-        // 重绘完全由输入事件驱动。鼠标不动时 egui 不重绘 → prepare 不调用 → 抓屏停止，
-        // 玻璃背景就「冻住」了，看起来正好像卡顿。所以需要持续喂重绘。
-        //
-        // **不在主循环里调 request_repaint_after**：那个 API 在 Windows 的 UI 循环内
-        // 会自我触发连续重绘（emilk/egui#3109），Duration 被忽略、帧率锁死 60fps。
-        // 这里只把期望节拍写给控制线程（见 `set_repaint_ms` 与 main.rs 的 repaint 线程）：
-        // 有动画/背景在变 → 16ms(60fps)；纯静止 → 33ms(30fps)。
-        if self.settings.skin == model::Skin::Liquid && self.wgpu_format.is_some() {
-            // 需要持续喂重绘（背景实时抓屏），但**不能在这里每帧调
-            // request_repaint_after**：egui 的 delay 从「现在」算，而请求要到帧末才被
-            // 处理，处理时已扣掉一帧时间 → 实际等待 = 设定值 − 帧周期，形成正反馈，
-            // 设 30ms 实测仍是 58fps（trace 里 delay 恒 13.6ms = 30.3 − 16.7）。
-            // 做法：只把「快/慢」记进 self.glass_tick，由 out.repaint_after 统一调度
-            // （main.rs 的 schedule_repaint 会补回 predicted_dt，不会自激）。
+        if self.settings.skin == model::Skin::Liquid {
             // 桌面拓扑检测放在这里（而不是只放在抓屏路径）：切显示模式时岛仔多半
             // 是收起态、根本不抓屏，只在抓屏时检测会整段错过 —— 展开后仍用旧拓扑
-            // 的底片，玻璃直接花掉。内部自带 ~100ms 降频，开销可忽略。
+            // 的背景，玻璃直接花掉。内部自带 ~100ms 降频，开销可忽略。
             crate::wgc::poll_topology();
-            // 换分辨率自动重启（实验开关，仅零拷贝）：延迟到桌面稳定后走标准重启
-            // 流程（保存窗口/拉新进程/释放单实例锁），同时重建 D3D11+D3D12 device，
-            // 绕开零拷贝独有的 device-lost 重建风暴。默认关，行为不变。
-            if crate::wgc::take_auto_restart_request() {
-                self.pending.push(Cmd::RestartApp);
-            }
+            // 液态玻璃的背景来自实时抓屏，有动画/悬停/拖动时要保持高节拍。
             self.glass_tick = if self.glass_morph > 0.01
                 || self.ctl_down
                 || env.cursor.is_some_and(|p| win.contains(p))
@@ -2446,6 +2509,11 @@ impl App {
         crate::gpu_glass::set_morph_scale(self.settings.liquid_morph);
         crate::gpu_glass::set_liquid_optics(self.settings.liquid_refract_px,self.settings.liquid_chroma_px);
         crate::gpu_glass::set_liquid_look(self.settings.liquid_blur_px,self.settings.liquid_band_px,self.settings.liquid_edge_w_px,self.settings.liquid_edge_op);
+        // 高光跟随鼠标：迁移到 D3D11 时漏接的线——之前 shader 的 lightcfg.x 恒为 0，
+        // 滑杆怎么拖都只出固定左上光。每帧同步，拖滑杆立即生效。
+        crate::gpu_glass::set_light_follow(self.settings.liquid_light_follow);
+        // 岛体投影开关：投影已移到 HLSL 玻璃 pass 里画，egui 侧不再画。
+        crate::gpu_glass::set_shadow(self.settings.liquid_shadow);
         if let Some(at_top)=env.browser_at_top {self.browser_at_top=at_top;}
         self.screen=env.screen;
         self.window_origin=env.window_origin;
@@ -2529,7 +2597,7 @@ impl App {
                 layout.x[bar::PET]=Some(pet_center-base/2.0);
             }
         }
-        self.resident.step(layout,dt,ctx.style().animation_time>0.0&&bar::animations_enabled());
+        self.resident.step(layout,dt,ctx.style_of(egui::Theme::Dark).animation_time>0.0&&bar::animations_enabled());
         if self.opts.fetch_lyrics {
             self.poll_lyrics();
         }
@@ -2625,10 +2693,24 @@ impl App {
             self.music_volume_open=false;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && self.is_editing() {
+            // egui 0.35 的 DragValue 会把键入值立即写回；这里用聚焦时快照恢复旧语义。
+            if self.settings_editing {
+                let snapshot_id = egui::Id::new("settings-edit-snapshot");
+                if let Some((field_id, before)) = ctx.data(|data| {
+                    data.get_temp::<(egui::Id, crate::model::Settings)>(snapshot_id)
+                }) {
+                    ctx.data_mut(|data| data.remove::<(egui::Id, crate::model::Settings)>(snapshot_id));
+                    // 清掉 DragValue 缓存的编辑文本，否则下一帧又会把键入值写回来。
+                    ctx.data_mut(|data| { data.remove_temp::<String>(field_id); });
+                    self.settings = before;
+                    self.settings.save();
+                }
+            }
             self.cancel_edit();
         }
         if (!self.is_editing() || self.todo_choosing) && page_hover && self.open && self.reveal > 0.95 {
-            let (scroll, left, right, esc) = ctx.input(|i| (i.raw_scroll_delta.y, i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::Escape)));
+            let (left, right, esc) = ctx.input(|i| (i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::Escape)));
+            let scroll = raw_scroll_y(&ctx);
             if esc { self.hover_lock = true; }
             if (left || right) && !self.todo_choosing {
                 self.wheel_delta=0.0;
@@ -2672,7 +2754,13 @@ impl App {
                             self.navigate_page(next);
                             self.wheel_page_at=self.t;
                         }
-                        ctx.input_mut(|i|{i.raw_scroll_delta=Vec2::ZERO;i.smooth_scroll_delta=Vec2::ZERO;});
+                        let consumed = raw_scroll_y(&ctx);
+                        ctx.input_mut(|i|{
+                            i.smooth_scroll_delta=Vec2::ZERO;
+                            // 等价旧 raw_scroll_delta 清零：移除本帧滚轮事件，避免同一滚动被内容区重复消费。
+                            i.events.retain(|e| !matches!(e, egui::Event::MouseWheel{..}));
+                        });
+                        let _ = consumed;
                     }
                 }
             }
@@ -2680,6 +2768,21 @@ impl App {
         let volume_dragging=self.music_volume_open && ctx.is_being_dragged(egui::Id::new(("card-drag",true,"m-volume-track")));
         let want = (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (self.is_editing() && self.open);
         self.morph(want, inside, env.t, dt);
+        // 收起判定靠「离开延迟到了」/「强制停留到点了」，两者都发生在未来某一帧；
+        // 而窗口没有输入事件时会睡死，鼠标移开后再没有事件，岛仔就一直停在展开态。
+        // 这里替它把下一帧约到状态真会改变的时刻（没人悬停时不白转）。
+        if self.open {
+            let wake = if !want {
+                self.t + LEAVE_DELAY + 0.02
+            } else if self.t < self.forced_open_until {
+                self.forced_open_until + 0.02
+            } else {
+                0.0
+            };
+            if wake > 0.0 {
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64((wake - self.t).max(0.01)));
+            }
+        }
         self.update_pet(env, cx);
 
         // ---------- 绘制 ----------
@@ -2716,12 +2819,28 @@ impl App {
         let mut keep_colors:Vec<(usize,usize)>=Vec::new();
         // 毛玻璃：真实模糊下保留柔和投影增加层次；无模糊时阴影再减淡一些，保持轻盈。
         let skin_shadow = if !glass_skin {1.0} else if env.glass_blur {0.75} else {0.7};
-        // 液态玻璃可关掉胶囊外围的多层落影（设置 → 液态玻璃 → 岛体投影）：
-        // shadow_k 归零后 shape::shadow_mapped / pill_shadow 的 strength<=0.01 早退
-        // 会跳过全部 4 层；玻璃内部的接触阴影在 shader 侧，不受这里影响。
-        let shadow_k = glass::shadow_alpha(0.0, thick) / 0.12 * skin_shadow
-            * if self.settings.skin==model::Skin::Liquid && !self.settings.liquid_shadow {0.0} else {1.0};
-        let island_shadow=|r:Rect,flare:f32,flare_h:f32,radius:f32,strength:f32| if pill {pill_shadow(&painter,r,radius,strength)} else if side {shape::shadow_docked(&painter,r,dock,flare,flare_h,radius,strength)} else {shape::shadow(&painter,r,flare,flare_h,radius,strength)};
+        // 阴影强度：非液态皮肤走 egui 的 pill_shadow / shadow_docked（strength<=0.01 早退）；
+        // 液态皮肤的投影已移到 HLSL 玻璃 pass，开关通过 set_shadow → lightcfg.z 传递，
+        // 这里的 shadow_k 对液态皮肤不再使用（island_shadow 闭包里直接跳过）。
+        let shadow_k = glass::shadow_alpha(0.0, thick) / 0.12 * skin_shadow;
+        // 液态玻璃的投影由 HLSL 在玻璃 pass 里画（见 glass.hlsl 的 outside 分支）：
+        // D3D11 栈是「先画玻璃、后画 egui」，egui 侧任何阴影都会盖在折射玻璃上——
+        // 迁移前 wgpu 是反过来（阴影先画、paint callback 的玻璃后画），所以那套
+        // pill_shadow/shadow_docked 在迁移后全部失效。液态皮肤这里直接不画，
+        // 交给 shader 按岛体 SDF 画外阴影，形状/位置/方向天然与玻璃一致。
+        // 其他皮肤维持原有 egui 实心阴影观感。
+        let liquid_skin = self.settings.skin==model::Skin::Liquid;
+        let island_shadow=|r:Rect,flare:f32,flare_h:f32,radius:f32,strength:f32| {
+            if liquid_skin {
+                // 投影已移到 shader，egui 不画（liquid_shadow 开关在 shader 侧生效）。
+            } else if pill {
+                pill_shadow(&painter,r,radius,strength);
+            } else if side {
+                shape::shadow_docked(&painter,r,dock,flare,flare_h,radius,strength);
+            } else {
+                shape::shadow(&painter,r,flare,flare_h,radius,strength);
+            }
+        };
         // 拿起时投影加深，像被从屏幕边缘提起来。
         let lifted = self.drag_lift.pos.clamp(0.0, 1.2);
         island_shadow(body, flare, flare_h, radius, (smoothstep(0.1, 0.9, pc) + lifted * 0.9) * shadow_k);
@@ -2755,6 +2874,7 @@ impl App {
         let reveal = if self.open { smoothstep(0.50, 0.97, p) } else { smoothstep(0.55, 0.92, p) };
         self.reveal = reveal;
         self.update_ctl_springs(origin, env);
+        self.update_liquid_search();
         self.paint_body(&painter, body, flare, flare_h, radius, feather, origin);
         if lifted > 0.01 {self.paint_lift_halo(&painter, body, flare, flare_h, radius, lifted.min(1.0));}
         let content_from=crate::skin_paint::shape_count(&ctx,layer);
@@ -2832,7 +2952,14 @@ impl App {
             self.pet.draw(&base.scaled(cx-origin.x,15.0,fit).shifted(0.0,y).faded(pet_alpha),cx-origin.x+self.resident.position(bar::PET),self.pet_anim_t,self.skin_palette());
         }
         if reveal > 0.004 && !banner && !restoring_lyrics {
-            let c = base.shifted(0.0, (1.0 - reveal) * -5.0).faded(reveal);
+            // 「内容上浮 5px」只属于从胶囊展开那一段（面板还没到基础高度）。
+            // 以前直接挂在 reveal 上：切页会改 expanded_height，progress 一回落
+            // reveal 就跟着掉，整页内容跟着下滑 5px 再弹回来——这就是切页「上下抖」。
+            let bar_h = self.base_size().1;
+            let unveil = if self.open && self.h.pos < PH {
+                smoothstep(0.50, 0.97, ((self.h.pos - bar_h) / (PH - bar_h).max(1.0)).clamp(0.0, 1.0))
+            } else { 1.0 };
+            let c = base.shifted(0.0, (1.0 - unveil) * -5.0).faded(reveal);
             let c = if reveal < 0.6 { c.ghost() } else { c };
             if self.calendar.draft.is_some(){self.draw_calendar_editor(&c);}else if self.task_dialog.is_some(){self.draw_task_editor(&c);}else{self.panel_body(&c, env, &mut cmds);}
             if !self.toast_below {self.toast_layer(&c,106.0);}
@@ -2948,10 +3075,10 @@ impl App {
         // 收起深度休眠（设置项可关）：收起 + 无动画 + 鼠标不在岛上（留 24px 余量）
         // + 无通知/吐司 + 无媒体播放，持续 2 分钟 → 整条管线降到 1Hz
         // （抓屏/玻璃/时钟文字都够用）。实测它只省电不省内存——内存大头在
-        // D3D12 抓屏管线本身，所以留了开关。任何输入事件都会让 egui 立即重绘，
+        // 抓屏管线本身，所以留了开关。任何输入事件都会让 egui 立即重绘，
         // 悬停/点击的唤醒是即时的；媒体/通知状态变化最多 1 秒内被发现并回升到 30/60fps。
         let pill_still=pill_still(PillStillInput{
-            liquid:self.settings.skin==model::Skin::Liquid && self.wgpu_format.is_some(),
+            liquid:self.settings.skin==model::Skin::Liquid,
             open:self.open, cursor_far, transitioning, ambient, lyric_scrolling,
             toast:self.toast.is_some(), media:self.media.playing,
             notice:self.notice.is_some(), hud:self.hud_notice.is_none(),
@@ -3022,7 +3149,7 @@ impl App {
             });
         }
         FrameOut {
-            region: rel(floating_toast.into_iter().chain(self.shelf_menu_rect.map(|r|r.union(r + ctx.style().visuals.popup_shadow.margin()).expand(1.0 / ctx.pixels_per_point()))).fold(region,Rect::union).intersect(ui.max_rect())),
+            region: rel(floating_toast.into_iter().chain(self.shelf_menu_rect.map(|r|r.union(r + ctx.style_of(egui::Theme::Dark).visuals.popup_shadow.margin()).expand(1.0 / ctx.pixels_per_point()))).fold(region,Rect::union).intersect(ui.max_rect())),
             glass: glass_region,
             hit: rel(next_hit),
             // 极简收起且无通知时点击穿透；strip_rect 就是细条本身的精确矩形。
@@ -3146,7 +3273,7 @@ impl App {
         let slot=self.unread_slot(height);
         let max_scroll=(n as f32-3.0).max(0.0)*slot;
         if max_scroll>0.0 && cursor.is_some_and(|p|rect.contains(p)) {
-            let delta=ctx.input(|i|i.raw_scroll_delta.y);
+            let delta=raw_scroll_y(ctx);
             self.messenger_scroll-=delta*0.5;
         }
         self.messenger_scroll=self.messenger_scroll.clamp(0.0,max_scroll);
@@ -3293,6 +3420,10 @@ impl App {
     /// 绘制岛体（或通知胶囊）的本体：经典皮肤为纯黑；毛玻璃为着色底 + 顶部柔光 + 边缘高光。
     fn paint_body(&mut self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,feather:f32,origin:Pos2){
         let skin=self.settings.skin;
+        // 非液态皮肤不画 HLSL 玻璃：必须显式关掉，否则会沿用上一次液态皮肤
+        // 发布的 body_rect（通常是收起态），在悬浮云/毛玻璃背景里留下不会随展开
+        // 变大的折射残影。渲染循环的玻璃参数在 UI 之前构建，双保险见 winit_runner。
+        if skin!=model::Skin::Liquid {crate::gpu_glass::set_active(false);}
         if skin==model::Skin::Liquid {
             // 显示器拓扑刚变过（切扩展/复制/仅主屏）后的稳定期：桌面还在播重建动画，
             // 抓屏会拿到「向内收拢 + 四周发黑」的中间态，旧纹理也是旧拓扑的画面。
@@ -3532,6 +3663,36 @@ impl App {
                 if self.page!=5 || self.subpage.is_some() || !self.mail.accounts.is_empty() {return None;}
                 (Rect::from_min_size(Pos2::new(42.0,88.0),Vec2::new(84.0,26.0)),13.0)
             }
+            // 置物架分栏容器胶囊（资料包 containerScale）：切换时容器也放大 1+16dp/w*press。
+            Ctl::ShelfTabBar=>{
+                if self.page!=3 || self.subpage.is_some() {return None;}
+                let (bx,bw,bh)=self.shelf_tab_bar;
+                if bw<2.0 {return None;}
+                let press=self.shelf_tab_press.pos.clamp(0.0,1.2);
+                let sc=1.0+16.0/bw*press;   // 资料包: 1 + 16dp/containerW * pressProgress
+                let r=bh*0.5;
+                (Rect::from_center_size(Pos2::new(bx,20.0),Vec2::new(bw*sc,bh)),r)
+            }
+            // 置物架分栏滑动指示器（资料包标签栏同 MailTab）：单透镜在两段间滑，
+            // 滑动横向拉伸 st、按压果冻 sc。几何由 shelf_tabs 绘制时写入 layout。
+            Ctl::ShelfTab=>{
+                if self.page!=3 || self.subpage.is_some() {
+                    return None;
+                }
+                let (x0,w0)=self.shelf_tab_layout[0];
+                let (x1,w1)=self.shelf_tab_layout[1];
+                if w0<2.0 || w1<2.0 {return None;}
+                let s=self.shelf_tab_spring.pos.clamp(-0.25,1.25);
+                let st=(self.shelf_tab_spring.vel.abs()*0.06).min(0.5);
+                // 资料包：切换瞬间 press 放大到 78/56≈1.393，到位后缩回 1。
+                // press 用独立弹簧(切换时主动触发)，不走按住驱动的 ctl_press。
+                let press=self.shelf_tab_press.pos.clamp(0.0,1.2);
+                let sc=1.0+(78.0/56.0-1.0)*press;
+                let cx=x0+(x1-x0)*s;
+                let w=(w0+(w1-w0)*s)*(1.0+st)*sc;
+                let h=(17.0*(1.0-st*0.35)*sc).min(19.0);
+                (Rect::from_center_size(Pos2::new(cx,20.0),Vec2::new(w,h)),(h*0.5).min(9.5))
+            }
         })
     }
 
@@ -3566,7 +3727,8 @@ impl App {
                 self.pointer_down_on(rect.translate(origin.to_vec2()),env)
             };
             self.ctl_press[i].target=if down {1.0}else{0.0};
-            self.ctl_press[i].tune(CTL_PRESS.0*sk,zt);
+            // 按压是效果型动效：固定临界阻尼，不跟用户设置的阻尼比走（那个只给入场）。
+            self.ctl_press[i].tune(CTL_PRESS.0*sk,CTL_PRESS.1);
             self.ctl_press[i].step(dt);
             self.ctl_appear[i].target=self.reveal;
             self.ctl_appear[i].tune(CTL_APPEAR.0*sk,zt);
@@ -3575,6 +3737,22 @@ impl App {
                 // 指示器滑到当前筛选段（0=全部，1=未读）。
                 self.mail_tab.target=if self.mail.manage.unread_only {1.0}else{0.0};
                 self.mail_tab.step(dt);
+            }
+            if ctl==Ctl::ShelfTab {
+                // 分栏指示器滑到当前分栏（0=置物架，1=剪贴板）。
+                let target=if self.shelf_tab==1 {1.0}else{0.0};
+                self.shelf_tab_spring.target=target;
+                self.shelf_tab_spring.tune(1000.0*sk,0.7);  // 资料包 TOGGLE_VALUE_K=1000
+                self.shelf_tab_spring.step(dt);
+                // 资料包 press-release：切换触发 press=1(放大)，滑动到位后 press=0(缩回)。
+                if self.shelf_tab_pressing {
+                    if (self.shelf_tab_spring.pos-target).abs()<0.02 && self.shelf_tab_spring.vel.abs()<0.1 {
+                        self.shelf_tab_pressing=false;
+                        self.shelf_tab_press.target=0.0;
+                    }
+                }
+                self.shelf_tab_press.tune(250.0*sk,0.6);     // 资料包 TOGGLE_SCALE_X_K=250 ζ=0.6
+                self.shelf_tab_press.step(dt);
             }
             // 圆钮的拖动放大弹簧：按在进度条上就进入放大镜态（尺寸与 mag 同步 ×1.9）。
             // 圆钮的拖动放大弹簧：target 直接用 pages.rs 写入的 egui 真实拖动状态
@@ -3590,20 +3768,106 @@ impl App {
         }
     }
 
+    /// 液态玻璃水滴搜索框：每帧推进七个弹簧 + 状态机。
+    /// 资料包 MetaballSearchRunner 移植：ω=11(k=121) ζ=0.72，半隐式欧拉，
+    /// 松手保留速度 → 带过冲冲向胶囊/缩回目标。指针目标由 pages.rs 的拖拽写入
+    /// `liquid_search_ptr`，这里只做「按状态设目标 + 积分 + 缩回完成判定」。
+    fn update_liquid_search(&mut self) {
+        let dt = self.dt.clamp(0.0, 1.0 / 30.0);
+        match self.liquid_search_state {
+            1 => {
+                // DRAG：中心跟手（cy 有下限 13，防止拉出面板顶），半宽半高按速度拉伸（+22 上限）。
+                let vx = (self.liquid_search_ptr.x - self.liquid_search_last_ptr.x).abs();
+                let vy = (self.liquid_search_ptr.y - self.liquid_search_last_ptr.y).abs();
+                self.ls_cx.target = self.liquid_search_ptr.x;
+                self.ls_cy.target = self.liquid_search_ptr.y.max(13.0);
+                let stretch_x = 2.0 + vx.min(26.0);
+                let stretch_y = 2.0 + vy.min(26.0);
+                self.ls_bx.target = 6.0 + stretch_x;
+                self.ls_by.target = 6.0 + stretch_y;
+                self.ls_k.target = 64.0;
+                self.ls_cont.target = 0.0;
+                self.liquid_search_last_ptr = self.liquid_search_ptr;
+            }
+            2 => {
+                // CAPSULE 成形：资料包默认弹簧 ω=11(k=121) ζ=0.72，约 0.3s 快速成形。
+                // 保留两阶段"先球后摊"的形态变化，但阈值降低让它快速跨过。
+                self.ls_cx.tune(121.0, 0.72);
+                self.ls_cy.tune(121.0, 0.72);
+                self.ls_bx.tune(100.0, 0.72);
+                self.ls_by.tune(121.0, 0.72);
+                self.ls_k.tune(121.0, 0.72);
+                self.ls_cont.tune(121.0, 0.72);
+                self.ls_cx.target = 209.5;
+                // 阶段A(圆球下落)：cy 先到 34，bx/by 维持圆球(r≈11)。
+                // 阶段B(摊开)：cy 过了 22 后，bx 摊到 163.5、by 收到 10。
+                if self.ls_cy.pos < 22.0 {
+                    self.ls_cy.target = 34.0;
+                    self.ls_bx.target = 11.0;
+                    self.ls_by.target = 11.0;
+                    self.ls_k.target = 64.0;
+                } else {
+                    self.ls_cy.target = 42.0;
+                    self.ls_bx.target = 163.5;
+                    self.ls_by.target = 10.0;
+                    self.ls_k.target = 10.0;
+                }
+                self.ls_cont.target = 0.5;
+            }
+            3 => {
+                // RETRACT：展开的逆过程，原路返回（同样用 ω=11 快速收起）。
+                // 阶段A(收回圆球)：扁胶囊 bx 163.5→11、by 10→11、cy 42→34。
+                // 阶段B(升回岛顶)：圆球 cy 34→8、bx/by→1，回到岛顶中间消失。
+                self.ls_cx.tune(121.0, 0.72);
+                self.ls_cy.tune(121.0, 0.72);
+                self.ls_bx.tune(100.0, 0.72);
+                self.ls_by.tune(121.0, 0.72);
+                self.ls_k.tune(121.0, 0.72);
+                self.ls_cont.tune(121.0, 0.72);
+                self.ls_cx.target = 209.5;
+                if self.ls_bx.pos > 20.0 {
+                    // 还没收成圆球：先收回圆球态（展开阶段B的逆）。
+                    self.ls_cy.target = 34.0;
+                    self.ls_bx.target = 11.0;
+                    self.ls_by.target = 11.0;
+                    self.ls_k.target = 64.0;
+                } else {
+                    // 已成圆球：升回岛顶并收成小点（展开阶段A的逆）。
+                    self.ls_cy.target = 8.0;
+                    self.ls_bx.target = 1.0;
+                    self.ls_by.target = 1.0;
+                    self.ls_k.target = 64.0;
+                }
+                self.ls_cont.target = 0.0;
+                // 半高弹簧降到 2.5 以下 → 回 IDLE（资料包 retract 判定）。
+                if self.ls_by.pos < 2.5 {
+                    self.liquid_search_state = 0;
+                }
+            }
+            _ => {}
+        }
+        for s in [&mut self.ls_cx, &mut self.ls_cy, &mut self.ls_bx, &mut self.ls_by,
+                  &mut self.ls_k, &mut self.ls_cont] {
+            s.step(dt);
+        }
+    }
+
     /// 指针是不是正按在这块矩形上。用真实指针位置算，而不是 egui 的 response ——
     /// GPU pass 在页面绘制**之前**跑，那时候 response 还不存在。
     fn pointer_down_on(&self,rect:Rect,env:&Env)->bool{
         self.ctl_down && env.cursor.is_some_and(|p|rect.contains(p))
     }
 
-    /// 控件的绘制缩放：入场（0.86 → 1，会冲过头一点）+ 按压果冻（默认 ×1.14，
-    /// 幅度随「弹簧强度」设置缩放）。圆钮的拖动放大（×1.9）由 `ctl_geom` 的胶囊
-    /// 尺寸承担，这里只叠**一半幅度**的按压果冻：按住进度条时圆钮在放大镜尺寸上
-    /// 带一点回弹（峰值 ≈×2.0，此前完全不弹，用户反馈「弹簧效果不强」）。
+    /// 控件的绘制缩放：入场 + 按压。
+    ///
+    /// 两个幅度都压在 6% 的文字死区内（入场 0.94→1.00、按压 +4%），所以控件里的
+    /// 文字全程保持原生字号、不做位图重采样——按 Apple/M3 的分档，缩放属于空间层，
+    /// 文字属于内容层，内容层不该跟着重栅格化（Flutter #162949 就是同一类抖）。
+    /// 更大的入场幅度（旧版 0.82）会把 9pt 的字一路拉大 18%，看起来就是文字上下抖。
     pub(crate) fn ctl_scale(&self,ctl:Ctl)->f32{
         let i=ctl.idx();
         let sk=self.settings.liquid_spring.clamp(0.2,3.0);
-        let appear=0.82+0.18*self.ctl_appear[i].pos.clamp(0.0,1.15);
+        let appear=0.94+0.06*self.ctl_appear[i].pos.clamp(0.0,1.15);
         let press=CTL_PRESS_SCALE*sk*self.ctl_press[i].pos.clamp(0.0,1.3);
         if ctl==Ctl::Seek {return appear*(1.0+press*0.5);}
         appear*(1.0+press)
@@ -3640,14 +3904,19 @@ impl App {
             let rect=if tx!=0.0 && !matches!(ctl,Ctl::Gear|Ctl::NavL|Ctl::NavR) {
                 rect.translate(egui::vec2(tx,0.0))
             }else{rect};
+            // 材质样式: 分栏容器高斯模糊磨砂(1，不压暗)、指示器提亮(2)，其余普通(0)。
+            let style=match ctl { Ctl::ShelfTabBar=>1, Ctl::ShelfTab=>2, _=>0 };
             out.push(crate::gpu_glass::Ctl {
                 rect:Rect::from_center_size(rect.center(),rect.size()*s).translate(origin.to_vec2()),
                 radius:radius*s,
                 mag,
                 // 短边相对原歌词卡（78px）缩放：27px 圆片 → 0.39，20px 胶囊 → 0.30。
                 refract:(short/70.0).clamp(0.30,1.0),
+                style,
             });
         }
+        // 融球水滴由 shader 的 meta/meta2 uniform 直接画（见 paint_gpu_glass），
+        // 不再作为控件透镜注入——否则和融球形状双层。
         out
     }
 
@@ -3668,38 +3937,36 @@ impl App {
 
     /// 液态玻璃试验皮肤：有 wgpu 设备时挂自定义 GPU pass 画物理折射，
     /// glow 后端（默认）下退回一层深色玻璃，保证功能不受影响。
-    fn paint_gpu_glass(&self,painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,origin:Pos2){
-        let (r,g,b)=if self.liquid_k>0.5 {(248u8,248u8,250u8)}else{(24u8,27u8,33u8)};
-        let Some(format)=self.wgpu_format else {
-            painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,225));
-            painter.rect_stroke(rect,radius,egui::Stroke::new(1.0_f32,Color32::from_white_alpha(80)),egui::StrokeKind::Inside);
-            return;
-        };
-        // GPU 未就绪时铺一层可见的兜底底色；就绪后几乎透明，别把折射压黑。
-        let backup=if crate::gpu_glass::gpu_ready(){20}else{170};
-        painter.rect_filled(rect,radius,Color32::from_rgba_unmultiplied(r,g,b,backup));
-        let ctx=painter.ctx();
-        let ppp=ctx.pixels_per_point();
-        let win=ctx.screen_rect().size();
-        // 折射要把采样 UV 推到岛体外，所以抓一块比岛体大的矩形。
-        let capture=rect.expand2(egui::vec2(64.0,48.0))
-            .intersect(Rect::from_min_size(Pos2::ZERO,win));
-        if capture.width()<8.0 || capture.height()<8.0 {return;}
-        // 用全局光标而不是 hover_pos：后者只在指针位于岛仔窗口内才有值，
-        // 折叠态只有 45px 高，指针大部分时间在外面，高光会一直是死的。
+    fn paint_gpu_glass(&self,_painter:&egui::Painter,rect:Rect,flare:f32,flare_h:f32,radius:f32,origin:Pos2){
+        // Liquid glass optics are drawn by the HLSL layer in the D3D11 render loop,
+        // BEFORE egui (see d3d11::runtime). Publish the real island geometry so the
+        // shader refracts exactly this rect; keep this body nearly transparent so the
+        // refracted desktop shows through, only the rim keeps the silhouette.
         let pointer=self.cursor_win.unwrap_or_else(||rect.center());
-        crate::gpu_glass::set_direct_composition(eframe::egui_wgpu::winit::direct_composition_active());
-        let frame=crate::gpu_glass::frame_for(
-            rect,capture,((win.x*ppp) as u32,(win.y*ppp) as u32),ppp,radius,
-            self.glass_morph,
-            crate::gpu_glass::NEUTRAL_TINT,self.t as f32,
-            (pointer.x,pointer.y),(self.window_origin[0],self.window_origin[1]),self.liquid_k,
-            self.settings.liquid_light_follow,
-            &self.glass_controls(origin),
-            // 刘海形状：把肩部参数传给着色器；胶囊/圆角矩形传 None。
-            if self.settings.island_shape==model::IslandShape::Notch {Some((flare,flare_h))}else{None});
-        painter.add(eframe::egui_wgpu::Callback::new_paint_callback(
-            capture,crate::gpu_glass::GlassCallback{frame,format}));
+        // 刘海/胶囊由设置决定；shader 的 notch.z 控制走 notch_sdf 还是圆角矩形 SDF。
+        // flare/flare_h 已在 paint_body 里按展开进度插值，迁移时漏传导致一直只有胶囊。
+        let is_notch=self.settings.island_shape!=model::IslandShape::Pill;
+        crate::gpu_glass::set_shape(flare,flare_h,is_notch);
+        crate::gpu_glass::set_body(rect,radius,(pointer.x,pointer.y),self.liquid_k);
+        // 岛内控件玻璃透镜：把本帧控件几何发布给 D3D11 渲染循环（crect/cprm）。
+        // glass_controls 已含展开入场弹簧 ctl_scale —— 白边会随展开连续变细，
+        // 而不是像旧迁移版那样透镜整层缺失、只剩 egui 边框突然消失。
+        crate::gpu_glass::set_controls(&self.glass_controls(origin));
+        // 融球水滴搜索：把弹簧几何写进 shader uniform。中心/半宽高是面板局部逻辑点，
+        // 加上 content_origin 换成窗口内逻辑点（runtime 再 ×ppp）。锚点=面板上沿 y=8。
+        // 只在剪贴板页、水滴成形/缩回途中打开开关。
+        let mb_on = self.page == 3 && self.shelf_tab == 1
+            && (self.liquid_search_state == 2 || self.liquid_search_state == 3)
+            && self.ls_bx.pos > 3.0 && self.ls_by.pos > 3.0;
+        crate::gpu_glass_stub::set_metaball(
+            self.ls_cx.pos + origin.x, self.ls_cy.pos + origin.y,
+            self.ls_bx.pos, self.ls_by.pos,
+            self.ls_k.pos, 8.0 + origin.y, mb_on,
+        );
+        // 液态玻璃的本体完全由 HLSL pass 绘制（折射 + 色散 + 白边 rim + 投影）。
+        // 迁移时这里曾多画一笔 alpha=20 的 rect_filled 圆角矩形兜底底色：
+        // 它和 shader 的 notch_sdf 刘海是两种形状，叠在一起会在刘海外露出一圈
+        // 「浅胶囊」轮廓。shader 已画完整玻璃，这笔纯属残留，已去除。
     }
 
     /// 悬浮云主体：轮廓交给 `RectShape` 的精确圆角，流动颜色做成一张固定尺寸的小纹理。
@@ -3712,7 +3979,7 @@ impl App {
         let w=rect.width().max(1.0);
         let h=rect.height().max(1.0);
         let expand=self.progress().clamp(0.0,1.0);
-        let mut image=egui::ColorImage::new([TEX_W,TEX_H],Color32::TRANSPARENT);
+        let mut image=egui::ColorImage::new([TEX_W,TEX_H], vec![Color32::TRANSPARENT; TEX_W * TEX_H]);
         for row in 0..TEX_H {
             let py=h*(row as f32+0.5)/TEX_H as f32;
             for col in 0..TEX_W {
@@ -4889,7 +5156,7 @@ impl App {
         let mut buf = std::mem::take(&mut self.buf);
         let te = egui::TextEdit::singleline(&mut buf)
             .id(egui::Id::new("todo-input"))
-            .frame(false)
+            .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .text_color(theme::WHITE)
             .font(theme::font(size::BODY, W::Regular))
@@ -4961,7 +5228,7 @@ mod lyric_scroll_tests {
     #[ignore]
     fn bench_long_line_layout_cost(){
         let ctx=egui::Context::default();
-        let _=ctx.run(Default::default(),|_|{});
+        let _=ctx.run_ui(Default::default(), |_| {});
         let text="这一句歌词故意写得非常非常长用来测试横向滚动到底能不能把整句话完整地显示出来".to_owned();
         let job=|size:f32|{
             let mut job=egui::text::LayoutJob::simple(text.clone(),egui::FontId::proportional(size),theme::WHITE,186.0);
@@ -4970,11 +5237,11 @@ mod lyric_scroll_tests {
         };
         let n=300;
         let t=std::time::Instant::now();
-        for _ in 0..n {let _=ctx.fonts(|fonts|fonts.layout_job(job(11.0)));}
+        for _ in 0..n {let _=ctx.fonts_mut(|fonts|fonts.layout_job(job(11.0)));}
         let one=t.elapsed().as_secs_f64()/n as f64;
         let t=std::time::Instant::now();
         for _ in 0..n {
-            for size in [11.0,10.5,10.0,9.5,9.0,8.5,8.0] {let _=ctx.fonts(|fonts|fonts.layout_job(job(size)));}
+            for size in [11.0,10.5,10.0,9.5,9.0,8.5,8.0] {let _=ctx.fonts_mut(|fonts|fonts.layout_job(job(size)));}
         }
         let seven=t.elapsed().as_secs_f64()/n as f64;
         // 每句都不一样才会真的走排版，用来区分「命中 egui 内部 galley 缓存」和「真重排」。
@@ -4982,7 +5249,7 @@ mod lyric_scroll_tests {
         for i in 0..n {
             let mut job=egui::text::LayoutJob::simple(format!("{}{}",text,i),egui::FontId::proportional(11.0),theme::WHITE,186.0);
             job.wrap.break_anywhere=true;
-            let _=ctx.fonts(|fonts|fonts.layout_job(job));
+            let _=ctx.fonts_mut(|fonts|fonts.layout_job(job));
         }
         let cold=t.elapsed().as_secs_f64()/n as f64;
         println!("命中缓存 {:.1}us | 未命中(真排版) {:.1}us | 每帧7次 {:.1}us | 30fps 每秒多花 {:.3}ms",
@@ -4993,10 +5260,10 @@ mod lyric_scroll_tests {
     fn cache_matches_only_same_line_and_width(){
         let ctx=egui::Context::default();
         // 字体要等第一次 run 之后才可用。
-        let _=ctx.run(Default::default(),|_|{});
+        let _=ctx.run_ui(Default::default(), |_| {});
         // semibold 字体族由 App 启动时注册，这里只验证匹配逻辑，用默认族即可。
         let job=egui::text::LayoutJob::simple("测试".to_owned(),egui::FontId::proportional(11.0),theme::WHITE,f32::INFINITY);
-        let galley=ctx.fonts(|fonts|fonts.layout_job(job));
+        let galley=ctx.fonts_mut(|fonts|fonts.layout_job(job));
         let cache=LyricLayoutCache{text:"测试".into(),width:160.0,white:true,title:false,galley,overflow:0.0};
         assert!(cache.matches("测试",160.0,true,false));
         // 换句、改宽度、换颜色、歌名/歌词切换都必须重排。

@@ -139,8 +139,8 @@ pub fn fill_gradient(painter: &egui::Painter, rect: Rect, flare: f32, flare_h: f
 fn fill_mapped(painter: &egui::Painter, rect: Rect, map: EdgeMap, flare: f32, flare_h: f32, radius: f32, top: Color32, bottom: Color32, span: f32, feather: f32) {
     let span=if top==bottom {0.0} else {span};
     let key=([rect.min.x,rect.min.y,rect.max.x,rect.max.y,flare,flare_h,radius,feather,span,map.code(),map.edge].map(f32::to_bits),top,bottom);
-    let mesh=painter.ctx().memory_mut(|memory|memory.caches.cache::<FillCache>().get(key));
-    painter.add(egui::Shape::Mesh(mesh));
+    let mesh=painter.ctx().memory_mut(|memory|memory.caches.cache::<FillCache>().get(key).clone());
+    painter.add(egui::Shape::Mesh(mesh.clone()));
 }
 
 type FillKey=([u32;11],Color32,Color32);
@@ -237,6 +237,9 @@ fn shadow_mapped(painter: &egui::Painter, rect: Rect, map: EdgeMap, flare: f32, 
     }
 }
 
+// 液态玻璃投影已移到 HLSL 玻璃 pass（见 shaders/glass.hlsl 的 d>thresh 分支）。
+// D3D11 栈先画玻璃后画 egui，egui 侧任何阴影都会盖住折射玻璃，故此处不再有环形阴影实现。
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,8 +317,8 @@ mod dock_tests {
 mod cache_tests {
     use super::*;
     fn frame(ctx:&egui::Context,width:f32,feather:f32)->std::sync::Arc<egui::Mesh>{
-        let out=ctx.run(egui::RawInput::default(),|ctx|{
-            fill(&ctx.layer_painter(egui::LayerId::background()),Rect::from_min_size(Pos2::ZERO,Vec2::new(width,30.0)),5.0,8.0,12.5,Color32::BLACK,feather);
+        let out=ctx.run_ui(egui::RawInput::default(), |ui|{
+            fill(&ui.ctx().layer_painter(egui::LayerId::background()),Rect::from_min_size(Pos2::ZERO,Vec2::new(width,30.0)),5.0,8.0,12.5,Color32::BLACK,feather);
         });
         out.shapes.into_iter().find_map(|s|if let egui::Shape::Mesh(m)=s.shape{Some(m)}else{None}).unwrap()
     }
@@ -525,7 +528,7 @@ mod fluid_path_bench {
 
         let t = Instant::now();
         for _ in 0..N {
-            let mut image = egui::ColorImage::new([160, 80], Color32::TRANSPARENT);
+            let mut image = egui::ColorImage::filled([160, 80], Color32::TRANSPARENT);
             for row in 0..80usize {
                 let py = h * (row as f32 + 0.5) / 80.0;
                 for col in 0..160usize {

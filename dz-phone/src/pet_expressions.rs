@@ -105,7 +105,16 @@ impl Expressions {
             }
         }
         let frame=if crate::bar_layout::animations_enabled(){expression.frame(time)}else{7};
-        let uv=Rect::from_min_max(egui::pos2(0.0,frame as f32/16.0),egui::pos2(1.0,(frame+1) as f32/16.0));
+        // 序列图 144×1440（16 帧纵向，每帧 144×90）。LINEAR 采样若用帧的精确
+        // UV 边界，会在矩形上边(v=frame/16)和右边(u=1)采到相邻帧/相邻列的像素，
+        // 在精灵边框上漏出一条白线（切换动作换帧时尤其明显）。
+        // 内缩半纹素避开边界，矩形内容不变、白线消失。
+        let inset_u = 0.5 / 144.0;
+        let inset_v = 0.5 / 1440.0;
+        let uv=Rect::from_min_max(
+            egui::pos2(inset_u, frame as f32/16.0 + inset_v),
+            egui::pos2(1.0 - inset_u, (frame+1) as f32/16.0 - inset_v),
+        );
         c.painter.image(self.sheet.as_ref().unwrap().2.id(),c.rect(cx-24.0,0.0,48.0,30.0),uv,Color32::WHITE);
         true
     }
@@ -186,8 +195,8 @@ mod tests {
     #[test]
     fn only_the_playing_sheet_is_uploaded_and_light_skins_keep_dark_eyes(){
         let ctx=egui::Context::default();let mut expressions=Expressions::default();expressions.play(Expression::Wink);
-        let frame=|expressions:&mut Expressions,palette|ctx.run(Default::default(),|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|{
+        let frame=|expressions:&mut Expressions,palette|ctx.run_ui(Default::default(), |ui|{
+            egui::CentralPanel::default().show(ui,|ui|{
                 let card=Card::new(ui,egui::Pos2::ZERO,ui.max_rect());assert!(expressions.draw(&card,24.0,palette));
             });
         });
@@ -208,7 +217,7 @@ mod tests {
         assert!(output.textures_delta.set.iter().any(|(texture,_)|*texture==id));
         for _ in 0..100 {expressions.step(PetState::Awake,0.1,true);if expressions.current().is_none(){break;}}
         assert!(expressions.current().is_none() && expressions.sheet.is_none(),"播完释放纹理，不常驻显存");
-        let output=ctx.run(Default::default(),|_|{});assert!(output.textures_delta.free.contains(&id));
+        let output=ctx.run_ui(Default::default(), |_| {});assert!(output.textures_delta.free.contains(&id));
     }
 
     #[test]

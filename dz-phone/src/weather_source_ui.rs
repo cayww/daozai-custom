@@ -68,7 +68,7 @@ pub(crate) struct State {
     tested:Option<Client>,
     testing:Option<Receiver<Result<Client,Error>>>,
     test_error:Option<Error>,
-    focus_city:bool,
+    pub(crate) focus_city:bool,
     draft_gate:Option<Arc<AtomicBool>>,
     search:Option<Receiver<Result<qweather::Search,Error>>>,
     geo_credits:Vec<String>,
@@ -302,10 +302,10 @@ impl App {
     fn qweather_city_picker(&mut self,ui:&mut egui::Ui){
         let popup=egui::Id::new("qweather-city-options");
         let input_id=egui::Id::new("qweather-city-input");
-        let keys=if ui.is_enabled()&&ui.memory(|m|m.has_focus(input_id)||m.is_popup_open(popup)){
+    let keys=if ui.is_enabled()&&(ui.memory(|m|m.has_focus(input_id))||egui::Popup::is_id_open(ui.ctx(),popup)){
             ui.input_mut(|i|(i.consume_key(egui::Modifiers::NONE,egui::Key::ArrowDown),i.consume_key(egui::Modifiers::NONE,egui::Key::ArrowUp),i.consume_key(egui::Modifiers::NONE,egui::Key::Enter)))
         }else{(false,false,false)};
-        let now=ui.ctx().input(|i|i.time);let mut selected=None;
+        let now=ui.ctx().input(|i|i.time);let mut selected=None;let mut open_cmd:Option<egui::SetOpenCommand>=None;
         let before=self.weather_source.province.clone();
         let response=ui.horizontal(|ui|{
             egui::ComboBox::from_id_salt("qweather-province").width(108.0).height(230.0)
@@ -321,14 +321,22 @@ impl App {
             let center=arrow.rect.center();ui.painter().add(egui::Shape::line(vec![center+egui::vec2(-4.0,-2.0),center+egui::vec2(0.0,2.0),center+egui::vec2(4.0,-2.0)],egui::Stroke::new(1.5_f32,ui.visuals().text_color())));
             if ui.is_enabled(){
                 if self.weather_source.focus_city {input.request_focus();self.weather_source.focus_city=false;}
-                if input.changed()||input.clicked()||before!=self.weather_source.province {ui.memory_mut(|m|m.open_popup(popup));}
-                if arrow.clicked(){ui.memory_mut(|m|m.toggle_popup(popup));}
-                if input.has_focus()||ui.memory(|m|m.is_popup_open(popup)){
+                if input.changed()||input.clicked()||before!=self.weather_source.province {open_cmd=Some(egui::SetOpenCommand::Bool(true));}
+                if arrow.clicked(){open_cmd=Some(egui::SetOpenCommand::Toggle);}
+                if input.has_focus()||egui::Popup::is_id_open(ui.ctx(),popup){
+                    // egui 0.35 的 Popup 不再替调用方处理上下键/回车选中，必须自己做。
                     if keys.0 {
-                        if ui.memory(|m|m.is_popup_open(popup)){self.weather_source.highlighted=(self.weather_source.highlighted+1).min(self.weather_source.results.len().saturating_sub(1));}
-                        ui.memory_mut(|m|m.open_popup(popup));
+                        if !self.weather_source.results.is_empty() {
+                            self.weather_source.highlighted=(self.weather_source.highlighted+1).min(self.weather_source.results.len()-1);
+                        }
+                        open_cmd=Some(egui::SetOpenCommand::Bool(true));
                     }
                     if keys.1{self.weather_source.highlighted=self.weather_source.highlighted.saturating_sub(1);}
+                    if keys.2 && !self.weather_source.results.is_empty() {
+                        let chosen=self.weather_source.results[self.weather_source.highlighted].clone();
+                        self.weather_source.choose_city(chosen);
+                        open_cmd=Some(egui::SetOpenCommand::Bool(false));
+                    }
                 }
             }
             input.union(arrow)
@@ -337,9 +345,9 @@ impl App {
             if self.weather_source.search_due(now){self.weather_source.search();}
             let term_ready=!self.weather_source.query.trim().is_empty()&&(!self.weather_source.query.is_ascii()||self.weather_source.query.trim().len()>=2);
             if term_ready&&(!self.weather_source.search_sent||self.weather_source.search.is_some()){ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));}
-            if keys.2 {if let Some(location)=self.weather_source.results.get(self.weather_source.highlighted){selected=Some(location.clone());}else{self.weather_source.search();ui.memory_mut(|m|m.open_popup(popup));}}
+                        open_cmd=Some(egui::SetOpenCommand::Bool(true));
         }
-        egui::popup::popup_below_widget(ui,popup,&response,egui::popup::PopupCloseBehavior::CloseOnClickOutside,|ui|{
+        egui::Popup::from_response(&response).id(popup).open_memory(open_cmd).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui|{
             ui.spacing_mut().item_spacing.y=2.0;
             if self.weather_source.query.trim().is_empty(){settings_hint(ui,"输入名称或拼音，自动匹配城市、县和区。");}
             else if self.weather_source.query.is_ascii()&&self.weather_source.query.trim().len()<2 {settings_hint(ui,"继续输入至少两个字母。");}
@@ -360,7 +368,7 @@ impl App {
             }
             for credit in &self.weather_source.geo_credits {settings_hint(ui,credit);}
         });
-        if let Some(location)=selected {self.weather_source.choose_city(location);ui.memory_mut(|m|m.close_popup());}
+        if let Some(location)=selected {self.weather_source.choose_city(location);egui::Popup::close_id(ui.ctx(),popup);}
     }
 
     pub(crate) fn qweather_city_settings(&mut self,ui:&mut egui::Ui){
@@ -424,10 +432,11 @@ impl App {
         ctx.show_viewport_immediate(id,egui::ViewportBuilder::default().with_title("和风天气配置教程 · 岛仔")
             .with_icon(crate::theme::app_icon()).with_inner_size([820.0,680.0]).with_min_inner_size([520.0,420.0]),|ctx,_|{
             if ctx.input(|i|i.viewport().close_requested()){self.weather_source.tutorial_open=false;}
-            let original=ctx.style();let mut style=(*original).clone();
+            let original=ctx.style_of(egui::Theme::Dark);let mut style=(*original).clone();
             style.visuals=if self.settings.settings_theme.dark(crate::settings_theme::system_dark(ctx)){egui::Visuals::dark()}else{egui::Visuals::light()};
             ctx.set_style(style);
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(ctx.style().visuals.panel_fill).inner_margin(16)).show(ctx,|ui|{
+            let panel_fill=ctx.style_of(egui::Theme::Dark).visuals.panel_fill;
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(panel_fill).inner_margin(16)).show(ctx,|ui|{
                 ui.horizontal_wrapped(|ui|{
                     ui.label(RichText::new("配置教程 · 步骤 01–10").strong());
                     egui::ComboBox::from_id_salt("weather-tutorial-zoom").width(100.0)
@@ -448,7 +457,7 @@ impl App {
                         for y in (0..height).step_by(1024){
                             let tile=image::imageops::crop_imm(&image,0,y,image.width(),1024.min(height-y)).to_image();
                             let pixels=egui::ColorImage::from_rgba_unmultiplied([tile.width()as usize,tile.height()as usize],tile.as_raw());
-                            self.weather_source.tutorial_textures.push(ctx.load_texture(format!("weather-tutorial-{index}-{y}"),pixels,egui::TextureOptions::LINEAR));
+                            self.weather_source.tutorial_textures.push(ui.ctx().load_texture(format!("weather-tutorial-{index}-{y}"),pixels,egui::TextureOptions::LINEAR));
                         }
                     }
                 }

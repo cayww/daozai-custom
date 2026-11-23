@@ -1156,7 +1156,7 @@ mod tests {
 
     #[test]
     fn native_cover_survives_a_missing_system_thumbnail(){
-        let cover=Arc::new(eframe::egui::ColorImage::new([2,2],eframe::egui::Color32::BLUE));
+        let cover=Arc::new(eframe::egui::ColorImage::filled([2,2], eframe::egui::Color32::BLUE));
         let native=NowPlaying{source:"cloudmusic.exe".into(),title:"歌曲".into(),artist:"歌手".into(),playing:true,artwork:Some(cover.clone()),..Default::default()};
         let mut system=native.clone();system.artwork=None;
         assert!(Arc::ptr_eq(choose_media(Some(system),Some(native)).unwrap().artwork.as_ref().expect("系统封面缺失时应保留原生封面"),&cover));
@@ -1164,9 +1164,9 @@ mod tests {
 
     #[test]
     fn other_music_clients_keep_their_own_covers_when_netease_is_open(){
-        let cover=Arc::new(eframe::egui::ColorImage::new([2,2],eframe::egui::Color32::RED));
+        let cover=Arc::new(eframe::egui::ColorImage::filled([2,2], eframe::egui::Color32::RED));
         let native=NowPlaying{source:"cloudmusic.exe".into(),title:"网易云歌曲".into(),artist:"歌手".into(),playing:true,
-            artwork:Some(Arc::new(eframe::egui::ColorImage::new([2,2],eframe::egui::Color32::BLUE))),..Default::default()};
+            artwork:Some(Arc::new(eframe::egui::ColorImage::filled([2,2], eframe::egui::Color32::BLUE))),..Default::default()};
         for source in ["SodaMusic.exe","KuGou.exe","QQMusic.exe","Spotify.exe"]{
             let system=NowPlaying{source:source.into(),title:"当前歌曲".into(),artist:"歌手".into(),playing:true,artwork:Some(cover.clone()),..Default::default()};
             let selected=choose_media(Some(system.clone()),Some(native.clone())).unwrap();

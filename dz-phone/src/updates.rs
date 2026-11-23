@@ -205,10 +205,11 @@ impl State {
                     if installing { ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose); }
                     else { self.dismiss(); return; }
                 }
+                let update_ppp=ctx.pixels_per_point();
                 egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
                     let window = ui.max_rect().shrink(8.0);
                     #[cfg(windows)]
-                    clip_update_window(window, ctx.pixels_per_point());
+                    clip_update_window(window, update_ppp);
                     ui.painter().rect_filled(window, 22.0, egui::Color32::from_rgb(25,25,28));
                     ui.painter().rect_stroke(window, 22.0, egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(55,55,61)), egui::StrokeKind::Inside);
                     let close_rect = egui::Rect::from_min_size(window.right_top()+egui::vec2(-42.0,12.0),egui::vec2(28.0,28.0));
@@ -221,7 +222,7 @@ impl State {
                     if close.clicked() && !installing { self.dismiss(); }
                     let drag_rect = egui::Rect::from_min_max(window.min,egui::pos2(close_rect.left()-8.0,window.top()+42.0));
                     if ui.interact(drag_rect,ui.id().with("update-drag"),egui::Sense::drag()).drag_started() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                     }
                     ui.scope_builder(egui::UiBuilder::new().max_rect(window.shrink2(egui::vec2(24.0,24.0))), |ui| {
                         let style = ui.style_mut();
@@ -323,7 +324,7 @@ impl State {
                         });
                         if release.package.is_none() { ui.label(egui::RichText::new("此版本请通过浏览器下载。").size(11.5).color(theme::DIM)); }
                     });
-                    if self.rx.is_some() { ctx.request_repaint_after(Duration::from_millis(100)); }
+                    if self.rx.is_some() { ui.ctx().request_repaint_after(Duration::from_millis(100)); }
                 });
             });
     }
@@ -666,8 +667,8 @@ mod tests {
             state.poll(&ctx);
             assert!(!state.begin_check(&ctx, false, || Ok(None)));
             assert!(state.result.is_some() && state.rx.is_none());
-            let page = ctx.run(Default::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| state.ui(ui, true));
+            let page = ctx.run_ui(Default::default(), |ui|{
+                egui::CentralPanel::default().show(ui, |ui| state.ui(ui, true));
             });
             assert!(page.shapes.iter().any(|shape| matches!(&shape.shape,
                 egui::Shape::Text(t) if t.galley.text().contains("秒后可重新检查"))));
@@ -815,9 +816,9 @@ mod tests {
             let mut state = State::default(); state.rx = Some(rx);
             state.automatic_check = true;
             let before = Instant::now();
-            let _ = ctx.run(Default::default(), |ctx| {
-                state.poll(ctx);
-                egui::CentralPanel::default().show(ctx, |ui| state.ui(ui, true));
+            let _ = ctx.run_ui(Default::default(), |ui|{
+                state.poll(ui.ctx());
+                egui::CentralPanel::default().show(ui, |ui| state.ui(ui, true));
             });
             assert!(state.rx.is_none());
             assert!(!state.automatic_check);
@@ -893,7 +894,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(520.0, 416.0))),
                 ..Default::default()
             };
-            *capture.lock().unwrap() = Some(ctx.run(raw, |ctx| (viewport.viewport_ui_cb)(ctx)));
+            *capture.lock().unwrap() = Some(ctx.run_ui(raw, |ui| (viewport.viewport_ui_cb)(ui)));
         });
         let mut raster = crate::preview_raster::Raster::new(520, 416);
         for (name, progress, message) in [
@@ -906,7 +907,7 @@ mod tests {
         app.updates.progress = progress.unwrap_or_default();
         app.updates.message = message.into();
         for frame in 0..5 {
-            let root = ctx.run(Default::default(), |ctx| app.settings_ui(ctx, false));
+            let root = ctx.run_ui(Default::default(), |ui| app.settings_ui(ui.ctx(), false));
             raster.update_textures(&root.textures_delta);
             let child = output.lock().unwrap().take().unwrap();
             raster.update_textures(&child.textures_delta);

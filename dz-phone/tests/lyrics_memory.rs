@@ -32,8 +32,8 @@ fn changing_songs_does_not_retain_per_song_animation_state(){
         media:daozai::smtc::NowPlaying{source:"cloudmusic.exe".into(),artist:"测试".into(),duration:120.0,position:5.0,playing:true,..Default::default()},..Default::default()};
     fn draw(ctx:&egui::Context,app:&mut App,env:&mut Env){
         env.t+=1.0/60.0;
-        let _=ctx.run(egui::RawInput{time:Some(env.t),screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(WIN_W,WIN_H))),..Default::default()},|ctx|{
-            egui::CentralPanel::default().show(ctx,|ui|{app.frame(ui,egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(WIN_W,WIN_H)),env);});
+        let _=ctx.run_ui(egui::RawInput{time:Some(env.t),screen_rect:Some(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(WIN_W,WIN_H))),..Default::default()},|ui|{
+            egui::CentralPanel::default().show(ui,|ui|{app.frame(ui,egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(WIN_W,WIN_H)),env);});
         });
     }
     if expanded{env.cursor=Some(egui::pos2(WIN_W/2.0,12.0));}

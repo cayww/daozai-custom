@@ -67,7 +67,7 @@ mod tests {
     fn song(title:&str,artist:&str)->NowPlaying{
         NowPlaying{title:title.into(),artist:artist.into(),source:"qqmusic".into(),playing:true,duration:200.0,
             playback_type:MediaKind::Music,sampled_at:Some(Instant::now()),
-            artwork:Some(std::sync::Arc::new(eframe::egui::ColorImage::new([1,1],eframe::egui::Color32::RED))),..Default::default()}
+            artwork:Some(std::sync::Arc::new(eframe::egui::ColorImage::filled([1,1], eframe::egui::Color32::RED))),..Default::default()}
     }
     #[test]
     fn video_gap_report_omits_the_title_and_creator(){

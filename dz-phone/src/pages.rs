@@ -210,7 +210,7 @@ impl App {
             if c.live && has && self.music_volume_ui.is_some() {
                 if button.clicked(){self.music_volume_open=!self.music_volume_open;}
                 if button.hovered(){
-                    let delta=c.ui.ctx().input(|i|i.raw_scroll_delta.y);
+                    let delta=crate::app::raw_scroll_y(c.ui.ctx());
                     if delta.abs()>0.5 {
                         self.change_music_volume(Transport::SetVolume((value as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32),cmds);
                     }
@@ -324,7 +324,7 @@ impl App {
                 command=Some(Transport::SetVolume(((75.0-popup.to_local(pointer).y)/43.0*100.0).round().clamp(0.0,100.0) as u32));
             }
         }else if popup.live && panel.contains(ctx.pointer_hover_pos().unwrap_or(Pos2::ZERO)) {
-            let delta=ctx.input(|i|i.raw_scroll_delta.y);
+            let delta=crate::app::raw_scroll_y(ctx);
             if delta.abs()>0.5{command=Some(Transport::SetVolume((volume as f32+delta/120.0*4.0).round().clamp(0.0,100.0) as u32));}
         }
         let mute=popup.hit(353.0,82.0,28.0,20.0,"m-volume-mute").on_hover_text(if muted{"恢复音乐音量"}else{"静音音乐，保留当前音量"});
@@ -370,20 +370,20 @@ impl App {
                 let row=col.faded((1.0-distance.abs()*0.35).clamp(0.0,1.0));
                 let font=row.font(if active {12.0}else{10.0},if active {W::Semibold}else{W::Regular});
                 // 音乐页歌词自动折行：先按阅读顺序分行再逐行 RTL 转换，避免先显示句尾。
-                let text=crate::rtl_text::display_wrapped(&line.text,132.0*c.s,
+                let text=crate::rtl_text::display_wrapped(&line.text,132.0,
                     |s|row.painter.layout_no_wrap(s.to_owned(),font.clone(),ink).size().x).into_owned();
-                let mut job=egui::text::LayoutJob::simple(text,font,ink,132.0*c.s);
+                let mut job=egui::text::LayoutJob::simple(text,font,ink,132.0);
                 job.wrap.max_rows=if active {3}else{1};
                 job.wrap.break_anywhere=true;
                 let galley=row.painter.layout_job(job);
-                let y=64.0+distance*29.0-galley.size().y/(2.0*c.s);
-                row.painter.galley(row.pos(246.0,y),galley,ink);
+                let y=64.0+distance*29.0-galley.size().y/2.0;
+                row.paint_galley(egui::pos2(246.0,y),galley,ink);
             }
             if !lyrics.synced {col.text(246.0,39.0,"文本歌词",8.0,W::Regular,theme::GRAY,H::Left);}
         } else {
             let status=if self.ly.loading {"正在查找歌词…"}else if let Some(error)=&self.ly.error {error.label()}else{"暂无歌词"};
-            let galley=col.painter.layout(status.into(),col.font(10.0,W::Regular),theme::GRAY,130.0*c.s);
-            col.painter.galley(col.pos(246.0,61.0-galley.size().y/(2.0*c.s)),galley,theme::GRAY);
+            let galley=col.painter.layout(status.into(),col.font(10.0,W::Regular),theme::GRAY,130.0);
+            col.paint_galley(egui::pos2(246.0,61.0-galley.size().y/2.0),galley,theme::GRAY);
             if self.ly.error.is_some() {
                 col.text(246.0,87.0,"点击重试",9.0,W::Regular,theme::GRAY,H::Left);
                 if c.hit(243.0,28.0,136.0,74.0,"lyrics-retry").on_hover_text("重新查询当前歌曲的歌词").clicked(){self.ly.key.clear();self.ly.manual_retry=true;}
@@ -789,15 +789,31 @@ impl App {
         let font = 12.0;
         let widths: Vec<f32> = labels.iter().map(|l| c.text_w(l, font, W::Bold) + 14.0).collect();
         let total = widths.iter().sum::<f32>() + 4.0;
-        if glassy { paint::glass_chip(c, x, 9.5, total, 21.0, 10.5, 0.12); } else { c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN); }
+        // 容器几何供 ctl_geom 用（资料包 containerScale：切换时容器也放大）。
+        self.shelf_tab_bar = (x + total / 2.0, total, 21.0);
+        let bar_on_gpu = glassy && self.ctl_on_gpu(Ctl::ShelfTabBar);
+        if bar_on_gpu {
+            // 容器由 GPU 玻璃透镜画（真折射，随 press 放大），egui 侧不画矢量底。
+        } else if glassy {
+            paint::glass_chip(c, x, 9.5, total, 21.0, 10.5, 0.12);
+        } else {
+            c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN);
+        }
         let mut left = x + 2.0;
+        // 选中透镜由 GPU 画时，egui 侧跳过选中胶囊的矢量填充，避免双层；
+        // 但文字/命中区照常。
+        let tab_on_gpu = glassy && self.ctl_on_gpu(Ctl::ShelfTab);
         for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
             let selected = self.shelf_tab == i;
+            // 记录选中胶囊几何（面板局部：中心 x + 宽），供 ctl_geom 的滑动透镜用。
+            self.shelf_tab_layout[i] = (left + w / 2.0, *w);
             let r = c.hit(left, 9.5, *w, 21.0, ("shelf-tab", i));
             let r = if i == 1 { r.on_hover_text("切到剪贴板") } else { r };
             let (h, _) = c.hover_t(&r);
             if selected {
-                c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
+                if !tab_on_gpu {
+                    c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
+                }
             } else if h > 0.01 {
                 c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_white_alpha((18.0 * h) as u8));
             }
@@ -806,6 +822,12 @@ impl App {
                 self.shelf_tab = i;
                 self.confirm_clear = None;
                 self.clip_confirm_clear = None;
+                // 资料包标签栏：切换瞬间触发 press(放大 78/56) → 滑动 → 到位缩回。
+                if glassy {
+                    self.shelf_tab_press.snap(0.0);
+                    self.shelf_tab_press.target = 1.0;
+                    self.shelf_tab_pressing = true;
+                }
             }
             left += w;
         }
@@ -910,7 +932,13 @@ impl App {
             }
             let r = row.hit_drag(x - 31.0, 30.0, 62.0, 78.0, ("shelf", p));
             let show_hint=self.shelf_menu_rect.is_none() && !r.context_menu_opened() && !r.secondary_clicked();
-            if show_hint {r.clone().on_hover_text(p.display().to_string());}
+            if show_hint {
+                // egui 0.35 默认把长路径截断成省略号；置物架提示必须能看到完整路径。
+                let path=p.display().to_string();
+                egui::Tooltip::for_widget(&r).width(900.0).show(move |ui| {
+                    ui.add(egui::Label::new(&path).wrap_mode(egui::TextWrapMode::Extend));
+                });
+            }
             let (h, pr) = row.hover_t(&r);
             let cc = row.faded(a).scaled(x, 66.0, 1.0 - 0.04 * pr);
             if h > 0.01 {
@@ -931,10 +959,10 @@ impl App {
             let mut delete=remove.clicked();
             if show_hint {remove.on_hover_text("从置物架移除，保留原文件");}
             r.context_menu(|ui|{
-                if ui.button("打开").clicked(){if p.exists(){cmds.push(Cmd::Open(p.clone()));}ui.close_menu();}
-                if ui.button("在文件夹中显示").clicked(){cmds.push(Cmd::Reveal(p.clone()));ui.close_menu();}
-                if ui.button("复制完整路径").clicked(){cmds.push(Cmd::Copy(p.display().to_string()));ui.close_menu();}
-                if ui.button("从置物架移除").clicked(){delete=true;ui.close_menu();}
+                if ui.button("打开").clicked(){if p.exists(){cmds.push(Cmd::Open(p.clone()));}}
+                if ui.button("在文件夹中显示").clicked(){cmds.push(Cmd::Reveal(p.clone()));}
+                if ui.button("复制完整路径").clicked(){cmds.push(Cmd::Copy(p.display().to_string()));}
+                if ui.button("从置物架移除").clicked(){delete=true;}
                 self.shelf_menu_rect=Some(egui::Frame::menu(ui.style()).widget_rect(ui.min_rect()));
             });
             if delete { self.shelf.remove(p); self.icons.remove(p); self.shelf_x.remove(p); self.shelf_born.remove(p); self.shelf_first=self.shelf_first.min(self.shelf.items.len().saturating_sub(5)); }
@@ -948,25 +976,66 @@ impl App {
     /// 表头其余元素又随内容动态排布，没有稳定空位，所以移到卡片外侧。
     /// 点开后输入框浮在列表上方（盖住第一行），Esc 或小叉收起。
     /// 过滤只作用于显示，索引仍指向同一份历史，复制/固定/删除的行为不变。
+    /// 水滴本体的液态玻璃由 HLSL 控件透镜画（见 app::glass_controls），egui 侧不重复画。
+
     fn clip_search(&mut self, c: &Card, cmds: &mut Vec<Cmd>) {
         // 右下侧空白带：x 377..419 不画列表，y 在箭头(≤101)与页码豆(≈131)之间。
+        // 液态皮肤下：点击放大镜 → 一滴玻璃从图标位置弹起、飞到表头位置、展开成搜索胶囊。
+        let glassy = self.glassy();
         let icon = c.hit(384.0, 105.0, 26.0, 20.0, "clip-search-open");
         let (h, _) = c.hover_t(&icon);
         if h > 0.01 { c.circle(397.0, 115.0, 10.5, Color32::from_white_alpha((22.0 * h) as u8)); }
         let ink = if self.clip_search_open { theme::BLUE } else { paint::mix(theme::GRAY, theme::WHITE, h) };
         c.ring(395.2, 113.2, 4.4, 1.3, ink);
         c.seg((398.6, 116.6), (402.4, 120.4), 1.3, ink);
-        let icon = icon.on_hover_text(if self.clip_search_open { "收起搜索" } else { "搜索剪贴板" });
-        if icon.clicked() {
+
+        // ---- 液态玻璃水滴搜索：点击 → 自动成形飞到搜索框位置 ----
+        if glassy && icon.clicked() {
+            match self.liquid_search_state {
+                0 | 3 => {
+                    // 从岛体顶部中间 snap 成一颗小融球水滴（资料包：从顶部黑边长出），
+                    // 随后交给弹簧向下展开到搜索框位置（state=2 的目标 209.5,42）。
+                    self.ls_cx.snap(209.5);
+                    self.ls_cy.snap(8.0);
+                    self.ls_bx.snap(2.0);
+                    self.ls_by.snap(2.0);
+                    self.ls_k.snap(64.0);
+                    self.ls_cont.snap(0.0);
+                    self.liquid_search_state = 2;
+                    self.clip_search_open = true;
+                    self.clip_query.clear();
+                    self.clip_search_focus = false;
+                }
+                2 => {
+                    // 已展开时再点放大镜 → 缩回。
+                    self.liquid_search_state = 3;
+                    self.clip_search_open = false;
+                    self.clip_query.clear();
+                }
+                _ => {}
+            }
+        } else if !glassy && icon.clicked() {
+            // 非液态皮肤：原来的点击展开/收起。
             self.clip_search_open = !self.clip_search_open;
             self.clip_query.clear();
             self.clip_search_focus = false;
         }
+
+        // 飞行 / 缩回途中：水滴本体由 HLSL 控件透镜画（真折射），egui 侧不画矢量玻璃。
+        // 到位后（半宽接近胶囊目标）才由下面的搜索框接管。
+        let forming = glassy && self.liquid_search_state == 2 && self.ls_bx.pos < 150.0;
+
+        icon.on_hover_text(if self.clip_search_open { "收起搜索" } else { "点击弹出搜索" });
+        // 飞行途中不渲染文字输入（等玻璃胶囊到位）。
+        if forming { return; }
         if !self.clip_search_open { return; }
-        // 输入框浮在列表卡片的上沿，比卡片亮一档 + 一圈描边，聚焦时描边变蓝。
+        // 输入框浮在列表卡片的上沿。液态皮肤下底/边交给 HLSL 控件透镜（真玻璃），
+        // 这里只放文字；其他皮肤用原来的灰底 + 描边。
         let rect = c.rect(46.0, 32.0, 327.0, 20.0);
-        c.fill(46.0, 32.0, 327.0, 20.0, 8.0, Color32::from_gray(64));
-        c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.0, Color32::from_gray(102));
+        if !glassy {
+            c.fill(46.0, 32.0, 327.0, 20.0, 8.0, Color32::from_gray(64));
+            c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.0, Color32::from_gray(102));
+        }
         let mut ui = egui::Ui::new(c.ui.ctx().clone(), egui::Id::new("clip-search"), egui::UiBuilder::new().layer_id(c.ui.layer_id()).max_rect(rect).style(c.ui.style().clone()));
         ui.set_clip_rect(c.painter.clip_rect());
         ui.set_opacity(c.painter.opacity());
@@ -976,7 +1045,7 @@ impl App {
         let mut buf = std::mem::take(&mut self.clip_query);
         let te = egui::TextEdit::singleline(&mut buf)
             .id(egui::Id::new("clip-search-edit"))
-            .frame(false)
+            .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .text_color(theme::WHITE)
             .font(theme::font(size::TINY, W::Regular))
@@ -991,12 +1060,14 @@ impl App {
             cmds.push(Cmd::Focus);
         }
         self.clip_typing=resp.has_focus();
-        if resp.has_focus() { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
-        // Esc 退出搜索：清空关键词并收起输入框。
+        // 液态皮肤下白边由 GPU 玻璃透镜画；再叠一圈静态蓝边会和它错位不同步。
+        if resp.has_focus() && !glassy { c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.4, theme::BLUE); }
+        // Esc 退出搜索：清空关键词并收起输入框。液态胶囊态一并缩回。
         if resp.has_focus() && c.ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
             self.clip_query.clear();
             self.clip_search_open = false;
             resp.surrender_focus();
+            if self.liquid_search_state == 2 { self.liquid_search_state = 3; }
         }
         let x = c.hit(352.0, 34.0, 18.0, 16.0, "clip-search-close").on_hover_text(if self.clip_query.is_empty() { "关闭搜索" } else { "清空并关闭" });
         paint::close(c, 361.0, 42.0, 2.6, if x.hovered() { theme::BLUE } else { Color32::from_gray(190) });
@@ -1004,6 +1075,7 @@ impl App {
             self.clip_query.clear();
             self.clip_search_open = false;
             resp.surrender_focus();
+            if self.liquid_search_state == 2 { self.liquid_search_state = 3; }
         }
     }
 
@@ -1035,7 +1107,15 @@ impl App {
         let n = shown.len();
         let recent = items.iter().filter(|clip| !clip.pinned).count();
         // 搜索时输入框占掉卡片第一行，可见行数少一行。
-        let searching = self.clip_search_open || !self.clip_query.is_empty();
+        // 液态皮肤下要等融球水滴到位(drop_landed)才让位——否则点击放大镜的瞬间
+        // 内容就提前少一行,而水滴还在飞,视觉上"让位"跑在动画前面。
+        // 收起时融球一离开到位态(state!=2)内容立即恢复。
+        let drop_landed = self.liquid_search_state == 2 && self.ls_bx.pos >= 150.0;
+        let searching = if self.glassy() {
+            drop_landed || !self.clip_query.is_empty()
+        } else {
+            self.clip_search_open || !self.clip_query.is_empty()
+        };
         let rows = if searching { CLIP_ROWS - 1 } else { CLIP_ROWS };
         self.clip_first = self.clip_first.min(n.saturating_sub(rows));
 
@@ -1081,7 +1161,13 @@ impl App {
             return;
         }
 
-        if glassy { paint::glass_chip(c, 42.0, 31.0, 335.0, 93.0, 12.0, 0.05); } else { c.fill(42.0, 31.0, 335.0, 93.0, 12.0, theme::CARD); }
+        // 卡片白边始终保留。融球材质已与其他控件统一，展开后叠在卡片顶边也不会
+        // 出现"双层不同步"——之前抑制卡片白边反而让剪贴板整块丢了轮廓。
+        if glassy {
+            paint::glass_chip(c, 42.0, 31.0, 335.0, 93.0, 12.0, 0.05);
+        } else {
+            c.fill(42.0, 31.0, 335.0, 93.0, 12.0, theme::CARD);
+        }
         // 超过一屏时右侧细滚动条，滚轮查看。
         if n > rows {
             let (top, track) = (38.0, 79.0);
@@ -1091,7 +1177,8 @@ impl App {
             c.fill(371.0, y, 2.5, thumb, 1.25, Color32::from_white_alpha(70));
         }
         // 搜索框拿到键盘焦点时：↑↓ 选行、Enter 复制。选中行始终保持在可视范围内。
-        if self.clip_search_open && self.clip_typing && !shown.is_empty() {
+        // 用 searching(含融球到位判定)而非 clip_search_open,避免动画途中就响应键盘。
+        if searching && self.clip_typing && !shown.is_empty() {
             let (down, up, enter) = c.ui.ctx().input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter)));
             if down { self.clip_sel=(self.clip_sel+1).min(n-1); }
             if up { self.clip_sel=self.clip_sel.saturating_sub(1); }
@@ -1112,7 +1199,7 @@ impl App {
             let y = if searching { 62.0 } else { 44.0 } + row as f32 * 22.5;
             let r = c.hit(48.0, y - 10.0, 323.0, 20.0, ("clip", index, clip.text.len(), clip.at.as_str()));
             let (h, _) = c.hover_t(&r);
-            let selected = self.clip_search_open && self.clip_typing && self.clip_first+row == self.clip_sel;
+            let selected = searching && self.clip_typing && self.clip_first+row == self.clip_sel;
             if selected {
                 c.fill(48.0, y - 10.0, 323.0, 20.0, 7.0, Color32::from_white_alpha(26));
             } else if h > 0.01 {
@@ -1287,8 +1374,8 @@ impl App {
                 if reminder_clicked {self.open_task_reminder(i);}
                 let mut edit_this=false;
                 r.context_menu(|ui|{
-                    if ui.button("编辑与提醒…").clicked(){edit_this=true;ui.close_menu();}
-                    if ui.button("取消提醒").clicked(){self.todos.items[i].due=None;self.todos.save();ui.close_menu();}
+                    if ui.button("编辑与提醒…").clicked(){edit_this=true;}
+                    if ui.button("取消提醒").clicked(){self.todos.items[i].due=None;self.todos.save();}
                 });
                 if edit_this {self.open_task_dialog(i);}
                 if delete {
