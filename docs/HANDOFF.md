@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-23 20:40
+> **最后更新**：2026-11-23 21:10
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -1785,3 +1785,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **缩放冻结修复保留**：子窗口 resize 置 `layout_dirty` → 发 `Wakeup::LayoutDirty` → 在 `user_event` 里用 `with_event_loop_context` 直接补跑父窗口（Windows 模态 sizing 循环里 `about_to_wait` 会停摆，不能只约下一帧）；`draw_main` 末尾清标记。
 - **验证**：`cargo check --locked --lib --tests --bins` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1402 passed / 0 failed / 131 ignored**；主程序 bin 10 passed（含新增 2 项单测：`readback_tests::screenshot_readback_flips_rows_and_swaps_bgra_to_rgba`、`root_scale_tests::repaint_scheduling_keeps_the_earliest_deadline`）；release exe sha `b7c92525f185de5f`（`dz-phone/target/release/daozai.exe`）。换行符已核对：改动文件仍为纯 LF。
 - **状态与待办**：**未打包、未部署、未实机验证**——需用户拖设置页边框确认缩放跟手、观察空闲 CPU 是否下降；兼容渲染路径当前 `native.wants_frames()` 恒 false，截图回灌属机制补齐，暂无实机触发点。剩余 eframe 缺口见桌面 HANDOFF §4⑤⑥⑦：设备丢失/suspended 恢复、子窗口位置持久化（`process::exit` 不跑 Drop）、viewport info 缺 `monitor_size/outer_rect`；低优先级 `device_event`/accesskit/首帧 viewport 命令未做。工作日志在 WorkBuddy 工作区 `.workbuddy/memory/2026-11-23.md`（**不在项目仓库**）。
+
+### 7.0zzz 补齐 §4⑤⑥⑦：设备恢复 / 位置持久化 / 子窗口几何（2026-11-23 20:43–21:10，提交 `38ee776`）
+- **⑤ 设备丢失 / suspended 恢复**：`d3d11/runtime.rs` 新增 `new_with_ctx()`，重建 D3D 栈时复用原 egui Context；`FrameStats.device_lost` 由 Present 的 `DXGI_ERROR_DEVICE_REMOVED/RESET` 触发。`winit_runner.rs` 的 `suspended` 只丢 window/runtime/viewport 缓存，**保留 Shell 与 Context**；`resumed` 重建 D3D 栈、重绑 `native::Window`（subclass/hook/拖放按 HWND 注册）、重置 `placed`，并用 `device_lost_pending` 在事件方法末尾（避开 `&Window` 与 `&mut self` 借用冲突）重建；失败按 500ms 退避。
+- **⑥ 设置窗口位置持久化**：`settings_window.rs` 加 `last_persist`，拖动中位置变化最多每秒原子写一次，防崩溃/强杀丢位置；关闭/退出仍立即落盘（main.rs 两处 `process::exit` 已调 `save_window_before_exit()`）。坑：`open()` 每帧调用，节流起点只能在首次打开时重置，否则自动保存永不触发。新增单测 `moving_settings_window_autosaves_after_a_second`。
+- **⑦ ViewportInfo 字段**：新增 `child_viewport_geometry()`，每帧按子窗口原生 DPI 填 `outer_rect` / `monitor_size` / `title`；最小化返回 None。`settings_window::restore` 不再因 `outer_rect=None` 退化为硬编码边框估算。新增单测 `child_viewport_info_gets_outer_rect_and_monitor_size`。
+- **验证**：全量 `cargo test --locked --release --lib -- --test-threads=1` = **1403 passed / 0 failed / 131 ignored**；bin **11 passed / 0 failed**；`cargo check --locked --lib --tests --bins` 通过；release exe sha `a5970d2bcdf538f7`。三份改动文件仍为纯 LF（已与 HEAD 对比 CRLF/LF 计数）。
+- **状态**：提交 `38ee776`（本地，**未 push**）；未打包、未部署。**⑤ 的设备丢失路径只做了代码级与单测验证，需实机显卡重置 / 远程桌面断开复现确认**；⑥⑦ 亦需跨屏/高 DPI 实机确认。低优先级 `device_event` / accesskit / 首帧 viewport 命令仍未做。工作日志路径同上（不在项目仓库）。
