@@ -268,7 +268,13 @@ float4 fs(VSOut i) : SV_TARGET {
             float sigma = 5.0;
             float shadow = exp(-pow(max(d - 1.0, 0.0), 2.0) / (2.0 * sigma * sigma));
             shadow *= lightcfg.z;   // 岛体投影开关（0=关，1=开）
-            return float4(0, 0, 0, saturate(shadow) * 0.28);
+            // 内边界抗锯齿：这里原本 d 刚过 thresh 就把 alpha 从岛体侧的 ~0.05
+            // 硬跳到 0.28，沿轮廓一圈无过渡 → 展开态四边锯齿，开投影尤其明显。
+            // 用屏幕导数 fwidth(d) 做 1~2 像素的平滑淡入，和岛体边缘 aa_w 同宽，
+            // 使阴影从岛体边缘连续长出，不出现台阶。
+            float sh_aa = max(fwidth(d), 1.0) * 1.4;
+            float edge_fade = smoothstep(thresh, thresh + sh_aa, d);
+            return float4(0, 0, 0, saturate(shadow) * 0.28 * edge_fade);
         }
         float3 bgcol = sample_px(p);
         float sh = (1.0 - smoothstep(0.0, 7.0, d - 1.0)) * lerp(0.06, 0.02, mat);
