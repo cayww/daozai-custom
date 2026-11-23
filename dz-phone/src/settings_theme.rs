@@ -10,7 +10,7 @@ impl SettingsTheme {
 }
 
 pub fn system_dark(ctx:&egui::Context)->bool {
-    let id=egui::Id::new("settings-system-theme");
+    let id=egui::Id::unique("settings-system-theme");
     if let Some((at,dark))=ctx.data(|d|d.get_temp::<(std::time::Instant,bool)>(id)) {
         if at.elapsed()<std::time::Duration::from_secs(1){return dark;}
     }

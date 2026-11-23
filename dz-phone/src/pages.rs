@@ -52,7 +52,7 @@ impl App {
         let with_lyrics=has && self.show_lyrics && !video;
         let glassy=self.glassy();
         let ctx=c.ui.ctx().clone();
-        let playing_t=ctx.animate_bool_with_time(egui::Id::new("np-playing"),np.playing,0.22);
+        let playing_t=ctx.animate_bool_with_time(egui::Id::unique("np-playing"),np.playing,0.22);
         let art_size=if with_lyrics {44.0}else{62.0};
         let art_y=if with_lyrics {23.0}else{13.0};
         if let Some((image,texture))=&self.music_artwork {
@@ -298,7 +298,7 @@ impl App {
         if self.music_volume_open && ctx.input(|i|i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p|!panel.contains(p) && !trigger.contains(p))){
             self.music_volume_open=false;
         }
-        let a=ctx.animate_bool_with_time(egui::Id::new("music-volume-open"),self.music_volume_open,0.12);
+        let a=ctx.animate_bool_with_time(egui::Id::unique("music-volume-open"),self.music_volume_open,0.12);
         let Some((volume,muted))=self.music_volume_ui else{return;};
         if a<0.01{return;}
         let popup=c.faded(a);
@@ -355,7 +355,7 @@ impl App {
         if let Some(lyrics)=&self.ly.lyrics {
             let current=if lyrics.synced {lyrics.index_at(self.lyric_position())}else{Some(0)};
             let target=current.unwrap_or(0);
-            let id=egui::Id::new("music-lyrics-scroll");
+            let id=egui::Id::unique("music-lyrics-scroll");
             if !self.ly.scroll_animation_started {
                 c.ui.ctx().animate_value_with_time(id,target as f32,0.0);
                 self.ly.scroll_animation_started=true;
@@ -398,7 +398,7 @@ impl App {
         c.text(111.0,23.0,"设置",10.5,W::Regular,theme::GRAY,H::Center);
         let (rx, ry, rr) = (79.0, 74.0, 32.0);
         let frac = self.ring_shown.pos.clamp(0.0, 1.0);
-        let run = c.ui.ctx().animate_bool_with_time(egui::Id::new("pomo-run"), self.pomo.running, 0.3);
+        let run = c.ui.ctx().animate_bool_with_time(egui::Id::unique("pomo-run"), self.pomo.running, 0.3);
         let resting=self.pomo.phase!=Phase::Focus;
         let (top,bottom)=if resting{(theme::SOFT_GREEN,mix(theme::SOFT_GREEN,Color32::BLACK,0.2))}else{(theme::RED_TOP,theme::RED)};
         // 外圈柔光；计时中缓慢呼吸
@@ -1036,7 +1036,7 @@ impl App {
             c.fill(46.0, 32.0, 327.0, 20.0, 8.0, Color32::from_gray(64));
             c.stroke(46.0, 32.0, 327.0, 20.0, 8.0, 1.0, Color32::from_gray(102));
         }
-        let mut ui = egui::Ui::new(c.ui.ctx().clone(), egui::Id::new("clip-search"), egui::UiBuilder::new().layer_id(c.ui.layer_id()).max_rect(rect).style(c.ui.style().clone()));
+        let mut ui = egui::Ui::new(c.ui.ctx().clone(), egui::Id::unique("clip-search"), egui::UiBuilder::new().layer_id(c.ui.layer_id()).max_rect(rect).style(c.ui.style().clone()));
         ui.set_clip_rect(c.painter.clip_rect());
         ui.set_opacity(c.painter.opacity());
         if !c.live { ui.disable(); }
@@ -1044,7 +1044,7 @@ impl App {
         let text_rect = Rect::from_min_max(rect.min + egui::vec2(8.0, 2.0), rect.max - egui::vec2(26.0, 2.0));
         let mut buf = std::mem::take(&mut self.clip_query);
         let te = egui::TextEdit::singleline(&mut buf)
-            .id(egui::Id::new("clip-search-edit"))
+            .id(egui::Id::unique("clip-search-edit"))
             .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .text_color(theme::WHITE)
@@ -1243,7 +1243,7 @@ impl App {
     fn file_icon_at(&mut self, c: &Card, p: &std::path::Path, cx: f32, cy: f32, sz: f32) {
         let tex=self.icons.get(c.ui.ctx(),p).and_then(|preview|preview.image);
         if let Some(tex) = tex {
-            let s = tex.size_vec2();
+            let s = tex.resolution_vec2();
             let k = sz / s.x.max(s.y);
             let r = Rect::from_center_size(c.pos(cx, cy), s * k * c.s);
             c.painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
@@ -1336,7 +1336,7 @@ impl App {
                     c.fill(202.0, y - 10.0, 169.0, 20.0, 7.0, Color32::from_white_alpha((12.0 * h) as u8));
                 }
                 let checked = item.done_for(&env.today);
-                let ct = ctx.animate_bool_with_time(egui::Id::new(("todo-check", item.text.as_str())), checked, 0.28);
+                let ct = ctx.animate_bool_with_time(egui::Id::unique(("todo-check", item.text.as_str())), checked, 0.28);
                 let rc = if today_item { c.clone() } else { c.faded(0.45) };
                 if self.todo_choosing{paint::pencil(c,212.0,y,10.0,theme::BLUE);}else{
                     rc.ring(212.0, y, 5.2, 1.3, paint::alpha(Color32::from_gray(120), 1.0 - ct));
@@ -1597,7 +1597,7 @@ impl App {
             let message=if !self.mail.manage.pending.is_empty(){"正在同步邮件…"}else if trash{"回收站为空"}else if self.mail.manage.unread_only{"没有未读邮件"}else{"还没有收到邮件"};
             c.text(list_x+6.0,80.0,message,11.0,W::Regular,theme::GRAY,H::Left);return;
         }
-        let mut content=egui::Ui::new(c.ui.ctx().clone(),egui::Id::new(("mail-list",c.live)),
+        let mut content=egui::Ui::new(c.ui.ctx().clone(),egui::Id::unique(("mail-list",c.live)),
             egui::UiBuilder::new().max_rect(c.rect(list_bounds.left(),list_bounds.top(),list_bounds.width(),list_bounds.height())).layer_id(c.painter.layer_id()).style(c.ui.style().clone()));
         content.set_clip_rect(c.rect(list_bounds.left(),list_bounds.top(),list_bounds.width(),list_bounds.height()).intersect(c.painter.clip_rect()));
         content.set_opacity(c.painter.opacity());if !c.live{content.disable();}
@@ -1711,7 +1711,7 @@ impl App {
         c.hit(46.0,80.0,230.0,16.0,("mail-account",&item.account,item.uid)).on_hover_text(&account);
 
         // 正文和链接共用滚动区域，会议与验证码操作保留在底部。
-        let mut content=egui::Ui::new(c.ui.ctx().clone(),egui::Id::new(("mail-content",&item.account,item.uid,c.live)),
+        let mut content=egui::Ui::new(c.ui.ctx().clone(),egui::Id::unique(("mail-content",&item.account,item.uid,c.live)),
             egui::UiBuilder::new().max_rect(c.rect(46.0,104.0,328.0,90.0)).layer_id(c.painter.layer_id()).style(c.ui.style().clone()));
         content.set_clip_rect(c.rect(46.0,104.0,328.0,90.0).intersect(c.painter.clip_rect()));
         content.set_opacity(c.painter.opacity());

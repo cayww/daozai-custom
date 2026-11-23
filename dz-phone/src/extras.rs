@@ -3149,8 +3149,8 @@ impl App {
         let name = ui.put(
             Rect::from_min_size(origin + egui::vec2(97.0, 35.0), egui::vec2(260.0, 17.0)),
             egui::TextEdit::singleline(&mut d.text)
-                .vertical_align(egui::Align::Center)
-                .id(egui::Id::new("task-name-edit"))
+                .align(egui::Align2::LEFT_CENTER)
+                .id(egui::Id::unique("task-name-edit"))
                 .frame(egui::Frame::NONE)
                 .font(theme::font(11.5, W::Regular)),
         );
@@ -3569,7 +3569,7 @@ fn island_number_field(
     value: egui::DragValue<'_>,
     id: impl std::hash::Hash + std::fmt::Debug,
 ) -> egui::Response {
-    let salt_id = egui::Id::new(&id);
+    let salt_id = egui::Id::unique(&id);
     let mut ui = egui::Ui::new(
         c.ui.ctx().clone(),
         salt_id,
@@ -3600,16 +3600,16 @@ fn island_number_field(
 }
 /// 数字框聚焦时记下整份设置快照；Esc 取消输入时由 App 恢复（0.35 会立即写回键入值）。
 fn note_number_edit_focus(c: &Card, field_id: impl std::hash::Hash + std::fmt::Debug, snapshot: &crate::model::Settings) {
-    let widget_id = c.ui.ctx().data(|data| data.get_temp::<egui::Id>(egui::Id::new(&field_id).with("widget-id")));
+    let widget_id = c.ui.ctx().data(|data| data.get_temp::<egui::Id>(egui::Id::unique(&field_id).with("widget-id")));
     if let Some(widget_id) = widget_id {
         c.ui.ctx().data_mut(|data| {
-            data.insert_temp(egui::Id::new("settings-edit-snapshot"), (widget_id, snapshot.clone()));
+            data.insert_temp(egui::Id::unique("settings-edit-snapshot"), (widget_id, snapshot.clone()));
         });
     }
 }
 /// 点击加减按钮后清掉 DragValue 缓存的编辑文本，避免下一帧又把旧输入写回、覆盖步进结果。
 fn clear_number_edit(c: &Card, id: impl std::hash::Hash + std::fmt::Debug) {
-    let widget_id = c.ui.ctx().data(|data| data.get_temp::<egui::Id>(egui::Id::new(&id).with("widget-id")));
+    let widget_id = c.ui.ctx().data(|data| data.get_temp::<egui::Id>(egui::Id::unique(&id).with("widget-id")));
     if let Some(widget_id) = widget_id {
         c.ui.ctx().data_mut(|data| { data.remove_temp::<String>(widget_id); });
     }
@@ -4786,7 +4786,7 @@ const TIME_RANGE_CLOCK_W: f32 = (26.0 + 6.0 + 56.0 + 6.0 + 26.0) * 2.0 + 8.0 + 1
 
 fn settings_advanced(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
     let ctx = &ui.ctx().clone();
-    let state = egui::Id::new(("settings-advanced", id));
+    let state = egui::Id::unique(("settings-advanced", id));
     let mut open = ctx.data(|d| d.get_temp::<bool>(state)).unwrap_or(false);
     ui.add_space(2.0);
     let (rect, response) =
@@ -5118,7 +5118,11 @@ impl App {
             egui_ctx.set_style_of(theme,style.clone());
             egui_ctx.set_theme(if dark{egui::ThemePreference::Dark}else{egui::ThemePreference::Light});
             ctx.set_style(style);
-            ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(if dark{egui::SystemTheme::Dark}else{egui::SystemTheme::Light}));
+            // 每帧重复 SetTheme 会让 DWM 重新应用窗口主题并重描阴影；只在真正变化时发送。
+            if self.settings_window_theme_sent!=Some(dark) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(if dark{egui::SystemTheme::Dark}else{egui::SystemTheme::Light}));
+                self.settings_window_theme_sent=Some(dark);
+            }
             if self.settings.settings_theme==crate::settings_theme::SettingsTheme::System {
                 ctx.request_repaint_after(std::time::Duration::from_secs(1));
             }
@@ -5593,7 +5597,7 @@ impl App {
                                 if before_apps!=self.notification_apps.items{self.notification_apps.save();}
                             });
                         });
-                        let connect_id=egui::Id::new("settings-notify-connect");
+                        let connect_id=egui::Id::unique("settings-notify-connect");
                         if open_connect {ui.ctx().data_mut(|d|d.insert_temp(connect_id,true));}
                         if ui.ctx().data(|d|d.get_temp::<bool>(connect_id)).unwrap_or(false) {
                             let mut close=false;
@@ -5688,7 +5692,7 @@ impl App {
                         });
                         });
                         // 添加邮箱：一次性的长表单放进弹窗，页面上只保留账号列表。
-                        let form_id=egui::Id::new("settings-mail-add");
+                        let form_id=egui::Id::unique("settings-mail-add");
                         if add_mail {self.mail.form.open=true;}
                         if self.mail.form.open {
                             let mut close=false;
@@ -5711,19 +5715,19 @@ impl App {
                             if self.mail.form.provider==crate::mail::Provider::Custom {
                                 settings_control_row(ui,"IMAP 主机",80.0,|ui|{ui.text_edit_singleline(&mut self.mail.form.custom.host)});
                                 settings_control_row(ui,"TLS 端口",80.0,|ui|{ui.add(egui::DragValue::new(&mut self.mail.form.custom.port).range(1..=65535))});
-                                settings_control_row(ui,"登录用户名",80.0,|ui|{ui.add(egui::TextEdit::singleline(&mut self.mail.form.custom.username).vertical_align(egui::Align::Center).hint_text("留空使用邮箱地址"))});
+                                settings_control_row(ui,"登录用户名",80.0,|ui|{ui.add(egui::TextEdit::singleline(&mut self.mail.form.custom.username).align(egui::Align2::LEFT_CENTER).hint_text("留空使用邮箱地址"))});
                             }
                             if !microsoft{
                             let input_width=(ui.available_width()-56.0-48.0-2.0*ui.spacing().item_spacing.x).max(100.0);
                             settings_control_row(ui,"邮箱",56.0,|ui|{
-                                ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.email).vertical_align(egui::Align::Center).hint_text("输入邮箱地址"))
+                                ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.email).align(egui::Align2::LEFT_CENTER).hint_text("输入邮箱地址"))
                             });
                             let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:self.mail.form.email.clone(),provider:self.mail.form.provider,enabled:true};
                             let unsupported=target.endpoint().err().as_deref()==Some(crate::mail::MICROSOFT_UNSUPPORTED);
                             if unsupported{ui.add(egui::Label::new(crate::mail::MICROSOFT_UNSUPPORTED).wrap());}
                             ui.add_enabled_ui(!unsupported,|ui|{
                             settings_control_row(ui,"授权码",56.0,|ui|{
-                                let field=ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.password).vertical_align(egui::Align::Center).password(!self.mail.form.show).hint_text("输入邮箱授权码"));
+                                let field=ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.password).align(egui::Align2::LEFT_CENTER).password(!self.mail.form.show).hint_text("输入邮箱授权码"));
                                 if ui.add_sized([48.0,30.0],egui::Button::new(if self.mail.form.show{"隐藏"}else{"显示"})).clicked(){self.mail.form.show=!self.mail.form.show;}
                                 field
                             });
@@ -5826,7 +5830,7 @@ impl App {
                         if import {self.pending.push(Cmd::CalendarImport);}
                         });
                         // 添加日历：选平台、填账号、获取方法、导入 .ics 都在弹窗里。
-                        let add_id=egui::Id::new("settings-calendar-add");
+                        let add_id=egui::Id::unique("settings-calendar-add");
                         if open_add {self.calendar.form.open=true;self.calendar.form.guide_open=true;}
                         if self.calendar.form.open {
                             let mut close=false;
@@ -5866,7 +5870,7 @@ impl App {
                             ui.horizontal_top(|ui|{
                                 ui.allocate_ui_with_layout(egui::vec2(50.0,18.0),egui::Layout::left_to_right(egui::Align::Center),|ui|{ui.set_min_size(egui::vec2(50.0,18.0));ui.label(egui::RichText::new("服务器").size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));});
                                 if self.calendar.form.provider.custom_server(){
-                                    ui.add_sized([ui.available_width(),22.0],egui::TextEdit::singleline(&mut self.calendar.form.server).vertical_align(egui::Align::Center)
+                                    ui.add_sized([ui.available_width(),22.0],egui::TextEdit::singleline(&mut self.calendar.form.server).align(egui::Align2::LEFT_CENTER)
                                         .hint_text(egui::RichText::new(self.calendar.form.provider.server_hint()).color(settings_color(ui.ctx(),Color32::from_gray(155),Color32::from_gray(100)))));
                                 }else{
                                     ui.add(egui::Label::new(egui::RichText::new(self.calendar.form.provider.server()).size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(205),Color32::from_gray(55)))).wrap());
@@ -5878,7 +5882,7 @@ impl App {
                             let input_width=(ui.available_width()-50.0-48.0-2.0*ui.spacing().item_spacing.x).max(80.0);
                                 ui.horizontal(|ui|{
                                     ui.allocate_ui_with_layout(egui::vec2(50.0,30.0),egui::Layout::left_to_right(egui::Align::Center),|ui|{ui.set_min_size(egui::vec2(50.0,30.0));ui.label(egui::RichText::new("用户名").size(13.0).color(settings_color(ui.ctx(),Color32::from_gray(210),Color32::from_gray(55))));});
-                                    let user=ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.calendar.form.username).vertical_align(egui::Align::Center)
+                                    let user=ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.calendar.form.username).align(egui::Align2::LEFT_CENTER)
                                         .hint_text(egui::RichText::new("输入用户名或粘贴账号信息").color(settings_color(ui.ctx(),Color32::from_gray(155),Color32::from_gray(100)))));
                                     if user.changed(){
                                         let pasted=self.calendar.form.username.clone();
@@ -5893,7 +5897,7 @@ impl App {
                                 ui.add_space(5.0);
                                 ui.horizontal(|ui|{
                                     ui.allocate_ui_with_layout(egui::vec2(50.0,30.0),egui::Layout::left_to_right(egui::Align::Center),|ui|{ui.set_min_size(egui::vec2(50.0,30.0));ui.label(egui::RichText::new("密码").size(13.0).color(settings_color(ui.ctx(),Color32::from_gray(210),Color32::from_gray(55))));});
-                                    ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.calendar.form.password).vertical_align(egui::Align::Center)
+                                    ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.calendar.form.password).align(egui::Align2::LEFT_CENTER)
                                         .password(!self.calendar.form.show).hint_text(egui::RichText::new("输入平台生成的密码").color(settings_color(ui.ctx(),Color32::from_gray(155),Color32::from_gray(100)))));
                                     if ui.add_sized([48.0,30.0],egui::Button::new(if self.calendar.form.show{"隐藏"}else{"显示"})).clicked(){self.calendar.form.show=!self.calendar.form.show;}
                                 });
@@ -6129,7 +6133,7 @@ impl App {
                                     ui.horizontal(|ui|{
                                         let field=(ui.available_width()-70.0).max(90.0);
                                         ui.add_sized([field,24.0],egui::TextEdit::singleline(&mut self.maa_prefs.exe_path)
-                                            .vertical_align(egui::Align::Center).hint_text("留空自动识别（MAA.exe）"));
+                                            .align(egui::Align2::LEFT_CENTER).hint_text("留空自动识别（MAA.exe）"));
                                         if ui.button("选择…").clicked(){self.pending.push(Cmd::PickMaaExe);}
                                     }).response
                                 });
@@ -6139,7 +6143,7 @@ impl App {
                                     ui.horizontal(|ui|{
                                         let field=(ui.available_width()-70.0).max(90.0);
                                         ui.add_sized([field,24.0],egui::TextEdit::singleline(&mut self.maa_prefs.log_dir)
-                                            .vertical_align(egui::Align::Center).hint_text("留空自动识别（<MAA目录>\\debug）"));
+                                            .align(egui::Align2::LEFT_CENTER).hint_text("留空自动识别（<MAA目录>\\debug）"));
                                         if ui.button("选择…").clicked(){self.pending.push(Cmd::PickMaaLogDir);}
                                     }).response
                                 });

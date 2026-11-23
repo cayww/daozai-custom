@@ -252,7 +252,7 @@ pub fn keep_glass_chrome(c: Color32, p: &Palette) -> Color32 {
 #[derive(Clone, Default)]
 struct Toned { pass: u64, spans: Vec<(egui::LayerId, usize, usize, Tone)> }
 
-fn toned_id() -> egui::Id { egui::Id::new("skin-paint-toned") }
+fn toned_id() -> egui::Id { egui::Id::unique("skin-paint-toned") }
 
 /// 把 `from` 起到当前为止画在 `layer` 上的图形登记为自带配色：换肤时改用 `tone`，
 /// 不走通用的「彩色逐步加深」。用于天气图标这类本身就有浅色版配色的插画式图形。

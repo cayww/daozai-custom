@@ -722,13 +722,13 @@ impl App {
 
     pub(crate) fn weather_city_picker(&mut self, ui: &mut egui::Ui) -> bool {
         use crate::extras::{settings_control_row,settings_hint};
-        let popup=egui::Id::new("weather-city-options");
+        let popup=egui::Id::unique("weather-city-options");
         let mut enter=false;
         let mut open_cmd:Option<egui::SetOpenCommand>=None;
         let response=settings_control_row(ui,"城市名称",80.0,|ui|{
             ui.horizontal(|ui|{
                 let input=ui.add_sized([ui.available_width()-38.0,32.0],egui::TextEdit::singleline(&mut self.weather.city_input)
-                    .id_salt("weather-city-input").vertical_align(egui::Align::Center).margin(egui::vec2(10.0,7.0)).hint_text("输入城市名称搜索"));
+                    .id_salt("weather-city-input").align(egui::Align2::LEFT_CENTER).margin(egui::vec2(10.0,7.0)).hint_text("输入城市名称搜索"));
                 let arrow=ui.add_sized([30.0,32.0],egui::Button::new("").corner_radius(7.0)).on_hover_text("选择具体地区");
                 let center=arrow.rect.center();ui.painter().add(egui::Shape::line(vec![center+egui::vec2(-4.0,-2.0),center+egui::vec2(0.0,2.0),center+egui::vec2(4.0,-2.0)],egui::Stroke::new(1.5_f32,ui.visuals().text_color())));
                 if input.changed() || input.clicked() {open_cmd=Some(egui::SetOpenCommand::Bool(true));};
@@ -773,7 +773,7 @@ impl App {
     /// 城市切换入口：「📍 地名 ▾」。有天气时就是实况区的地点行，没有数据时画在页面中下方。
     /// 返回入口的命中区域（局部坐标 x, y, w, h）。
     fn weather_place_trigger(&self, c: &Card, snapshot: Option<&weather::Snapshot>) -> (f32, f32, f32, f32) {
-        let open=c.ui.ctx().animate_bool_with_time(egui::Id::new(("weather-picker",c.live)),self.weather.picker_open,0.16);
+        let open=c.ui.ctx().animate_bool_with_time(egui::Id::unique(("weather-picker",c.live)),self.weather.picker_open,0.16);
         match snapshot {
             // 地点文字由 paint_forecast 绘制，这里只补 ▾ 并给出命中区域。
             Some(snapshot)=>{
@@ -934,7 +934,7 @@ impl App {
         if hover>0.0 {c.fill(x,y,w,h,h/2.0,Color32::from_white_alpha((hover*14.0) as u8));}
         if place.clicked() {self.weather.picker_open=!self.weather.picker_open;}
         let ctx=c.ui.ctx().clone();
-        let open=ctx.animate_bool_with_time(egui::Id::new(("weather-picker",c.live)),self.weather.picker_open,0.16);
+        let open=ctx.animate_bool_with_time(egui::Id::unique(("weather-picker",c.live)),self.weather.picker_open,0.16);
         if open>0.0 {self.paint_weather_picker(c,open);}
         if c.live && open>0.0 && open<1.0 {ctx.request_repaint();}
     }
@@ -1000,17 +1000,17 @@ impl App {
         }
         let ctx=c.ui.ctx().clone();
         // 进页面后先动几秒再静止；指针停在页面上时继续动。离开再回来重新计时。
-        let seen_id=egui::Id::new(("weather-page-seen",c.live));
+        let seen_id=egui::Id::unique(("weather-page-seen",c.live));
         let (mut seen,last)=ctx.data(|d|d.get_temp::<(f64,f64)>(seen_id)).unwrap_or((env.t,env.t));
         if env.t-last>0.5 {seen=env.t;}
         ctx.data_mut(|d|d.insert_temp(seen_id,(seen,env.t)));
         let ambient=c.live && (response.hovered() || env.t-seen<AMBIENT_SECS);
-        let t=ambient_clock(&ctx,egui::Id::new(("weather-ambient",c.live)),ambient,env.t);
+        let t=ambient_clock(&ctx,egui::Id::unique(("weather-ambient",c.live)),ambient,env.t);
         // 日照入口卡的悬停与按下：只在指针落在卡片范围内时生效。
         let on_entry=response.hover_pos().map(|p|c.to_local(p)).is_some_and(|p|(300.0..384.0).contains(&p.x)&&(77.0..111.0).contains(&p.y)) && !self.weather.solar_open;
-        let lift=ctx.animate_bool_with_time(egui::Id::new(("weather-entry-lift",c.live)),on_entry,0.25);
-        let press=ctx.animate_bool_with_time(egui::Id::new(("weather-entry-press",c.live)),on_entry&&response.is_pointer_button_down_on(),0.08);
-        let mix=ctx.animate_bool_with_time(egui::Id::new(("weather-view-blend",c.live)),self.weather.solar_open,0.24);
+        let lift=ctx.animate_bool_with_time(egui::Id::unique(("weather-entry-lift",c.live)),on_entry,0.25);
+        let press=ctx.animate_bool_with_time(egui::Id::unique(("weather-entry-press",c.live)),on_entry&&response.is_pointer_button_down_on(),0.08);
+        let mix=ctx.animate_bool_with_time(egui::Id::unique(("weather-view-blend",c.live)),self.weather.solar_open,0.24);
         let slide=((env.t-self.weather.solar_at) as f32/SUN_SLIDE).clamp(0.0,1.0);
         // 两个视图交叉淡入，同时轻微缩放，切换有景深感。
         if mix<1.0 {
@@ -1091,7 +1091,7 @@ impl App {
         // 右下：更新时间 + 圆形刷新按钮（加载中转圈）。
         let ready = self.weather_can_refresh();
         let (bx, by) = (width - 32.0, 124.0);
-        let button = ui.interact(c.rect(bx - 13.0, by - 13.0, 26.0, 26.0), ui.id().with("weather-hero-refresh"), if ready { egui::Sense::click() } else { egui::Sense::hover() })
+        let button = ui.interact(c.rect(bx - 13.0, by - 13.0, 26.0, 26.0), ui.scope_id().with("weather-hero-refresh"), if ready { egui::Sense::click() } else { egui::Sense::hover() })
             .on_hover_text(if ready { "刷新天气；自动模式会重新定位" } else { "刚刚刷新过，请稍后再试" });
         let hover = ctx.animate_bool_with_time(button.id, ready && button.hovered(), 0.12);
         c.circle(bx, by, 13.0, Color32::from_white_alpha((34.0 + 40.0 * hover) as u8));

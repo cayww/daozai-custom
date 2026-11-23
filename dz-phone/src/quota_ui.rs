@@ -139,7 +139,7 @@ pub(crate) fn bar_tooltip(response:egui::Response,text:String)->egui::Response{
 /// 这些厂商的图标自带品牌配色（官方方形标），直接使用原图；其余统一压成白色标识。
 fn keeps_brand_color(provider:Provider)->bool{matches!(provider,Provider::WorkBuddy|Provider::ZCode|Provider::MiniMax|Provider::Kiro|Provider::Doubao)}
 fn logo_texture(ctx:&egui::Context,provider:Provider,pixels:u32)->Option<egui::TextureHandle>{
-    let key=egui::Id::new(("quota-logo",provider.name(),pixels));
+    let key=egui::Id::unique(("quota-logo",provider.name(),pixels));
     if let Some(texture)=ctx.data_mut(|data|data.get_temp::<egui::TextureHandle>(key)){return Some(texture);}
     // WorkBuddy 图标来自官方 WorkBuddyAI 客户端的 workbuddy-app-icon SVG，保留原始配色。
     let mut image=if provider==Provider::Doubao{
@@ -170,7 +170,7 @@ fn deepseek_badge_svg(skin:crate::model::Skin)->String{
 }
 fn deepseek_badge(c:&Card,skin:crate::model::Skin,x:f32,y:f32,size:f32){
     let ctx=c.ui.ctx();let ppp=ctx.pixels_per_point();let pixels=(size*c.s*ppp).round().max(1.0) as u32;
-    let key=egui::Id::new(("deepseek-badge",skin.key(),pixels));
+    let key=egui::Id::unique(("deepseek-badge",skin.key(),pixels));
     let texture=ctx.data_mut(|data|data.get_temp::<egui::TextureHandle>(key)).or_else(||{
         let image=egui_extras::image::load_svg_bytes_with_size(deepseek_badge_svg(skin).as_bytes(),egui::load::SizeHint::Size { width: pixels, height: pixels, maintain_aspect_ratio: true }, &Default::default()).ok()?;
         let texture=ctx.load_texture(format!("deepseek-badge-{}-{pixels}",skin.key()),image,egui::TextureOptions::LINEAR);
@@ -680,7 +680,7 @@ impl App {
     }
     fn quota_connect_window(&mut self,ctx:&egui::Context){
         if !self.quota.connect_open{return;}let mut open=true;
-        egui::Window::new(egui::RichText::new(if self.quota.connect_target.is_some(){"重新连接账号"}else{"添加账号"}).size(16.0).color(crate::settings_theme::color(ctx,Color32::from_gray(235),Color32::from_gray(35)))).id(egui::Id::new("quota-connect-window")).open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER,egui::Vec2::ZERO).default_width(410.0).show(ctx,|ui|{
+        egui::Window::new(egui::RichText::new(if self.quota.connect_target.is_some(){"重新连接账号"}else{"添加账号"}).size(16.0).color(crate::settings_theme::color(ctx,Color32::from_gray(235),Color32::from_gray(35)))).id(egui::Id::unique("quota-connect-window")).open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER,egui::Vec2::ZERO).default_width(410.0).show(ctx,|ui|{
             ui.set_max_width(410.0);ui.style_mut().wrap_mode=Some(egui::TextWrapMode::Wrap);ui.spacing_mut().item_spacing.y=9.0;ui.visuals_mut().override_text_color=Some(crate::settings_theme::color(ctx,Color32::from_gray(225),Color32::from_gray(35)));
             if self.quota.provider==Provider::RelayCustom{ui.set_min_height((ctx.content_rect().height()-160.0).clamp(260.0,560.0));}
             egui::ScrollArea::vertical().max_height(if self.quota.provider==Provider::RelayCustom{(ctx.content_rect().height()-140.0).clamp(260.0,640.0)}else{460.0}).show(ui,|ui|{
@@ -720,7 +720,7 @@ impl App {
                     if previous!=self.quota.relay_user_token{self.quota.api_key.clear();self.quota.relay_user_id.clear();self.quota.note.clear();}
                 });
             }
-            settings_control_row(ui,"备注",56.0,|ui|{ui.add_sized([ui.available_width(),27.0],egui::TextEdit::singleline(&mut self.quota.alias).vertical_align(egui::Align::Center).hint_text("例如：个人、工作、备用"))});
+            settings_control_row(ui,"备注",56.0,|ui|{ui.add_sized([ui.available_width(),27.0],egui::TextEdit::singleline(&mut self.quota.alias).align(egui::Align2::LEFT_CENTER).hint_text("例如：个人、工作、备用"))});
             if self.quota.provider.api_key(){
                 let provider=self.quota.provider;
                 let user_token=provider==Provider::NewApi&&self.quota.relay_user_token;
@@ -783,10 +783,10 @@ impl App {
                 ui.label(egui::RichText::new("使用已登录的 Chrome 144+，允许连接后验证额度，无需扩展。").size(12.0).color(ui.visuals().weak_text_color()));
                 ui.horizontal_wrapped(|ui|{ui.label("首次在 Chrome 开启原生连接：");ui.code("chrome://inspect/#remote-debugging");if ui.small_button("复制地址").clicked(){ui.ctx().copy_text("chrome://inspect/#remote-debugging".into());}});
                 ui.add(egui::Label::new(egui::RichText::new("Chrome 会请求浏览器会话访问权限。岛仔仅在连接时读取 Gemini 登录，完成后断开，后续使用本机加密会话刷新。").size(11.0).color(ui.visuals().weak_text_color())).wrap());
-                settings_control_row(ui,"Google 邮箱",80.0,|ui|{ui.add_sized([ui.available_width(),27.0],egui::TextEdit::singleline(&mut self.quota.gemini_email).vertical_align(egui::Align::Center).hint_text("可选：指定要连接的 Google 邮箱"))});
+                settings_control_row(ui,"Google 邮箱",80.0,|ui|{ui.add_sized([ui.available_width(),27.0],egui::TextEdit::singleline(&mut self.quota.gemini_email).align(egui::Align2::LEFT_CENTER).hint_text("可选：指定要连接的 Google 邮箱"))});
                 ui.collapsing("高级：手动 Cookie 连接",|ui|{
                     ui.label("在 Gemini 用量页按 F12，打开网络，刷新后找到 executeQuery 请求，复制 Cookie 请求头。");
-                    ui.add_sized([ui.available_width(),27.0],egui::TextEdit::singleline(&mut self.quota.gemini_cookie).vertical_align(egui::Align::Center).password(true).hint_text("粘贴 Cookie 请求头"));
+                    ui.add_sized([ui.available_width(),27.0],egui::TextEdit::singleline(&mut self.quota.gemini_cookie).align(egui::Align2::LEFT_CENTER).password(true).hint_text("粘贴 Cookie 请求头"));
                     if ui.add_enabled(self.quota.gemini_connecting.is_none() && !self.quota.gemini_cookie.trim().is_empty()&&!self.quota.gemini_email.trim().is_empty(),egui::Button::new("验证并连接")).clicked(){self.quota.note.clear();self.quota.gemini_connecting=Some(quota::gemini::Connect::start(self.quota.alias.clone(),self.quota.gemini_email.clone(),Some(std::mem::take(&mut self.quota.gemini_cookie)),self.quota.connect_target.as_ref().and_then(|id|self.quota.config.accounts.iter().find(|a|&a.id==id)).and_then(|a|a.slot.clone())));}
                 });
                 if self.quota.gemini_connecting.is_some(){ui.horizontal(|ui|{ui.spinner();ui.label("正在连接并验证 Gemini 额度…");if ui.button("取消").clicked(){self.quota.gemini_connecting=None;self.quota.note="已取消 Gemini 连接".into();}});ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));}
@@ -858,7 +858,7 @@ impl App {
     }
     fn quota_file_form(&mut self,ui:&mut egui::Ui){
         let local=self.quota.provider==Provider::Claude;
-        ui.label(if local{"本地用量 JSON 文件"}else{"登录 JSON 文件"});ui.horizontal(|ui|{ui.add_sized([(ui.available_width()-65.0).max(100.0),27.0],egui::TextEdit::singleline(&mut self.quota.source).vertical_align(egui::Align::Center).hint_text(if local{"选择 Claude 本地用量记录"}else{"选择该账号的登录文件"}));if ui.button("选择…").clicked(){self.pending.push(Cmd::QuotaChooseFile);}});
+        ui.label(if local{"本地用量 JSON 文件"}else{"登录 JSON 文件"});ui.horizontal(|ui|{ui.add_sized([(ui.available_width()-65.0).max(100.0),27.0],egui::TextEdit::singleline(&mut self.quota.source).align(egui::Align2::LEFT_CENTER).hint_text(if local{"选择 Claude 本地用量记录"}else{"选择该账号的登录文件"}));if ui.button("选择…").clicked(){self.pending.push(Cmd::QuotaChooseFile);}});
         if self.quota.provider==Provider::Kiro{
             if ui.add_enabled(self.quota.kiro_connecting.is_none()&&!self.quota.source.trim().is_empty(),egui::Button::new("验证并连接")).clicked(){self.quota_start_kiro(self.quota.source.trim().into());}
         }else if ui.button("添加账号").clicked(){match self.quota.config.add(self.quota.provider,self.quota.alias.clone(),self.quota.source.trim().into()){Ok(())=>{self.quota.alias.clear();self.quota.source.clear();self.quota.note="账号已添加".into();},Err(e)=>self.quota.note=e}}
@@ -1013,7 +1013,7 @@ mod tests {
                 let mesh=output.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Mesh(mesh)=>Some(mesh),_=>None}).expect("应绘制厂商图标");
                 let image=&output.textures_delta.set.iter().find(|(id,_)|**id==mesh.texture_id).expect("不同尺寸应各自生成纹理").1[0].image;
                 let pixels=(size*scale).round() as usize;
-                assert_eq!(image.size(),[pixels,pixels],"图标应按屏幕像素生成，厂商={}，缩放={scale}",provider.name());
+                assert_eq!(image.resolution(),[pixels,pixels],"图标应按屏幕像素生成，厂商={}，缩放={scale}",provider.name());
                 for v in &mesh.vertices {
                     assert!((v.pos.x*scale-(v.pos.x*scale).round()).abs()<0.001 && (v.pos.y*scale-(v.pos.y*scale).round()).abs()<0.001,"图标边界应对齐物理像素");
                 }

@@ -65,7 +65,7 @@ impl Picker {
                         self.icon(ui,Rect::from_center_size(rect.center(),Vec2::splat(32.0)),path,name);
                         response.on_hover_text(format!("{name}\n所有窗口\n{path}"));
                         let center=rect.right_top()+egui::vec2(-8.0,8.0);
-                        let remove_button=ui.interact(Rect::from_center_size(center,Vec2::splat(20.0)),ui.id().with(("avoidance-remove",index)),egui::Sense::click());
+                        let remove_button=ui.interact(Rect::from_center_size(center,Vec2::splat(20.0)),ui.scope_id().with(("avoidance-remove",index)),egui::Sense::click());
                         let fill=if remove_button.hovered(){ui.visuals().widgets.hovered.bg_fill}else{ui.visuals().widgets.inactive.bg_fill};
                         ui.painter().circle_filled(center,7.0,fill);
                         ui.painter().text(center,egui::Align2::CENTER_CENTER,"×",crate::theme::font(9.0,crate::theme::W::Regular),ui.visuals().text_color());
@@ -95,7 +95,7 @@ impl Picker {
             }
         }
         let mut close=false;
-        let response=egui::Modal::new(egui::Id::new("avoidance-picker"))
+        let response=egui::Modal::new(egui::Id::unique("avoidance-picker"))
             .frame(egui::Frame::popup(&ctx.style_of(egui::Theme::Dark)).inner_margin(20).corner_radius(12.0)).show(ctx,|ui|{
             ui.visuals_mut().override_text_color=Some(crate::settings_theme::color(ctx,Color32::from_gray(235),Color32::from_gray(30)));
             ui.set_width(410.0);

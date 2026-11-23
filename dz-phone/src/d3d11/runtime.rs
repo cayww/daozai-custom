@@ -175,7 +175,7 @@ fn drain_actions(
     device: &ID3D11Device,
     ctx: &ID3D11DeviceContext,
     rt: Option<&ID3D11RenderTargetView>,
-    viewport_id: egui::ViewportId,
+    _viewport_id: egui::ViewportId,
 ) {
     if actions.is_empty() { return; }
     for action in actions.drain(..) {

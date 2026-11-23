@@ -1169,6 +1169,8 @@ pub struct App {
     /// 指针绝大多数时间在外面 —— 那样液态玻璃的镜面高光就永远是死的。
     cursor_win:Option<egui::Pos2>,
     pub(crate) settings_focus_requested:bool,
+    /// 上次发给设置窗口的系统主题；重复 SetTheme 会让 DWM 重描窗口阴影，聚焦时表现为闪动。
+    pub(crate) settings_window_theme_sent:Option<bool>,
     pub(crate) settings_tab:usize,
     pub(crate) settings_category:usize,
     pub messenger_statuses:std::collections::HashMap<Messenger,String>,
@@ -1478,6 +1480,7 @@ impl App {
             fluid_title:String::new(),
             screen:None,
             settings_focus_requested:false,
+            settings_window_theme_sent:None,
             settings_tab:0,
             settings_category:0,
             messenger_statuses:Default::default(),
@@ -2191,6 +2194,7 @@ impl App {
         self.adding || self.editing.is_some() || self.todo_choosing || self.task_dialog.is_some() || self.calendar.draft.is_some() || self.clip_search_open || self.settings_editing
     }
 
+    #[allow(deprecated)]
     pub fn filter_todo_input(&mut self,input:&mut egui::RawInput) {
         self.todo_ime_frame=false;
         if !self.adding && self.editing.is_none(){self.todo_ime_active=false;return;}
@@ -2712,7 +2716,7 @@ impl App {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && self.is_editing() {
             // egui 0.35 的 DragValue 会把键入值立即写回；这里用聚焦时快照恢复旧语义。
             if self.settings_editing {
-                let snapshot_id = egui::Id::new("settings-edit-snapshot");
+                let snapshot_id = egui::Id::unique("settings-edit-snapshot");
                 if let Some((field_id, before)) = ctx.data(|data| {
                     data.get_temp::<(egui::Id, crate::model::Settings)>(snapshot_id)
                 }) {
@@ -2782,7 +2786,7 @@ impl App {
                 }
             }
         } else {self.wheel_delta=0.0;}
-        let volume_dragging=self.music_volume_open && ctx.is_being_dragged(egui::Id::new(("card-drag",true,"m-volume-track")));
+        let volume_dragging=self.music_volume_open && ctx.is_being_dragged(egui::Id::unique(("card-drag",true,"m-volume-track")));
         let want = (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (self.is_editing() && self.open);
         self.morph(want, inside, env.t, dt);
         // 收起判定靠「离开延迟到了」/「强制停留到点了」，两者都发生在未来某一帧；
@@ -4420,7 +4424,7 @@ impl App {
                 paint::note(&c,art_left+10.0,center_y,13.0,theme::WHITE);
             }
             let index=lyric.unwrap_or(0);
-            let id=egui::Id::new("island-lyric-line");
+            let id=egui::Id::unique("island-lyric-line");
             if !self.ly.island_animation_started {
                 c.ui.ctx().animate_value_with_time(id,index as f32,0.0);
                 self.ly.island_animation_started=true;
@@ -5232,7 +5236,7 @@ impl App {
         let rect = Rect::from_min_size(origin + Vec2::new(222.0, 37.0), Vec2::new(142.0, 18.0));
         let mut buf = std::mem::take(&mut self.buf);
         let te = egui::TextEdit::singleline(&mut buf)
-            .id(egui::Id::new("todo-input"))
+            .id(egui::Id::unique("todo-input"))
             .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .text_color(theme::WHITE)

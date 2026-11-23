@@ -212,7 +212,7 @@ fn qweather_data_credit_opens_the_provider_site_in_forecast_and_solar_views(){
         assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()=="QWeather")));
         assert!(h.app.weather.snapshot.as_ref().is_some_and(|s|s.days.len()==7),"检查署名时必须实际显示和风数据");
         assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().starts_with("预报 "))),"预报需标明自己的更新时间");
-        let point=h.ctx.read_response(egui::Id::new(("card",true,"weather-source"))).unwrap().rect.center();
+        let point=h.ctx.read_response(egui::Id::unique(("card",true,"weather-source"))).unwrap().rect.center();
         h.click(point);assert!(h.cmds.contains(&crate::app::Cmd::OpenUrl("https://www.qweather.com/".into())));assert_eq!(h.app.page(),8);
     }
 }
@@ -259,7 +259,7 @@ fn qweather_frontend_gallery(){
         }
         if name.contains("city-picker"){
             h.app.weather_source.province="浙江".into();h.app.weather_source.query="杭".into();h.app.weather_source.mock_search_results(vec![district("杭州",0),district("余杭",1),district("临平",2)]);
-            egui::Popup::open_id(&h.ctx, egui::Id::new("qweather-city-options"));
+            egui::Popup::open_id(&h.ctx, egui::Id::unique("qweather-city-options"));
         }
         if name=="qweather-five-cities" {
             qweather_data_fixture(&mut h);h.app.weather_source.key.clear();h.app.weather_source.config_open=false;

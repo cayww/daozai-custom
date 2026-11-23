@@ -87,12 +87,12 @@ fn five_client_icons_fit_collapsed_and_expand_to_their_own_click_targets(){
     }
     h.app.alerts.clear();h.app.notice=None;h.app.notification_bell_until=0.0;
     for _ in 0..90{h.frame(vec![]);}
-    let compact=h.ctx.read_response(egui::Id::new(("card",true,"messenger-stack"))).unwrap();
+    let compact=h.ctx.read_response(egui::Id::unique(("card",true,"messenger-stack"))).unwrap();
     assert!(compact.rect.width()>90.0,"五个来源不能仍只给两个图标留宽度");
     h.app.reveal_unread();for _ in 0..90{h.frame(vec![]);}
-    let first=h.ctx.read_response(egui::Id::new(("card",true,"微信".to_string()))).unwrap();
+    let first=h.ctx.read_response(egui::Id::unique(("card",true,"微信".to_string()))).unwrap();
     h.hover(first.rect.center(),0.1);for _ in 0..20{h.wheel(-50.0);}h.frame(vec![]);
-    let target=h.ctx.read_response(egui::Id::new(("card",true,"钉钉".to_string()))).unwrap();
+    let target=h.ctx.read_response(egui::Id::unique(("card",true,"钉钉".to_string()))).unwrap();
     h.click(target.rect.center());
     assert!(h.cmds.iter().any(|cmd|matches!(cmd,Cmd::ViewMessenger(unread) if unread.source==Messenger::DingTalk)));
 }

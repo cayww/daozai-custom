@@ -68,7 +68,7 @@ pub fn chase(c: &Card, x0: f32, head: f32, y: f32, thick: f32, tint: Color32, ho
         origin: c.origin,
         ppp: c.ui.ctx().pixels_per_point(),
     };
-    let cache_id = egui::Id::new(("paint::chase", c.ui.id()));
+    let cache_id = egui::Id::unique(("paint::chase", c.ui.scope_id()));
     let cached = c.ui.ctx().data_mut(|d| {
         d.get_temp::<ChaseCache>(cache_id)
             .and_then(|c| if c.key == key { Some(c.mesh) } else { None })

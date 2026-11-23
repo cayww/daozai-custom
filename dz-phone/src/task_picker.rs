@@ -77,7 +77,7 @@ impl ReminderPicker {
             }
             if response.clicked(){if let Some(pos)=response.interact_pointer_pos(){let y=c.to_local(pos).y;if y<68.0{self.adjust(column,-1);}else if y>88.0{self.adjust(column,1);}}}
             response.on_hover_text(format!("{} · 滚轮、上下拖动或点选调整",["日期","小时","分钟"][column]));
-            let position=ctx.animate_value_with_time(egui::Id::new(("reminder-wheel-position",column)),self.positions[column] as f32,if self.focus{0.0}else{0.13});
+            let position=ctx.animate_value_with_time(egui::Id::unique(("reminder-wheel-position",column)),self.positions[column] as f32,if self.focus{0.0}else{0.13});
             let clipped=c.clipped(x,51.0,width,52.0);
             for value in position.floor() as i64-1..=position.floor() as i64+2 {
                 let distance=value as f32-position;

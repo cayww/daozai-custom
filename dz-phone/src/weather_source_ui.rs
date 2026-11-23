@@ -300,8 +300,8 @@ impl App {
     }
 
     fn qweather_city_picker(&mut self,ui:&mut egui::Ui){
-        let popup=egui::Id::new("qweather-city-options");
-        let input_id=egui::Id::new("qweather-city-input");
+        let popup=egui::Id::unique("qweather-city-options");
+        let input_id=egui::Id::unique("qweather-city-input");
     let keys=if ui.is_enabled()&&(ui.memory(|m|m.has_focus(input_id))||egui::Popup::is_id_open(ui.ctx(),popup)){
             ui.input_mut(|i|(i.consume_key(egui::Modifiers::NONE,egui::Key::ArrowDown),i.consume_key(egui::Modifiers::NONE,egui::Key::ArrowUp),i.consume_key(egui::Modifiers::NONE,egui::Key::Enter)))
         }else{(false,false,false)};
@@ -472,8 +472,8 @@ impl App {
                             ui.label("当前生效变为「和风天气」后，切换完成。配置可收起；城市选择与应用按钮保持可用。");
                             ui.add_space(10.0);
                         }
-                        let height=width*texture.size()[1]as f32/texture.size()[0]as f32;
-                        ui.add(egui::Image::new((texture.id(),texture.size_vec2())).fit_to_exact_size(egui::vec2(width,height)));
+                        let height=width*texture.resolution()[1]as f32/texture.resolution()[0]as f32;
+                        ui.add(egui::Image::new((texture.id(),texture.resolution_vec2())).fit_to_exact_size(egui::vec2(width,height)));
                     }
                 });
             });

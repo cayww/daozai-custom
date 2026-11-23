@@ -12,7 +12,7 @@ fn due() -> H {
 }
 
 fn badge(h:&H,kind:&str)->Rect {
-    h.ctx.read_response(egui::Id::new(("card",true,format!("health-{kind}"))))
+    h.ctx.read_response(egui::Id::unique(("card",true,format!("health-{kind}"))))
         .unwrap_or_else(||panic!("缺少 {kind} 常驻入口")).rect
 }
 

@@ -254,7 +254,7 @@ fn weather_side_bar_shows_a_clickable_temperature_on_both_edges(){
         let mut h=H::new();h.app.settings.dock=dock;
         h.app.weather.snapshot=Some(crate::weather::Snapshot{place:"杭州".into(),temp:-12.0,code:0,day:true,..Default::default()});
         for _ in 0..60{side_frame(&mut h,Some(Pos2::new(250.0,580.0)));}
-        let response=h.ctx.read_response(egui::Id::new(("card",true,"weather-side"))).expect("两侧都应提供常驻天气入口");
+        let response=h.ctx.read_response(egui::Id::unique(("card",true,"weather-side"))).expect("两侧都应提供常驻天气入口");
         let temp=h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()=="12°"=>Some((s.clip_rect,t.visual_bounding_rect())),_=>None}).expect("负温度应完整显示");
         assert!(temp.0.contains_rect(temp.1),"{dock:?} 负温度不应裁切");
         let click=response.rect.center();
@@ -523,7 +523,7 @@ fn weather_city_dropdown_selects_the_region_without_applying_the_draft(){
         h.shapes=h.ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.weather_city_picker(ui);});}).shapes;
     }
     for _ in 0..3 {draw(&mut h,vec![]);}
-    egui::Popup::open_id(&h.ctx, egui::Id::new("weather-city-options"));
+    egui::Popup::open_id(&h.ctx, egui::Id::unique("weather-city-options"));
     for _ in 0..3 {draw(&mut h,vec![]);}
     let point=h.shapes.iter().find_map(|s|match &s.shape {egui::Shape::Text(text) if text.galley.text()=="佛山市"=>Some(text.visual_bounding_rect().center()),_=>None}).expect("下拉框必须显示完整城市名");
     assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()=="广东 · 中国")),"下拉框必须显示省份");
@@ -531,7 +531,7 @@ fn weather_city_dropdown_selects_the_region_without_applying_the_draft(){
     draw(&mut h,vec![egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
     assert_eq!(h.app.weather.selected_city.as_ref(),Some(&correct));assert_eq!(h.app.weather.draft_city(),Some("佛山市"));
     assert_eq!(h.app.settings.weather_city,"杭州","选择候选后仍需应用确认");assert!(!h.app.weather.loading);
-    assert!(!egui::Popup::is_id_open(&h.ctx, egui::Id::new("weather-city-options")));
+    assert!(!egui::Popup::is_id_open(&h.ctx, egui::Id::unique("weather-city-options")));
     h.app.settings.weather_city="佛山市".into();h.app.settings.weather_position=Some(correct.clone());h.app.settings.save();
     let saved=crate::model::Settings::load();assert_eq!(saved.weather_position,Some(correct));
     h.app.weather.city_input="伦敦".into();assert_eq!(h.app.weather.draft_city(),None,"改写输入后必须重新选择地区");
@@ -551,7 +551,7 @@ fn weather_refresh_keeps_music_and_settings_shortcuts_separate(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.media=crate::smtc::NowPlaying{source:"cloudmusic.exe".into(),title:"歌曲".into(),artist:"歌手".into(),playing:true,..Default::default()};
     h.app.show_page(8);h.hover(H::local(300.0,60.0),1.0);
-    let rect=|name|h.ctx.read_response(egui::Id::new(("card",true,name))).unwrap().rect;
+    let rect=|name|h.ctx.read_response(egui::Id::unique(("card",true,name))).unwrap().rect;
     let refresh=rect("weather-refresh");
     assert!(!refresh.intersects(rect("header-music")));
     assert!(!refresh.intersects(rect("page-settings")));
@@ -914,7 +914,7 @@ fn meeting_notice_can_close_without_deleting_event_or_other_reminders(){
     h.app.meeting_alert(crate::mail::Meeting{all_day:false,title:"下一场会议".into(),start:chrono::Local::now().timestamp()+1200,end:None,at:String::new(),uid:"dismiss-next".into()},"钉钉".into(),7);
     for _ in 0..45{h.frame(vec![]);}
     let page=h.app.page;
-    let button=h.ctx.read_response(egui::Id::new(("card",true,"meeting-dismiss"))).expect("会议提醒必须有关闭按钮").rect;
+    let button=h.ctx.read_response(egui::Id::unique(("card",true,"meeting-dismiss"))).expect("会议提醒必须有关闭按钮").rect;
     h.click(button.center());
     assert!(h.app.notice.is_none());assert_eq!(h.app.page,page);
     assert_eq!(h.app.calendar.events.len(),1,"关闭提醒不能删除日程");
@@ -1732,7 +1732,6 @@ fn settings_opening_restores_focus_once_without_becoming_topmost() {
         raw.viewports.insert(id,egui::ViewportInfo{focused:Some(focused),..Default::default()});
         let mut output=h.ctx.run_ui(raw, |ui| h.app.settings_ui(ui.ctx(),false));
         let viewport=output.viewport_output.remove(&id).unwrap();
-        assert!(viewport.commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark))),"浅色系统下窗口标题栏和边框也应使用深色");
         (viewport.builder,viewport.commands)
     };
     h.app.open_mail_settings();
@@ -1743,12 +1742,14 @@ fn settings_opening_restores_focus_once_without_becoming_topmost() {
     let focus=commands.iter().position(|cmd|matches!(cmd,egui::ViewportCommand::Focus)).unwrap();
     let theme=commands.iter().position(|cmd|matches!(cmd,egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark))).unwrap();
     assert!(theme<show,"显示窗口前应设置深色边框，避免白边闪现");
+    // 阴影闪动根因：每帧重复 SetTheme 会让 DWM 重新应用窗口主题并重描阴影。
     assert!(show<focus,"应先显示已绘制的窗口，再获取焦点");
     assert_eq!(builder.window_level,Some(egui::WindowLevel::Normal),"打开设置时应保持普通窗口层级");
     assert!(commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::Minimized(false))),"应恢复已最小化的设置窗口：{commands:?}");
     assert!(commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::Focus)),"应将焦点交给设置窗口");
     let (builder,commands)=frame(&mut h,true);
     assert!(!commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::Visible(_))),"正常重绘不应重复显示窗口，避免打断最小化");
+    assert!(!commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::SetTheme(_))),"主题未变时不应重复 SetTheme，避免 DWM 重描阴影闪动");
     assert_eq!(builder.window_level,Some(egui::WindowLevel::Normal),"操作设置时也不能切换到置顶层");
     assert!(!commands.iter().any(|cmd|matches!(cmd,egui::ViewportCommand::Focus)),"正常绘制不应反复抢焦点");
     let (builder,commands)=frame(&mut h,false);
@@ -3557,6 +3558,7 @@ fn empty_todo_draft_can_be_cancelled_by_clicking_elsewhere(){
 }
 
 #[test]
+#[allow(deprecated)]
 fn todo_ime_first_backspace_keeps_committed_text(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.app.show_page(4);h.hover(H::local(300.0,60.0),1.0);h.click(H::local(70.0,109.0));
@@ -3569,6 +3571,7 @@ fn todo_ime_first_backspace_keeps_committed_text(){
 }
 
 #[test]
+#[allow(deprecated)]
 fn todo_ime_focus_change_preserves_empty_draft(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.app.show_page(4);h.hover(H::local(300.0,60.0),1.0);h.click(H::local(70.0,109.0));h.cmds.clear();
@@ -3584,6 +3587,7 @@ fn todo_ime_focus_change_preserves_empty_draft(){
 }
 
 #[test]
+#[allow(deprecated)]
 fn todo_ime_confirmation_does_not_submit_or_cancel_the_draft(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for key in [egui::Key::Enter,egui::Key::Escape]{
@@ -3599,6 +3603,7 @@ fn todo_ime_confirmation_does_not_submit_or_cancel_the_draft(){
 }
 
 #[test]
+#[allow(deprecated)]
 fn todo_ime_candidate_closing_does_not_discard_the_empty_draft(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
     h.app.show_page(4);h.hover(H::local(300.0,60.0),1.0);h.click(H::local(70.0,109.0));
@@ -3610,6 +3615,7 @@ fn todo_ime_candidate_closing_does_not_discard_the_empty_draft(){
 }
 
 #[test]
+#[allow(deprecated)]
 fn todo_ime_event_variants_preserve_mixed_text_and_resume_plain_input(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let cases=vec![
@@ -4286,7 +4292,7 @@ fn todo_edit_choice_can_cancel_without_toggling_or_deleting_items(){
 #[test]
 fn todo_edit_choice_keeps_the_selected_item_when_an_earlier_item_is_deleted(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();h.app.todos.items=["第一项","第二项","第三项"].into_iter().map(crate::model::TodoItem::new).collect();h.app.show_page(4);h.hover(H::local(300.0,60.0),1.0);
-    h.click_text("改一下");h.frame(vec![]);h.click_text("第二项");h.frame(vec![]);h.click(h.ctx.read_response(egui::Id::new(("card",true,("todo-delete",0usize)))).unwrap().rect.center());
+    h.click_text("改一下");h.frame(vec![]);h.click_text("第二项");h.frame(vec![]);h.click(h.ctx.read_response(egui::Id::unique(("card",true,("todo-delete",0usize)))).unwrap().rect.center());
     assert_eq!(h.app.editing,Some(0),"删除前面的条目后，编辑目标仍须是第二项");h.app.buf="第二项已修改".into();h.frame(vec![egui::Event::Key{key:egui::Key::Enter,physical_key:None,pressed:true,repeat:false,modifiers:Default::default()}]);assert_eq!(h.app.todos.items.iter().map(|t|t.text.as_str()).collect::<Vec<_>>(),["第二项已修改","第三项"]);
 }
 
@@ -4669,7 +4675,7 @@ fn closing_app_notification_clears_its_bell_and_keeps_queued_messages(){
         h.app.receive_notification("测试消息".into(),"notice.test".into(),"第一条消息".into());
         for _ in 0..60{h.frame(vec![]);}
         let bell=h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Path(p)if p.points.len()==17=>Some(p.visual_bounding_rect().center()),_=>None}).unwrap();
-        let close=h.ctx.read_response(egui::Id::new(("card",true,"external-dismiss"))).unwrap().rect;
+        let close=h.ctx.read_response(egui::Id::unique(("card",true,"external-dismiss"))).unwrap().rect;
         assert!(bell.x>close.right(),"通知铃铛应位于岛内最右侧");
         h.app.receive_notification("测试消息".into(),"notice.test".into(),"第二条消息".into());
         h.click(close.center());
@@ -5700,7 +5706,7 @@ fn remove_icons_are_centered_in_their_buttons_at_each_scale(){
         h.app.todos.items=["第一项","第二项","第三项"].into_iter().map(|text|crate::model::TodoItem{text:text.into(),due:None,done_on:None,reminded:false,..Default::default()}).collect();
         h.app.show_page(4);h.hover(H::local(300.0,60.0),1.0);
         for i in 0..3usize{
-            let button=h.ctx.read_response(egui::Id::new(("card",true,("todo-delete",i)))).unwrap().rect;
+            let button=h.ctx.read_response(egui::Id::unique(("card",true,("todo-delete",i)))).unwrap().rect;
             let ink=h.shapes.iter().filter_map(|s|match &s.shape{
                 egui::Shape::Text(t) if t.galley.text()=="×" && button.contains(t.visual_bounding_rect().center())=>Some(t.visual_bounding_rect()),
                 egui::Shape::LineSegment{points,..} if points.iter().all(|p|button.shrink(2.0).contains(*p)) && (points[0].x-points[1].x).abs()>2.0 && (points[0].y-points[1].y).abs()>2.0=>Some(Rect::from_two_pos(points[0],points[1])),
@@ -5790,7 +5796,7 @@ fn meeting_notice_prioritizes_the_start_time_and_keeps_actions_aligned(){
         assert!(clock.3>=28.0 && clock.3>title.1,"开始时刻应比事项名称更醒目");
         assert!((title.0-clock.2).abs()<0.5,"开始时刻与标题应沿同一列对齐");
         let date=h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text().contains('月') && t.galley.text().contains('日')=>Some((t.visual_bounding_rect(),t.pos.x)),_=>None}).unwrap();
-        let button=h.ctx.read_response(egui::Id::new(("card",true,"meeting-action"))).unwrap().rect;
+        let button=h.ctx.read_response(egui::Id::unique(("card",true,"meeting-action"))).unwrap().rect;
         assert!((date.0.center().y-button.center().y).abs()<0.5,"日期与查看按钮应垂直居中对齐");
         assert!(((date.1-clock.1.left())-(clock.1.right()-button.right())).abs()<0.5,"卡片左右应保留相同边距");
     }
@@ -5854,7 +5860,7 @@ fn shelf_remove_icon_stays_centered_on_hover_and_preserves_the_file(){
         h.app.shelf.items=vec![path.clone()];h.app.show_page(3);
         for pointer in [H::local(300.0,60.0),H::local(233.0,39.0)]{
             h.hover(pointer,1.0);
-            let button=h.ctx.read_response(egui::Id::new(("card",true,("shelf-remove",&path)))).unwrap().rect;
+            let button=h.ctx.read_response(egui::Id::unique(("card",true,("shelf-remove",&path)))).unwrap().rect;
             let ink=h.shapes.iter().filter_map(|s|match &s.shape{
                 egui::Shape::LineSegment{points,..} if points.iter().all(|p|button.shrink(2.0).contains(*p)) && (points[0].x-points[1].x).abs()>2.0 && (points[0].y-points[1].y).abs()>2.0=>Some(Rect::from_two_pos(points[0],points[1])),_=>None,
             }).fold(Rect::NOTHING,|a,b|a.union(b));
@@ -5871,7 +5877,7 @@ fn resident_components_can_be_dragged_saved_and_reset(){
     fn draw(h:&mut H,events:Vec<egui::Event>,slot:usize)->[Pos2;2]{
         let mut points=[Pos2::ZERO;2];
         h.t+=0.02;
-        let out=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,300.0))),time:Some(h.t),events,..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.resident_order_settings(ui);for (index,slot) in [slot,BATTERY].into_iter().enumerate(){points[index]=ui.ctx().read_response(ui.id().with(("resident-icon",slot))).expect("暂未显示的组件也应可以独立拖动").rect.center();}});});
+        let out=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,300.0))),time:Some(h.t),events,..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|{h.app.resident_order_settings(ui);for (index,slot) in [slot,BATTERY].into_iter().enumerate(){points[index]=ui.ctx().read_response(ui.scope_id().with(("resident-icon",slot))).expect("暂未显示的组件也应可以独立拖动").rect.center();}});});
         h.shapes=out.shapes;points
     }
     fn point(h:&H,label:&str)->Pos2{h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==label=>Some(t.visual_bounding_rect().center()),_=>None}).unwrap()}
@@ -5952,7 +5958,7 @@ fn mailbox_scroll_reaches_older_mail_without_changing_pages() {
     h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-900.0),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown}]);
     h.hover(H::local(200.0,90.0),0.6);
     assert_eq!(h.app.page(),5,"滚动邮箱列表不能切换页面");
-    let row=h.ctx.read_response(egui::Id::new(("card",true,("mail-row",8u32,"test@qq.com")))).expect("第八封邮件应可访问");
+    let row=h.ctx.read_response(egui::Id::unique(("card",true,("mail-row",8u32,"test@qq.com")))).expect("第八封邮件应可访问");
     h.click(row.rect.center());
     assert_eq!(h.app.mail.open_uid,Some(("test@qq.com".into(),8)));
 }
@@ -6179,7 +6185,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
         (SettingsTheme::System,false,false),(SettingsTheme::Dark,false,true),(SettingsTheme::Light,true,false)] {
         h.app.settings.settings_theme=mode;
         h.app.settings.save();assert_eq!(crate::model::Settings::load().settings_theme,mode);
-        h.ctx.data_mut(|d|d.insert_temp(egui::Id::new("settings-system-theme"),(std::time::Instant::now(),system)));
+        h.ctx.data_mut(|d|d.insert_temp(egui::Id::unique("settings-system-theme"),(std::time::Instant::now(),system)));
         let output=std::sync::Arc::new(std::sync::Mutex::new(None));let capture=output.clone();
         egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
             let id=viewport.ids.this;
@@ -6192,11 +6198,17 @@ fn settings_theme_follows_system_and_preserves_island_style() {
             // AI 额度的添加账号表单默认收起，点「＋ 添加账号」才展开；展开后再检查表单行对齐。
             h.app.quota.connect_open=tab==11;
             for frame in 0..3 {
-                h.ctx.data_mut(|d|d.insert_temp(egui::Id::new("settings-system-theme"),(std::time::Instant::now(),system)));
+                h.ctx.data_mut(|d|d.insert_temp(egui::Id::unique("settings-system-theme"),(std::time::Instant::now(),system)));
                 let root=h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(),false));
                 assert!(h.ctx.style_of(egui::Theme::Dark).visuals.dark_mode,"设置页主题不能泄漏到岛体");
                 let commands=&root.viewport_output[&egui::ViewportId::from_hash_of("daozai-settings")].commands;
-                assert!(commands.iter().any(|c|matches!(c,egui::ViewportCommand::SetTheme(t) if *t==if dark{egui::SystemTheme::Dark}else{egui::SystemTheme::Light})),"原生边框必须与页面一致");
+                if frame==0 {
+                    let expected=if dark{egui::SystemTheme::Dark}else{egui::SystemTheme::Light};
+                    // 主题已一致时不会再发 SetTheme（避免 DWM 重描阴影闪动）。
+                    assert!(commands.iter().any(|c|matches!(c,egui::ViewportCommand::SetTheme(t) if *t==expected)) || h.app.settings_window_theme_sent==Some(dark),"原生边框必须与页面一致");
+                } else {
+                    assert!(!commands.iter().any(|c|matches!(c,egui::ViewportCommand::SetTheme(_))),"主题未变时不应重复 SetTheme，避免阴影闪动");
+                }
                 let child=output.lock().unwrap().take().unwrap();
                 if frame==2 {
                     let pairs:&[(&str,&str)]=match tab {
@@ -6215,7 +6227,7 @@ fn settings_theme_follows_system_and_preserves_island_style() {
                         let texts:Vec<(&str,f32,f32)>=child.shapes.iter().filter_map(|s|if let egui::Shape::Text(t)=&s.shape{let c=t.visual_bounding_rect().center();Some((t.galley.text(),c.y,c.x))}else{None}).collect();
                         let centers=|needle:&str|->Vec<f32>{
                             let mut ys:Vec<f32>=Vec::new();
-                            for (txt,y,x) in &texts {
+                            for (txt,y,_x) in &texts {
                                 if *txt==needle {ys.push(*y);continue;}
                                 // 同一行（y 相近）所有片段按 x 升序拼成整行后比较
                                 let mut same:Vec<_>=texts.iter().filter(|(_,y2,_)|(y2-y).abs()<1.5).collect::<Vec<_>>();
@@ -6910,7 +6922,7 @@ fn mailbox_compact_third_row_stays_visible_below_the_toolbar(){
     h.app.mail.accounts=vec![crate::mail::Account {custom:None,email:"test@qq.com".into(),provider:crate::mail::Provider::Qq,enabled:true}];
     h.app.mail.recent=(1..=6).map(|uid|crate::mail::Item {received_unix:None,account:"test@qq.com".into(),from:format!("来源 {uid}"),subject:format!("邮件 {uid}"),time:"09:41".into(),code:None,html: String::new().into(), summary:String::new().into(),links:vec![],meeting:None,uid}).collect();
     h.app.show_page(5);h.hover(H::local(200.0,90.0),1.0);
-    let third=h.ctx.read_response(egui::Id::new(("card",true,("mail-row",3u32,"test@qq.com")))).expect("第三封邮件应完整可见");
+    let third=h.ctx.read_response(egui::Id::unique(("card",true,("mail-row",3u32,"test@qq.com")))).expect("第三封邮件应完整可见");
     assert!(third.rect.bottom()<=H::local(380.0,122.0).y+0.5);
     h.click(third.rect.center());
     assert_eq!(h.app.mail.open_uid,Some(("test@qq.com".into(),3)));
@@ -7924,12 +7936,12 @@ fn messenger_notifications_keep_separate_badges_until_the_client_is_viewed(){
     assert_eq!(sources(&h),[Messenger::Wechat,Messenger::Qq]);
     // 收起时两条未读叠成一个入口，点它展开面板，再在旁边的胶囊里逐个点开。
     h.frame(vec![]);
-    let stack=h.ctx.read_response(egui::Id::new(("card",true,"messenger-stack"))).expect("叠放入口可点击").rect.center();
+    let stack=h.ctx.read_response(egui::Id::unique(("card",true,"messenger-stack"))).expect("叠放入口可点击").rect.center();
     h.click(stack);for _ in 0..60{h.frame(vec![]);}
     assert!(h.app.open);
     for source in [Messenger::Wechat,Messenger::Qq]{
         h.frame(vec![]);
-        let pos=h.ctx.read_response(egui::Id::new(("card",true,source.name()))).expect("胶囊图标可点击").rect.center();
+        let pos=h.ctx.read_response(egui::Id::unique(("card",true,source.name()))).expect("胶囊图标可点击").rect.center();
         h.cmds.clear(); h.click(pos);assert!(h.cmds.contains(&Cmd::ViewMessenger(Unread::of(source))),"{source:?} {pos:?} {:?}",h.cmds);
         h.app.viewed_messenger(source);h.frame(vec![]);
     }
@@ -7954,7 +7966,7 @@ fn messenger_capsule_grows_during_opening(){
             h.frame(vec![]);
             let appear=h.app.messenger_appear();
             if (0.02..0.95).contains(&appear) {
-                let button=h.ctx.read_response(egui::Id::new(("card",true,"微信".to_string()))).unwrap();
+                let button=h.ctx.read_response(egui::Id::unique(("card",true,"微信".to_string()))).unwrap();
                 sampled|=(1.0..crate::app::UNREAD_W-1.0).contains(&button.rect.width());
             }
         }
@@ -7973,7 +7985,7 @@ fn messenger_accounts_get_number_tags_and_clear_one_by_one(){
     assert_eq!((h.app.unread_tag(0),h.app.unread_tag(1),h.app.unread_tag(2)),(Some(1),Some(2),None),"只有同一来源多个账号才编号");
     h.app.alerts.clear();h.app.notice=None;
     h.hover(Pos2::new(WIN_W/2.0,12.0),1.5);
-    let rect=|h:&H,name:&str|h.ctx.read_response(egui::Id::new(("card",true,name.to_string()))).unwrap_or_else(||panic!("{name}")).rect;
+    let rect=|h:&H,name:&str|h.ctx.read_response(egui::Id::unique(("card",true,name.to_string()))).unwrap_or_else(||panic!("{name}")).rect;
     let panel=h.app.island_rect(Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H)),crate::app::PW,h.app.expanded_height());
     let (a,b,q)=(rect(&h,"微信"),rect(&h,"微信2"),rect(&h,"QQ"));
     assert!(a.bottom()<=b.top()+0.5 && b.bottom()<=q.top()+0.5);
@@ -8007,7 +8019,7 @@ fn messenger_notifications_stay_right_and_move_outside_expanded_panel(){
     let mut h=H::new();h.app.settings.wechat_notifications=true;
     h.frame(vec![]);h.app.receive_wechat_reminder();
     for _ in 0..360{h.frame(vec![]);}
-    let badge=|h:&H|h.ctx.read_response(egui::Id::new(("card",true,"微信"))).unwrap().rect;
+    let badge=|h:&H|h.ctx.read_response(egui::Id::unique(("card",true,"微信"))).unwrap().rect;
     assert!(badge(&h).left()>WIN_W/2.0);
     h.hover(Pos2::new(WIN_W/2.0,12.0),1.5);
     assert!(h.app.open && badge(&h).left()>WIN_W/2.0);
@@ -8029,7 +8041,7 @@ fn messenger_notifications_align_with_system_banner(){
     for _ in 0..360{h.frame(vec![]);}
     h.app.receive_notification("ChatGPT".into(),"ChatGPT".into(),"测试".into());
     for _ in 0..60{h.frame(vec![]);}
-    let rect=|name|h.ctx.read_response(egui::Id::new(("card",true,name))).unwrap().rect;
+    let rect=|name|h.ctx.read_response(egui::Id::unique(("card",true,name))).unwrap().rect;
     let badge=rect("微信");let close=rect("external-dismiss");
     assert!(badge.left()>close.right());
     assert!((badge.center().y-close.center().y).abs()<1.1);
@@ -8043,11 +8055,11 @@ fn messenger_notifications_side_docks_keep_one_column(){
         h.app.receive_wechat_reminder();h.app.receive_notification("QQ".into(),"QQ".into(),"测试".into());
         for _ in 0..720{h.frame(vec![]);}
         let win=Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H));
-        let stack=h.ctx.read_response(egui::Id::new(("card",true,"messenger-stack"))).unwrap().rect;
+        let stack=h.ctx.read_response(egui::Id::unique(("card",true,"messenger-stack"))).unwrap().rect;
         let bar=h.app.island_rect(win,h.app.w.pos,h.app.h.pos);
         assert!((stack.center().x-bar.center().x).abs()<1.0 && stack.top()>=bar.bottom()-0.5,"收起时叠放在竖胶囊下方");
         h.click(stack.center());for _ in 0..90{h.frame(vec![]);}
-        let rect=|name|h.ctx.read_response(egui::Id::new(("card",true,name))).unwrap().rect;
+        let rect=|name|h.ctx.read_response(egui::Id::unique(("card",true,name))).unwrap().rect;
         let a=rect("微信");let b=rect("QQ");
         assert_eq!(a.center().x,b.center().x);assert!(a.bottom()<=b.top()+0.01);
         let panel=h.app.island_rect(win,crate::app::PW,h.app.expanded_height());
@@ -8735,7 +8747,7 @@ fn weather_settings_preview(){
         });
         let mut raster=crate::preview_raster::Raster::new(1600,1240);
         for frame in 0..4 {
-            if dropdown && frame==1 {egui::Popup::open_id(&h.ctx, egui::Id::new("weather-city-options"));}
+            if dropdown && frame==1 {egui::Popup::open_id(&h.ctx, egui::Id::unique("weather-city-options"));}
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(frame as f64),..Default::default()};
             let root=h.ctx.run_ui(raw, |ui| h.app.settings_ui(ui.ctx(),false));
             let child_frames:Vec<_>=children.lock().unwrap().drain(..).collect();

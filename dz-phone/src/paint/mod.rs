@@ -539,13 +539,13 @@ impl<'a> Card<'a> {
     pub fn hit(&self, x: f32, y: f32, w: f32, h: f32, id: impl std::hash::Hash + std::fmt::Debug) -> Response {
         let rect = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
         let sense = if self.live { Sense::click() } else { Sense::hover() };
-        let id = Id::new(("card", self.live, id));
+        let id = egui::Id::unique(("card", self.live, id));
         self.ui.interact(rect, id, sense)
     }
 
     pub fn hit_drag(&self,x:f32,y:f32,w:f32,h:f32,id:impl std::hash::Hash+std::fmt::Debug)->Response {
         let rect=self.rect(x,y,w,h).intersect(self.painter.clip_rect());
-        self.ui.interact(rect,Id::new(("card-drag",self.live,id)),if self.live{Sense::click_and_drag()}else{Sense::hover()})
+        self.ui.interact(rect,egui::Id::unique(("card-drag",self.live,id)),if self.live{Sense::click_and_drag()}else{Sense::hover()})
     }
     /// 悬停 / 按下的平滑过渡量（0..1）。
     pub fn hover_t(&self, r: &Response) -> (f32, f32) {

@@ -1817,4 +1817,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 按用户要求继续启用其他“比现状好”的可选项：`eframe` 增加 `system_fonts` feature（examples/eframe 路径也一致），`egui` 增加 `rayon`（并行 tessellation）与 `monochrome_emoji_fonts`（emoji 兜底）；D3D11 sampler 从 `MIN_MAG_MIP_LINEAR` 改为 `MIN_MAG_LINEAR_MIP_POINT`（字体图集无有用 mip 链，避免采样到更糊的 mip 层）。仅 `cargo check --lib --tests --bins --examples` 通过，未跑全量测试、未重新打包。
 - 结论：0.35 → 56f3a0e 的提交里没有专门修“文字毛刺/抗锯齿”的提交；系统字体提供者只改善缺字/CJK 回退，毛刺是否改善需实机观察。
 - **1.2.7 本地包（2026-11-24）**：包含系统字体 provider / `system_fonts`、`rayon`、`monochrome_emoji_fonts` 与无 mip 采样改动。`Daozai-Setup-v1.2.7-x64.exe` 9,185,752 B / sha `079e29279cdbcf3c`；`Daozai-v1.2.7-windows-x64.zip` 11,508,245 B / sha `c6a7cd9971bcc29c`；包内 exe sha `1a38bc67e0439e7b`。提交 `64fa8ce`。未上传 release、未部署。
-- 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear、兼容渲染截图与系统字体回退效果。
+- 过时的 egui 0.35 API 已清理：`Id::new` → `Id::unique`、`TextEdit::vertical_align(Align)` → `align(Align2::LEFT_CENTER)`、`Ui::id` → `scope_id`、`TextureHandle/ImageData/ColorImage::size` → `resolution`、`size_vec2` → `resolution_vec2`。`ImeEvent::Enabled/Disabled` 在 0.37 仅 deprecated 但仍保留语义，测试与 app 处理处加局部 `#[allow(deprecated)]`，避免改坏输入法模拟。`cargo check --lib --tests --bins --examples` 的 deprecated warning 从 121 降到 0。
+- 设置页窗口阴影闪动：根因是每帧都发 `ViewportCommand::SetTheme`，DWM 反复重描窗口阴影。新增 `App::settings_window_theme_sent`，只在深浅主题真正变化时发送；相关测试改为断言主题未变时不重复 SetTheme。
+- 验证：release bin 11 passed；release lib 1403 passed / 1 failed / 131 ignored，唯一失败 `messenger::windows::tests::exited_messenger_accounts_are_removed_individually`，与真实企业微信/微信进程列表有关，和本次改动无关。
+- 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear、兼容渲染截图、系统字体回退与设置页阴影。

@@ -643,7 +643,7 @@ impl Shell {
             if native.wants_frames() {
                 let shot=self.compat_shot.lock().unwrap_or_else(|e|e.into_inner()).take();
                 let other_input=ctx.input(|i|!i.events.is_empty());
-                let changed=shot.as_ref().is_some_and(|image|native.present_frame(image.size(),image.as_raw()));
+                let changed=shot.as_ref().is_some_and(|image|native.present_frame(image.resolution(),image.as_raw()));
                 if shot.is_none() || changed || other_input {
                     // 拖动、悬停等有输入时满帧跟手；歌词滚动这类自己在动的画面约 30 帧/秒读回，
                     // 未到间隔就预约一次重绘，到时补上读回，动画停下时的最后一帧不会漏掉。

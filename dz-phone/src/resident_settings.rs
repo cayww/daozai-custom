@@ -59,7 +59,7 @@ impl crate::app::App {
             }};
             let left=if slot==QUOTA{cx+layout.quota_slots().filter_map(|i|layout.x[i].map(|x|x-layout.widths[i]/2.0)).fold(f32::INFINITY,f32::min)}else{x-width/2.0};
             let rect=card.rect(left-5.0,1.0,width+10.0,28.0);
-            let response=ui.interact(rect,ui.id().with(("resident-icon",slot)),egui::Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::Grab);
+            let response=ui.interact(rect,ui.scope_id().with(("resident-icon",slot)),egui::Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::Grab);
             response.dnd_set_drag_payload(slot);
             if let (Some(from),Some(point))=(dragged.as_deref(),pointer){
                 if *from!=slot && rect.contains(point) && ui.input(|i|i.pointer.primary_down()){movement=Some((*from,index));}

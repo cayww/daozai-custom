@@ -475,7 +475,7 @@ fn main() {
             egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
                 fo = Some(app.frame(ui, win, &env));
             });
-            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("demo-cursor")));
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::unique("demo-cursor")));
             ripples.retain(|(_, t0)| t - t0 < 0.45);
             for (at, t0) in &ripples {
                 let k = ((t - t0) / 0.45) as f32;
