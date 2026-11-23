@@ -1,6 +1,6 @@
-//! 设置窗口独立的位置与大小记录；仅在关闭或退出程序时落盘。
+//! 设置窗口独立的位置与大小记录；关闭/退出时落盘，拖动中也按秒自动保存（防崩溃/强杀丢位置）。
 use eframe::egui::{self,Pos2,Rect,Vec2};
-use std::{io::Read,path::PathBuf};
+use std::{io::Read,path::PathBuf,time::{Duration,Instant}};
 
 const MIN_SIZE:Vec2=egui::vec2(600.0,450.0);
 #[derive(Clone,Copy,Debug,PartialEq,serde::Serialize,serde::Deserialize)]
@@ -24,7 +24,11 @@ fn fit(saved:Placement,areas:&[Area],frame:Vec2)->Option<Fit>{
 }
 
 #[derive(Default)]
-pub(crate) struct State {path:Option<PathBuf>,saved:Option<Placement>,current:Option<Placement>,opened:bool}
+pub(crate) struct State {
+    path:Option<PathBuf>,saved:Option<Placement>,current:Option<Placement>,opened:bool,
+    /// 上次落盘时刻：拖动设置窗口时最多每秒写一次，避免每帧IO。
+    last_persist:Option<Instant>,
+}
 impl State {
     pub(crate) fn load()->Self{
         if cfg!(test){return Self::default();}
@@ -35,9 +39,15 @@ impl State {
         let saved=(||{let mut bytes=Vec::new();std::fs::File::open(&path).ok()?.take(4097).read_to_end(&mut bytes).ok()?;
             if bytes.len()>4096{return None;}
             serde_json::from_slice::<Placement>(&bytes).ok().filter(|p|p.valid())})();
-        Self{path:Some(path),saved,current:saved,opened:false}
+        Self{path:Some(path),saved,current:saved,opened:false,last_persist:None}
     }
-    pub(crate) fn open(&mut self)->bool{let first=!self.opened;self.opened=true;first}
+    pub(crate) fn open(&mut self)->bool{
+        let first=!self.opened;self.opened=true;
+        // 只在「刚打开」这一帧重置节流起点；open() 每帧都会调用，
+        // 若每次都重置，拖动超过 1 秒也永远等不到自动保存。
+        if first{self.last_persist=Some(Instant::now());}
+        first
+    }
     pub(crate) fn restore(&self,ctx:&egui::Context)->bool{
         if self.current.or(self.saved).is_none() || ctx.viewport_id()==egui::ViewportId::ROOT{return false;}
         let mut areas=work_areas();for area in &mut areas{area.scale*=ctx.zoom_factor();}
@@ -59,14 +69,21 @@ impl State {
         let ppp=ctx.pixels_per_point();
         let placement=ctx.input(|i|{let v=i.viewport();if v.minimized==Some(true)||v.maximized==Some(true){return None;}
             Some(Placement{position:(v.outer_rect?.min*ppp).into(),size:v.inner_rect?.size().into()})});
-        if let Some(placement)=placement.filter(|p|p.valid()){self.current=Some(placement);}
+        if let Some(placement)=placement.filter(|p|p.valid()) {
+            if self.current!=Some(placement){
+                self.current=Some(placement);
+                // 崩溃 / 强杀不会跑 Drop：拖动过程中也按秒把新位置落盘。
+                let due=self.last_persist.map_or(true,|t|t.elapsed()>=Duration::from_secs(1));
+                if due{self.persist();}
+            }
+        }
     }
     pub(crate) fn close(&mut self){if self.opened{self.opened=false;self.persist();}}
     fn persist(&mut self){
         if self.current==self.saved{return;}
         let (Some(path),Some(current))=(&self.path,self.current)else{return;};
         if let Some(parent)=path.parent(){if std::fs::create_dir_all(parent).is_err(){return;}}
-        if let Ok(bytes)=serde_json::to_vec(&current){if crate::model::atomic_write(path,&bytes).is_ok(){self.saved=Some(current);}}
+        if let Ok(bytes)=serde_json::to_vec(&current){if crate::model::atomic_write(path,&bytes).is_ok(){self.saved=Some(current);self.last_persist=Some(Instant::now());}}
     }
 }
 impl Drop for State {fn drop(&mut self){self.persist();}}
@@ -134,6 +151,20 @@ mod tests {
         state.close();let bytes=std::fs::read(&path).unwrap();assert_eq!(serde_json::from_slice::<Placement>(&bytes).unwrap(),normal.unwrap());
         assert_eq!(State::load_at(path.clone()).saved,normal,"重启后应读回原始普通窗口位置与大小");
         state.close();assert_eq!(std::fs::read(&path).unwrap(),bytes);std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn moving_settings_window_autosaves_after_a_second(){
+        let path=std::env::temp_dir().join(format!("daozai-settings-window-autosave-{}.json",std::process::id()));
+        let _=std::fs::remove_file(&path);
+        let mut state=State{path:Some(path.clone()),..Default::default()};
+        assert!(state.open());
+        state.last_persist=Some(Instant::now()-Duration::from_secs(2));
+        let ctx=egui::Context::default();let id=egui::ViewportId::from_hash_of("settings-autosave-test");
+        let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(800.0,600.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),inner_rect:Some(Rect::from_min_size(egui::pos2(0.0,0.0),egui::vec2(800.0,600.0))),outer_rect:Some(Rect::from_min_size(egui::pos2(20.0,30.0),egui::vec2(816.0,640.0))),..Default::default()})).collect(),..Default::default()};
+        let _=ctx.run_ui(raw,|ui|state.observe(ui.ctx()));
+        let bytes=std::fs::read(&path).unwrap();
+        assert_eq!(serde_json::from_slice::<Placement>(&bytes).unwrap(),state.current.unwrap());
+        state.close();std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn invalid_window_records_fall_back_without_rewriting_them(){

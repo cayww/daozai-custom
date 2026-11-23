@@ -235,6 +235,9 @@ pub struct FrameStats {
     pub viewport_commands: Vec<(egui::ViewportId, Vec<egui::ViewportCommand>)>,
     /// 本帧仍活跃的 viewport id（app 不再 show_viewport 的窗口要销毁，否则关不掉）。
     pub active_viewports: Vec<egui::ViewportId>,
+    /// Present 返回 DXGI_ERROR_DEVICE_REMOVED / DEVICE_RESET：D3D 设备已丢失，
+    /// 集成层必须重建 device/swapchain（并重建共享 Renderer 与子窗口），否则黑屏到退出。
+    pub device_lost: bool,
 }
 
 /// D3D11 抓屏栈诊断：同时输出到 stderr 和 liquid-glass.log。
@@ -287,7 +290,14 @@ impl D3d11Runtime {
     pub fn device(&self) -> ID3D11Device { self.device.clone() }
     pub fn device_context(&self) -> ID3D11DeviceContext { self.ctx.clone() }
     pub fn shared_renderer(&self) -> Rc<RefCell<Renderer>> { self.egui_renderer.clone() }
+    /// 第一次启动：新建 egui Context。恢复路径请用 `new_with_ctx` 保留原 Context，
+    /// 否则 Shell / 后台线程手里的旧 Context 会和新渲染栈脱节（repaint 与字体图集全断）。
     pub fn new(window: &winit::window::Window) -> windows::core::Result<Self> {
+        Self::new_with_ctx(window, egui::Context::default())
+    }
+
+    /// 用既有 egui Context 重建 D3D11 栈（suspended/resume、设备丢失恢复共用）。
+    pub fn new_with_ctx(window: &winit::window::Window, egui_ctx: egui::Context) -> windows::core::Result<Self> {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let RawWindowHandle::Win32(h) = window.window_handle().unwrap().as_raw() else {
             return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL));
@@ -312,7 +322,6 @@ impl D3d11Runtime {
         };
         let rt = Self::create_rt(&device, &swap)?;
 
-        let egui_ctx = egui::Context::default();
         let egui_renderer = Rc::new(RefCell::new(Renderer::new(&device)?));
         let egui_winit = egui_winit::State::new(
             egui_ctx.clone(), egui_ctx.viewport_id(), window, None, None, None);
@@ -678,6 +687,7 @@ impl D3d11Runtime {
             self.last_report = std::time::Instant::now();
         }
         let size = window.inner_size();
+        let mut device_lost = false;
 
         if let Some(rt) = self.rt.clone() {
             unsafe {
@@ -689,11 +699,15 @@ impl D3d11Runtime {
             // Present 之前消费截图/剪贴板动作：FLIP_DISCARD 后缓冲内容失效。
             drain_actions(self.egui_winit.as_mut().unwrap(), &mut self.actions,
                 &self.device, &self.ctx, Some(&rt), egui::ViewportId::ROOT);
-            unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
+            let present = unsafe { self.swap.Present(1, DXGI_PRESENT(0)) };
+            // 显卡重置 / 远程桌面断开时 Present 会返回 DEVICE_REMOVED/RESET。
+            // 旧代码把错误丢弃，结果是永久黑屏只能重启；这里上报让事件循环重建整条 D3D 栈。
+            device_lost = present == DXGI_ERROR_DEVICE_REMOVED || present == DXGI_ERROR_DEVICE_RESET;
+            if device_lost { dlog(&format!("Present failed: {present:?}; device lost")); }
             unsafe { let _ = self.dcomp._device.Commit(); }
         }
         FrameStats { fps: self.fps, wgc_live: self.wgc_ever_frame,
-                     viewport_commands: platform.1, active_viewports: platform.2 }
+                     viewport_commands: platform.1, active_viewports: platform.2, device_lost }
     }
 
     fn draw_glass(&mut self, win_w: u32, win_h: u32, u: &GlassParams) {

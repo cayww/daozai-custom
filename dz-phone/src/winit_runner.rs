@@ -88,15 +88,76 @@ struct DaozaiApp {
     subs: HashMap<WindowId, SubWindow>,
     sub_ids: HashMap<egui::ViewportId, WindowId>,
     pending_close: Vec<WindowId>,
+    /// 跨 suspended/resume 与设备丢失保留的 egui Context。
+    /// Shell、后台线程、字体图集和 repaint callback 都绑在它上面，重建 D3D 栈时不能换。
+    egui_ctx: Option<egui::Context>,
     /// 下一次需要跑父窗口 UI 的时刻。None = 没有待处理请求（长睡眠等输入事件）。
     next_repaint: Option<Instant>,
+    /// draw_main 检测到 Present 报设备丢失后延迟到事件方法末尾重建，
+    /// 避免同时持有 &Window 与 &mut self。
+    device_lost_pending: bool,
 }
 
 impl DaozaiApp {
     fn new(attrs: WindowAttributes) -> Self {
         Self { attrs, window: None, runtime: None, shell: None,
                subs: HashMap::new(), sub_ids: HashMap::new(), pending_close: Vec::new(),
-               next_repaint: None }
+               egui_ctx: None, next_repaint: None, device_lost_pending: false }
+    }
+
+    fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        match window.window_handle().ok()?.as_raw() {
+            RawWindowHandle::Win32(h) => Some(windows::Win32::Foundation::HWND(h.hwnd.get() as _)),
+            _ => None,
+        }
+    }
+
+    /// D3 设备或窗口会话重建后，旧的 PlainWindow 全绑在旧 device/renderer 上，
+    /// 必须连同 winit 子窗口缓存一起丢弃；下一帧 show_viewport_immediate 会重建。
+    fn clear_viewport_state(&mut self) {
+        self.subs.clear();
+        self.sub_ids.clear();
+        self.pending_close.clear();
+        VIEWPORT_REQ.with(|q| q.borrow_mut().clear());
+        VIEWPORT_WINDOWS.with(|m| m.borrow_mut().clear());
+        VIEWPORT_INPUTS.with(|m| m.borrow_mut().clear());
+        CLOSE_REQ.with(|q| q.borrow_mut().clear());
+    }
+
+    /// 用保留的 egui Context 重建 D3D11 栈，并让 Shell 重新绑定新 HWND。
+    fn recreate_graphics(&mut self, window: &Window) -> bool {
+        let Some(ctx) = self.egui_ctx.clone() else { return false };
+        let Some(hwnd) = Self::hwnd(window) else { return false };
+        match D3d11Runtime::new_with_ctx(window, ctx.clone()) {
+            Ok(runtime) => {
+                self.runtime = Some(runtime);
+                if let Some(sh) = self.shell.as_mut() {
+                    // native::Window 的 subclass / event hook / 拖放监听都按旧 HWND 注册，
+                    // 换窗口后必须重绑定；Drop 会摘掉旧 hook。
+                    sh.native = daozai::native::Window::new(hwnd, ctx.clone());
+                    sh.placed = false; // 新窗口要重新按目标屏幕定位
+                }
+                self.clear_viewport_state();
+                self.repaint_now();
+                true
+            }
+            Err(e) => {
+                eprintln!("[d3d11] 重建图形栈失败，稍后重试: {e:?}");
+                self.schedule_repaint(Instant::now() + Duration::from_millis(500));
+                false
+            }
+        }
+    }
+
+    /// draw_main 之后统一处理设备丢失：把窗口从 self 里暂时拿出，
+    /// 这样重建函数可以同时借用其他字段与 &Window。
+    fn flush_device_recovery(&mut self) {
+        if !self.device_lost_pending { return; }
+        self.device_lost_pending = false;
+        let Some(window) = self.window.take() else { return };
+        self.recreate_graphics(&window);
+        self.window = Some(window);
     }
 
     /// 预约下一次父窗口绘制；多次请求取最早的那个（与 eframe 的 next_repaint_time 同语义）。
@@ -159,14 +220,22 @@ impl DaozaiApp {
             VIEWPORT_INPUTS.with(|m| { m.borrow_mut().insert(sub.id, sin); });
         }
         let window = self.window.as_ref().unwrap();
-        let rt = self.runtime.as_mut().unwrap();
-        let sh = self.shell.as_mut().unwrap();
-        let stats: FrameStats = rt.render(window, origin, &params, input, scale, |_ctx, ui| sh.draw(ui));
+        let stats: FrameStats = {
+            let rt = self.runtime.as_mut().unwrap();
+            let sh = self.shell.as_mut().unwrap();
+            rt.render(window, origin, &params, input, scale, |_ctx, ui| sh.draw(ui))
+        };
+        if stats.device_lost {
+            // 设备已重置：这一帧的 viewport output 全部作废，交给事件方法末尾重建。
+            self.device_lost_pending = true;
+            return;
+        }
         // 把主窗口 output 里子 viewport 的窗口命令（Visible(true)/位置/大小）应用到子窗口。
+        let egui_ctx = self.runtime.as_ref().unwrap().egui_ctx.clone();
         for (vid, cmds) in stats.viewport_commands {
             if let Some(&wid) = self.sub_ids.get(&vid) {
                 if let Some(sub) = self.subs.get_mut(&wid) {
-                    egui_winit::process_viewport_commands(&rt.egui_ctx, &mut sub.renderer.viewport_info,
+                    egui_winit::process_viewport_commands(&egui_ctx, &mut sub.renderer.viewport_info,
                         cmds, &sub.window, &mut sub.renderer.actions);
                 }
             }
@@ -230,6 +299,7 @@ impl ApplicationHandler<Wakeup> for DaozaiApp {
                     self.draw_main();
                 });
                 for sub in self.subs.values() { sub.window.request_redraw(); }
+                self.flush_device_recovery();
             }
         }
     }
@@ -240,99 +310,118 @@ impl ApplicationHandler<Wakeup> for DaozaiApp {
             Ok(w) => w,
             Err(e) => { eprintln!("[winit] create_window failed: {e}"); el.exit(); return; }
         };
-        let runtime = match D3d11Runtime::new(&window) {
+        let Some(hwnd) = Self::hwnd(&window) else {
+            eprintln!("[winit] not a win32 window"); el.exit(); return;
+        };
+        // 关键：设备重置 / 系统 suspend 后重建 D3D 栈时沿用同一个 Context，
+        // 否则 Shell、后台线程手里的旧 Context 与字体图集/repaint callback 全部脱节。
+        let ctx = self.egui_ctx.clone().unwrap_or_else(egui::Context::default);
+        let runtime = match D3d11Runtime::new_with_ctx(&window, ctx.clone()) {
             Ok(r) => r,
             Err(e) => { eprintln!("[d3d11] runtime init failed: {e}"); el.exit(); return; }
         };
-        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let hwnd = match window.window_handle().map(|h| h.as_raw()) {
-            Ok(RawWindowHandle::Win32(h)) => windows::Win32::Foundation::HWND(h.hwnd.get() as _),
-            _ => { eprintln!("[winit] not a win32 window"); el.exit(); return; }
-        };
-        let ctx = runtime.egui_ctx.clone();
 
-        if let Some(proxy) = REPAINT_PROXY.get() {
-            let px = proxy.clone();
-            ctx.set_request_repaint_callback(move |info| {
-                let _ = px.send_event(Wakeup::Repaint {
-                    viewport_id: info.viewport_id,
-                    when: Instant::now() + info.delay,
-                    cumulative_pass_nr: info.current_cumulative_pass_nr,
+        if self.egui_ctx.is_none() {
+            self.egui_ctx = Some(ctx.clone());
+            if let Some(proxy) = REPAINT_PROXY.get() {
+                let px = proxy.clone();
+                ctx.set_request_repaint_callback(move |info| {
+                    let _ = px.send_event(Wakeup::Repaint {
+                        viewport_id: info.viewport_id,
+                        when: Instant::now() + info.delay,
+                        cumulative_pass_nr: info.current_cumulative_pass_nr,
+                    });
                 });
+            }
+            // 让 show_viewport_immediate 走原生独立窗口（egui 默认内嵌会把设置页画到岛仔本体）。
+            // 照搬 eframe 0.35：注册 immediate renderer，回调在 draw 上下文同步执行——
+            // 用 event_loop_context 取当前 event loop 建窗口，跑 viewport_ui_cb 拿 output 存队列。
+            ctx.set_embed_viewports(false);
+            egui::Context::set_immediate_viewport_renderer(|egui_ctx, viewport| {
+                let egui::ImmediateViewport { ids, builder, mut viewport_ui_cb } = viewport;
+                let id = ids.this;
+                // 复用已创建的窗口；只有首次或 builder 变化时才 create。
+                let need_create = VIEWPORT_WINDOWS.with(|m| {
+                    m.borrow().get(&id).map(|(_, old)| *old != builder).unwrap_or(true)
+                });
+                if need_create {
+                    let attrs = egui_winit::create_winit_window_attributes(egui_ctx, builder.clone());
+                    let Some(Ok(window)) = with_current_event_loop(|el| el.create_window(attrs)) else {
+                        eprintln!("[winit] viewport {id:?} create_window failed");
+                        return;
+                    };
+                    let window = Rc::new(window);
+                    egui_winit::apply_viewport_builder_to_window(egui_ctx, &window, &builder);
+                    VIEWPORT_WINDOWS.with(|m| { m.borrow_mut().insert(id, (window, builder.clone())); });
+                }
+                let Some(window) = VIEWPORT_WINDOWS.with(|m| m.borrow().get(&id).map(|(w, _)| w.clone())) else { return };
+                // 子窗口 input：优先用 window_event 累积的真实 input（含鼠标/键盘），
+                // 否则（首帧）构造最小 input。viewport_id/viewports 必须配套，
+                // 否则设置页 ctx.input(|i| i.viewport()) 会 panic（egui RawInput::viewport）。
+                let mut input = VIEWPORT_INPUTS.with(|m| m.borrow_mut().remove(&id)).unwrap_or_default();
+                input.viewport_id = id;
+                // 子窗口永远用自己窗口的原生 DPI，不能读 egui_ctx.pixels_per_point() /
+                // native_pixels_per_point()——那是主 viewport 按「岛体大小」放大后的值。
+                let native_ppp = window.scale_factor() as f32;
+                if input.screen_rect.is_none() {
+                    let size = window.inner_size();
+                    input.screen_rect = Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0),
+                        egui::vec2(size.width as f32 / native_ppp, size.height as f32 / native_ppp)));
+                }
+                let outer = window.outer_position().ok().map(|p| (p.x, p.y));
+                let size = window.outer_size();
+                let monitor = window.current_monitor()
+                    .map(|m| (m.size().width, m.size().height));
+                let (outer_rect, monitor_size) = child_viewport_geometry(
+                    outer, (size.width, size.height), monitor,
+                    window.is_minimized() == Some(true), native_ppp,
+                );
+                let info = input.viewports.entry(id).or_default();
+                info.native_pixels_per_point = Some(native_ppp);
+                if info.inner_rect.is_none() { info.inner_rect = input.screen_rect; }
+                info.outer_rect = outer_rect;
+                info.monitor_size = monitor_size;
+                info.title = Some(window.title());
+                if input.time.is_none() { input.time = Some(egui_ctx.input(|i| i.time)); }
+                // 右上角 X：把 CloseRequested 转成 egui ViewportEvent::Close，
+                // 设置页 UI 的 viewport().close_requested() 读到后置 settings_open=false。
+                let close_now = CLOSE_REQ.with(|q| {
+                    let mut q = q.borrow_mut();
+                    let hit = q.iter().position(|&v| v == id);
+                    hit.map(|i| { q.remove(i); })
+                });
+                if close_now.is_some() {
+                    input.viewports.entry(id).or_default()
+                        .events.push(egui::ViewportEvent::Close);
+                }
+                // 同步跑子窗口 UI（viewport_ui_cb 借用 app，只能在此调用，不能跨帧存）。
+                let output = egui_ctx.run_ui(input, |ui| viewport_ui_cb(ui));
+                VIEWPORT_REQ.with(|q| q.borrow_mut().push((id, window, output)));
             });
         }
-        // 让 show_viewport_immediate 走原生独立窗口（egui 默认内嵌会把设置页画到岛仔本体）。
-        // 照搬 eframe 0.35：注册 immediate renderer，回调在 draw 上下文同步执行——
-        // 用 event_loop_context 取当前 event loop 建窗口，跑 viewport_ui_cb 拿 output 存队列。
-        ctx.set_embed_viewports(false);
-        egui::Context::set_immediate_viewport_renderer(|egui_ctx, viewport| {
-            let egui::ImmediateViewport { ids, builder, mut viewport_ui_cb } = viewport;
-            let id = ids.this;
-            // 复用已创建的窗口；只有首次或 builder 变化时才 create。
-            let need_create = VIEWPORT_WINDOWS.with(|m| {
-                m.borrow().get(&id).map(|(_, old)| *old != builder).unwrap_or(true)
-            });
-            if need_create {
-                let attrs = egui_winit::create_winit_window_attributes(egui_ctx, builder.clone());
-                let Some(Ok(window)) = with_current_event_loop(|el| el.create_window(attrs)) else {
-                    eprintln!("[winit] viewport {id:?} create_window failed");
-                    return;
-                };
-                let window = Rc::new(window);
-                egui_winit::apply_viewport_builder_to_window(egui_ctx, &window, &builder);
-                VIEWPORT_WINDOWS.with(|m| { m.borrow_mut().insert(id, (window, builder.clone())); });
-            }
-            let Some(window) = VIEWPORT_WINDOWS.with(|m| m.borrow().get(&id).map(|(w, _)| w.clone())) else { return };
-            // 子窗口 input：优先用 window_event 累积的真实 input（含鼠标/键盘），
-            // 否则（首帧）构造最小 input。viewport_id/viewports 必须配套，
-            // 否则设置页 ctx.input(|i| i.viewport()) 会 panic（egui RawInput::viewport）。
-            let mut input = VIEWPORT_INPUTS.with(|m| m.borrow_mut().remove(&id)).unwrap_or_default();
-            input.viewport_id = id;
-            // 子窗口永远用自己窗口的原生 DPI，不能读 egui_ctx.pixels_per_point() /
-            // native_pixels_per_point()——那是主 viewport 按「岛体大小」放大后的值。
-            let native_ppp = window.scale_factor() as f32;
-            if input.screen_rect.is_none() {
-                let size = window.inner_size();
-                input.screen_rect = Some(egui::Rect::from_min_size(egui::pos2(0.0, 0.0),
-                    egui::vec2(size.width as f32 / native_ppp, size.height as f32 / native_ppp)));
-            }
-            if !input.viewports.contains_key(&id) {
-                input.viewports.insert(id, egui::ViewportInfo {
-                    native_pixels_per_point: Some(native_ppp),
-                    inner_rect: input.screen_rect,
-                    ..Default::default()
-                });
-            }
-            if input.time.is_none() { input.time = Some(egui_ctx.input(|i| i.time)); }
-            // 右上角 X：把 CloseRequested 转成 egui ViewportEvent::Close，
-            // 设置页 UI 的 viewport().close_requested() 读到后置 settings_open=false。
-            let close_now = CLOSE_REQ.with(|q| {
-                let mut q = q.borrow_mut();
-                let hit = q.iter().position(|&v| v == id);
-                hit.map(|i| { q.remove(i); })
-            });
-            if close_now.is_some() {
-                input.viewports.entry(id).or_default()
-                    .events.push(egui::ViewportEvent::Close);
-            }
-            // 同步跑子窗口 UI（viewport_ui_cb 借用 app，只能在此调用，不能跨帧存）。
-            let output = egui_ctx.run_ui(input, |ui| viewport_ui_cb(ui));
-            VIEWPORT_REQ.with(|q| q.borrow_mut().push((id, window, output)));
-        });
 
-        let shell = Shell::new(ctx, hwnd);
-        self.shell = Some(shell);
+        // Shell 承载全部 app 状态与后台服务：suspend 时保留，resume 只重建窗口绑定。
+        if self.shell.is_none() {
+            self.shell = Some(Shell::new(ctx.clone(), hwnd));
+        } else if let Some(sh) = self.shell.as_mut() {
+            sh.native = daozai::native::Window::new(hwnd, ctx.clone());
+            sh.placed = false;
+        }
+        // 旧子窗口的 PlainWindow 绑在已销毁的 device 上，必须整体重来。
+        self.clear_viewport_state();
         self.runtime = Some(runtime);
         self.window = Some(window);
-        self.repaint_now(); // 首帧
+        self.repaint_now(); // 首帧 / resume 后第一帧
     }
 
     fn suspended(&mut self, _el: &ActiveEventLoop) {
+        // 只丢与设备/窗口绑定的资源；Shell（app 状态 + 后台服务）和 egui Context 必须留着，
+        // 否则 resume 后等于冷启动：通知/邮件/歌词状态全丢，用户数据观感像"重启过"。
         self.window.take();
         self.runtime.take();
-        self.shell.take();
-        self.subs.clear();
-        self.sub_ids.clear();
+        self.clear_viewport_state();
+        self.next_repaint = None;
+        self.device_lost_pending = false;
     }
 
     fn new_events(&mut self, _el: &ActiveEventLoop, _cause: winit::event::StartCause) {
@@ -350,6 +439,7 @@ impl ApplicationHandler<Wakeup> for DaozaiApp {
                 self.draw_main();
             });
             for sub in self.subs.values() { sub.window.request_redraw(); }
+            self.flush_device_recovery();
         }
         // 没有待处理重绘时长睡眠：输入事件/代理消息会立刻唤醒事件循环，
         // 而不是像旧版每 16ms 无条件跑一帧（隐藏态 1fps / 静止 15fps 请求才能生效）。
@@ -397,6 +487,29 @@ impl ApplicationHandler<Wakeup> for DaozaiApp {
         }
         if let WindowEvent::RedrawRequested = event { self.render_sub(id); }
     }
+}
+
+/// 把 winit 子窗口的物理几何换算成 egui 的逻辑点，补齐 ViewportInfo。
+/// egui-winit 的 take_egui_input 只填 native_pixels_per_point，outer_rect /
+/// monitor_size 为空会让依赖边框宽度的设置页恢复逻辑退化成硬编码估算值。
+fn child_viewport_geometry(
+    outer_position: Option<(i32, i32)>,
+    outer_size: (u32, u32),
+    monitor_size: Option<(u32, u32)>,
+    minimized: bool,
+    native_ppp: f32,
+) -> (Option<egui::Rect>, Option<egui::Vec2>) {
+    if minimized || !native_ppp.is_finite() || native_ppp <= 0.0 {
+        return (None, None);
+    }
+    let outer = outer_position.map(|(x, y)| {
+        egui::Rect::from_min_size(
+            egui::pos2(x as f32 / native_ppp, y as f32 / native_ppp),
+            egui::vec2(outer_size.0 as f32 / native_ppp, outer_size.1 as f32 / native_ppp),
+        )
+    });
+    let monitor = monitor_size.map(|(w, h)| egui::vec2(w as f32 / native_ppp, h as f32 / native_ppp));
+    (outer, monitor)
 }
 
 /// 从 app 当前状态构造 HLSL 玻璃 uniform（岛体胶囊布局）。
@@ -546,6 +659,20 @@ mod root_scale_tests {
         assert_eq!(next.screen_rect.unwrap().width(), 768.0);
         assert_eq!(next.viewports[&egui::ViewportId::ROOT].native_pixels_per_point, Some(1.25));
         assert!(matches!(next.events[0], egui::Event::PointerMoved(p) if p == egui::pos2(80.0, 40.0)));
+    }
+
+    #[test]
+    fn child_viewport_info_gets_outer_rect_and_monitor_size() {
+        let (outer, monitor) = child_viewport_geometry(
+            Some((300, 150)), (900, 675), Some((1920, 1080)), false, 1.5,
+        );
+        assert_eq!(outer, Some(egui::Rect::from_min_size(
+            egui::pos2(200.0, 100.0), egui::vec2(600.0, 450.0))));
+        assert_eq!(monitor, Some(egui::vec2(1280.0, 720.0)));
+
+        // 最小化窗口 / 非法 DPI 不应该给出假的边框尺寸。
+        assert_eq!(child_viewport_geometry(Some((0, 0)), (10, 10), Some((100, 100)), true, 1.0).0, None);
+        assert_eq!(child_viewport_geometry(Some((0, 0)), (10, 10), Some((100, 100)), false, 0.0).1, None);
     }
 
     #[test]
