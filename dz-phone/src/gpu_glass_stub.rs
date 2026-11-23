@@ -79,8 +79,6 @@ pub struct GlassCallback {
     pub format: u32, // placeholder for the old wgpu::TextureFormat
 }
 
-pub const NEUTRAL_TINT: [f32; 3] = [0.62, 0.66, 0.74];
-
 /// 背景亮度：供 liquid_k 决定深/浅材质（深材质压暗+冷蓝，浅材质通透）。
 /// 优先读 wgc::THEME_LUMA——D3D11 渲染循环每 500ms 从玻璃背后的真实桌面帧采样，
 /// 与旧 wgpu 栈同机制（theme_luma_commit 过滤过渡帧）；未采样到时用启动时壁纸锚值兜底。
@@ -96,7 +94,6 @@ pub fn seed_theme_luma(v: f32) {
     // 播种到 wgc 的实时亮度（app::new 里也直接调 wgc::seed_theme_luma，幂等）。
     crate::wgc::seed_theme_luma(v);
 }
-pub fn gpu_ready() -> bool { true }
 pub fn set_morph_scale(v: f32) {
     if let Ok(mut u) = UNIFORMS.lock() { u.morph = v; }
 }
@@ -119,7 +116,6 @@ pub fn set_light_follow(v: f32) {
 pub fn set_shadow(enabled: bool) {
     if let Ok(mut u) = UNIFORMS.lock() { u.shadow = if enabled { 1.0 } else { 0.0 }; }
 }
-pub fn set_direct_composition(_active: bool) {}
 
 pub fn frame_for(
     body: Rect,

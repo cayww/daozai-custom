@@ -36,7 +36,7 @@ fn email(raw:&str)->Result<String,String>{
     if value.len()>254 || !value.is_ascii() || value.chars().any(char::is_whitespace) || value.split('@').count()!=2 || !value.split('@').all(|s|!s.is_empty()) {return Err("请填写这个 Google 账号的完整邮箱".into());}
     Ok(value)
 }
-fn slot(email:&str)->String{ring::digest::digest(&ring::digest::SHA256,email.as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect()}
+fn slot(email:&str)->String{crate::quota::sha256_hex(ring::digest::digest(&ring::digest::SHA256,email.as_bytes()).as_ref())}
 fn cookie(raw:&str)->Result<String,String>{
     let raw=raw.trim();let raw=raw.strip_prefix("Cookie:").or_else(||raw.strip_prefix("cookie:")).unwrap_or(raw).trim();
     if raw.is_empty() || raw.len()>32768 || !raw.is_ascii() || raw.bytes().any(|b|b<32 || b==127){return Err("请粘贴有效的 Cookie 请求头".into());}

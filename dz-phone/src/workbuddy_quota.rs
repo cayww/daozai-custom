@@ -27,7 +27,7 @@ pub fn parse(value:&Value)->Result<Snapshot,String>{
     Ok(Snapshot{plan:data["SubscriptionPackageName"].as_str().unwrap_or_default().into(),credits:Some(Credits{remaining,packages}),at:chrono::Utc::now().timestamp(),..Default::default()})
 }
 fn valid_origin(origin:&str)->bool{matches!(origin,"https://www.codebuddy.cn"|"https://www.workbuddy.cn")}
-fn slot(uid:&str)->String{ring::digest::digest(&ring::digest::SHA256,uid.as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect()}
+fn slot(uid:&str)->String{crate::quota::sha256_hex(ring::digest::digest(&ring::digest::SHA256,uid.as_bytes()).as_ref())}
 #[derive(serde::Serialize,serde::Deserialize)]
 struct Session { origin:String, ua:String, cookie:String, #[serde(default)] auth:Option<Auth> }
 #[derive(serde::Serialize,serde::Deserialize)]

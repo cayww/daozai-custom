@@ -209,6 +209,9 @@ pub fn watch(shared: Shared, repaint: impl Fn() + Send + 'static) -> Option<Watc
 #[cfg(not(windows))]
 pub fn watch(_shared: Shared, _repaint: impl Fn() + Send + 'static) -> Option<Watcher> { Some(Watcher {}) }
 
+#[cfg(not(windows))]
+pub fn copy_history(_text: &str) -> bool { false }
+
 #[cfg(windows)]
 const HISTORY_COPY_FORMAT: &str = "Daozai.ClipboardHistoryCopy";
 

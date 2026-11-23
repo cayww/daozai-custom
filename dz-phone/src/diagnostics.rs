@@ -138,13 +138,9 @@ mod native_crash {
         let code = record.ExceptionCode.0 as u32;
         let (module, offset) = module_at(record.ExceptionAddress as usize);
         let uptime = super::STARTED.get().map(|at| at.elapsed().as_secs()).unwrap_or(0);
-        let gl_driver = daozai::renderer::is_gl_driver(&module);
-        let renderer = if daozai::renderer::compat_active() { "兼容渲染（Direct3D 12）" } else { "OpenGL" };
-        let mut details = format!("异常代码：{code:#010x}\n崩溃模块：{module}\n模块内偏移：{offset:#x}\n已运行：{uptime} 秒\n渲染方式：{renderer}\n");
-        if gl_driver && !daozai::renderer::compat_active() {
-            daozai::renderer::request_fallback(&module);
-            details.push_str("判断：崩在显卡的 OpenGL 驱动里，下次启动自动改用兼容渲染（Direct3D 12）。\n");
-        }
+        // 渲染栈已是 D3D11（Windows 原生，Win7+ 全支持，无需 OpenGL 驱动回退）；
+        // 旧的 renderer-fallback 机制在 egui 0.35 迁移后已成为断链死代码，一并移除。
+        let mut details = format!("异常代码：{code:#010x}\n崩溃模块：{module}\n模块内偏移：{offset:#x}\n已运行：{uptime} 秒\n渲染方式：Direct3D 11\n");
         let restarted = super::relaunch_after_failure(&format!("进程崩溃（{module}）"));
         details.push_str(if restarted { "已自动重新启动岛仔。\n" } else { "未自动重启（运行不足 30 秒或一小时内已重启 3 次）。\n" });
         let _ = super::write_report(&super::diagnostics_dir(), "岛仔意外退出（进程崩溃）", &details);

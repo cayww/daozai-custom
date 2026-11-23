@@ -190,6 +190,14 @@ impl Fluid {
 
     /// 把一个顶点合成成颜色（未预乘）。`x/y` 是岛体局部坐标。
     pub fn compose(&self, x: f32, y: f32, w: f32, h: f32, expand: f32) -> Color32 {
+        let (tint, glow, glow_a, seek_xy, seek_a) = self.render_state();
+        self.compose_with(x, y, w, h, expand, tint, glow, glow_a, seek_xy, seek_a)
+    }
+
+    /// compose 的无状态变体：调用方预先取好 render_state()，供逐像素循环复用，
+    /// 避免在 12800 次循环里重复调用 tint_now() 等帧内不变量。
+    pub fn compose_with(&self, x: f32, y: f32, w: f32, h: f32, expand: f32,
+                        tint: [f32;3], glow: (f32,f32), glow_a: f32, seek_xy: (f32,f32), seek_a: f32) -> Color32 {
         let w = w.max(1.0);
         let h = h.max(1.0);
         let (u, v) = ((x / w).clamp(0.0, 1.0), (y / h).clamp(0.0, 1.0));
@@ -203,33 +211,37 @@ impl Fluid {
         let mut c = [g * a0; 3];
 
         // 2) 封面主色淡彩：贴着封面那一侧最浓，向右迅速衰减
-        let tint = self.tint_now();
         let edge = 0.22 + 0.78 * (-(u / 0.32).powi(2)).exp();
         over(&mut c, &mut a, tint, 0.22 * edge * (0.55 + 0.45 * expand));
 
         // 3) 光标光晕：跟着鼠标的一团散光
-        if self.glow_a > 0.003 {
-            let dx = (x - self.glow.0) / GLOW_RX;
-            let dy = (y - self.glow.1) / GLOW_RY;
+        if glow_a > 0.003 {
+            let dx = (x - glow.0) / GLOW_RX;
+            let dy = (y - glow.1) / GLOW_RY;
             let e = (-(dx * dx + dy * dy) * 1.5).exp();
-            over(&mut c, &mut a, [1.0, 1.0, 1.0], 0.12 * e * self.glow_a);
+            over(&mut c, &mut a, [1.0, 1.0, 1.0], 0.12 * e * glow_a);
         }
 
         // 4) 追光：头部往**后**拖一条很淡的尾光，头前几乎立刻收掉。
         //    和进度条上那道彗尾同方向，面板上才不会出现「一团圆灯」。
-        if self.seek_a > 0.003 {
-            let dx = x - self.seek_xy.0;
+        if seek_a > 0.003 {
+            let dx = x - seek_xy.0;
             let along = if dx >= 0.0 {
                 (-(dx / SEEK_LEAD).powi(2) * 1.6).exp()
             } else {
                 (-(-dx / SEEK_TAIL).powf(1.3)).exp()
             };
-            let dy = (y - self.seek_xy.1) / SEEK_RY;
+            let dy = (y - seek_xy.1) / SEEK_RY;
             let e = along * (-(dy * dy) * 1.6).exp();
-            over(&mut c, &mut a, tint, 0.065 * e * self.seek_a);
+            over(&mut c, &mut a, tint, 0.065 * e * seek_a);
         }
 
         unmultiply(c, a)
+    }
+
+    /// compose() 依赖的全部运行状态快照，供上层做纹理缓存的脏判断。
+    pub fn render_state(&self) -> ([f32;3],(f32,f32),f32,(f32,f32),f32) {
+        (self.tint_now(), self.glow, self.glow_a, self.seek_xy, self.seek_a)
     }
 
     /// 是否还需要连续刷新（功耗闸门）。

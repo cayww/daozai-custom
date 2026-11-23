@@ -30,7 +30,7 @@ fn read_json(path:&Path)->Result<Value,String>{
     let raw=fs::read(path).map_err(|_|"尚无 Claude 本地用量记录，请在官方客户端使用后刷新".to_string())?;
     serde_json::from_slice(raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&raw)).map_err(|_|"Claude 本地用量记录暂不可读，等待客户端更新".into())
 }
-fn slot(owner:&str,org:&str)->String{digest::digest(&digest::SHA256,format!("{owner}|{org}").as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect()}
+fn slot(owner:&str,org:&str)->String{crate::quota::sha256_hex(digest::digest(&digest::SHA256,format!("{owner}|{org}").as_bytes()).as_ref())}
 fn desktop_identity(path:&Path)->Result<(String,i64),String>{
     // 只反序列化账号标识，忽略同文件中的加密登录缓存。
     #[derive(serde::Deserialize)]
@@ -285,7 +285,7 @@ mod tests {
         let at=chrono::Utc::now().timestamp_millis()-60_000;
         let history=serde_json::json!({"version":2,"samples":[{"t":at-1000,"org":"local-org","u":{"fh":8,"sd":70}},{"t":at,"org":"local-org","u":{"fh":11,"sd":76}}]}).to_string();
         fs::write(dir.join("plan-usage-history.json"),&history).unwrap();
-        let slot=digest::digest(&digest::SHA256,b"local-user|local-org").as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>();
+        let slot=crate::quota::sha256_hex(digest::digest(&digest::SHA256,b"local-user|local-org").as_ref());
         let mut account=Account{id:"local-test".into(),provider:super::super::Provider::Claude,alias:"本地测试".into(),source:source.clone(),slot:Some(slot),enabled:true,pinned:false};
         let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
         let agent=ureq::AgentBuilder::new().proxy(ureq::Proxy::new(format!("http://{}",listener.local_addr().unwrap())).unwrap()).timeout(std::time::Duration::from_millis(100)).build();

@@ -138,10 +138,10 @@ impl Shell {
     /// D3D11 自绘栈构造：直接接收 egui Context 与窗口 HWND（不经 eframe CreationContext）。
     fn new(egui_ctx: egui::Context, hwnd: windows::Win32::Foundation::HWND) -> Self {
         diagnostics::graphics();
-        let running_compat=false; // migration: no wgpu render state
         diagnostics::startup("加载本地配置");
         let mut app = App::new(&egui_ctx, Options::default());
-        app.render_compat_running=running_compat;
+        // D3D11 自绘栈无 wgpu 渲染状态兼容模式；保留字段仅为设置页「需重启」提示。
+        app.render_compat_running=false;
         #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
         #[cfg(not(feature="record"))] let quota_demo=false;
         diagnostics::startup("初始化额度配置");
@@ -791,6 +791,15 @@ impl Shell {
                     self.volume_quiet=PollClock::now();
                 },
                 Cmd::Copy(text)=>{ctx.copy_text(text);self.app.say("已复制");},
+                Cmd::CopyOtp(text)=>{
+                    // 验证码只写系统剪贴板、不打进岛仔自己的剪贴板历史；
+                    // copy_history 会带 HISTORY_COPY_FORMAT 标记，监听线程据此跳过记录。
+                    #[cfg(windows)]
+                    if !daozai::clipboard::copy_history(&text) { ctx.copy_text(text.clone()); }
+                    #[cfg(not(windows))]
+                    ctx.copy_text(text);
+                    self.app.say("已复制");
+                },
                 Cmd::Notify(title,body,sound)=>{
                     #[cfg(windows)] {
                         if sound==app::NotificationSound::Health {daozai::tray::play_health_sound();}

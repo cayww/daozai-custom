@@ -64,7 +64,7 @@ fn claims(token:&str)->Result<Value,String>{
 }
 fn slot_of(token:&str)->Result<String,String>{
     let value=claims(token)?;let sub=value["sub"].as_str().filter(|s|!s.is_empty()).ok_or(LOGIN_ERROR)?;
-    Ok(digest::digest(&digest::SHA256,sub.as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect())
+    Ok(crate::quota::sha256_hex(digest::digest(&digest::SHA256,sub.as_bytes()).as_ref()))
 }
 fn session(value:&Value)->Result<Session,String>{
     let token=value["accessToken"].as_str().or_else(||value["access_token"].as_str()).filter(|s|!s.is_empty()).ok_or(LOGIN_ERROR)?.to_owned();
@@ -82,7 +82,7 @@ fn native_session(account:&Account)->Result<Session,String>{
 #[cfg(windows)]
 fn credential(slot:&str)->Result<keyring::Entry,String>{
     if slot.len()!=64 || !slot.bytes().all(|b|b.is_ascii_hexdigit()){return Err(LOGIN_ERROR.into());}
-    keyring::Entry::new("Daozai.GrokBot",slot).map_err(|_|"无法打开 Windows 凭据管理器".into())
+    crate::quota::credential_entry("Daozai.GrokBot",slot)
 }
 #[cfg(windows)]
 fn save_session(slot:&str,value:&Session)->Result<(),String>{

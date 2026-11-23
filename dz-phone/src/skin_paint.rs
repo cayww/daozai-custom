@@ -292,9 +292,15 @@ pub fn recolor_layer(ctx: &egui::Context, layer: egui::LayerId, ranges: &[(usize
                 }
             }
         }
+        // 预计算每个 shape 索引的 tone（后注册的区间覆盖先注册的，与原 rev().find 语义一致），
+        // 把逐 shape 的线性扫描 O(shapes×spans) 降为一次 O(shapes+spans) 预处理 + O(1) 查询。
+        let mut tone_at: Vec<Option<Tone>> = vec![None; end];
+        for &(a, b, tone) in &toned {
+            for slot in tone_at.iter_mut().take(b.min(end)).skip(a) { *slot = Some(tone); }
+        }
         for &(from, to) in ranges {
             for i in from..to.min(end) {
-                if let Some(&(_, _, tone)) = toned.iter().rev().find(|&&(a, b, _)| i >= a && i < b) {
+                if let Some(tone) = tone_at[i] {
                     list.mutate_shape(egui::layers::ShapeIdx(i), |s| recolor_with(&mut s.shape, p, tone));
                     continue;
                 }

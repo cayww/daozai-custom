@@ -62,7 +62,18 @@ pub fn request(agent:&ureq::Agent,base:&str,credential:&Credential,cancelled:imp
     let base=super::validate_base_url(base).map_err(|e|(e,0))?;
     if credential.script.trim().is_empty()||credential.script.len()>65536{return Err(("请输入 64 KB 以内的查询脚本".into(),0));}
     let mut code=credential.script.clone();
-    for (key,value) in [("baseUrl",base.as_str()),("apiKey",credential.api_key.as_str()),("accessToken",credential.access_token.as_str()),("userId",credential.user_id.as_str())]{code=code.replace(&format!("{{{{{key}}}}}"),value);}
+    // 凭据来自用户自填（可能含引号/反斜杠）：按 JSON 字符串规则转义后再拼进 JS 字面量，
+    // 防止突破 `"{{apiKey}}"` 这类引号注入任意脚本。serde_json 编码结果首尾必是 `"`，
+    // 去掉首尾引号即得到可安全嵌入既定引号内的内容。
+    let js_escape = |value: &str| -> String {
+        match serde_json::to_string(value) {
+            Ok(encoded) if encoded.len() >= 2 => encoded[1..encoded.len()-1].to_string(),
+            _ => String::new(),
+        }
+    };
+    for (key,value) in [("baseUrl",base.as_str()),("apiKey",credential.api_key.as_str()),("accessToken",credential.access_token.as_str()),("userId",credential.user_id.as_str())]{
+        code=code.replace(&format!("{{{{{key}}}}}"), &js_escape(value));
+    }
     let config=evaluate(&code,None,Duration::from_secs(5)).map_err(|e|(e,0))?;
     let url=url::Url::parse(config["url"].as_str().ok_or(("查询脚本缺少请求地址".into(),0))?).map_err(|_|("查询脚本的请求地址无效".into(),0))?;
     let origin=url::Url::parse(&base).unwrap();

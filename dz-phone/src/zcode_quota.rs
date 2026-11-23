@@ -8,7 +8,7 @@ pub(crate) fn path()->Option<PathBuf>{
     Some(PathBuf::from(std::env::var_os("USERPROFILE")?).join(".zcode/v2/credentials.json"))
 }
 const CREDENTIAL_ERROR:&str="无法读取当前 Windows 用户的 ZCode 登录，请在客户端重新登录";
-fn hash(bytes:&[u8])->String{digest::digest(&digest::SHA256,bytes).as_ref().iter().map(|b|format!("{b:02x}")).collect()}
+fn hash(bytes:&[u8])->String{crate::quota::sha256_hex(digest::digest(&digest::SHA256,bytes).as_ref())}
 #[cfg(windows)]
 fn system_key(path:&Path)->Result<Vec<u8>,String>{
     // ZCode 按绝对路径的 SHA-256 定位系统密钥，不解析符号链接或改变路径大小写。

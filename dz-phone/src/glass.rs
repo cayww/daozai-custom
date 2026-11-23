@@ -23,16 +23,8 @@ const THICK_H: f32 = 220.0;
 /// 边缘高光与内发光的强度（`crates/poni/src/glass.rs:693-694`）。
 pub const RIM_STRENGTH: f32 = 0.80;
 pub const RIM_FACING_MIN: f32 = 0.30;
-pub const GLOW_STRENGTH: f32 = 0.09;
-/// 两层霜的模糊半径，DIP（`crates/poni/src/glass.rs:29-30`）。
-pub const FROST_LO: f32 = 3.0;
-pub const FROST_HI: f32 = 9.0;
-/// 颜色饱和度与色散（`crates/poni/src/glass.rs:699-700, 725`）。
-pub const SATURATION: f32 = 1.45;
-pub const DISPERSION: f32 = 0.03;
 /// 深色玻璃的底色与描边（`poni-core/src/look.rs:139, 142`）。
 pub const GROUND_DARK: (u8, u8, u8) = (0x1C, 0x1C, 0x1E);
-pub const BORDER_ALPHA: f32 = 0.10;
 
 /// 玻璃厚度：0 = 收起的小药丸，1 = 展开的面板。
 pub fn thickness(height: f32) -> f32 {

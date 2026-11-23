@@ -27,6 +27,20 @@ pub(crate) mod kiro;
 #[path="native_auth.rs"]
 mod native_auth;
 
+/// 各 provider 共用的 Windows 凭据入口（差异化错误信息由调用方保留）。
+#[cfg(windows)]
+pub fn credential_entry(service:&str,slot:&str)->Result<keyring::Entry,String>{
+    keyring::Entry::new(service,slot).map_err(|_|"无法打开 Windows 凭据管理器".into())
+}
+
+/// 把 SHA256 摘要字节转成小写 hex，供各 provider 的 slot/指纹统一使用。
+pub fn sha256_hex(bytes:&[u8])->String{
+    const HEX:&[u8;16]=b"0123456789abcdef";
+    let mut out=String::with_capacity(bytes.len()*2);
+    for &b in bytes{out.push(HEX[(b>>4) as usize] as char);out.push(HEX[(b&15) as usize] as char);}
+    out
+}
+
 pub struct Discovery {pub added:usize,pub notes:Vec<String>}
 impl Discovery {
     pub fn message(&self)->String{

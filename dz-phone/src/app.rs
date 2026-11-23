@@ -364,6 +364,8 @@ pub enum Cmd {
     Focus,
     Reveal(PathBuf),
     Copy(String),
+    /// 验证码专用复制：写入剪贴板但不进入岛仔的剪贴板历史（避免明文长期留存）。
+    CopyOtp(String),
     Notify(String, String, NotificationSound),
     RequestNotifications,
     RequestQqNotifications,
@@ -1131,6 +1133,8 @@ pub struct App {
     fluid_title:String,
     /// 悬浮云每帧刷新的颜色纹理：低分辨率交给 GPU 双线性插值，避免每帧生成上万顶点。
     fluid_tex:Option<egui::TextureHandle>,
+    /// Fluid 胶囊纹理的状态快照：状态未变时跳过每帧 12800 次 compose 与纹理上传。
+    fluid_tex_state:Option<(f32,f32,f32,[f32;3],(f32,f32),f32,(f32,f32),f32)>,
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
     /// 液态玻璃的重绘档位：0=不管（交给原有节拍）、1=60fps（有动画/悬停/拖动）、
@@ -1204,6 +1208,10 @@ pub struct App {
     pub(crate) quiet_meeting_key:Option<String>,
     /// 上次检查会议勿扰的时刻（每 5 秒查一次，别每帧都拼日程）。
     pub(crate) meeting_checked_at:f64,
+    /// 会议提醒扫描的签名缓存：(触发时刻 now_ts, 数据源内容 hash)。
+    /// 同一秒内且日程/邮件/忽略/已提醒集合都没变时跳过重扫；数据一变立即重扫，
+    /// 既避免每帧遍历分配，又不破坏「加日程后立即提醒」的语义。
+    pub(crate) meeting_scan_sig:Option<(i64,u64)>,
     /// 今日会议候选缓存：(日期, 生成时刻, (开始, 结束, uid))。
     /// 日程合并排序较重，60 秒或跨天才重算一次；90 秒的触发窗口保证不会漏。
     pub(crate) meeting_plan:(String,f64,Vec<(i64,i64,String)>),
@@ -1477,6 +1485,7 @@ impl App {
             subpage:None,
             task_dialog:None,
             fluid_tex:None,
+            fluid_tex_state:None,
             liquid_k:1.0,
             glass_tick:0,
             pill_still_since:None,
@@ -1515,6 +1524,7 @@ impl App {
             quiet_until:0.0,
             quiet_meeting_key:None,
             meeting_checked_at:0.0,
+            meeting_scan_sig:None,
             meeting_plan:(String::new(),f64::MIN,Vec::new()),
             snoozed:Vec::new(),
             focus_pending:0.0,
@@ -2453,9 +2463,6 @@ impl App {
         (self.h.pos - bh) / (self.expanded_height() - bh)
     }
 
-    /// 点击/切走/编辑等场景下撤销续滚带。
-    pub fn cancel_page_scroll(&mut self) { self.page_scroll_area=None; }
-
     pub(crate) fn expanded_height(&self)->f32 {
         if self.page==CALENDAR_PAGE {CALENDAR_H}else if self.page==WEATHER_PAGE {WEATHER_H}else if self.page==6{176.0}else if self.page==5&&self.mail.open_uid.is_some(){236.0}else{PH}
     }
@@ -2553,11 +2560,14 @@ impl App {
         self.tick(env, dt, elapsed);
         self.sync_device(env);
         self.tick_alerts();
-        let hud_active=self.notice.clone();
-        if hud_active.as_ref().map(|a|&a.title)!=self.hud_notice.as_ref().map(|a|&a.title)||hud_active.is_none(){self.notice_details=false;}
-        if let Some(a)=&hud_active {self.hud_notice=Some(a.clone());}
-        self.hud_alpha=anim::approach(self.hud_alpha,if hud_active.is_some(){1.0}else{0.0},if hud_active.is_some(){16.0}else{8.0},dt);
-        if hud_active.is_none() && self.hud_alpha<0.003 {self.hud_notice=None;}
+        // 避免每帧双重 clone：先按 title 比较，仅标题变化时才克隆一次到 hud_notice。
+        // （draw_notice 需要 &mut self，其入参的 clone 无法省，这里是唯一安全可省的一处。）
+        let title_changed=self.notice.as_ref().map(|a|&a.title)!=self.hud_notice.as_ref().map(|a|&a.title);
+        let has_notice=self.notice.is_some();
+        if title_changed||!has_notice {self.notice_details=false;}
+        if title_changed {if let Some(a)=self.notice.as_ref(){self.hud_notice=Some(a.clone());}}
+        self.hud_alpha=anim::approach(self.hud_alpha,if has_notice{1.0}else{0.0},if has_notice{16.0}else{8.0},dt);
+        if !has_notice && self.hud_alpha<0.003 {self.hud_notice=None;}
         let notice_target=if !self.notice.as_ref().is_some_and(|a|a.messenger().is_some()) && self.compact_notices()&&(self.notice.is_some()||self.t<self.notification_bell_until) {44.0}else{0.0};
         self.notice_width.target=notice_target;
         if self.compact_notices(){self.notice_width.step(dt);}else{self.notice_width.snap(0.0);self.notice_details=false;}
@@ -3986,19 +3996,28 @@ impl App {
         let w=rect.width().max(1.0);
         let h=rect.height().max(1.0);
         let expand=self.progress().clamp(0.0,1.0);
-        let mut image=egui::ColorImage::new([TEX_W,TEX_H], vec![Color32::TRANSPARENT; TEX_W * TEX_H]);
-        for row in 0..TEX_H {
-            let py=h*(row as f32+0.5)/TEX_H as f32;
-            for col in 0..TEX_W {
-                let px=w*(col as f32+0.5)/TEX_W as f32;
-                image.pixels[row*TEX_W+col]=self.fluid.compose(px,py,w,h,expand);
-            }
-        }
+        let (tint,glow,glow_a,seek_xy,seek_a)=self.fluid.render_state();
+        let state=(w,h,expand,tint,glow,glow_a,seek_xy,seek_a);
         let options=egui::TextureOptions::LINEAR;
-        let handle=self.fluid_tex.get_or_insert_with(||{
-            painter.ctx().load_texture("daozai-fluid",image.clone(),options)
-        });
-        handle.set(image,options);
+        // 静止态（尺寸/进度/取色/光晕/追光都没变）直接复用纹理，跳过每帧
+        // 12800 次 compose（含 powf/exp）与 50KB 分配 + 上传；动画期间仍逐帧重算。
+        if self.fluid_tex_state.as_ref()!=Some(&state) || self.fluid_tex.is_none() {
+            let mut image=egui::ColorImage::new([TEX_W,TEX_H], vec![Color32::TRANSPARENT; TEX_W * TEX_H]);
+            let tint_here=tint;
+            for row in 0..TEX_H {
+                let py=h*(row as f32+0.5)/TEX_H as f32;
+                for col in 0..TEX_W {
+                    let px=w*(col as f32+0.5)/TEX_W as f32;
+                    image.pixels[row*TEX_W+col]=self.fluid.compose_with(px,py,w,h,expand,tint_here,glow,glow_a,seek_xy,seek_a);
+                }
+            }
+            let handle=self.fluid_tex.get_or_insert_with(||{
+                painter.ctx().load_texture("daozai-fluid",image.clone(),options)
+            });
+            handle.set(image,options);
+            self.fluid_tex_state=Some(state);
+        }
+        let handle=self.fluid_tex.as_ref().expect("fluid texture initialized above");
         let radius=radius.min(rect.height().min(rect.width())*0.5);
         let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
         painter.add(egui::epaint::RectShape::filled(rect,radius,Color32::WHITE).with_texture(handle.id(),uv));
@@ -4819,6 +4838,49 @@ impl App {
     // ---------------------------------------------------------------
     // 每帧推进：番茄钟、饮水提醒、跨天
     // ---------------------------------------------------------------
+    /// 会议提醒扫描的数据签名：把会改变提醒判定的输入压成一个 u64。
+    /// 用异或累积使 HashSet 遍历顺序无关；只 hash (uid,start,all_day) 等标量，
+    /// 不分配 String，比每帧 dedupe_key + clone 便宜得多。
+    fn meeting_scan_data_hash(&self, calendar_on: bool, mail_on: bool) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        calendar_on.hash(&mut h);
+        mail_on.hash(&mut h);
+        self.settings.mail_ics.hash(&mut h);
+        let mut mix = |uid: &str, start: i64, all_day: bool| {
+            let mut one = std::collections::hash_map::DefaultHasher::new();
+            uid.hash(&mut one); start.hash(&mut one); all_day.hash(&mut one);
+            h.write_u64(one.finish());
+        };
+        for entry in &self.calendar.local {
+            mix(&entry.event.uid, entry.event.start, entry.event.all_day);
+        }
+        for (m, _) in self.calendar_work_events(None) {
+            mix(&m.uid, m.start, m.all_day);
+        }
+        if mail_on {
+            for m in self.mail.recent.iter().filter_map(|item| item.meeting.as_ref()) {
+                mix(&m.uid, m.start, m.all_day);
+            }
+        }
+        // fired / ignored 用顺序无关的异或，内容一变签名就变。
+        let mut fired_bits = 0u64;
+        for key in &self.mail.fired {
+            let mut one = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut one);
+            fired_bits ^= one.finish();
+        }
+        h.write_u64(fired_bits);
+        let mut ignored_bits = 0u64;
+        for key in &self.settings.ignored_mail_events {
+            let mut one = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut one);
+            ignored_bits ^= one.finish();
+        }
+        h.write_u64(ignored_bits);
+        h.finish()
+    }
+
     fn tick(&mut self, env: &Env, dt: f32, elapsed: f32) {
         #[cfg(windows)] crate::smtc::netease_control::boot_scan_shortcuts();
         if self.toast.as_ref().is_some_and(|(_,at)|self.t-at>TOAST_SECS as f64){self.toast=None;}
@@ -4887,10 +4949,15 @@ impl App {
         // 邮件和日历两条来源撞上了也只弹一次。
         let lead = self.settings.mail_ics as i64 * 60;
         let now_ts = chrono::Local::now().timestamp();
+        let calendar_on = self.module_on(CALENDAR_PAGE);
+        let mail_on = self.mail_active();
+        // 同一秒且数据源（日程/邮件/忽略/已提醒）都没变时跳过整段遍历；
+        // 任一变化 signature 立即改变 → 马上重扫，保留「加日程就提醒」的语义。
+        let scan_changed = self.meeting_scan_sig != Some((now_ts, self.meeting_scan_data_hash(calendar_on, mail_on)));
+        if scan_changed {
         let mut picks = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         // 会议提醒点开后进入日程页；日程模块关闭时不再提醒（含邮件邀请）。
-        let calendar_on=self.module_on(CALENDAR_PAGE);
         for entry in self.calendar.local.iter().filter(|_|calendar_on) {
             let Some(at)=entry.reminder_at() else{continue;};
             let key=calendar::dedupe_key(&entry.event);
@@ -4907,7 +4974,7 @@ impl App {
                 picks.push((key, m.clone(), source.to_string(), CALENDAR_PAGE));
             }
         }
-        if calendar_on && self.mail_active() {
+        if calendar_on && mail_on {
             for m in self.mail.recent.iter().filter_map(|m| m.meeting.as_ref()).filter(|m|!self.mail_event_ignored(m)) {
                 let left = m.start - now_ts;
                 let key = calendar::dedupe_key(m);
@@ -4919,6 +4986,9 @@ impl App {
         for (key, meeting, source, page) in picks {
             self.mail.fired.insert(key);
             self.meeting_alert(meeting, source, page);
+        }
+        // 用扫描后的状态（含本次新增的 fired）更新签名，避免下一帧因 fired 变化重复扫描。
+        self.meeting_scan_sig = Some((now_ts, self.meeting_scan_data_hash(calendar_on, mail_on)));
         }
         self.water_ring.target = self.water.percent() / 100.0;
         self.water_ring.step(dt);

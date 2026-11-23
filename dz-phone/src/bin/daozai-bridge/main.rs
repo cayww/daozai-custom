@@ -189,6 +189,11 @@ fn handle_status(msg: &serde_json::Value) {
     let mut item = serde_json::Map::new();
     for field in STATUS_FIELDS {
         if let Some(value) = msg.get(field).filter(|v| !v.is_null()) {
+            // 浏览器扩展不应有本地文件打开能力：桥侧拦掉 file: click，
+            // 纵深防御（主程序 file: 白名单仍在）。copy:/url: 等合法动作照常透传。
+            if field == "click" && value.as_str().is_some_and(|s| s.trim_start().starts_with("file:")) {
+                continue;
+            }
             item.insert(field.into(), value.clone());
         }
     }

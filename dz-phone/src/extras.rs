@@ -1556,7 +1556,8 @@ impl App {
             let code = crate::otp::extract("", &body, &[]);
             log_otp("phone", code.as_ref().map(|c| c.text.as_str()));
             if let Some(code) = code {
-                self.pending.push(Cmd::Copy(code.text));
+                // 验证码不进岛仔的剪贴板历史，只写系统剪贴板。
+                self.pending.push(Cmd::CopyOtp(code.text));
             }
         }
         // 来电中 / 未接来电：标签都是「电话」，靠正文区分——
@@ -1595,7 +1596,13 @@ impl App {
                 },
             )
         };
-        log_notice(&format!("SHOW {title} / {body}  <- {trace}"));
+        // 通知正文可能含短信验证码：落盘诊断日志前先打码，避免 generate diagnostics 时外泄。
+        let logged_body = if let Some(code) = crate::otp::extract("", &body, &[]) {
+            crate::mail_privacy::mask(&body, &code.text)
+        } else {
+            body.clone()
+        };
+        log_notice(&format!("SHOW {title} / {logged_body}  <- {trace}"));
         self.enqueue_alert(
             Alert {
                 source: AlertSource::External(id),
@@ -1783,7 +1790,8 @@ fn focus_days() -> Vec<(String, u32)> {
         .filter_map(|item| {
             Some((
                 item.get("date")?.as_str()?.to_owned(),
-                item.get("minutes")?.as_u64()? as u32,
+                // 防止超大值静默截断为 0 或错误的小数值；越界条目直接丢弃。
+                u32::try_from(item.get("minutes")?.as_u64()?).ok()?,
             ))
         })
         .collect()
@@ -2063,35 +2071,28 @@ fn status_action(spec: &str) -> Option<(&'static str, StatusAct)> {
         }
     }
     if let Some(file) = spec.strip_prefix("file:") {
-        // 只放行「看到的文件」：路径必须存在，且不是可执行/脚本/快捷方式——
-        // 否则任何能写 island_status.json 的进程都能借岛仔的手启动程序。
+        // 只放行「看到的文件」：路径必须存在，且扩展名在白名单内。
+        // 黑名单挡不住 .py/.jar/.msc/.chm 等可执行/脚本/解析即执行的文件类型——
+        // 任何能写 island_status.json 的进程都能借岛仔的手启动程序，故改为白名单。
         let path = std::path::PathBuf::from(file);
-        let blocked = path
+        let allowed = path
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| {
+            .is_some_and(|e| {
                 matches!(
                     e.to_ascii_lowercase().as_str(),
-                    "exe"
-                        | "bat"
-                        | "cmd"
-                        | "com"
-                        | "ps1"
-                        | "vbs"
-                        | "js"
-                        | "jse"
-                        | "wsf"
-                        | "wsh"
-                        | "hta"
-                        | "lnk"
-                        | "scr"
-                        | "msi"
-                        | "pif"
-                        | "reg"
+                    // 文档
+                    "txt" | "md" | "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx"
+                        | "rtf" | "csv" | "epub" | "mobi"
+                        // 图片
+                        | "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" | "ico" | "heic"
+                        // 音视频
+                        | "mp3" | "wav" | "flac" | "m4a" | "aac" | "ogg" | "mp4" | "mkv" | "avi" | "mov" | "webm"
+                        // 压缩包
+                        | "zip" | "rar" | "7z" | "tar" | "gz"
                 )
-            })
-            .unwrap_or(false);
-        if path.exists() && !blocked {
+            });
+        if path.is_file() && allowed {
             return Some(("打开", Shell(Cmd::Open(path))));
         }
     }
@@ -2250,7 +2251,7 @@ impl App {
             {
                 nc.centered_text(text_x, 30.0, &code, 20.0, W::Bold, theme::WHITE, H::Left);
                 if notice_button(&nc, 160.0, 12.0, 60.0, "复制", "phone-code-copy") {
-                    _cmds.push(Cmd::Copy(code));
+                    _cmds.push(Cmd::CopyOtp(code));
                 }
             } else {
                 nc.centered_text(

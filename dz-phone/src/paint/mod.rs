@@ -551,28 +551,6 @@ impl<'a> Card<'a> {
         (h, p)
     }
 
-    /// 按钮按压弹簧（k=300 ζ=0.5：按下冲过头、松手晃回来）。
-    /// 弹簧状态按 `id` 存在 egui 的临时数据里，跨帧保留速度与位置；非 live
-    /// （截图/录制）时直接吸附到目标，不产生动画。返回当前位移 0..≈1.3。
-    pub fn press_spring(&self, id: egui::Id, down: bool, k: f32, zeta: f32) -> f32 {
-        let ctx = self.ui.ctx();
-        let sid = id.with("glass-press-spring");
-        // `unstable_dt` 是这一帧的真实间隔（`stable_dt` 会做平滑，弹簧会慢半拍）；
-        // 上限 50ms 防止掉帧后弹簧积分爆掉。
-        let dt = self.ui.input(|i| i.unstable_dt.min(0.05));
-        let mut s = ctx.data_mut(|d| {
-            d.get_temp::<crate::anim::Spring>(sid).unwrap_or_else(|| {
-                crate::anim::Spring::new(if down { 1.0 } else { 0.0 }, k, zeta)
-            })
-        });
-        s.tune(k, zeta);
-        s.target = if self.live && down { 1.0 } else { 0.0 };
-        if !self.live { s.snap(s.target); }
-        s.step(dt);
-        let pos = s.pos;
-        ctx.data_mut(|d| d.insert_temp(sid, s));
-        pos
-    }
 }
 
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {

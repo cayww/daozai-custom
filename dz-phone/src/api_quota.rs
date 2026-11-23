@@ -46,7 +46,7 @@ fn request(agent:&ureq::Agent,provider:Provider,source:&str,key:&str,cancel:Opti
     }
 }
 #[cfg(windows)]
-fn credential(slot:&str)->Result<keyring::Entry,String>{keyring::Entry::new("Daozai.ApiQuota",slot).map_err(|_|"无法打开 Windows 凭据管理器".into())}
+fn credential(slot:&str)->Result<keyring::Entry,String>{crate::quota::credential_entry("Daozai.ApiQuota",slot)}
 #[cfg(windows)]
 fn save(slot:&str,key:&str)->Result<(),String>{
     if slot.starts_with("script-"){

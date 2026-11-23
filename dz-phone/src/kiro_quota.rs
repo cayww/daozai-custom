@@ -37,7 +37,7 @@ fn body(profile_arn:Option<&str>)->Value{
 }
 fn owner(v:&Value)->Result<String,String>{
     let user=v["userInfo"]["userId"].as_str().map(str::trim).filter(|s|!s.is_empty()&&s.len()<=4096).ok_or("Kiro 未返回可核验的用户标识，暂不显示此账号额度")?;
-    let hash=ring::digest::digest(&ring::digest::SHA256,user.as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>();
+    let hash=crate::quota::sha256_hex(ring::digest::digest(&ring::digest::SHA256,user.as_bytes()).as_ref());
     Ok(format!("kiro-user:{hash}"))
 }
 pub(super) fn verified_slot(slot:&str)->bool{slot.strip_prefix("kiro-user:").is_some_and(|s|s.len()==64&&s.bytes().all(|b|b.is_ascii_hexdigit()))}

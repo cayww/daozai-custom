@@ -38,7 +38,6 @@ mod task_picker;
 pub mod model;
 pub mod island_status;
 pub mod maa;
-pub mod renderer;
 pub mod otp;
 pub mod phone_battery;
 pub mod quota;

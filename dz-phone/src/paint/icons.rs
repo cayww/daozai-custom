@@ -163,13 +163,6 @@ pub fn reset(c: &Card, cx: f32, cy: f32, spin: f32, color: Color32) {
     );
 }
 
-pub fn coffee(c: &Card, x: f32, y: f32, color: Color32) {
-    c.stroke(x - 4.5, y - 2.0, 7.6, 6.0, 1.8, 1.1, color);
-    c.arc(x + 3.4, y + 1.0, 1.8, -FRAC_PI_2, FRAC_PI_2, 1.1, color);
-    c.seg((x - 2.0, y - 5.8), (x - 2.0, y - 3.8), 1.0, color);
-    c.seg((x + 0.6, y - 6.4), (x + 0.6, y - 3.8), 1.0, color);
-}
-
 pub fn target(c: &Card, x: f32, y: f32, color: Color32) {
     c.ring(x, y, 5.0, 1.1, color);
     c.ring(x, y, 2.4, 1.1, color);

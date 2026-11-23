@@ -640,7 +640,7 @@ pub(crate) mod net {
     use imap::extensions::idle::SetReadTimeout;
     use native_tls::{TlsConnector, TlsStream};
     use std::io::{Read, Write};
-    use std::net::TcpStream;
+    use std::net::{TcpStream, ToSocketAddrs};
     use std::time::Duration;
 
     pub type Stream = TlsStream<TcpStream>;
@@ -715,9 +715,14 @@ pub(crate) mod net {
             .min_protocol_version(Some(native_tls::Protocol::Tlsv12))
             .build()
             .map_err(|e| format!("TLS 初始化失败：{e}"))?;
-        let tcp = TcpStream::connect((host.as_str(), port))
-            .map_err(|e| format!("无法连接 {host}：{e}"))?;
+        // 连接阶段也要有超时：只读/写超时无法中断卡在 TCP 三次握手的 connect，
+        // 防火墙静默丢包时会让该账户永久停在「连接中」且无法响应停止。
         let timeout = Some(Duration::from_secs(20));
+        let tcp = (host.as_str(), port)
+            .to_socket_addrs()
+            .map_err(|e| format!("无法解析 {host}：{e}"))?
+            .find_map(|addr| TcpStream::connect_timeout(&addr, timeout.unwrap()).ok())
+            .ok_or_else(|| format!("无法连接 {host}：连接超时或不可达"))?;
         let _ = tcp.set_read_timeout(timeout);
         let _ = tcp.set_write_timeout(timeout);
         let mut stream = tls.connect(&host, tcp).map_err(|e| format!("TLS 握手失败：{e}"))?;
@@ -811,9 +816,18 @@ mod service {
         pub fn start() -> Self {
             let (ev_tx, ev_rx) = channel();
             let (cmd_tx, cmd_rx) = channel();
-            let _ = std::thread::Builder::new()
+            let fallback_tx = ev_tx.clone();
+            if std::thread::Builder::new()
                 .name("daozai-mail".into())
-                .spawn(move || supervisor(cmd_rx, ev_tx));
+                .spawn(move || supervisor(cmd_rx, ev_tx)).is_err()
+            {
+                // 线程创建失败（句柄耗尽）曾被视为 let _ = 静默吞掉，
+                // 之后所有 send 都失败、邮件功能无反应且 UI 无任何提示。
+                let _ = fallback_tx.send(Event::Status{
+                    account: String::new(),
+                    status: Status::Failed("邮件服务无法启动（系统线程资源不足）".into()),
+                });
+            }
             let (manage,done)=crate::mail_manage::start();
             Self { cmd: cmd_tx, ev: ev_rx,manage,done }
         }
@@ -865,11 +879,19 @@ mod service {
                         let iv = interval.clone();
                         let name = "daozai-mail".to_string();
                         let running_account=account.clone();
-                        if let Ok(handle) = std::thread::Builder::new()
+                        let ev_spawn = ev.clone();
+                        match std::thread::Builder::new()
                             .name(name)
                             .spawn(move || worker(account, flag, iv, ev))
                         {
-                            workers.insert(k, (stop, handle,running_account));
+                            Ok(handle) => { workers.insert(k, (stop, handle,running_account)); }
+                            Err(_) => {
+                                // 单账户线程创建失败不能静默跳过：发 Failed 让 UI 明确显示。
+                                let _ = ev_spawn.send(Event::Status{
+                                    account: running_account.email,
+                                    status: Status::Failed("邮箱同步线程无法启动（系统线程资源不足）".into()),
+                                });
+                            }
                         }
                     }
                 }

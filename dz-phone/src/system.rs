@@ -678,10 +678,23 @@ fn connect_inner(ctx:eframe::egui::Context,filter:crate::messenger::Notification
             result.is_ok()
         };
         let run = || -> Result<()> {
-            unsafe {windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED)}?;
             struct Apartment;
             impl Drop for Apartment {fn drop(&mut self){unsafe{windows::Win32::System::WinRT::RoUninitialize();}}}
-            let _apartment=Apartment;
+            // 初始化阶段（COM 套间 / 权限服务）可能因竞争或系统抖动瞬时失败。
+            // 在这里重试，避免整个监听线程一次失败就永久退出、通知再也不上岛。
+            let mut init_error: Option<windows::core::Error> = None;
+            let mut apartment: Option<Apartment> = None;
+            for attempt in 0..3u32 {
+                match unsafe {windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED)} {
+                    Ok(()) => { apartment = Some(Apartment); init_error = None; break; }
+                    Err(e) => {
+                        init_error = Some(e);
+                        if stopped.recv_timeout(std::time::Duration::from_secs(2))!=Err(mpsc::RecvTimeoutError::Timeout){return Ok(());}
+                        let _ = attempt;
+                    }
+                }
+            }
+            let _apartment = apartment.ok_or_else(||init_error.unwrap_or_else(||windows::core::Error::from_win32()))?;
             if request.get()? != UserNotificationListenerAccessStatus::Allowed {
                 send(Incoming::Revoked);
                 send(Incoming::Status("Windows 未授予通知读取权限，可在系统设置中调整。".into()));
@@ -810,167 +823,7 @@ pub fn pick_exe(title:&str) -> Result<Option<std::path::PathBuf>> {
 }
 
 // —— 关闭其它应用的 Windows 通知横幅 ——
-// Windows 没有公开 API 改别人的通知设置；ShowBanner 是 HKCU 下的内部项，
-// 写 0 表示「不弹右下角横幅」，通知仍会进通知中心，岛仔照常读取。
-// 原值记在 banner-overrides.json，随时可以一键恢复；每次操作逐条写日志。
-const BANNER_ROOT:&str="SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings";
-const BANNER_VALUE:&str="ShowBanner";
-const BANNER_FILE:&str="banner-overrides.json";
-const BANNER_LOG:&str="notification-banner.log";
 
-fn banner_wide(text:&str)->Vec<u16>{text.encode_utf16().chain(Some(0)).collect()}
-fn banner_log_path()->std::path::PathBuf{crate::model::config_dir().join("diagnostics").join(BANNER_LOG)}
-
-fn banner_log(message:&str){
-    use std::io::Write as _;
-    let path=banner_log_path();
-    if let Some(dir)=path.parent(){let _=std::fs::create_dir_all(dir);}
-    // 别让它无限长：超过 256 KB 就从头写。
-    if std::fs::metadata(&path).is_ok_and(|meta|meta.len()>256*1024){let _=std::fs::write(&path,b"");}
-    if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(&path){
-        let stamp=chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        let _=writeln!(file,"{stamp} | {message}");
-    }
-}
-
-/// 设置页显示的上次结果；找不到就返回 None。
-pub fn banner_last_summary()->Option<String>{
-    let text=std::fs::read_to_string(banner_log_path()).ok()?;
-    text.lines().rev().find(|line|line.contains("| 汇总 |"))
-        .and_then(|line|line.split_once("| 汇总 |"))
-        .map(|(_,rest)|rest.trim().to_string())
-}
-
-pub fn open_banner_log()->std::result::Result<(),String>{
-    let path=banner_log_path();
-    if !path.exists(){
-        if let Some(dir)=path.parent(){let _=std::fs::create_dir_all(dir);}
-        let _=std::fs::write(&path,b"");
-    }
-    std::process::Command::new("explorer.exe").arg(&path).spawn().map(|_|())
-        .map_err(|error|format!("打开日志失败：{error}"))
-}
-
-fn win32_message(code:u32)->String{
-    format!("错误 {code}：{}",std::io::Error::from_raw_os_error(code as i32))
-}
-fn banner_value_text(value:Option<u32>)->String{
-    match value{
-        None=>"不存在（默认弹横幅）".to_string(),
-        Some(0)=>"0（原本已关）".to_string(),
-        Some(1)=>"1（原本弹横幅）".to_string(),
-        Some(v)=>v.to_string(),
-    }
-}
-
-#[derive(Default,serde::Serialize,serde::Deserialize)]
-struct BannerOverrides{entries:std::collections::BTreeMap<String,Option<u32>>}
-fn banner_file()->std::path::PathBuf{crate::model::config_dir().join(BANNER_FILE)}
-fn banner_load()->BannerOverrides{
-    std::fs::read(banner_file()).ok().and_then(|bytes|serde_json::from_slice(&bytes).ok()).unwrap_or_default()
-}
-fn banner_save(state:&BannerOverrides)->std::result::Result<(),String>{
-    let bytes=serde_json::to_vec_pretty(state).map_err(|error|error.to_string())?;
-    std::fs::write(banner_file(),bytes).map_err(|error|format!("保存失败：{error}"))
-}
-
-/// None = 这个值原本不存在（默认会弹横幅）；Some(0) = 原本就关闭。
-fn banner_original(app:&str)->Option<u32>{
-    use windows::{core::PCWSTR,Win32::System::Registry::*};
-    let path=banner_wide(&format!("{BANNER_ROOT}\\{app}"));
-    let name=banner_wide(BANNER_VALUE);
-    let mut value=0u32;let mut size=std::mem::size_of::<u32>() as u32;
-    let rc=unsafe{RegGetValueW(HKEY_CURRENT_USER,PCWSTR(path.as_ptr()),PCWSTR(name.as_ptr()),
-        RRF_RT_REG_DWORD,None,Some((&mut value as *mut u32).cast()),Some(&mut size))};
-    (rc.0==0).then_some(value)
-}
-
-/// Some(v) 写值；None 删掉该值（回到默认弹横幅）。失败原因带 Windows 错误码与描述。
-fn banner_set(app:&str,value:Option<u32>)->std::result::Result<(),String>{
-    use windows::{core::PCWSTR,Win32::System::Registry::*};
-    let path=banner_wide(&format!("{BANNER_ROOT}\\{app}"));
-    let name=banner_wide(BANNER_VALUE);
-    let mut key=HKEY::default();
-    unsafe{
-        let opened=RegCreateKeyExW(HKEY_CURRENT_USER,PCWSTR(path.as_ptr()),0,PCWSTR::null(),
-            REG_OPTION_NON_VOLATILE,KEY_QUERY_VALUE|KEY_SET_VALUE,None,&mut key,None);
-        if opened.0!=0{return Err(format!("打不开通知设置（{}）",win32_message(opened.0)));}
-        let rc=match value{
-            Some(v)=>RegSetValueExW(key,PCWSTR(name.as_ptr()),0,REG_DWORD,Some(&v.to_le_bytes())),
-            None=>{
-                // 值不存在本来就是默认状态，删不掉也无所谓。
-                let _=RegDeleteValueW(key,PCWSTR(name.as_ptr()));
-                let _ = RegCloseKey(key);
-                return Ok(());
-            },
-        };
-        let _ = RegCloseKey(key);
-        if rc.0==0{Ok(())}else{Err(format!("写 ShowBanner 失败（{}）",win32_message(rc.0)))}
-    }
-}
-
-pub fn banner_overridden_count()->usize{banner_load().entries.len()}
-
-/// 只动岛仔应用列表里已勾选的应用；单个失败不影响后面的应用。返回 (成功数, 失败数)。
-pub fn close_notification_banners(apps:&[String])->std::result::Result<(usize,usize),String>{
-    let mut state=banner_load();
-    banner_log(&format!("开始 | 关闭横幅 | 待处理 {} 个",apps.len()));
-    let (mut ok,mut fail,mut skip)=(0,0,0);
-    for app in apps{
-        if app.trim().is_empty(){skip+=1;banner_log("跳过 | 应用名为空");continue;}
-        // 第一次记录原值；重复点「关闭」不能把原值覆盖成 0，否则恢复时还原不回去。
-        let original=match state.entries.get(app){Some(v)=>*v,None=>banner_original(app)};
-        match banner_set(app,Some(0)){
-            Ok(())=>{
-                state.entries.entry(app.clone()).or_insert(original);
-                ok+=1;
-                banner_log(&format!("成功 | {app} | {} -> 0",banner_value_text(original)));
-            },
-            Err(error)=>{fail+=1;banner_log(&format!("失败 | {app} | {error}"));},
-        }
-    }
-    let saved=match banner_save(&state){
-        Ok(())=>"状态文件已保存".to_string(),
-        Err(error)=>format!("状态文件保存失败：{error}"),
-    };
-    banner_log(&format!("| 汇总 | 关闭 | 成功={ok} 失败={fail} 跳过={skip} | {saved}"));
-    if saved.starts_with("状态文件保存失败"){return Err(saved);}
-    Ok((ok,fail))
-}
-
-/// 恢复失败的应用继续留在记录里，下次还能重试。返回 (成功数, 失败数)。
-pub fn restore_notification_banners()->std::result::Result<(usize,usize),String>{
-    let state=banner_load();
-    banner_log(&format!("开始 | 恢复横幅 | 待处理 {} 个",state.entries.len()));
-    let (mut ok,mut fail)=(0,0);
-    let mut remaining=BannerOverrides::default();
-    for (app,original) in &state.entries{
-        match banner_set(app,*original){
-            Ok(())=>{
-                ok+=1;
-                banner_log(&format!("成功 | {app} | 恢复为 {}",banner_value_text(*original)));
-            },
-            Err(error)=>{
-                fail+=1;
-                banner_log(&format!("失败 | {app} | {error}"));
-                remaining.entries.insert(app.clone(),*original);
-            },
-        }
-    }
-    let saved=match banner_save(&remaining){
-        Ok(())=>"状态文件已保存".to_string(),
-        Err(error)=>format!("状态文件保存失败：{error}"),
-    };
-    banner_log(&format!("| 汇总 | 恢复 | 成功={ok} 失败={fail} | {saved}"));
-    if saved.starts_with("状态文件保存失败"){return Err(saved);}
-    Ok((ok,fail))
-}
-
-/// 兜底：直接改注册表不一定立刻生效，给用户一个官方设置入口。
-pub fn open_notification_settings()->std::result::Result<(),String>{
-    std::process::Command::new("explorer.exe").arg("ms-settings:notifications")
-        .spawn().map(|_|()).map_err(|error|format!("打开设置失败：{error}"))
-}
 
 pub fn pick_files_for(title:&str,multiple:bool) -> Result<Vec<std::path::PathBuf>> {
     unsafe {

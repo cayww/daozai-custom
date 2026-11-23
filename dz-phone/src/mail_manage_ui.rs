@@ -5,7 +5,7 @@ use std::collections::{HashMap,HashSet};
 struct LocalFlags{seen:Option<bool>,removed:bool}
 fn identity(account:&Account)->String{
     let value=format!("{}:{}",account.provider.key(),account.credential_key());
-    ring::digest::digest(&ring::digest::SHA256,value.as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect()
+    crate::quota::sha256_hex(ring::digest::digest(&ring::digest::SHA256,value.as_bytes()).as_ref())
 }
 #[derive(Default)]pub(crate) struct State{
     pub unread_only:bool,pub trash_open:bool,pub trash:Vec<Item>,

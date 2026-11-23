@@ -1100,13 +1100,17 @@ fn parse_events_in_range(xml:&str,lo:chrono::DateTime<chrono::Utc>,hi:chrono::Da
             if nested==0 && matches!(line.split([';',':']).next(),Some("DTSTART"|"RRULE"|"RDATE"|"EXDATE")){rules.push(line);}
         }
         let Ok(set)=rules.join("\n").parse::<rrule::RRuleSet>()else{report.invalid+=1;report.problem("部分日程的重复规则无法解析");continue;};
-        let duration=base.end.map_or(0,|end|end-base.start);
-        let result=set.after((lo-chrono::Duration::seconds(duration.max(1))).with_timezone(&rrule::Tz::UTC)).before(hi.with_timezone(&rrule::Tz::UTC)).all(2000);
+        // 畸形/第三方日历可能出现 DTEND < DTSTART：用 saturating_sub 避免负时长，
+        // 并过滤掉展开后仍然倒挂的实例，防止污染排序与窗口过滤。
+        let duration=base.end.map_or(0,|end|end.saturating_sub(base.start));
+        let lookback=chrono::TimeDelta::try_seconds(duration.max(1)).unwrap_or_default();
+        let result=set.after((lo-lookback).with_timezone(&rrule::Tz::UTC)).before(hi.with_timezone(&rrule::Tz::UTC)).all(2000);
         report.limited|=result.limited;if result.dates.is_empty(){report.outside+=1;}
         let uid=field(&body,"UID").unwrap_or_default();
         for date in result.dates{
             let start=date.timestamp();if overrides.contains(&(uid.clone(),start)){continue;}
-            let mut event=base.clone();event.start=start;event.end=base.end.map(|end|start+end-base.start);
+            let mut event=base.clone();event.start=start;
+            event.end=base.end.and_then(|end|start.checked_add(end.saturating_sub(base.start))).filter(|&end|end>=start);
             event.at=date.with_timezone(&chrono::Local).format(if event.all_day{"%m-%d 全天"}else{"%m-%d %H:%M"}).to_string();
             if !add_event(event,&mut report){break 'blocks;}
         }

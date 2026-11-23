@@ -874,12 +874,6 @@ impl TodoList {
             .collect()
     }
 
-    pub fn done_today(&self, today: &str) -> usize {
-        self.items
-            .iter()
-            .filter(|i| i.done_on.as_deref() == Some(today))
-            .count()
-    }
 
     /// 今天要做的待办（不在今天的重复待办除外）中，(已完成, 总数)。
     pub fn progress(&self, today: &str) -> (usize, usize) {
@@ -1156,10 +1150,6 @@ impl NoticeRules {
         self.compiled.iter().any(|(re, act)| act == action && re.is_match(text))
     }
 
-    /// 第一条命中的规则动作，用于诊断日志。
-    pub fn first_action(&self, text: &str) -> Option<&str> {
-        self.compiled.iter().find(|(re, _)| re.is_match(text)).map(|(_, act)| act.as_str())
-    }
 }
 
 /// 名单默认为空：没有内置种子，`phone-apps.json` 不存在时也不再自动写盘 ——
