@@ -1811,4 +1811,6 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - `Primitive::Clear` 已实现：D3D11 后端新增无混合 blend state，把 Clear rect 与 clip_rect 相交后生成透明黑四边形，按原始 op 顺序与 Mesh 交替绘制并恢复普通 blend state（不再忽略 Shape::Clear）。
 - `examples/lyrics_switch_memory.rs` 的 `font_image_size()` 已改为 `font_image_resolution()`；`cargo check --examples` 通过。
 - 验证：`cargo check --locked --lib --tests --bins --examples` 通过；播放图标连续性测试把画布从 64pt 扩到 96pt，避开 0.37 严格 clip_rect 边界采样。`compact_font_atlas_preserves_settings_pixels_at_multiple_scales` 曾偶发一次图集上限 2048 / scale2 大面积差异，复测稳定通过；测试加了 `DAOZAI_FONT_DEBUG_DIR` 可选导出 before/after PNG 以便复现。最终 release lib **1404 passed / 0 failed / 131 ignored**，release bin **11 passed / 0 failed**。debug 测试仍有旧 helper 未 clear TexturesDelta 的 debug_assert 和布局差异失败，属测试适配未完成，不是发行构建问题。
-- 版本升至 **1.2.6**（仅本分支；与 main 已发布 1.2.5 区分）。状态：**研究分支，未合并 main、未发布、未部署**；按用户要求打本地 1.2.6 包。下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear 与兼容渲染截图。
+- 版本升至 **1.2.6**（仅本分支；与 main 已发布 1.2.5 区分）。状态：**研究分支，未合并 main、未发布、未部署**。
+- **本地包已打（2026-11-24）**：`dz-phone/dist/Daozai-Setup-v1.2.6-x64.exe` 8,645,885 B / sha `0589de891dac74b9`；`dz-phone/dist/Daozai-v1.2.6-windows-x64.zip` 10,851,948 B / sha `542dccbacdcc75d2`；包内 exe sha `1473042ce598bad6`。完整 sha 见 `dz-phone/dist/SHA256SUMS.txt`。未上传 release、未部署。
+- 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear 与兼容渲染截图。
