@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-22 20:40
+> **最后更新**：2026-11-23 20:40
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -1776,3 +1776,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   （按压 14% + 入场 spring）。字形 mesh 逐帧完全一致，物理上不会再抖。
 - 相应删掉 `App::ctl_text_scale`（已无调用点，避免 dead_code）。
 - 部署 exe `6e78b71047f52a61`，PID 21796，备份 `daozai.exe.prev-before-frozentry`。
+
+### 7.0zzy 补齐 eframe 0.35 自研事件循环缺口：截图动作回灌 + 精确重绘（2026-11-23 20:18–20:40，提交 `e34f70f`）
+- **来源与接手状态**：用户给 `C:\Users\cay\WorkBuddy AI\2026-11-23-17-18-54\HANDOFF-交接给新Agent.md` 要求继续。接手时 `main` HEAD=`a3b37c4`（tag `v1.2.4` 已推、release 已发），工作树只有 `winit_runner.rs` 的**设置页缩放冻结修复**（上一轮未提交、未实机验证）。本轮把该修复与下面两项一起提交为 `e34f70f`，**本地提交，未 push**。
+- **① ActionRequested 回灌（桌面 HANDOFF §4①，`d3d11/runtime.rs`）**：`process_viewport_commands` 只把 `Screenshot/Cut/Copy/Paste` 写进 `actions`，原代码从不读取。照 eframe 0.35 `glow_integration.rs:715-747` 补消费端：主窗口 `render()` 和 `PlainWindow::paint_output()/render()` 都在 **Present 之前** drain；Screenshot 用 staging texture `CopyResource` 读回，BGRA 自下而上 → 顶原点 RGBA 预乘 `ColorImage`，注入下一帧 `RawInput.events`；Paste 读系统剪贴板并规范化 CRLF。新增单测锁行翻转/通道序/RowPitch padding。
+- **②③ repaint 调度（`winit_runner.rs`）**：user event 从 `()` 改为 `Wakeup::{Repaint{viewport_id,when,cumulative_pass_nr}, LayoutDirty}`，照 eframe `run.rs:299-332` 用 `ctx.cumulative_pass_nr_for(id)` 丢弃过期请求。`about_to_wait` 只在 `next_repaint` 到期时画，无请求时 `WaitUntil(now+60s)` 长睡；旧固定 16ms 心跳删除 → 空闲不再 60fps 空转，app 的隐藏 1fps / 静止 15fps 请求终于生效。
+- **④ 主窗口 resize（`winit_runner.rs`）**：`window_event` 不再丢弃 `repaint`；`Resized`/`ScaleFactorChanged` 强制即时重绘。子窗口输入 repaint 同时请求子窗口 Redraw 与父窗口绘制（immediate viewport UI 只在父窗口 `draw_main` 里跑）。
+- **缩放冻结修复保留**：子窗口 resize 置 `layout_dirty` → 发 `Wakeup::LayoutDirty` → 在 `user_event` 里用 `with_event_loop_context` 直接补跑父窗口（Windows 模态 sizing 循环里 `about_to_wait` 会停摆，不能只约下一帧）；`draw_main` 末尾清标记。
+- **验证**：`cargo check --locked --lib --tests --bins` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1402 passed / 0 failed / 131 ignored**；主程序 bin 10 passed（含新增 2 项单测：`readback_tests::screenshot_readback_flips_rows_and_swaps_bgra_to_rgba`、`root_scale_tests::repaint_scheduling_keeps_the_earliest_deadline`）；release exe sha `b7c92525f185de5f`（`dz-phone/target/release/daozai.exe`）。换行符已核对：改动文件仍为纯 LF。
+- **状态与待办**：**未打包、未部署、未实机验证**——需用户拖设置页边框确认缩放跟手、观察空闲 CPU 是否下降；兼容渲染路径当前 `native.wants_frames()` 恒 false，截图回灌属机制补齐，暂无实机触发点。剩余 eframe 缺口见桌面 HANDOFF §4⑤⑥⑦：设备丢失/suspended 恢复、子窗口位置持久化（`process::exit` 不跑 Drop）、viewport info 缺 `monitor_size/outer_rect`；低优先级 `device_event`/accesskit/首帧 viewport 命令未做。工作日志在 WorkBuddy 工作区 `.workbuddy/memory/2026-11-23.md`（**不在项目仓库**）。
