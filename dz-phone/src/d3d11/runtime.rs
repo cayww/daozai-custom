@@ -141,6 +141,13 @@ pub struct FrameStats {
     pub active_viewports: Vec<egui::ViewportId>,
 }
 
+/// D3D11 抓屏栈诊断：同时输出到 stderr 和 liquid-glass.log。
+/// 之前只用 eprintln，日志里看不到重建/失败/watchdog，概率性冻结无从诊断。
+fn dlog(msg: &str) {
+    eprintln!("[d3d11] {}", msg);
+    crate::wgc::log(&format!("d3d11: {}", msg));
+}
+
 /// 渲染运行时。持有窗口生命周期内不能重建的 D3D/DComp 状态。
 pub struct D3d11Runtime {
     device: ID3D11Device,
@@ -159,6 +166,10 @@ pub struct D3d11Runtime {
     /// 不能一次失败就永久放弃（否则玻璃定格不自愈）；按 0.2/0.4/0.8...s 退避重试。
     wgc_retry_at: Option<std::time::Instant>,
     wgc_retry_backoff_ms: u64,
+    /// 最近一次成功抓到帧的时刻。会话可能在稳定期中间建立、之后因 DWM 重组
+    /// 永久不送帧；此时拿不到帧 → 尺寸校验也无从触发 → 必须靠 watchdog 重建。
+    /// 社区 streaming 项目「重建后 confirm 新帧到达」同款。
+    wgc_last_frame_at: Option<std::time::Instant>,
     pub egui_ctx: egui::Context,
     /// 所有 viewport 共用同一个 Renderer/TexturePool：egui 字体图集是 Context 级单例，
     /// 各窗口各自 Renderer 会导致 partial 纹理更新 pos 套到旧图集上越界（文字错乱+闪退）。
@@ -226,7 +237,7 @@ impl D3d11Runtime {
         Ok(Self {
             device, ctx, swap, rt: Some(rt), dcomp, glass, wgc,
             wgc_ever_frame: false, wgc_epoch: crate::wgc::topo_epoch(),
-            wgc_retry_at: None, wgc_retry_backoff_ms: 200,
+            wgc_retry_at: None, wgc_retry_backoff_ms: 200, wgc_last_frame_at: None,
             egui_ctx, egui_renderer, egui_winit: Some(egui_winit),
             frames: 0, last_report: std::time::Instant::now(), fps: 0.0,
             repaint_delay: std::time::Duration::ZERO,
@@ -369,14 +380,14 @@ impl D3d11Runtime {
                 let backoff = self.wgc_retry_backoff_ms.min(2000);
                 self.wgc_retry_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(backoff));
                 self.wgc_retry_backoff_ms = (backoff * 2).min(2000);
-                eprintln!("[d3d11] topology epoch={} rebuild WGC failed ({:?}), retry in {}ms",
-                          epoch, e, backoff);
+                dlog(&format!("topology epoch={} rebuild WGC failed ({:?}), retry in {}ms",
+                              epoch, e, backoff));
                 return;
             }
         };
         let (bw, bh) = fresh.size();
-        eprintln!("[d3d11] topology epoch={} rebuild WGC {}x{} (was {}x{})",
-                  epoch, bw, bh, self.glass.bg_w, self.glass.bg_h);
+        dlog(&format!("topology epoch={} rebuild WGC {}x{} (was {}x{})",
+                      epoch, bw, bh, self.glass.bg_w, self.glass.bg_h));
         // 尺寸没变也重建会话（主屏 monitor 可能换了、item 失效），但纹理可复用。
         if bw != self.glass.bg_w || bh != self.glass.bg_h {
             let desc = D3D11_TEXTURE2D_DESC {
@@ -406,7 +417,7 @@ impl D3d11Runtime {
                 let backoff = self.wgc_retry_backoff_ms.min(2000);
                 self.wgc_retry_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(backoff));
                 self.wgc_retry_backoff_ms = (backoff * 2).min(2000);
-                eprintln!("[d3d11] rebuild bg texture failed, retry in {}ms", backoff);
+                dlog(&format!("rebuild bg texture failed, retry in {}ms", backoff));
                 return;
             }
         }
@@ -416,6 +427,9 @@ impl D3d11Runtime {
         self.wgc_epoch = epoch;
         self.wgc_retry_at = None;
         self.wgc_retry_backoff_ms = 200;
+        // watchdog 从重建时刻起算：若 1.5s 内没有新帧到达，说明这个会话是「活的但不送帧」，
+        // 需要再重建（稳定期中间建立的会话常这样）。
+        self.wgc_last_frame_at = Some(std::time::Instant::now());
     }
 
     /// 窗口尺寸变化：重建 RT（swap 由 DComp 持有，ResizeBuffers 即可）。
@@ -452,7 +466,17 @@ impl D3d11Runtime {
         // 三者任一即重建，且失败会继续退避重试，不再一次失败就永久 latch。
         let epoch_changed = self.wgc_epoch != crate::wgc::topo_epoch();
         let retry_due = self.wgc_retry_at.is_some_and(|t| std::time::Instant::now() >= t);
-        if epoch_changed || retry_due {
+        // watchdog：稳定期外、会话已建立，但超过 1.5s 没抓到任何新帧 → 会话是
+        // 「活着但不送帧」（稳定期中间建立的会话常这样），尺寸校验也无从触发，
+        // 必须主动重建。社区 streaming 项目「重建后 confirm 新帧到达」同款。
+        let now = std::time::Instant::now();
+        let frame_stalled = !crate::wgc::settling()
+            && self.wgc.is_some()
+            && self.wgc_last_frame_at.is_some_and(|t| now.duration_since(t) > std::time::Duration::from_millis(1500));
+        if epoch_changed || retry_due || frame_stalled {
+            if frame_stalled && !epoch_changed && !retry_due {
+                dlog("WGC no frame >1.5s, watchdog rebuild");
+            }
             self.rebuild_wgc();
         }
         // WGC 抓屏（GPU 侧 CopyResource）。稳定期内不抓过渡帧，沿用旧纹理；
@@ -461,7 +485,10 @@ impl D3d11Runtime {
         let mut size_mismatch = false;
         if !crate::wgc::settling() {
             if let Some(wgc) = self.wgc.as_ref() {
-                if wgc.grab_into(&self.ctx, &self.glass.bg_tex) { self.wgc_ever_frame = true; }
+                if wgc.grab_into(&self.ctx, &self.glass.bg_tex) {
+                    self.wgc_ever_frame = true;
+                    self.wgc_last_frame_at = Some(std::time::Instant::now());
+                }
                 size_mismatch = wgc.take_size_mismatch();
             }
         }

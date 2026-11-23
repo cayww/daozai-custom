@@ -142,8 +142,10 @@ impl WgcCapture {
             if sd.Width != dd.Width || sd.Height != dd.Height {
                 self.size_mismatch.store(true, Ordering::Relaxed);
                 if !self.size_warned.swap(true, Ordering::Relaxed) {
-                    eprintln!("[wgc] frame size {}x{} != bg {}x{}, signal rebuild",
-                              sd.Width, sd.Height, dd.Width, dd.Height);
+                    let m = format!("frame size {}x{} != bg {}x{}, signal rebuild",
+                                    sd.Width, sd.Height, dd.Width, dd.Height);
+                    eprintln!("[wgc] {}", m);
+                    crate::wgc::log(&format!("wgc: {}", m));
                 }
                 return false; // 上层据 size_mismatch() 触发重建
             }

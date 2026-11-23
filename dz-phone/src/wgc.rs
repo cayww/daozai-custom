@@ -181,7 +181,7 @@ fn sample_theme_luma(
     }
 }
 
-fn log(msg: &str) {
+pub fn log(msg: &str) {
     use std::io::Write;
     let dir = crate::model::config_dir().join("diagnostics");
     let _ = std::fs::create_dir_all(&dir);
