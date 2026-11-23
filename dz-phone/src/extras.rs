@@ -1286,8 +1286,14 @@ impl App {
         body: String,
         unread: Option<crate::app::Unread>,
     ) {
-        // 手机连接的通知从这里进来（WinRT 监听器直连此路径，不经过 notify_phone），
-        // 先做 App 名单自动登记，再照常显示。非手机通道是 no-op。
+        // WinRT 监听器把手机连接通知直接送进这里。若按普通通知处理，正文会被
+        // 打码（mask），验证码卡片取不到明文、自动复制也不会触发——用户看到的是
+        // 「连接」普通通知。手机通道（且没有 messenger 未读目标）必须改走
+        // notify_phone，复用它的短信标签、验证码停留时长与自动复制逻辑。
+        if unread.is_none() && crate::system::phone_channel(&id) {
+            self.notify_phone(app, id, body);
+            return;
+        }
         self.maybe_register_phone_app(&id, &body);
         if !self.settings.read_notifications
             || id.is_empty()

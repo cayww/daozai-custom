@@ -9437,6 +9437,30 @@ fn 手机通知走receive路径也会自动登记App(){
     assert_eq!(h.app.phone_apps.items.len(),before+1,"非手机通道不应登记到手机名单");
 }
 
+/// WinRT 监听器直连 receive_notification_from：短信验证码必须仍能上「验证码卡片」并自动复制。
+#[test]
+fn winrt_phone_sms_otp_uses_card_and_auto_copy(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();h.frame(vec![]);
+    h.app.settings.read_notifications=true;
+    h.app.settings.notifications=true;
+    h.app.settings.phone_alerts=true;
+    h.app.settings.auto_copy_otp=true;
+    h.app.receive_notification_from(
+        "手机连接".into(),
+        "Microsoft.YourPhone_8wekyb3d8bbwe!App".into(),
+        "10691234 · 【测试】您的验证码是 834921，10分钟内有效。".into(),
+        None,
+    );
+    let alert=h.app.alerts.back().expect("手机短信应上岛");
+    assert_eq!(alert.title,"手机 · 短信");
+    assert!(alert.body.contains("834921"),"验证码正文不能被打码，否则卡片取不到明文：{}",alert.body);
+    assert_eq!(crate::otp::extract("",&alert.body,&[]).map(|c|c.text),Some("834921".into()));
+    h.frame(vec![]);
+    assert!(h.cmds.iter().any(|c|matches!(c,crate::app::Cmd::CopyOtp(code) if code=="834921")),
+        "开启自动复制后 WinRT 短信验证码必须写剪贴板");
+}
+
 /// 切到更高的页面时，`expanded_height` 会立刻变大、`progress` 回落；内容坐标
 /// 不能跟着 reveal 一起上下滑（那会表现为整页文字上下抖）。
 #[test]
