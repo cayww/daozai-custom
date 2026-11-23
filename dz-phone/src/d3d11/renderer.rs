@@ -48,6 +48,8 @@ pub struct Renderer {
     rasterizer_state: ID3D11RasterizerState,
     sampler_state: ID3D11SamplerState,
     blend_state: ID3D11BlendState,
+    /// egui 0.37 `Shape::Clear` 需要无混合写入透明黑。
+    clear_blend_state: ID3D11BlendState,
 
     texture_pool: TexturePool,
 }
@@ -108,6 +110,11 @@ struct MeshData {
     clip_rect: egui::Rect,
 }
 
+enum DrawOp {
+    Clear(MeshData),
+    Mesh(MeshData),
+}
+
 impl Renderer {
     /// Create a [`Renderer`] using the provided Direct3D11 device. The
     /// [`Renderer`] holds various Direct3D11 resources and states derived
@@ -123,6 +130,7 @@ impl Renderer {
         let mut rasterizer_state = None;
         let mut sampler_state = None;
         let mut blend_state = None;
+        let mut clear_blend_state = None;
         unsafe {
             device.CreateInputLayout(
                 &Self::INPUT_ELEMENTS_DESC,
@@ -149,6 +157,10 @@ impl Renderer {
             )?;
             device
                 .CreateBlendState(&Self::BLEND_DESC, Some(&mut blend_state))?;
+            device.CreateBlendState(
+                &Self::CLEAR_BLEND_DESC,
+                Some(&mut clear_blend_state),
+            )?;
         };
         Ok(Self {
             device: device.clone(),
@@ -158,6 +170,7 @@ impl Renderer {
             rasterizer_state: rasterizer_state.unwrap(),
             sampler_state: sampler_state.unwrap(),
             blend_state: blend_state.unwrap(),
+            clear_blend_state: clear_blend_state.unwrap(),
             texture_pool: TexturePool::new(device),
         })
     }
@@ -262,7 +275,13 @@ impl Renderer {
         let zoom_factor = egui_ctx.zoom_factor();
 
         self.setup(device_context, render_target, frame_size);
-        let meshes = egui_ctx
+        let ndc = |p: Pos2| {
+            (
+                p.x * zoom_factor / frame_size_scaled.0 * 2.0 - 1.0,
+                1.0 - p.y * zoom_factor / frame_size_scaled.1 * 2.0,
+            )
+        };
+        let draw_ops: Vec<DrawOp> = egui_ctx
             .tessellate(egui_output.shapes, egui_output.pixels_per_point)
             .into_iter()
             .filter_map(
@@ -270,64 +289,124 @@ impl Renderer {
                      primitive,
                      clip_rect,
                  }| match primitive {
-                    Primitive::Mesh(mesh) => Some((mesh, clip_rect)),
+                    Primitive::Mesh(mesh) => {
+                        if mesh.indices.is_empty() {
+                            return None;
+                        }
+                        if mesh.indices.len() % 3 != 0 {
+                            log::warn!(concat!(
+                                "egui wants to draw a incomplete triangle. ",
+                                "this request will be ignored."
+                            ));
+                            return None;
+                        }
+                        Some(DrawOp::Mesh(MeshData {
+                            vtx: mesh
+                                .vertices
+                                .into_iter()
+                                .map(|Vertex { pos, uv, color }| {
+                                    let (x, y) = ndc(pos);
+                                    VertexData {
+                                        pos: Pos2::new(x, y),
+                                        uv,
+                                        color: [
+                                            color[0] as f32 / 255.0,
+                                            color[1] as f32 / 255.0,
+                                            color[2] as f32 / 255.0,
+                                            color[3] as f32 / 255.0,
+                                        ],
+                                    }
+                                })
+                                .collect(),
+                            idx: mesh.indices,
+                            tex: mesh.texture_id,
+                            clip_rect: clip_rect
+                                * egui_output.pixels_per_point
+                                * zoom_factor,
+                        }))
+                    },
                     Primitive::Callback(..) => {
                         log::warn!("paint callbacks are not yet supported.");
                         None
                     },
                     Primitive::Clear(rect) => {
-                        // egui 0.37 adds Shape::Clear; D3D11 backend has no scissored clear yet.
-                        // Ignore for now (whole-target clear still happens every frame).
-                        let _ = rect;
-                        None
+                        let rect = rect.intersect(clip_rect);
+                        if rect.min.x >= rect.max.x || rect.min.y >= rect.max.y {
+                            return None;
+                        }
+                        let corners = [
+                            rect.min,
+                            Pos2::new(rect.max.x, rect.min.y),
+                            rect.max,
+                            Pos2::new(rect.min.x, rect.max.y),
+                        ];
+                        let vtx = corners
+                            .into_iter()
+                            .map(|p| {
+                                let (x, y) = ndc(p);
+                                VertexData {
+                                    pos: Pos2::new(x, y),
+                                    uv: Pos2::new(0.0, 0.0),
+                                    color: [0.0; 4],
+                                }
+                            })
+                            .collect();
+                        Some(DrawOp::Clear(MeshData {
+                            vtx,
+                            idx: vec![0, 1, 2, 0, 2, 3],
+                            tex: egui::TextureId::default(),
+                            clip_rect: rect
+                                * egui_output.pixels_per_point
+                                * zoom_factor,
+                        }))
                     },
                 },
             )
-            .filter_map(|(mesh, clip_rect)| {
-                if mesh.indices.is_empty() {
-                    return None;
-                }
-                if mesh.indices.len() % 3 != 0 {
-                    log::warn!(concat!(
-                        "egui wants to draw a incomplete triangle. ",
-                        "this request will be ignored."
-                    ));
-                    return None;
-                }
-                Some(MeshData {
-                    vtx: mesh
-                        .vertices
-                        .into_iter()
-                        .map(|Vertex { pos, uv, color }| VertexData {
-                            pos: Pos2::new(
-                                pos.x * zoom_factor / frame_size_scaled.0 * 2.0
-                                    - 1.0,
-                                1.0 - pos.y * zoom_factor / frame_size_scaled.1
-                                    * 2.0,
-                            ),
-                            uv,
-                            color: [
-                                color[0] as f32 / 255.0,
-                                color[1] as f32 / 255.0,
-                                color[2] as f32 / 255.0,
-                                color[3] as f32 / 255.0,
-                            ],
-                        })
-                        .collect(),
-                    idx: mesh.indices,
-                    tex: mesh.texture_id,
-                    clip_rect: clip_rect
-                        * egui_output.pixels_per_point
-                        * zoom_factor,
-                })
-            });
-        for mesh in meshes {
+            .collect();
+
+        let mut clear_blend = false;
+        for op in draw_ops {
+            match &op {
+                DrawOp::Clear(_) if !clear_blend => {
+                    unsafe {
+                        device_context.OMSetBlendState(
+                            &self.clear_blend_state,
+                            Some(&[0.; 4]),
+                            u32::MAX,
+                        );
+                    }
+                    clear_blend = true;
+                },
+                DrawOp::Mesh(_) if clear_blend => {
+                    unsafe {
+                        device_context.OMSetBlendState(
+                            &self.blend_state,
+                            Some(&[0.; 4]),
+                            u32::MAX,
+                        );
+                    }
+                    clear_blend = false;
+                },
+                _ => {}
+            }
+            let mesh = match op {
+                DrawOp::Clear(mesh) | DrawOp::Mesh(mesh) => mesh,
+            };
             Self::draw_mesh(
                 &self.device,
                 device_context,
                 &self.texture_pool,
                 mesh,
             )?;
+        }
+        if clear_blend {
+            unsafe {
+                device_context.OMSetBlendState(
+                    &self.blend_state,
+                    Some(&[0.; 4]),
+                    u32::MAX,
+                );
+            }
         }
         Ok(())
     }
@@ -466,6 +545,29 @@ impl Renderer {
                 BlendOp: D3D11_BLEND_OP_ADD,
                 SrcBlendAlpha: D3D11_BLEND_INV_DEST_ALPHA,
                 DestBlendAlpha: D3D11_BLEND_ONE,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as _,
+            },
+            zeroed(),
+            zeroed(),
+            zeroed(),
+            zeroed(),
+            zeroed(),
+            zeroed(),
+            zeroed(),
+        ],
+        ..zeroed()
+    };
+
+    const CLEAR_BLEND_DESC: D3D11_BLEND_DESC = D3D11_BLEND_DESC {
+        RenderTarget: [
+            D3D11_RENDER_TARGET_BLEND_DESC {
+                BlendEnable: BOOL(0),
+                SrcBlend: D3D11_BLEND_ONE,
+                DestBlend: D3D11_BLEND_ZERO,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ONE,
+                DestBlendAlpha: D3D11_BLEND_ZERO,
                 BlendOpAlpha: D3D11_BLEND_OP_ADD,
                 RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL.0 as _,
             },

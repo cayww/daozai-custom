@@ -47,7 +47,7 @@ fn main()->eframe::Result<()> {
                 let mut memory=Memory{size:std::mem::size_of::<Memory>()as u32,..Default::default()};let mut handles=0;
                 unsafe{assert_ne!(K32GetProcessMemoryInfo(GetCurrentProcess(),&mut memory,memory.size),0);GetProcessHandleCount(GetCurrentProcess(),&mut handles);}
                 if t>=20.0{self.baseline.get_or_insert(memory.private);self.peak=self.peak.max(memory.private);}
-                let (atlas,galleys)=ctx.fonts(|f|(f.font_image_size(),f.num_galleys_in_cache()));
+                let (atlas,galleys)=ctx.fonts(|f|(f.font_image_resolution(),f.num_galleys_in_cache()));
                 let textures=ctx.tex_manager().read().num_allocated();
                 println!("mode={} seconds={t:.1} tracks={} frames={} private_mib={:.2} working_mib={:.2} handles={handles} textures={textures} atlas={}x{} galleys={galleys}",self.mode,song+1,self.frames,memory.private as f64/1048576.0,memory.working as f64/1048576.0,atlas[0],atlas[1]);
                 if memory.private>1536*1024*1024{panic!("私有内存超过 1.5 GiB，停止压测");}

@@ -578,15 +578,17 @@ mod gradient_tests {
                     for (size,color) in [11.0,15.0].into_iter().flat_map(|size|[Color32::WHITE,Color32::from_gray(22),Color32::from_white_alpha(128)].map(|color|(size,color))) {
                         let ctx=egui::Context::default();ctx.set_zoom_factor(ppp);
                         let center=Pos2::new(30.0+offset,26.0+offset);
-                        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(64.0))),..Default::default()};
+                        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(96.0))),..Default::default()};
                         let output=ctx.run_ui(raw, |ui|{
                             let card=Card::new(ui,Pos2::ZERO,ui.max_rect()).scaled(center.x,center.y,scale);
                             play_pause(&card,center.x,center.y,size,0.0,color);
                         });
-                        let mut raster=crate::preview_raster::Raster::new((64.0*ppp) as usize,(64.0*ppp) as usize);
+                        let mut raster=crate::preview_raster::Raster::new((96.0*ppp) as usize,(96.0*ppp) as usize);
                         raster.update_textures(&output.textures_delta);
                         raster.draw(&ctx.tessellate(output.shapes,ppp),ppp);
                         let y=(center.y*ppp).floor() as usize;
+                        // egui 0.37 applies clip_rect strictly; keep the canvas wide enough
+                        // that all sampled triangle interior points stay inside it.
                         for dx in [-0.5,0.0,0.5,1.0,1.5] {
                             let x=((center.x+dx*scale)*ppp).floor() as usize;
                             let expected=color.a() as f32/255.0;
