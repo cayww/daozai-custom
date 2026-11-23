@@ -23,6 +23,7 @@ use windows::Win32::System::WinRT::Direct3D11::{
 };
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::core::factory;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct WgcCapture {
     pool: Direct3D11CaptureFramePool,
@@ -30,6 +31,10 @@ pub struct WgcCapture {
     width: u32,
     height: u32,
     diag_done: std::cell::Cell<bool>,
+    size_checked: std::cell::Cell<bool>,
+    size_warned: AtomicBool,
+    /// 帧尺寸与 bg_tex 不一致（取走即清）。上层据此重建会话/纹理。
+    size_mismatch: AtomicBool,
 }
 
 impl WgcCapture {
@@ -73,10 +78,18 @@ impl WgcCapture {
         let _ = session.SetIsBorderRequired(false);
 
         Ok(Self { pool, _session: session, width, height,
-                  diag_done: std::cell::Cell::new(false) })
+                  diag_done: std::cell::Cell::new(false),
+                  size_checked: std::cell::Cell::new(false),
+                  size_warned: AtomicBool::new(false),
+                  size_mismatch: AtomicBool::new(false) })
     }
 
     pub fn size(&self) -> (u32, u32) { (self.width, self.height) }
+
+    /// 取走「帧尺寸与背景纹理不匹配」信号（取后清零，只报一次）。
+    pub fn take_size_mismatch(&self) -> bool {
+        self.size_mismatch.swap(false, Ordering::Relaxed)
+    }
 
     /// Poll the newest frame and copy it into `dst` (GPU-side, format must be
     /// B8G8R8A8_UNORM). Returns true if a fresh frame was copied.
@@ -114,13 +127,27 @@ impl WgcCapture {
                 Ok(t) => t,
                 Err(e) => { if !self.diag_done.get() { self.diag_done.set(true); eprintln!("[wgc] GetInterface failed: {:?}", e); } return false; }
             };
-            // Frame texture confirmed as 2560x1440 B8G8R8A8 (matches dst).
-            #[cfg(debug_assertions)]
-            {
-                let mut sd = unsafe { std::mem::zeroed::<windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC>() };
-                unsafe { src.GetDesc(&mut sd) };
-                eprintln!("[wgc] src desc: {}x{} fmt={:?}", sd.Width, sd.Height, sd.Format);
+            // 每帧校验 src 尺寸与 dst（bg_tex）是否一致。D3D11 CopyResource 在
+            // 尺寸不匹配时**静默失败**（不报错也不拷贝），则会一直拿旧纹理画 =
+            // 玻璃错乱/拉伸。社区 streaming 项目（Vibepollo 等）都是每帧校验
+            // 描述符、不匹配就 reinit，绝不带着错位尺寸继续跑。
+            use windows::Win32::Graphics::Direct3D11::D3D11_TEXTURE2D_DESC;
+            let mut sd = unsafe { std::mem::zeroed::<D3D11_TEXTURE2D_DESC>() };
+            let mut dd = unsafe { std::mem::zeroed::<D3D11_TEXTURE2D_DESC>() };
+            unsafe { src.GetDesc(&mut sd); dst.GetDesc(&mut dd); }
+            if !self.size_checked.get() {
+                self.size_checked.set(true);
+                eprintln!("[wgc] first frame src {}x{} dst {}x{}", sd.Width, sd.Height, dd.Width, dd.Height);
             }
+            if sd.Width != dd.Width || sd.Height != dd.Height {
+                self.size_mismatch.store(true, Ordering::Relaxed);
+                if !self.size_warned.swap(true, Ordering::Relaxed) {
+                    eprintln!("[wgc] frame size {}x{} != bg {}x{}, signal rebuild",
+                              sd.Width, sd.Height, dd.Width, dd.Height);
+                }
+                return false; // 上层据 size_mismatch() 触发重建
+            }
+            self.size_warned.store(false, Ordering::Relaxed);
             unsafe { ctx.CopyResource(dst, &src) };
             return true;
         }

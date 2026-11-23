@@ -155,6 +155,10 @@ pub struct D3d11Runtime {
     /// 换过分辨率/显示模式：会话绑定的主屏/帧尺寸已失效，必须重建（社区标准做法：
     /// item size 变化时对 frame pool 做 Recreate；这里整个会话重建，等价且更简单）。
     wgc_epoch: u64,
+    /// 重建失败后的退避重试时刻。多屏切换中间态 WgcCapture::new 常失败，
+    /// 不能一次失败就永久放弃（否则玻璃定格不自愈）；按 0.2/0.4/0.8...s 退避重试。
+    wgc_retry_at: Option<std::time::Instant>,
+    wgc_retry_backoff_ms: u64,
     pub egui_ctx: egui::Context,
     /// 所有 viewport 共用同一个 Renderer/TexturePool：egui 字体图集是 Context 级单例，
     /// 各窗口各自 Renderer 会导致 partial 纹理更新 pos 套到旧图集上越界（文字错乱+闪退）。
@@ -222,6 +226,7 @@ impl D3d11Runtime {
         Ok(Self {
             device, ctx, swap, rt: Some(rt), dcomp, glass, wgc,
             wgc_ever_frame: false, wgc_epoch: crate::wgc::topo_epoch(),
+            wgc_retry_at: None, wgc_retry_backoff_ms: 200,
             egui_ctx, egui_renderer, egui_winit: Some(egui_winit),
             frames: 0, last_report: std::time::Instant::now(), fps: 0.0,
             repaint_delay: std::time::Duration::ZERO,
@@ -355,8 +360,21 @@ impl D3d11Runtime {
     /// 否则静默失败、一直拿旧纹理画 = 玻璃永久定格（用户实测的故障）。
     fn rebuild_wgc(&mut self) {
         let epoch = crate::wgc::topo_epoch();
-        let fresh = WgcCapture::new(&self.device).ok();
-        let (bw, bh) = fresh.as_ref().map(|c| c.size()).unwrap_or((1920, 1080));
+        // 关键：new 失败（多屏切换中间态主屏 item 暂不可用）时**不设 None、不更新 epoch**，
+        // 保留旧会话 + 退避重试。否则 epoch 被标记为已处理 → 永不重建 → 玻璃永久定格。
+        // 这正是社区 streaming 项目反复强调的「reinit 失败不能 latch 成永久状态」。
+        let fresh = match WgcCapture::new(&self.device) {
+            Ok(c) => c,
+            Err(e) => {
+                let backoff = self.wgc_retry_backoff_ms.min(2000);
+                self.wgc_retry_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(backoff));
+                self.wgc_retry_backoff_ms = (backoff * 2).min(2000);
+                eprintln!("[d3d11] topology epoch={} rebuild WGC failed ({:?}), retry in {}ms",
+                          epoch, e, backoff);
+                return;
+            }
+        };
+        let (bw, bh) = fresh.size();
         eprintln!("[d3d11] topology epoch={} rebuild WGC {}x{} (was {}x{})",
                   epoch, bw, bh, self.glass.bg_w, self.glass.bg_h);
         // 尺寸没变也重建会话（主屏 monitor 可能换了、item 失效），但纹理可复用。
@@ -384,15 +402,20 @@ impl D3d11Runtime {
                 self.glass.bg_w = bw;
                 self.glass.bg_h = bh;
             } else {
-                // 新纹理创建失败：宁可保留旧纹理也别把管线留在半重建态；下一帧 epoch
-                // 仍不等会再试一次（自愈），而不是永久放弃。
-                eprintln!("[d3d11] rebuild bg texture failed, retry next frame");
+                // 新纹理创建失败：保留旧会话/纹理与 epoch，退避后再试（自愈）。
+                let backoff = self.wgc_retry_backoff_ms.min(2000);
+                self.wgc_retry_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(backoff));
+                self.wgc_retry_backoff_ms = (backoff * 2).min(2000);
+                eprintln!("[d3d11] rebuild bg texture failed, retry in {}ms", backoff);
                 return;
             }
         }
-        self.wgc = fresh;
+        // 全部成功：换上新会话、标记 epoch 已处理、清退避（下次拓扑变化从 200ms 重新起）。
+        self.wgc = Some(fresh);
         self.wgc_ever_frame = false;
         self.wgc_epoch = epoch;
+        self.wgc_retry_at = None;
+        self.wgc_retry_backoff_ms = 200;
     }
 
     /// 窗口尺寸变化：重建 RT（swap 由 DComp 持有，ResizeBuffers 即可）。
@@ -424,18 +447,30 @@ impl D3d11Runtime {
     pub fn render(&mut self, window: &winit::window::Window, origin: (f32, f32),
                   params: &GlassParams, input: egui::RawInput, root_scale: f32,
                   mut run_ui: impl FnMut(&egui::Context, &mut egui::Ui)) -> FrameStats {
-        // 拓扑变化（换分辨率 / 切显示模式）后重建抓屏会话 + 背景纹理。
-        // epoch 由 App::frame 每帧的 poll_topology 递增；稳定期内 DWM 还在播
-        // 「收拢→发黑→复原」动画，先重建会话但跳过抓屏，等稳定期过再抓新帧。
-        if self.wgc_epoch != crate::wgc::topo_epoch() {
+        // 重建触发条件（社区「持续自愈状态机」）：
+        //   ① 拓扑 epoch 变化；② 上次重建失败后的退避到期；③ 帧尺寸与 bg 纹理不匹配。
+        // 三者任一即重建，且失败会继续退避重试，不再一次失败就永久 latch。
+        let epoch_changed = self.wgc_epoch != crate::wgc::topo_epoch();
+        let retry_due = self.wgc_retry_at.is_some_and(|t| std::time::Instant::now() >= t);
+        if epoch_changed || retry_due {
             self.rebuild_wgc();
         }
         // WGC 抓屏（GPU 侧 CopyResource）。稳定期内不抓过渡帧，沿用旧纹理；
         // app 层 paint_gpu_glass 同期回退纯色，看不到旧拓扑画面。
+        // grab_into 每帧校验 src/dst 尺寸，不匹配会置 size_mismatch 并返回 false。
+        let mut size_mismatch = false;
         if !crate::wgc::settling() {
             if let Some(wgc) = self.wgc.as_ref() {
                 if wgc.grab_into(&self.ctx, &self.glass.bg_tex) { self.wgc_ever_frame = true; }
+                size_mismatch = wgc.take_size_mismatch();
             }
+        }
+        // 帧尺寸不匹配 → 重建（不等拓扑事件，社区 streaming 项目每帧校验同款）。
+        // 走 retry_at 退避：中间态反复变尺寸时不会每帧重建（避免重建风暴）。
+        if size_mismatch && self.wgc_retry_at.is_none() {
+            let backoff = self.wgc_retry_backoff_ms.min(2000);
+            self.wgc_retry_at = Some(std::time::Instant::now() + std::time::Duration::from_millis(backoff));
+            self.wgc_retry_backoff_ms = (backoff * 2).min(2000);
         }
         // 主题亮度：从刚抓到的全屏帧里取「玻璃背后那块桌面」的实时亮度，
         // 500ms 节流读回。旧 wgpu 栈每帧抓屏时算，迁移后 D3D11 栈需在这里接上，
