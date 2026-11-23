@@ -533,10 +533,12 @@ mod tests {
     impl ClientProcess {
         fn new()->Self{
             use std::os::windows::process::CommandExt;
-            let child=std::process::Command::new("powershell.exe")
-                .args(["-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Command","[System.Threading.Thread]::Sleep(60000)"])
+            // CREATE_SUSPENDED：进程保持存活但从不执行，避免 PowerShell/Sleep 在全量测试里
+            // 自然退出而被 exited_with 误判成账号下线；kill 仍能正常结束它。
+            let child=std::process::Command::new("cmd.exe")
+                .args(["/c","exit"])
                 .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-                .creation_flags(0x08000000).spawn().unwrap();
+                .creation_flags(0x08000000 | 0x00000004).spawn().unwrap();
             Self(child)
         }
         fn exit(&mut self){self.0.kill().unwrap();self.0.wait().unwrap();}
