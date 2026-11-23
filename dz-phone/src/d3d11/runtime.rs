@@ -110,6 +110,102 @@ fn scale_root_platform_output(output: &mut egui::PlatformOutput, scale: f32) {
     }
 }
 
+/// D3D11 暂存纹理是「自下而上 + BGRA」，egui 要「自上而下 + RGBA（预乘）」。
+fn bgra_bottom_up_to_rgba_top_down(src: &[u8], row_pitch: usize, w: usize, h: usize) -> Vec<u8> {
+    let mut rgba = vec![0u8; w * h * 4];
+    for row in 0..h {
+        let srow = &src[row * row_pitch..row * row_pitch + w * 4];
+        let dst = &mut rgba[(h - 1 - row) * w * 4..];
+        for x in 0..w {
+            let s = &srow[x * 4..x * 4 + 4];
+            let d = &mut dst[x * 4..x * 4 + 4];
+            d[0] = s[2];
+            d[1] = s[1];
+            d[2] = s[0];
+            d[3] = s[3];
+        }
+    }
+    rgba
+}
+
+/// 从刚画完的 D3D11 渲染目标读回 RGBA 帧（顶原点、预乘 alpha）。
+/// 语义对齐 eframe 0.35 `egui_glow::Painter::read_screen_rgba`：
+/// egui 的 Screenshot 事件和兼容渲染分层窗口都期待「顶原点 RGBA 预乘」。
+/// 只在 egui 显式请求截图时调用，避免每帧 GPU stall。
+fn read_back_rt_rgba(
+    device: &ID3D11Device,
+    ctx: &ID3D11DeviceContext,
+    rt: &ID3D11RenderTargetView,
+) -> Option<egui::ColorImage> {
+    let tex: ID3D11Texture2D = unsafe { rt.GetResource().ok()?.cast().ok()? };
+    let mut desc = D3D11_TEXTURE2D_DESC::default();
+    unsafe { tex.GetDesc(&mut desc) };
+    let (w, h) = (desc.Width as usize, desc.Height as usize);
+    if w == 0 || h == 0 { return None; }
+    let staging_desc = D3D11_TEXTURE2D_DESC {
+        Width: w as u32, Height: h as u32, MipLevels: 1, ArraySize: 1,
+        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_STAGING, BindFlags: 0,
+        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+        MiscFlags: 0,
+    };
+    let mut staging = None;
+    if unsafe { device.CreateTexture2D(&staging_desc, None, Some(&mut staging)) }.is_err() { return None; }
+    let staging = staging?;
+    unsafe { ctx.CopyResource(&staging, &tex); }
+    let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+    if unsafe { ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped)) }.is_err() { return None; }
+    // D3D11 纹理行序自下而上、通道 BGRA；egui 要自上而下 RGBA。
+    let pitch = mapped.RowPitch as usize;
+    let mapped_bytes = unsafe {
+        std::slice::from_raw_parts(mapped.pData as *const u8, pitch * h)
+    };
+    let rgba = bgra_bottom_up_to_rgba_top_down(mapped_bytes, pitch, w, h);
+    unsafe { ctx.Unmap(&staging, 0); }
+    Some(egui::ColorImage::from_rgba_premultiplied([w, h], &rgba))
+}
+
+/// 照搬 eframe 0.35 `glow_integration.rs:715-747` 的 ActionRequested 回灌：
+/// `process_viewport_commands` 只把 Screenshot/Cut/Copy/Paste 记进 actions，
+/// 真正的像素读回与事件注入必须由集成层完成，否则这些功能全是死数据。
+fn drain_actions(
+    egui_winit: &mut egui_winit::State,
+    actions: &mut Vec<egui_winit::ActionRequested>,
+    device: &ID3D11Device,
+    ctx: &ID3D11DeviceContext,
+    rt: Option<&ID3D11RenderTargetView>,
+    viewport_id: egui::ViewportId,
+) {
+    if actions.is_empty() { return; }
+    for action in actions.drain(..) {
+        match action {
+            egui_winit::ActionRequested::Screenshot(user_data) => {
+                // screenshot 必须在 Present 之前读回（FLIP_DISCARD 交换链 Present 后后缓冲内容失效）。
+                if let Some(image) = rt.and_then(|rt| read_back_rt_rgba(device, ctx, rt)) {
+                    egui_winit.egui_input_mut().events.push(egui::Event::Screenshot {
+                        viewport_id, user_data, image: image.into(),
+                    });
+                }
+            }
+            egui_winit::ActionRequested::Cut => {
+                egui_winit.egui_input_mut().events.push(egui::Event::Cut);
+            }
+            egui_winit::ActionRequested::Copy => {
+                egui_winit.egui_input_mut().events.push(egui::Event::Copy);
+            }
+            egui_winit::ActionRequested::Paste => {
+                if let Some(contents) = egui_winit.clipboard_text() {
+                    let contents = contents.replace("\r\n", "\n");
+                    if !contents.is_empty() {
+                        egui_winit.egui_input_mut().events.push(egui::Event::Paste(contents));
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct GlassPipeline {
     vs: ID3D11VertexShader,
     ps: ID3D11PixelShader,
@@ -590,6 +686,9 @@ impl D3d11Runtime {
             }
             self.draw_glass(size.width, size.height, &u);
             let _ = self.egui_renderer.borrow_mut().render(&self.ctx, &rt, &self.egui_ctx, platform.0);
+            // Present 之前消费截图/剪贴板动作：FLIP_DISCARD 后缓冲内容失效。
+            drain_actions(self.egui_winit.as_mut().unwrap(), &mut self.actions,
+                &self.device, &self.ctx, Some(&rt), egui::ViewportId::ROOT);
             unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
             unsafe { let _ = self.dcomp._device.Commit(); }
         }
@@ -715,6 +814,8 @@ impl PlainWindow {
                 self.ctx.ClearRenderTargetView(&rt, &clear);
             }
             let _ = self.renderer.borrow_mut().render(&self.ctx, &rt, egui_ctx, ro);
+            drain_actions(&mut self.egui_winit, &mut self.actions, &self.device,
+                &self.ctx, Some(&rt), viewport_id);
             unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
         }
     }
@@ -741,8 +842,32 @@ impl PlainWindow {
                 self.ctx.ClearRenderTargetView(&rt, &clear);
             }
             let _ = self.renderer.borrow_mut().render(&self.ctx, &rt, egui_ctx, ro);
+            drain_actions(&mut self.egui_winit, &mut self.actions, &self.device,
+                &self.ctx, Some(&rt), viewport_id);
             unsafe { let _ = self.swap.Present(1, DXGI_PRESENT(0)); }
         }
         let _ = size;
+    }
+}
+
+#[cfg(test)]
+mod readback_tests {
+    use super::*;
+
+    #[test]
+    fn screenshot_readback_flips_rows_and_swaps_bgra_to_rgba() {
+        // 两行、每行 2 像素。D3D11 内自下而上存：第 0 行是屏幕底部。
+        // 行距 12 字节（8 有效 + 4 padding），模拟 D3D11_MAPPED_SUBRESOURCE.RowPitch。
+        let src = [
+            // row 0（底行）：红(BGRA) / 绿(BGRA)，再 4 字节 padding
+            0x00, 0x00, 0xff, 0xff, 0x00, 0xff, 0x00, 0x80, 0xee, 0xee, 0xee, 0xee,
+            // row 1（顶行）：蓝(BGRA) / 白(BGRA)，再 4 字节 padding
+            0xff, 0x00, 0x00, 0x40, 0xff, 0xff, 0xff, 0xff, 0xdd, 0xdd, 0xdd, 0xdd,
+        ];
+        let out = bgra_bottom_up_to_rgba_top_down(&src, 12, 2, 2);
+        assert_eq!(out, vec![
+            0x00, 0x00, 0xff, 0x40, 0xff, 0xff, 0xff, 0xff, // 顶行：蓝、白
+            0xff, 0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0x80, // 底行：红、绿
+        ]);
     }
 }

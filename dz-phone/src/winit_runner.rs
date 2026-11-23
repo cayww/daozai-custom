@@ -6,7 +6,7 @@ use daozai::d3d11::runtime::{D3d11Runtime, GlassParams, PlainWindow, FrameStats}
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -16,8 +16,21 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
-/// egui repaint 唤醒事件循环的代理（user event = ()）。
-static REPAINT_PROXY: std::sync::OnceLock<winit::event_loop::EventLoopProxy<()>> = std::sync::OnceLock::new();
+/// 照搬 eframe 0.35 的 UserEvent：repaint 请求必须带 viewport id / 到期时刻 / 请求时的
+/// pass 序号，才能按窗口精确调度并丢弃过期请求（原来只发 `()`，语义全丢）。
+#[derive(Debug)]
+enum Wakeup {
+    Repaint {
+        viewport_id: egui::ViewportId,
+        when: Instant,
+        cumulative_pass_nr: u64,
+    },
+    /// 子窗口 resize/DPI 变化：立即补跑父窗口布局（eframe 的 RepaintNext(parent)）。
+    LayoutDirty,
+}
+
+/// egui repaint 唤醒事件循环的代理。
+static REPAINT_PROXY: std::sync::OnceLock<winit::event_loop::EventLoopProxy<Wakeup>> = std::sync::OnceLock::new();
 
 thread_local! {
     /// immediate viewport renderer 回调（在 draw 上下文同步执行）把该帧子窗口的
@@ -61,6 +74,10 @@ struct SubWindow {
     renderer: PlainWindow,
     output: Option<egui::FullOutput>,
     id: egui::ViewportId,
+    /// 子窗口刚被 resize：内容需要按新尺寸重跑布局，而不是拉伸旧 output。
+    /// Windows 拖动边框时进入模态 sizing 循环，about_to_wait 不跑，
+    /// 只能靠 RedrawRequested 触发父窗口重算 viewport layout。
+    layout_dirty: bool,
 }
 
 struct DaozaiApp {
@@ -71,12 +88,25 @@ struct DaozaiApp {
     subs: HashMap<WindowId, SubWindow>,
     sub_ids: HashMap<egui::ViewportId, WindowId>,
     pending_close: Vec<WindowId>,
+    /// 下一次需要跑父窗口 UI 的时刻。None = 没有待处理请求（长睡眠等输入事件）。
+    next_repaint: Option<Instant>,
 }
 
 impl DaozaiApp {
     fn new(attrs: WindowAttributes) -> Self {
         Self { attrs, window: None, runtime: None, shell: None,
-               subs: HashMap::new(), sub_ids: HashMap::new(), pending_close: Vec::new() }
+               subs: HashMap::new(), sub_ids: HashMap::new(), pending_close: Vec::new(),
+               next_repaint: None }
+    }
+
+    /// 预约下一次父窗口绘制；多次请求取最早的那个（与 eframe 的 next_repaint_time 同语义）。
+    fn schedule_repaint(&mut self, when: Instant) {
+        self.next_repaint = Some(self.next_repaint.map_or(when, |cur| cur.min(when)));
+    }
+
+    /// 输入/尺寸变化等需要立刻跟手的绘制。
+    fn repaint_now(&mut self) {
+        self.schedule_repaint(Instant::now());
     }
 
     /// 消费 immediate viewport 请求：新建/更新子窗口，并保存该帧 output 供绘制。
@@ -101,7 +131,7 @@ impl DaozaiApp {
             // 窗口尚未创建（drain 在 render 之后）而丢失，这里窗口建好后主动显示。
             window.set_visible(true);
             self.sub_ids.insert(id, wid);
-            self.subs.insert(wid, SubWindow { window, renderer, output: Some(output), id });
+            self.subs.insert(wid, SubWindow { window, renderer, output: Some(output), id, layout_dirty: false });
         }
     }
 
@@ -160,6 +190,8 @@ impl DaozaiApp {
         // 独立窗口后必须每帧画，否则内容区空白。
         let subs: Vec<WindowId> = self.subs.keys().copied().collect();
         for wid in subs { self.render_sub_inner(wid); }
+        // 布局已按新尺寸重跑，清除 resize 脏标记。
+        for sub in self.subs.values_mut() { sub.layout_dirty = false; }
     }
 
     /// 绘制子窗口一帧（RedrawRequested 与"不可见窗口直接绘制"共用）。
@@ -177,11 +209,29 @@ impl DaozaiApp {
     }
 }
 
-impl ApplicationHandler<()> for DaozaiApp {
-    fn user_event(&mut self, _el: &ActiveEventLoop, _event: ()) {
-        // egui 后台线程请求重绘：消费 viewport 队列并请求重画。
-        self.drain_viewports();
-        if let Some(w) = self.window.as_ref() { w.request_redraw(); }
+impl ApplicationHandler<Wakeup> for DaozaiApp {
+    fn user_event(&mut self, el: &ActiveEventLoop, event: Wakeup) {
+        match event {
+            Wakeup::Repaint { viewport_id, when, cumulative_pass_nr } => {
+                // 丢弃过期请求：本窗口已经画过比请求时更新的 pass 了（eframe run.rs:303-332 同款）。
+                let current = self.runtime.as_ref()
+                    .map(|rt| rt.egui_ctx.cumulative_pass_nr_for(viewport_id))
+                    .unwrap_or(0);
+                if current == cumulative_pass_nr || current == cumulative_pass_nr + 1 {
+                    self.schedule_repaint(when);
+                }
+            }
+            Wakeup::LayoutDirty => {
+                // Windows 模态 sizing 循环里 about_to_wait 会停摆，不能只约下一帧：
+                // 必须在这里直接补跑父窗口，让 immediate viewport 按新尺寸重排设置页。
+                self.next_repaint = None;
+                with_event_loop_context(el, || {
+                    self.drain_viewports();
+                    self.draw_main();
+                });
+                for sub in self.subs.values() { sub.window.request_redraw(); }
+            }
+        }
     }
 
     fn resumed(&mut self, el: &ActiveEventLoop) {
@@ -203,7 +253,13 @@ impl ApplicationHandler<()> for DaozaiApp {
 
         if let Some(proxy) = REPAINT_PROXY.get() {
             let px = proxy.clone();
-            ctx.set_request_repaint_callback(move |_info| { let _ = px.send_event(()); });
+            ctx.set_request_repaint_callback(move |info| {
+                let _ = px.send_event(Wakeup::Repaint {
+                    viewport_id: info.viewport_id,
+                    when: Instant::now() + info.delay,
+                    cumulative_pass_nr: info.current_cumulative_pass_nr,
+                });
+            });
         }
         // 让 show_viewport_immediate 走原生独立窗口（egui 默认内嵌会把设置页画到岛仔本体）。
         // 照搬 eframe 0.35：注册 immediate renderer，回调在 draw 上下文同步执行——
@@ -268,6 +324,7 @@ impl ApplicationHandler<()> for DaozaiApp {
         self.shell = Some(shell);
         self.runtime = Some(runtime);
         self.window = Some(window);
+        self.repaint_now(); // 首帧
     }
 
     fn suspended(&mut self, _el: &ActiveEventLoop) {
@@ -278,45 +335,42 @@ impl ApplicationHandler<()> for DaozaiApp {
         self.sub_ids.clear();
     }
 
-    fn new_events(&mut self, el: &ActiveEventLoop, cause: winit::event::StartCause) {
-        // WaitUntil 到期时 winit 调 new_events；绘制统一放在 about_to_wait，
-        // 避免同一帧画两次（这里只维持 16ms 的唤醒节拍）。
-        if matches!(cause, winit::event::StartCause::ResumeTimeReached { .. })
-            || matches!(cause, winit::event::StartCause::Init) {
-            self.drain_viewports();
-            el.set_control_flow(ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_millis(16)));
-        }
+    fn new_events(&mut self, _el: &ActiveEventLoop, _cause: winit::event::StartCause) {
+        // 绘制统一在 about_to_wait：它按 egui callback 的 delay 决定下一帧时刻，
+        // 这里如果再设固定 16ms 唤醒会覆盖精确调度、把空闲态重新变成 60fps 空转。
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        with_event_loop_context(el, || {
-            self.drain_viewports();
-            self.draw_main();
-        });
-        for sub in self.subs.values() {
-            sub.window.request_redraw();
+        let now = Instant::now();
+        if self.next_repaint.is_some_and(|t| t <= now) {
+            // 先消费本次请求；绘制过程中 ctx.request_repaint[_after] 会重新预约下一次。
+            self.next_repaint = None;
+            with_event_loop_context(el, || {
+                self.drain_viewports();
+                self.draw_main();
+            });
+            for sub in self.subs.values() { sub.window.request_redraw(); }
         }
-        // 固定 60fps 的 WaitUntil：确保 about_to_wait 每帧都被调用（Poll 模式下 winit
-        // 不调 about_to_wait，导致 viewport 队列无人消费）。
-        el.set_control_flow(ControlFlow::WaitUntil(std::time::Instant::now() + Duration::from_millis(16)));
+        // 没有待处理重绘时长睡眠：输入事件/代理消息会立刻唤醒事件循环，
+        // 而不是像旧版每 16ms 无条件跑一帧（隐藏态 1fps / 静止 15fps 请求才能生效）。
+        let deadline = self.next_repaint.unwrap_or_else(|| Instant::now() + Duration::from_secs(60));
+        el.set_control_flow(ControlFlow::WaitUntil(deadline));
     }
 
     fn window_event(&mut self, _el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if self.window.as_ref().is_some_and(|w| w.id() == id) {
+            let resized = matches!(&event, WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. });
             let repaint = self.runtime.as_mut().map(|r| {
                 let w = self.window.as_ref().unwrap();
                 r.on_window_event(w, &event)
             }).unwrap_or(false);
-            match event {
-                // 绘制在 about_to_wait 的事件循环上下文中做（避免 create_window 重入死锁）。
-                WindowEvent::RedrawRequested => {}
-                _ => {}
-            }
-            let _ = repaint;
+            // 输入和 resize 必须立刻跟手；旧版在这里丢弃 repaint，只靠 16ms 心跳碰巧刷新。
+            if repaint || resized { self.repaint_now(); }
             return;
         }
 
         // 子 viewport 窗口
+        let mut repaint = false;
         if let Some(sub) = self.subs.get_mut(&id) {
             if event == WindowEvent::CloseRequested {
                 // 转成 egui 的 Close 事件喂给设置页 UI（它读 viewport().close_requested()
@@ -326,8 +380,20 @@ impl ApplicationHandler<()> for DaozaiApp {
                 self.pending_close.push(id);
                 return;
             }
-            let repaint = sub.renderer.on_event(&sub.window, &event);
-            if repaint { sub.window.request_redraw(); }
+            if matches!(&event, WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }) {
+                // 尺寸/DPI 变化必须让 immediate viewport 回调重跑一次布局才能正确重排；
+                // 只 request_redraw 会画缓存 output（旧布局被拉伸）。
+                // 对应 eframe 原生 run_ui_and_paint 里的 RepaintNext(parent_viewport)：
+                // 发 user event，在 user_event handler 里安全地跑 draw_main（避免重入）。
+                sub.layout_dirty = true;
+                if let Some(proxy) = REPAINT_PROXY.get() { let _ = proxy.send_event(Wakeup::LayoutDirty); }
+            }
+            repaint = sub.renderer.on_event(&sub.window, &event);
+        }
+        if repaint {
+            // 子窗口输入进了 VIEWPORT_INPUTS，immediate 回调只在父窗口 draw 里消费。
+            if let Some(sub) = self.subs.get(&id) { sub.window.request_redraw(); }
+            self.repaint_now();
         }
         if let WindowEvent::RedrawRequested = event { self.render_sub(id); }
     }
@@ -428,7 +494,7 @@ fn build_glass_params(ppp: f32, liquid: bool, dock: daozai::model::Dock) -> Glas
 
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let event_loop = EventLoop::<()>::new()?;
+    let event_loop = EventLoop::<Wakeup>::with_user_event().build()?;
     let _ = REPAINT_PROXY.set(event_loop.create_proxy());
     let attrs = WindowAttributes::default()
         .with_title("岛仔")
@@ -480,5 +546,23 @@ mod root_scale_tests {
         assert_eq!(next.screen_rect.unwrap().width(), 768.0);
         assert_eq!(next.viewports[&egui::ViewportId::ROOT].native_pixels_per_point, Some(1.25));
         assert!(matches!(next.events[0], egui::Event::PointerMoved(p) if p == egui::pos2(80.0, 40.0)));
+    }
+
+    #[test]
+    fn repaint_scheduling_keeps_the_earliest_deadline() {
+        let mut app = DaozaiApp::new(WindowAttributes::default());
+        let base = Instant::now();
+        let later = base + Duration::from_millis(100);
+        let earlier = base + Duration::from_millis(20);
+        app.schedule_repaint(later);
+        app.schedule_repaint(earlier);
+        assert_eq!(app.next_repaint, Some(earlier));
+        app.schedule_repaint(base + Duration::from_secs(1));
+        assert_eq!(app.next_repaint, Some(earlier));
+
+        let now = Instant::now();
+        app.repaint_now();
+        let due = app.next_repaint.unwrap();
+        assert!(due >= now && due <= Instant::now());
     }
 }
