@@ -42,8 +42,8 @@ ureq = { path = "vendor/ureq" }
 # Research branch: pin all egui crates to upstream main commit 56f3a0e.
 
 [dependencies]
-eframe = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false, features = ["glow", "default_fonts"] }
-egui = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab" }
+eframe = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false, features = ["glow", "default_fonts", "system_fonts"] }
+egui = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", features = ["rayon", "monochrome_emoji_fonts"] }
 log = "0.4"
 dhat = { version = "0.3", optional = true }
 egui_extras = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false, features = ["svg", "image"] }
@@ -68,7 +68,7 @@ rquickjs = "0.8"
 
 # Linux 下 winit 至少要一个后端才能编译（只用于开发/录制，正式目标是 Windows）。
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false, features = ["glow", "default_fonts", "x11"] }
+eframe = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false, features = ["glow", "default_fonts", "system_fonts", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
