@@ -257,7 +257,7 @@ impl Fluid {
     /// 从封面图取一个「不太脏」的主色：暗部和低饱和像素权重更低，
     /// 取完再把明度归一，保证淡彩看得见但不会变成霓虹。
     pub fn tint_from_image(image: &ColorImage) -> [f32; 3] {
-        let [w, h] = image.size;
+        let [w, h] = image.resolution();
         if w == 0 || h == 0 {
             return NEUTRAL;
         }
@@ -267,7 +267,7 @@ impl Fluid {
         while y < h {
             let mut x = 0;
             while x < w {
-                let p = image.pixels[y * w + x];
+                let p = image.pixels()[y * w + x];
                 let (rr, gg, bb) = (p.r() as f32 / 255.0, p.g() as f32 / 255.0, p.b() as f32 / 255.0);
                 let mx = rr.max(gg).max(bb);
                 let mn = rr.min(gg).min(bb);
@@ -347,7 +347,7 @@ mod tests {
     use super::*;
 
     fn image_of(color: Color32) -> ColorImage {
-        ColorImage { size: [8, 8], pixels: vec![color; 64], source_size: eframe::egui::vec2(8.0, 8.0) }
+        ColorImage::new([8, 8], vec![color; 64])
     }
 
     fn lum(c: Color32) -> u32 {
@@ -542,7 +542,7 @@ mod tests {
         let mut img = image_of(Color32::from_rgb(0, 0, 0));
         for y in 2..6 {
             for x in 2..6 {
-                img.pixels[y * 8 + x] = Color32::from_rgb(220, 60, 90);
+                img.pixels_mut()[y * 8 + x] = Color32::from_rgb(220, 60, 90);
             }
         }
         let t = Fluid::tint_from_image(&img);

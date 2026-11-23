@@ -180,12 +180,11 @@ fn drain_actions(
     if actions.is_empty() { return; }
     for action in actions.drain(..) {
         match action {
-            egui_winit::ActionRequested::Screenshot(user_data) => {
+            egui_winit::ActionRequested::Screenshot(callback) => {
                 // screenshot 必须在 Present 之前读回（FLIP_DISCARD 交换链 Present 后后缓冲内容失效）。
+                // egui 0.37 用一次性 ScreenshotCallback 取代了 Event::Screenshot。
                 if let Some(image) = rt.and_then(|rt| read_back_rt_rgba(device, ctx, rt)) {
-                    egui_winit.egui_input_mut().events.push(egui::Event::Screenshot {
-                        viewport_id, user_data, image: image.into(),
-                    });
+                    callback.complete(std::sync::Arc::new(image));
                 }
             }
             egui_winit::ActionRequested::Cut => {
@@ -202,6 +201,8 @@ fn drain_actions(
                     }
                 }
             }
+            // 自定义事件循环本来就会在 hidden 窗口上继续跑 UI；无需额外动作。
+            egui_winit::ActionRequested::PaintWhileHidden => {}
         }
     }
 }

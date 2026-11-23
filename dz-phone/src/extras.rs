@@ -2910,7 +2910,7 @@ mod tests {
         ];
         for bytes in icons {
             let image = egui_extras::image::load_svg_bytes(bytes, &Default::default()).unwrap();
-            assert!(image.pixels.iter().any(|p| p.a() > 0));
+            assert!(image.pixels().iter().any(|p| p.a() > 0));
         }
     }
 

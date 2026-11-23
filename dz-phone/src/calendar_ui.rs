@@ -150,7 +150,7 @@ mod tests {
                 source_icon(&c,source,40.0,0.0,28.0);
             });
         });
-        assert!(output.textures_delta.set.iter().any(|(_,delta)|delta.image.size()==[56,56]),"放大的通知图标必须按屏幕像素重新栅格化，不能拉伸小图：{:?}",output.textures_delta.set.iter().map(|(_,d)|d.image.size()).collect::<Vec<_>>());
+        assert!(output.textures_delta.set.values().flatten().any(|delta|delta.image.resolution()==[56,56]),"放大的通知图标必须按屏幕像素重新栅格化，不能拉伸小图：{:?}",output.textures_delta.set.values().flatten().map(|d|d.image.resolution()).collect::<Vec<_>>());
         }
     }
 
@@ -164,13 +164,13 @@ mod tests {
             source_icon(&c,Source::Calendar(Some(calendar::Provider::DingTalk)),0.0,0.0,20.0);
             source_icon(&c.scaled(50.0,0.0,1.5),Source::Calendar(Some(calendar::Provider::DingTalk)),50.0,0.0,20.0);
         });});
-        let first=frame(&ctx);let sizes=first.textures_delta.set.iter().map(|(_,delta)|delta.image.size()).collect::<Vec<_>>();
+        let first=frame(&ctx);let sizes=first.textures_delta.set.values().flatten().map(|delta|delta.image.resolution()).collect::<Vec<_>>();
         assert!(sizes.contains(&[32,32]) && sizes.contains(&[48,48]),"图标应按实际物理像素过滤，而非直接缩小原始大图：{sizes:?}");
-        let logo=first.textures_delta.set.iter().find_map(|(_,delta)|match &delta.image{egui::ImageData::Color(image) if image.size==[32,32]=>Some(image),_=>None}).unwrap();
-        let rows=(0..32).filter(|y|logo.pixels[y*32..(y+1)*32].iter().any(|pixel|pixel.a()>=128)).collect::<Vec<_>>();
+        let logo=first.textures_delta.set.values().flatten().find_map(|delta|match &delta.image{egui::ImageData::Color(image) if image.resolution()==[32,32]=>Some(image),_=>None}).unwrap();
+        let rows=(0..32).filter(|y|logo.pixels()[y*32..(y+1)*32].iter().any(|pixel|pixel.a()>=128)).collect::<Vec<_>>();
         assert!(rows.last().unwrap()-rows.first().unwrap()+1>=30,"钉钉标记不能因重复留白而缩小到丢失翅膀和闪电细节");
         let next=frame(&ctx);
-        assert!(!next.textures_delta.set.iter().any(|(_,delta)|matches!(delta.image.size(),[32,32]|[48,48])),"不同显示尺寸应各自复用贴图，不能每帧重新上传");
+        assert!(!next.textures_delta.set.values().flatten().any(|delta|matches!(delta.image.resolution(),[32,32]|[48,48])),"不同显示尺寸应各自复用贴图，不能每帧重新上传");
     }
     #[test]
     fn date_markers_merge_repeat_sources_and_show_at_most_three_colors() {

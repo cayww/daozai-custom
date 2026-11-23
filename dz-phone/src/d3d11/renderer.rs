@@ -275,6 +275,12 @@ impl Renderer {
                         log::warn!("paint callbacks are not yet supported.");
                         None
                     },
+                    Primitive::Clear(rect) => {
+                        // egui 0.37 adds Shape::Clear; D3D11 backend has no scissored clear yet.
+                        // Ignore for now (whole-target clear still happens every frame).
+                        let _ = rect;
+                        None
+                    },
                 },
             )
             .filter_map(|(mesh, clip_rect)| {

@@ -92,35 +92,38 @@ impl TexturePool {
         ctx: &ID3D11DeviceContext,
         delta: TexturesDelta,
     ) -> Result<()> {
-        for (tid, delta) in delta.set {
-            if delta.is_whole()
-                && delta.image.width() > 0
-                && delta.image.height() > 0
-            {
-                self.pool.insert(
-                    tid,
-                    Self::create_managed_texture(&self.device, delta.image)?,
-                );
-                // the old texture is returned and dropped here, freeing
-                // all its gpu resource.
-            } else if let Some(tex) =
-                self.pool.get_mut(&tid).filter(|t| t.is_managed())
-            {
-                Self::update_partial(
-                    ctx,
-                    tex,
-                    delta.image,
-                    delta.pos.unwrap(),
-                )?;
-            } else {
-                log::warn!(
-                    "egui wants to update a non-existing texture {tid:?}. this request will be ignored."
-                );
+        // TexturesDelta implements Drop in egui 0.37: borrow its fields instead of moving them.
+        for (tid, deltas) in &delta.set {
+            for delta in deltas {
+                if delta.is_whole()
+                    && delta.image.width() > 0
+                    && delta.image.height() > 0
+                {
+                    self.pool.insert(
+                        *tid,
+                        Self::create_managed_texture(&self.device, delta.image.clone())?,
+                    );
+                    // the old texture is returned and dropped here, freeing
+                    // all its gpu resource.
+                } else if let Some(tex) =
+                    self.pool.get_mut(&tid).filter(|t| t.is_managed())
+                {
+                    Self::update_partial(
+                        ctx,
+                        tex,
+                        delta.image.clone(),
+                        delta.pos.unwrap(),
+                    )?;
+                } else {
+                    log::warn!(
+                        "egui wants to update a non-existing texture {tid:?}. this request will be ignored."
+                    );
+                }
             }
         }
-        for tid in delta.free {
-            if self.pool.get(&tid).is_some_and(|t| t.is_managed()) {
-                self.pool.remove(&tid);
+        for tid in &delta.free {
+            if self.pool.get(tid).is_some_and(|t| t.is_managed()) {
+                self.pool.remove(tid);
             }
         }
         Ok(())
@@ -168,8 +171,8 @@ impl TexturePool {
                     for x in 0..f.width() {
                         let whole = (ny + y) * old.width + nx + x;
                         let frac = y * f.width() + x;
-                        old.pixels[whole] = f.pixels[frac];
-                        data[whole] = f.pixels[frac];
+                        old.pixels[whole] = f.pixels()[frac];
+                        data[whole] = f.pixels()[frac];
                     }
                 }
             },
@@ -185,7 +188,7 @@ impl TexturePool {
         let width = data.width();
 
         let pixels = match &data {
-            ImageData::Color(c) => c.pixels.clone(),
+            ImageData::Color(c) => c.pixels().to_vec(),
         };
 
         let desc = D3D11_TEXTURE2D_DESC {

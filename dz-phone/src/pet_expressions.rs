@@ -97,7 +97,7 @@ impl Expressions {
             let decoded=image::load_from_memory(expression.sheet()).expect("内置表情序列图").into_rgba8();
             let mut image=egui::ColorImage::from_rgba_unmultiplied([decoded.width() as usize,decoded.height() as usize],decoded.as_raw());
             drop(decoded);
-            if let Some(palette)=palette {for pixel in &mut image.pixels {if pixel.a()>0 {*pixel=crate::skin_paint::map_color(*pixel,&palette);}}}
+            if let Some(palette)=palette {for pixel in image.pixels_mut() {if pixel.a()>0 {*pixel=crate::skin_paint::map_color(*pixel,&palette);}}}
             if let Some((previous,previous_palette,texture))=&mut self.sheet {*previous=expression;*previous_palette=palette;texture.set(image,egui::TextureOptions::LINEAR);}
             else {
                 let texture=c.ui.ctx().load_texture("daozai-expressions",image,egui::TextureOptions::LINEAR);
@@ -200,24 +200,30 @@ mod tests {
                 let card=Card::new(ui,egui::Pos2::ZERO,ui.max_rect());assert!(expressions.draw(&card,24.0,palette));
             });
         });
-        let output=frame(&mut expressions,None);let id=expressions.sheet.as_ref().unwrap().2.id();
-        let delta=&output.textures_delta.set.iter().find(|(texture,_)|*texture==id).unwrap().1;
+        let mut output=frame(&mut expressions,None);let id=expressions.sheet.as_ref().unwrap().2.id();
+        let delta=&output.textures_delta.set.iter().find(|(texture,_)|**texture==id).unwrap().1[0];
         let egui::ImageData::Color(image)=&delta.image else{panic!("表情应为彩色纹理")};
-        assert_eq!(image.size,[144,1440],"只上传正在播放的表情，不上传整张图集");
-        let white=image.pixels.iter().position(|p|p.a()>250&&p.r()>240&&p.g()>240&&p.b()>240).unwrap();
-        assert!(!frame(&mut expressions,None).textures_delta.set.iter().any(|(texture,_)|*texture==id),"同一表情、同一皮肤不能重复解码或上传");
+        assert_eq!(image.resolution(),[144,1440],"只上传正在播放的表情，不上传整张图集");
+        let white=image.pixels().iter().position(|p|p.a()>250&&p.r()>240&&p.g()>240&&p.b()>240).unwrap();
+        output.textures_delta.clear();
+        let mut repeat=frame(&mut expressions,None);
+        assert!(!repeat.textures_delta.set.iter().any(|(texture,_)|*texture==id),"同一表情、同一皮肤不能重复解码或上传");
+        repeat.textures_delta.clear();
         for palette in [crate::skin_paint::CREAM,crate::skin_paint::GLASS_LIGHT] {
-            let output=frame(&mut expressions,Some(palette));assert_eq!(expressions.sheet.as_ref().unwrap().2.id(),id);
-            let delta=&output.textures_delta.set.iter().find(|(texture,_)|*texture==id).unwrap().1;
+            let mut output=frame(&mut expressions,Some(palette));assert_eq!(expressions.sheet.as_ref().unwrap().2.id(),id);
+            let delta=&output.textures_delta.set.iter().find(|(texture,_)|**texture==id).unwrap().1[0];
             let egui::ImageData::Color(image)=&delta.image else{unreachable!()};
-            assert!(image.pixels[white].r()<70&&image.pixels[white].g()<70&&image.pixels[white].b()<70,"浅色皮肤上的眼睛应为深色");
+            assert!(image.pixels()[white].r()<70&&image.pixels()[white].g()<70&&image.pixels()[white].b()<70,"浅色皮肤上的眼睛应为深色");
+            output.textures_delta.clear();
         }
         expressions.play(Expression::Search);
-        let output=frame(&mut expressions,None);assert_eq!(expressions.sheet.as_ref().unwrap().2.id(),id,"换表情原地替换，不新建纹理");
+        let mut output=frame(&mut expressions,None);assert_eq!(expressions.sheet.as_ref().unwrap().2.id(),id,"换表情原地替换，不新建纹理");
         assert!(output.textures_delta.set.iter().any(|(texture,_)|*texture==id));
+        output.textures_delta.clear();
         for _ in 0..100 {expressions.step(PetState::Awake,0.1,true);if expressions.current().is_none(){break;}}
         assert!(expressions.current().is_none() && expressions.sheet.is_none(),"播完释放纹理，不常驻显存");
-        let output=ctx.run_ui(Default::default(), |_| {});assert!(output.textures_delta.free.contains(&id));
+        let mut output=ctx.run_ui(Default::default(), |_| {});assert!(output.textures_delta.free.contains(&id));
+        output.textures_delta.clear();
     }
 
     #[test]

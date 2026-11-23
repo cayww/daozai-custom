@@ -2664,7 +2664,7 @@ impl App {
         let (hovering_files, dropped) = ctx.input(|i| {
             (
                 self.settings.visible_pages[3] && !i.raw.hovered_files.is_empty(),
-                i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect::<Vec<_>>(),
+                i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect::<Vec<_>>(),
             )
         });
         if !dropped.is_empty() && self.settings.visible_pages[3] {
@@ -4008,7 +4008,7 @@ impl App {
                 let py=h*(row as f32+0.5)/TEX_H as f32;
                 for col in 0..TEX_W {
                     let px=w*(col as f32+0.5)/TEX_W as f32;
-                    image.pixels[row*TEX_W+col]=self.fluid.compose_with(px,py,w,h,expand,tint_here,glow,glow_a,seek_xy,seek_a);
+                    image.pixels_mut()[row*TEX_W+col]=self.fluid.compose_with(px,py,w,h,expand,tint_here,glow,glow_a,seek_xy,seek_a);
                 }
             }
             let handle=self.fluid_tex.get_or_insert_with(||{
@@ -4411,7 +4411,7 @@ impl App {
             // 有手机电量时把封面右移，给最左侧的常驻电量环让出位置。
             let art_left=left+if resident_battery {36.0}else{12.0};
             if let Some((image,texture))=&self.music_artwork {
-                let [width,height]=image.size;
+                let [width,height]=image.resolution();
                 let uv_size=if width>height {egui::vec2(height as f32/width as f32,1.0)}else{egui::vec2(1.0,width as f32/height as f32)};
                 let uv=Rect::from_center_size(Pos2::new(0.5,0.5),uv_size);
                 c.painter.add(egui::epaint::RectShape::filled(c.rect(art_left,center_y-10.0,20.0,20.0),5.0*c.s,Color32::WHITE).with_texture(texture.id(),uv));

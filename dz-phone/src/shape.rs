@@ -532,7 +532,7 @@ mod fluid_path_bench {
             for row in 0..80usize {
                 let py = h * (row as f32 + 0.5) / 80.0;
                 for col in 0..160usize {
-                    image.pixels[row * 160 + col] =
+                    image.pixels_mut()[row * 160 + col] =
                         fluid.compose(w * (col as f32 + 0.5) / 160.0, py, w, h, 1.0);
                 }
             }

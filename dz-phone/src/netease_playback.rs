@@ -870,10 +870,10 @@ mod tests{
         loop{
             let mut media=reader.poll().expect("未读到网易云原生播放事件");reader.fill_artwork(&mut media);
             if let Some(image)=&media.artwork{
-                assert!(image.size[0]>1 && image.size[0]<=256 && image.size[1]>1 && image.size[1]<=256);
+                assert!(image.resolution()[0]>1 && image.resolution()[0]<=256 && image.resolution()[1]>1 && image.resolution()[1]<=256);
                 let mut next=reader.poll().unwrap();reader.fill_artwork(&mut next);
                 if next.song_id==media.song_id{assert!(Arc::ptr_eq(next.artwork.as_ref().unwrap(),image));}
-                println!("歌曲={} 封面={}x{}，重复采样复用缓存",media.title,image.size[0],image.size[1]);break;
+                println!("歌曲={} 封面={}x{}，重复采样复用缓存",media.title,image.resolution()[0],image.resolution()[1]);break;
             }
             assert!(start.elapsed()<Duration::from_secs(10),"未获取到网易云专辑封面");std::thread::sleep(Duration::from_millis(100));
         }

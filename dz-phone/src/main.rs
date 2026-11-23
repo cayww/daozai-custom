@@ -21,6 +21,9 @@ struct Shell {
     /// 兼容渲染上一次请求读回画面的时刻（无输入的持续动画按约 30 帧/秒读回）。
     #[cfg(windows)]
     readback_at: Option<Instant>,
+    /// egui 0.37 截图改为一次性回调：跨帧接住兼容渲染的读回结果。
+    #[cfg(windows)]
+    compat_shot: std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<egui::ColorImage>>>>,
     media: smtc::Shared,
     seek_rx: Option<(&'static str,std::sync::mpsc::Receiver<bool>)>,
     media_control:Option<smtc::ControlWorker>,
@@ -187,6 +190,8 @@ impl Shell {
             frame_at: Instant::now(),
             #[cfg(windows)]
             readback_at: None,
+            #[cfg(windows)]
+            compat_shot: std::sync::Arc::new(std::sync::Mutex::new(None)),
             media,
             seek_rx: None,
             media_control:None,
@@ -636,17 +641,23 @@ impl Shell {
             // 兼容渲染：读回的画面交给分层窗口，边缘保留抗锯齿。画面变化（或有其他输入）时才请求下一次读回，
             // 读回完成本身触发的那一帧若画面没变就停下，静止时不会一直空转。
             if native.wants_frames() {
-                let (shot,other_input)=ctx.input(|i|(
-                    i.events.iter().rev().find_map(|e|match e{egui::Event::Screenshot{image,..}=>Some(image.clone()),_=>None}),
-                    i.events.iter().any(|e|!matches!(e,egui::Event::Screenshot{..})),
-                ));
-                let changed=shot.as_ref().is_some_and(|image|native.present_frame(image.size,image.as_raw()));
+                let shot=self.compat_shot.lock().unwrap_or_else(|e|e.into_inner()).take();
+                let other_input=ctx.input(|i|!i.events.is_empty());
+                let changed=shot.as_ref().is_some_and(|image|native.present_frame(image.size(),image.as_raw()));
                 if shot.is_none() || changed || other_input {
                     // 拖动、悬停等有输入时满帧跟手；歌词滚动这类自己在动的画面约 30 帧/秒读回，
                     // 未到间隔就预约一次重绘，到时补上读回，动画停下时的最后一帧不会漏掉。
                     let now=Instant::now();
                     match daozai::layered::readback_delay(self.readback_at,now,other_input) {
-                        None=>{self.readback_at=Some(now);ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));}
+                        None=>{
+                            self.readback_at=Some(now);
+                            let slot=self.compat_shot.clone();
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                                egui::ScreenshotCallback::new(move |image| {
+                                    if let Ok(mut guard)=slot.lock(){*guard=Some(image);}
+                                }),
+                            ));
+                        }
                         Some(wait)=>ctx.request_repaint_after(wait),
                     }
                 }
@@ -923,9 +934,8 @@ mod quota_sig_tests {
 // ---------------- 系统信息 ----------------
 
 fn schedule_repaint(ctx:&egui::Context,interval:Duration){
-    // egui 会预减一帧；本程序自行调度刷新，补回后才能保持实际的等待间隔。
-    let predicted=ctx.input(|i|Duration::from_secs_f32(i.predicted_dt));
-    ctx.request_repaint_after(interval.saturating_add(predicted));
+    // egui 0.37 不再预减一帧：直接传目标间隔，别再补 predicted_dt。
+    ctx.request_repaint_after(interval);
 }
 
 #[cfg(test)]
@@ -936,11 +946,12 @@ mod repaint_tests {
         let ctx=egui::Context::default();
         let mut delay=Duration::ZERO;
         for frame in 0..4 {
-            let output=ctx.run_ui(egui::RawInput{time:Some(frame as f64),predicted_dt:1.0/60.0,..Default::default()}, |ui|{
+            let mut output=ctx.run_ui(egui::RawInput{time:Some(frame as f64),predicted_dt:1.0/60.0,..Default::default()}, |ui|{
                 if immediate{ui.ctx().request_repaint();}
                 schedule_repaint(&ctx,interval);
             });
             delay=output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
+            output.textures_delta.clear();
         }
         delay
     }

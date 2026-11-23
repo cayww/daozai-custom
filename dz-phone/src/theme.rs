@@ -291,7 +291,7 @@ mod tests {
         }
         let fonts=super::shared_fonts();let font=&fonts.font_data["cjk0"];
         let mut name=[0u16;1024];
-        let count=unsafe{K32GetMappedFileNameW(windows::Win32::System::Threading::GetCurrentProcess().0,font.font.as_ptr().cast(),name.as_mut_ptr(),name.len()as u32)};
+        let count=unsafe{K32GetMappedFileNameW(windows::Win32::System::Threading::GetCurrentProcess().0,font.bytes().as_ptr().cast(),name.as_mut_ptr(),name.len()as u32)};
         assert!(count>0,"中文字体仍占用完整的私有堆副本，没有复用系统字体文件页");
         let name=String::from_utf16_lossy(&name[..count as usize]).to_lowercase();
         assert!([".ttc",".ttf",".otf"].iter().any(|suffix|name.ends_with(suffix)),"映射必须来自实际字体文件");
@@ -300,8 +300,11 @@ mod tests {
     #[test]
     fn font_data_is_shared_across_contexts_without_owned_byte_copies(){
         let fonts=super::shared_fonts();
-        assert!(fonts.font_data.values().all(|font|matches!(font.font,std::borrow::Cow::Borrowed(_))),"字体不能在每个排版上下文中产生完整副本");
         let cloned=fonts.clone();
+        // egui 0.37 FontData.font 是 Arc<dyn AsRef<[u8]>>；共享性由 Arc 指针保证。
+        assert!(fonts.font_data.iter().all(|(name,font)|
+            std::sync::Arc::ptr_eq(&font.font,&cloned.font_data[name].font)),
+            "字体字节不能在每个排版上下文中产生完整副本");
         for (name,font) in &fonts.font_data {assert!(std::sync::Arc::ptr_eq(font,&cloned.font_data[name]));}
     }
 }

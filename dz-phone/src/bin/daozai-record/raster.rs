@@ -25,25 +25,27 @@ impl Raster {
     }
 
     pub fn update_textures(&mut self, delta: &TexturesDelta) {
-        for (id, d) in &delta.set {
-            let (w, h, px): (usize, usize, Vec<[f32; 4]>) = match &d.image {
-                ImageData::Color(img) => (
-                    img.width(),
-                    img.height(),
-                    img.pixels.iter().map(|c| [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, c.a() as f32 / 255.0]).collect(),
-                ),
-            };
-            match d.pos {
-                Some([x0, y0]) => {
-                    let t = self.textures.get_mut(id).expect("partial update of unknown texture");
-                    for y in 0..h {
-                        for x in 0..w {
-                            t.px[(y0 + y) * t.w + x0 + x] = px[y * w + x];
+        for (id, deltas) in &delta.set {
+            for d in deltas {
+                let (w, h, px): (usize, usize, Vec<[f32; 4]>) = match &d.image {
+                    ImageData::Color(img) => (
+                        img.width(),
+                        img.height(),
+                        img.pixels().iter().map(|c| [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, c.a() as f32 / 255.0]).collect(),
+                    ),
+                };
+                match d.pos {
+                    Some([x0, y0]) => {
+                        let t = self.textures.get_mut(id).expect("partial update of unknown texture");
+                        for y in 0..h {
+                            for x in 0..w {
+                                t.px[(y0 + y) * t.w + x0 + x] = px[y * w + x];
+                            }
                         }
                     }
-                }
-                None => {
-                    self.textures.insert(*id, Tex { w, h, px });
+                    None => {
+                        self.textures.insert(*id, Tex { w, h, px });
+                    }
                 }
             }
         }

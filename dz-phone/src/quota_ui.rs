@@ -150,7 +150,7 @@ fn logo_texture(ctx:&egui::Context,provider:Provider,pixels:u32)->Option<egui::T
         egui_extras::image::load_svg_bytes_with_size(bytes,egui::load::SizeHint::Size { width: pixels, height: pixels, maintain_aspect_ratio: true }, &Default::default()).ok()?
     };
     // 白色标识使用矢量覆盖率，避免透明边缘再次变暗。
-    for pixel in &mut image.pixels{if keeps_brand_color(provider){continue;}*pixel=if provider==Provider::DeepSeek{Color32::from_rgba_unmultiplied(77,107,254,pixel.a())}else{Color32::from_white_alpha(pixel.a())};}
+    for pixel in image.pixels_mut(){if keeps_brand_color(provider){continue;}*pixel=if provider==Provider::DeepSeek{Color32::from_rgba_unmultiplied(77,107,254,pixel.a())}else{Color32::from_white_alpha(pixel.a())};}
     let texture=ctx.load_texture(format!("quota-logo-{}-{pixels}",provider.name()),image,egui::TextureOptions::LINEAR);
     if (!provider.balance()||provider.relay())&&!keeps_brand_color(provider){crate::skin_paint::mark_monochrome(texture.id());}else{crate::skin_paint::mark_colored(texture.id());}
     ctx.data_mut(|data|data.insert_temp(key,texture.clone()));Some(texture)
@@ -939,7 +939,7 @@ mod tests {
         let icon=egui_extras::image::load_svg_bytes_with_size(include_bytes!("../assets/ai-icons/zcode.svg"),egui::load::SizeHint::Size { width: 26, height: 26, maintain_aspect_ratio: true }, &Default::default()).unwrap();
         for (x,y) in [(3,3),(22,3),(3,22),(22,22)] {assert_eq!(icon[(x,y)].a(),0);}
         assert!(icon[(13,1)].a()>180);
-        assert!(icon.pixels.iter().filter(|p|p.r()>230&&p.a()>240).count()>35);
+        assert!(icon.pixels().iter().filter(|p|p.r()>230&&p.a()>240).count()>35);
     }
     #[test] fn relay_key_icons_remain_visible_in_light_skins(){
         let ctx=egui::Context::default();
@@ -957,7 +957,7 @@ mod tests {
         use crate::model::Skin;
         for skin in [Skin::Classic,Skin::Cream,Skin::GlassLight,Skin::GlassDark]{
             let image=egui_extras::image::load_svg_bytes_with_size(deepseek_badge_svg(skin).as_bytes(),egui::load::SizeHint::Size { width: 100, height: 100, maintain_aspect_ratio: true }, &Default::default()).unwrap();
-            assert!(image.pixels.iter().any(|p|*p==Color32::from_rgb(77,107,254)));
+            assert!(image.pixels().iter().any(|p|*p==Color32::from_rgb(77,107,254)));
             let id=egui::TextureId::User(0xDEE5);crate::skin_paint::mark_monochrome(id);crate::skin_paint::mark_colored(id);
             let mut mesh=egui::Mesh::with_texture(id);mesh.add_rect_with_uv(egui::Rect::from_min_size(egui::Pos2::ZERO,egui::vec2(24.0,24.0)),egui::Rect::from_min_max(egui::Pos2::ZERO,egui::pos2(1.0,1.0)),Color32::WHITE);
             let mut shape=egui::Shape::mesh(mesh);crate::skin_paint::recolor(&mut shape,&crate::skin_paint::CREAM);
@@ -1011,7 +1011,7 @@ mod tests {
                     let c=Card::new(ui,egui::pos2(0.37,0.21),ui.max_rect());logo(&c,provider,32.25,32.5,size);
                 });
                 let mesh=output.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Mesh(mesh)=>Some(mesh),_=>None}).expect("应绘制厂商图标");
-                let image=&output.textures_delta.set.iter().find(|(id,_)|*id==mesh.texture_id).expect("不同尺寸应各自生成纹理").1.image;
+                let image=&output.textures_delta.set.iter().find(|(id,_)|**id==mesh.texture_id).expect("不同尺寸应各自生成纹理").1[0].image;
                 let pixels=(size*scale).round() as usize;
                 assert_eq!(image.size(),[pixels,pixels],"图标应按屏幕像素生成，厂商={}，缩放={scale}",provider.name());
                 for v in &mesh.vertices {
@@ -1019,12 +1019,12 @@ mod tests {
                 }
                 if let egui::ImageData::Color(image)=image {
                     if provider==Provider::Doubao{
-                        assert!(image.pixels.iter().any(|pixel|pixel.a()>150&&pixel.b()>pixel.r().saturating_add(20)),"豆包头像应保留官方原始配色");
-                        assert!(image.pixels.iter().any(|pixel|pixel.a()==0),"豆包头像应保留透明底");
+                        assert!(image.pixels().iter().any(|pixel|pixel.a()>150&&pixel.b()>pixel.r().saturating_add(20)),"豆包头像应保留官方原始配色");
+                        assert!(image.pixels().iter().any(|pixel|pixel.a()==0),"豆包头像应保留透明底");
                     }else if provider==Provider::MiniMax{
                         let original=egui_extras::image::load_svg_bytes_with_size(include_bytes!("../assets/ai-icons/minimax.svg"),egui::load::SizeHint::Size { width: pixels as u32, height: pixels as u32, maintain_aspect_ratio: true }, &Default::default()).unwrap();
-                        assert_eq!(image.pixels,original.pixels,"MiniMax 应保留品牌颜色和透明边缘");
-                    }else{for pixel in &image.pixels {let expected=if keeps_brand_color(provider){*pixel}else if provider==Provider::DeepSeek{Color32::from_rgba_unmultiplied(77,107,254,pixel.a())}else{Color32::from_white_alpha(pixel.a())};assert_eq!(*pixel,expected,"标识颜色与透明边缘应保持一致");}}
+                        assert_eq!(image.pixels(),original.pixels(),"MiniMax 应保留品牌颜色和透明边缘");
+                    }else{for pixel in image.pixels() {let expected=if keeps_brand_color(provider){*pixel}else if provider==Provider::DeepSeek{Color32::from_rgba_unmultiplied(77,107,254,pixel.a())}else{Color32::from_white_alpha(pixel.a())};assert_eq!(*pixel,expected,"标识颜色与透明边缘应保持一致");}}
                 }
             }}
         }

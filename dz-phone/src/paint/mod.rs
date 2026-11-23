@@ -303,7 +303,7 @@ impl<'a> Card<'a> {
         if s > 1.0 {
             let amount = ((s - 1.0) / 0.12).clamp(0.0, 1.0);
             if amount > 1e-3 {
-                let atlas = self.ui.ctx().fonts(|f| f.font_image_size());
+                let atlas = self.ui.ctx().fonts(|f| f.font_image_resolution());
                 inset_text_uv(&mut shape, atlas, amount);
             }
         }
@@ -498,7 +498,11 @@ impl<'a> Card<'a> {
     /// 圆角竖直渐变，沿用 egui 的边缘抗锯齿。
     pub fn vgrad(&self, x: f32, y: f32, w: f32, h: f32, radius:f32, top: Color32, bottom: Color32) {
         let r = self.rect(x, y, w, h);
-        let shapes=vec![egui::epaint::ClippedShape{clip_rect:self.painter.clip_rect(),shape:egui::Shape::rect_filled(r,radius*self.s,Color32::WHITE)}];
+        let shapes=vec![egui::epaint::ClippedShape{
+            clip_rect:self.painter.clip_rect(),
+            shape:egui::Shape::rect_filled(r,radius*self.s,Color32::WHITE),
+            transform_after_tessellation:egui::epaint::emath::TSTransform::IDENTITY,
+        }];
         for primitive in self.ui.ctx().tessellate(shapes,self.ui.ctx().pixels_per_point()) {
             if let egui::epaint::Primitive::Mesh(mut mesh)=primitive.primitive {
                 mesh.texture_id=egui::TextureId::default();

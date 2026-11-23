@@ -244,17 +244,17 @@ mod tests {
         std::fs::remove_file(&picture).unwrap();std::fs::remove_dir(&dir).unwrap();
         if initialized{unsafe{CoUninitialize();}}
         for ((actual,expected),kind) in previews.into_iter().zip(["文件夹系统图标","图片内容缩略图"]){
-            assert!(actual.size[0]<=96&&actual.size[1]<=96,"{kind}不能上传大图");
-            assert_eq!(actual.size,expected.size,"{kind}尺寸不符");
-            assert!(actual.pixels==expected.pixels,"{kind}应使用对应的系统图像");
+            assert!(actual.resolution()[0]<=96&&actual.resolution()[1]<=96,"{kind}不能上传大图");
+            assert_eq!(actual.resolution(),expected.resolution(),"{kind}尺寸不符");
+            assert!(actual.pixels()==expected.pixels(),"{kind}应使用对应的系统图像");
         }
     }
 
     #[test]
     fn oversized_shell_thumbnails_are_reduced_before_upload(){
         let preview=preview_image(1024,512,vec![255;1024*512*4]).unwrap();
-        assert_eq!(preview.size,[96,48]);
-        assert!(preview.pixels.len()<=96*96,"缩略图插件返回大图时也必须限制单项内存");
+        assert_eq!(preview.resolution(),[96,48]);
+        assert!(preview.pixels().len()<=96*96,"缩略图插件返回大图时也必须限制单项内存");
     }
     #[test]
     fn slow_preview_keeps_ui_nonblocking_and_requests_bounded(){

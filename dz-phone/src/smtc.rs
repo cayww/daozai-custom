@@ -1369,7 +1369,7 @@ mod tests {
         // 网页可能先提供占位图，随后才发布真实封面。
         let actual=cache.get("song".into(),||Some(cover_bytes(eframe::egui::Color32::BLUE))).unwrap();
         assert!(!Arc::ptr_eq(&temporary,&actual),"同一首歌的真实封面到达后必须替换占位图");
-        assert_eq!(actual.pixels[0],eframe::egui::Color32::BLUE);
+        assert_eq!(actual.pixels()[0],eframe::egui::Color32::BLUE);
     }
 
     #[test]
@@ -1379,8 +1379,8 @@ mod tests {
             let mut bytes=std::io::Cursor::new(Vec::new());
             original.write_to(&mut bytes,format).unwrap();
             let decoded=decode_artwork(bytes.get_ref()).unwrap();
-            assert_eq!(decoded.size,[256,128]);
-            assert!(decoded.pixels.iter().all(|p|p.a()==255));
+            assert_eq!(decoded.resolution(),[256,128]);
+            assert!(decoded.pixels().iter().all(|p|p.a()==255));
         }
         assert!(decode_artwork(b"invalid image").is_none());
     }
@@ -1638,7 +1638,7 @@ mod tests {
         assert!(next.playing && after>before+2.0,"播放进度没有推进：{before:.2} -> {after:.2}");
         let cover=next.artwork.expect("播放中封面消失");
         println!("客户端={} 歌曲={} 歌手={} 封面={}x{} 歌词={}行 进度={before:.2}->{after:.2} 歌词行={:?}->{:?}",
-            first.source,first.title,first.artist,cover.size[0],cover.size[1],lyrics.lines.len(),lyrics.index_at(before as f32),lyrics.index_at(after as f32));
+            first.source,first.title,first.artist,cover.resolution()[0],cover.resolution()[1],lyrics.lines.len(),lyrics.index_at(before as f32),lyrics.index_at(after as f32));
     }
 
     #[cfg(windows)]
@@ -1682,10 +1682,10 @@ mod tests {
         };
         println!("当前媒体：{} / {}；来源 {}；类型 {:?}",np.title,np.artist,np.source,np.kind());
         let cover=np.artwork.expect("当前媒体会话没有可读封面");
-        println!("系统封面尺寸：{}×{}",cover.size[0],cover.size[1]);
+        println!("系统封面尺寸：{}×{}",cover.resolution()[0],cover.resolution()[1]);
         if let Ok(path)=std::env::var("DAOZAI_ARTWORK_PROBE") {
-            let pixels:Vec<u8>=cover.pixels.iter().flat_map(|p|p.to_srgba_unmultiplied()).collect();
-            image::save_buffer(path,&pixels,cover.size[0] as u32,cover.size[1] as u32,image::ColorType::Rgba8).unwrap();
+            let pixels:Vec<u8>=cover.pixels().iter().flat_map(|p|p.to_srgba_unmultiplied()).collect();
+            image::save_buffer(path,&pixels,cover.resolution()[0] as u32,cover.resolution()[1] as u32,image::ColorType::Rgba8).unwrap();
         }
     }
 }

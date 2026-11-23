@@ -47,7 +47,7 @@ pub(crate) fn provider_option(ui:&mut egui::Ui,provider:Provider,selected:bool,w
         let pill=egui::Rect::from_min_size(egui::pos2(x,rect.top()+40.0),galley.size()+egui::vec2(10.0,6.0));
         painter.rect_filled(pill,4.0,crate::paint::mix(fill,ink,if fee{0.10}else{0.06}));painter.galley(pill.min+egui::vec2(5.0,3.0),galley,ink);x=pill.right()+5.0;
     }
-    response.widget_info(||egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel,ui.is_enabled(),selected,title));
+    response.widget_info(||egui::WidgetInfo::selected(egui::Role::Button,ui.is_enabled(),selected,title));
     response.on_hover_text(if overseas{"海外源，默认免费使用，无需 Key。"}else{"和风天气：国内源·精准。自备 API Host 与 Key；有免费额度，超额可能收费。"})
 }
 

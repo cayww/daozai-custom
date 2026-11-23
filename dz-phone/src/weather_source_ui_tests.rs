@@ -152,7 +152,7 @@ fn qweather_draft_hides_default_cities_requires_validation_and_can_collapse_with
         let second_tiles:Vec<_>=h.ctx.tex_manager().read().allocated().filter(|(_,meta)|meta.name.starts_with("weather-tutorial-1-")).map(|(id,_)|*id).collect();assert!(!second_tiles.is_empty());
         let mut second_visible=false;
         for frame in 0..45 {
-            let mut events=vec![egui::Event::PointerMoved(Pos2::new(400.0,400.0))];if frame==2||frame==24{events.push(egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,if frame==2{-2000.0}else{-10000.0}),phase:egui::TouchPhase::Move,modifiers:Default::default()});}
+            let mut events=vec![egui::Event::PointerMoved(Pos2::new(400.0,400.0))];if frame==2||frame==24{events.push(egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,if frame==2{-2000.0}else{-10000.0}),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown});}
             let (_,children)=draw(&mut h,events,egui::vec2(740.0,980.0),1.0);let help=&children.iter().find(|(id,_)|*id==egui::ViewportId::from_hash_of("daozai-weather-tutorial")).unwrap().1;
             second_visible|=help.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Rect(r)if second_tiles.contains(&r.fill_texture_id())&&s.clip_rect.intersects(r.rect)));
         }
@@ -270,7 +270,7 @@ fn qweather_frontend_gallery(){
         let frames=if end{45}else{4};
         for frame in 0..frames{
             let mut events=if end{vec![egui::Event::PointerMoved(Pos2::new(400.0,400.0))]}else{vec![]};
-            if end&&frame==2{events.push(egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-10000.0),phase:egui::TouchPhase::Move,modifiers:Default::default()});}
+            if end&&frame==2{events.push(egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-10000.0),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown});}
             let (root,children)=draw(&mut h,events,size,scale);raster.update_textures(&root.textures_delta);
             for (_,out) in &children{raster.update_textures(&out.textures_delta);}
             let id=egui::ViewportId::from_hash_of(if help{"daozai-weather-tutorial"}else{"daozai-settings"});

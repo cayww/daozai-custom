@@ -13,9 +13,31 @@ mod lyrics_switch;
 #[path="health_reminder_ui_tests.rs"]
 mod health_reminder;
 use eframe::egui::{self, Pos2, Rect, Vec2};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// egui 0.37 把 DroppedFile 改成 trait；测试里只需要一个带路径的最小实现。
+#[derive(Debug)]
+struct TestDroppedFile(std::path::PathBuf);
+impl egui::DroppedFile for TestDroppedFile {
+    fn path(&self) -> &std::path::Path { &self.0 }
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+fn test_dropped_file(path: std::path::PathBuf) -> egui::DroppedFileHandle {
+    Arc::new(TestDroppedFile(path))
+}
+fn font_textures_delta(ctx: &egui::Context) -> egui::TexturesDelta {
+    let mut delta = egui::TexturesDelta::default();
+    let image = ctx.fonts(|fonts| fonts.image());
+    delta.push(
+        egui::TextureId::default(),
+        egui::epaint::ImageDelta::full(image, egui::TextureOptions::LINEAR),
+    );
+    delta
+}
 
 /// egui 0.35 会把一段 RichText 拆成多个 Text shape（如 "25 分钟" -> "25" + " 分钟"）。
 /// 先精确匹配；否则把同一行（y 相近）的片段按 x 排序拼回整行再匹配，返回组合包围盒。
@@ -562,7 +584,7 @@ fn resized_font_atlases_stop_reuploading_and_release_unused_sizes(){
             for _ in 0..3{frame(ppp,settings);}
             let start=std::time::Instant::now();let mut bytes=0usize;
             for _ in 0..60 {for output in frame(ppp,settings){
-                bytes+=output.textures_delta.set.iter().map(|(_,delta)|delta.image.width()*delta.image.height()*4).sum::<usize>();
+                bytes+=output.textures_delta.set.values().flatten().map(|delta|delta.image.width()*delta.image.height()*4).sum::<usize>();
             }}
             println!("缩放={ppp:.2} 设置={settings} 60帧上传={bytes}字节 耗时={:?}",start.elapsed());
             assert_eq!(bytes,0,"大小稳定后不能重复上传字形图集，包括设置同时打开时");
@@ -615,7 +637,7 @@ fn enlarged_island_preserves_font_resolution_with_a_separate_settings_window(){
         *capture.lock().unwrap()=Some(ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui)));
     });
     let mut raster=crate::preview_raster::Raster::new(WIN_W as usize,WIN_H as usize);
-    raster.update_textures(&egui::TexturesDelta{set:vec![(egui::TextureId::default(),egui::epaint::ImageDelta::full(h.ctx.fonts(|fonts|fonts.image()),egui::TextureOptions::LINEAR))],..Default::default()});
+    raster.update_textures(&font_textures_delta(&h.ctx));
     for scale in [1.0,1.2,1.4] {
         raster.w=(WIN_W*scale) as usize;raster.h=(WIN_H*scale) as usize;raster.buf.resize(raster.w*raster.h,[0.0;4]);
         for frame in 0..3 {
@@ -1291,7 +1313,7 @@ struct H {
     browser_at_top: Option<bool>,
     file_drop_zone:Option<Rect>,
     hovered_files:Vec<egui::HoveredFile>,
-    dropped_files:Vec<egui::DroppedFile>,
+    dropped_files:Vec<egui::DroppedFileHandle>,
     /// 本帧向宿主预约的下一帧间隔（没有预约就是 `Duration::MAX`）。
     repaint: std::time::Duration,
 }
@@ -1340,12 +1362,14 @@ impl H {
         let animating=&mut self.animating;
         let app = &mut self.app;
         let file_drop_zone=&mut self.file_drop_zone;
-        let output = self.ctx.run_ui(raw, |ui|{
+        let mut output = self.ctx.run_ui(raw, |ui|{
                 let win = Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));
                 let frame=app.frame(ui, win, &env);*region=frame.region;*hit=frame.hit;*animating=frame.animating;*file_drop_zone=frame.file_drop_zone;cmds.extend(frame.cmds);
             });
-        self.shapes=output.shapes;
+        self.shapes = std::mem::take(&mut output.shapes);
         self.repaint=output.viewport_output.values().map(|v|v.repaint_delay).min().unwrap_or(std::time::Duration::MAX);
+        // egui 0.37 debug-asserts that texture deltas are applied before FullOutput is dropped.
+        output.textures_delta.clear();
     }
     fn hover(&mut self, p: Pos2, secs: f64) {
         self.cursor = Some(p);
@@ -1367,7 +1391,7 @@ impl H {
     }
     fn click_notice_badge(&mut self){if self.app.compact_notices(){self.click(Pos2::new(WIN_W/2.0+(self.app.current_width()-44.0)/2.0+26.0,15.0));}}
     fn wheel(&mut self,delta:f32) {
-        self.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,delta),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
+        self.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,delta),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown}]);
     }
     fn picker_frame(&mut self,events:Vec<egui::Event>){
         self.frame(events);
@@ -1681,12 +1705,12 @@ fn shelf_quick_drop_in_the_capture_zone_shows_the_added_file(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();h.frame(vec![]);
     let path=crate::model::config_dir().join("快速拖入.txt");std::fs::create_dir_all(path.parent().unwrap()).unwrap();std::fs::write(&path,"test").unwrap();
     h.cursor=Some(h.file_drop_zone.unwrap().right_bottom()-Vec2::splat(12.0));
-    h.dropped_files.push(egui::DroppedFile{path:Some(path.clone()),..Default::default()});
+    h.dropped_files.push(test_dropped_file(path.clone()));
     for _ in 0..90{h.frame(vec![]);}
     assert!(h.app.open && h.app.page==3);assert_eq!(h.app.shelf.items,vec![path.clone()]);assert!(path.exists());
     let mut h=H::new();for _ in 0..90{h.frame(vec![]);}
     h.cursor=Some(h.file_drop_zone.unwrap().right_bottom()-Vec2::splat(12.0));h.app.settings.visible_pages[3]=false;
-    h.dropped_files.push(egui::DroppedFile{path:Some(path),..Default::default()});h.frame(vec![]);
+    h.dropped_files.push(test_dropped_file(path));h.frame(vec![]);
     assert!(!h.app.open && !h.app.settings_open,"关闭置物架后应忽略拖入");
 }
 
@@ -1940,7 +1964,7 @@ fn music_volume_popup_gallery(){
         if lyrics{h.app.set_lyrics("晴天","周杰伦",269.0,crate::lyrics::parse_lrc("[00:00]午后的阳光落在窗边\n[01:30]风把回忆吹向远方\n[01:40]慢慢走过这段时光"));}
         h.click(H::local(367.0,118.0));h.hover(H::local(330.0,112.0),0.25);
         let ppp=h.ctx.pixels_per_point();let mut raster=crate::preview_raster::Raster::new((crate::app::CANVAS_W*ppp) as usize,(WIN_H*ppp) as usize);
-        raster.update_textures(&egui::TexturesDelta{set:vec![(egui::TextureId::default(),egui::epaint::ImageDelta::full(h.ctx.fonts(|f|f.image()),egui::TextureOptions::LINEAR))],..Default::default()});
+        raster.update_textures(&font_textures_delta(&h.ctx));
         raster.buf.fill([0.10,0.12,0.16,1.0]);raster.draw(&h.ctx.tessellate(h.shapes.clone(),ppp),ppp);
         let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);
         let image=image::RgbaImage::from_raw(raster.w as u32,raster.h as u32,rgba).unwrap();
@@ -3354,7 +3378,7 @@ fn page_visibility_skips_hidden_pages_in_every_navigation_control() {
     assert_eq!(h.app.page,5);
     h.frame(vec![egui::Event::Key{key:egui::Key::ArrowRight,physical_key:None,pressed:false,repeat:false,modifiers:Default::default()}]);
     h.hover(H::local(300.0,60.0),0.7);
-    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,40.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
+    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,40.0),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown}]);
     assert_eq!(h.app.page,2,"滚轮应跳过隐藏页面");
     h.click(H::local(21.0,68.0));
     assert_eq!(h.app.page,0);
@@ -3975,7 +3999,7 @@ fn mascot_atlas_respects_visibility_and_skin_switches(){
             // 每个表情单独一张序列图：横向铺满整张，纹理只有一列大小。
             // 每帧内缩半纹素避开 LINEAR 采样边界（修复精灵边框白线），不是精确 0。
             assert!((drawn.vertices[0].uv.x-0.5/144.0).abs()<0.001);
-            assert_eq!(h.ctx.tex_manager().read().meta(atlas).unwrap().size,[144,1440],"只保留正在播放的表情");
+            assert_eq!(h.ctx.tex_manager().read().meta(atlas).unwrap().resolution,[144,1440],"只保留正在播放的表情");
         }
     }
     h.app.settings.pet=false;h.frame(vec![]);assert!(h.app.pet.expressions.current().is_none());
@@ -4605,7 +4629,7 @@ fn display_choice_saves_and_keeps_disconnected_selection(){
         let find=|h:&H|h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==label=>Some(t.visual_bounding_rect()),_=>None}).filter(|r|r.bottom()<550.0);
         for _ in 0..20 {
             if let Some(r)=find(h){return Some(r);}
-            frame(h,raster,vec![egui::Event::PointerMoved(Pos2::new(450.0,300.0)),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,-60.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
+            frame(h,raster,vec![egui::Event::PointerMoved(Pos2::new(450.0,300.0)),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:Vec2::new(0.0,-60.0),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown}]);
             for _ in 0..6{frame(h,raster,vec![]);}
         }
         find(h)
@@ -5383,7 +5407,7 @@ fn scrolling_mail_details_keeps_the_current_message_open() {
     h.app.mail.open_uid=Some(("work@qq.com".into(),42));h.app.show_page(5);h.hover(H::local(270.0,150.0),1.0);
     let body_clip=h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text().starts_with("需要滚动阅读")=>Some(s.clip_rect),_=>None}).expect("正文应显示");
     assert!(body_clip.height()>=80.0,"详情正文应有足够阅读空间，而不是仅能容纳一行");
-    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-120.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
+    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-120.0),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown}]);
     assert_eq!(h.app.page(),5,"邮件正文滚动不能切换功能页");
     assert_eq!(h.app.mail.open_uid,Some(("work@qq.com".into(),42)));
 }
@@ -5480,7 +5504,7 @@ fn full_mail_reader_keeps_the_entire_body_and_scrolls_independently(){
     };
     // 正文按块渲染：视口外的块不生成文字形状，所以「末尾可见」只能滚动到底再断言。
     let text_top=|h:&H,needle:&str|h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==needle=>Some(t.visual_bounding_rect().top()),_=>None});
-    let wheel=|dy:f32|vec![egui::Event::PointerMoved(egui::pos2(350.0,300.0)),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,dy),phase:egui::TouchPhase::Move,modifiers:Default::default()}];
+    let wheel=|dy:f32|vec![egui::Event::PointerMoved(egui::pos2(350.0,300.0)),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,dy),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown}];
     render(&mut h,vec![]);render(&mut h,vec![]);
     let first=text_top(&h,"开头：这是第一段。").expect("首屏应显示正文开头");
     assert!(text_top(&h,"最后一段：全文结束").is_none(),"长邮件末尾应在首屏之外");
@@ -5925,7 +5949,7 @@ fn mailbox_scroll_reaches_older_mail_without_changing_pages() {
     h.app.mail.recent=(1..=8).map(|uid|crate::mail::Item {received_unix: None, account:"test@qq.com".into(),from:format!("来源 {uid}"),subject:format!("邮件 {uid}"),time:"11-03 09:41".into(),code:Some(format!("{uid:06}")),html: String::new().into(), summary:String::new().into(),links:vec![],meeting:None,uid}).collect();
     for item in h.app.mail.recent.clone(){h.app.mail.privacy.observe(&item,true,h.app.t,chrono::Utc::now().timestamp());}
     h.app.show_page(5);h.hover(H::local(200.0,90.0),1.0);
-    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-900.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
+    h.frame(vec![egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-900.0),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown}]);
     h.hover(H::local(200.0,90.0),0.6);
     assert_eq!(h.app.page(),5,"滚动邮箱列表不能切换页面");
     let row=h.ctx.read_response(egui::Id::new(("card",true,("mail-row",8u32,"test@qq.com")))).expect("第八封邮件应可访问");
@@ -6604,16 +6628,18 @@ fn avoidance_picker_add_remove_and_save() {
         })
     }
     fn click(h:&mut H,point:Pos2){
-        draw(h,vec![egui::Event::PointerMoved(point),egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed:true,modifiers:Default::default()}]);
-        draw(h,vec![egui::Event::PointerMoved(point),egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
+        let mut down=draw(h,vec![egui::Event::PointerMoved(point),egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed:true,modifiers:Default::default()}]);
+        down.textures_delta.clear();
+        let mut up=draw(h,vec![egui::Event::PointerMoved(point),egui::Event::PointerButton{pos:point,button:egui::PointerButton::Primary,pressed:false,modifiers:Default::default()}]);
+        up.textures_delta.clear();
     }
     fn point(out:&egui::FullOutput,label:&str)->Pos2 {
         out.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t) if t.galley.text()==label=>Some(t.visual_bounding_rect().center()),_=>None}).unwrap_or_else(||panic!("未找到 {label}"))
     }
     h.app.avoidance.open=true;
     let mut raster=crate::preview_raster::Raster::new(600,560);
-    let mut out=draw(&mut h,vec![]);raster.update_textures(&out.textures_delta);
-    for _ in 0..40 {std::thread::sleep(std::time::Duration::from_millis(10));out=draw(&mut h,vec![]);raster.update_textures(&out.textures_delta);}
+    let mut out=draw(&mut h,vec![]);raster.update_textures(&out.textures_delta);out.textures_delta.clear();
+    for _ in 0..40 {std::thread::sleep(std::time::Duration::from_millis(10));out=draw(&mut h,vec![]);raster.update_textures(&out.textures_delta);out.textures_delta.clear();}
     assert!(out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="浏览器规则已覆盖")));
     if let Some(dest)=std::env::var_os("DAOZAI_AVOID_PREVIEW_DIR") {
         std::fs::create_dir_all(&dest).unwrap();raster.buf.fill([0.0,0.0,0.0,1.0]);
@@ -6621,16 +6647,17 @@ fn avoidance_picker_add_remove_and_save() {
         let mut rgba=Vec::new();raster.to_rgba8(&mut rgba);image::save_buffer(std::path::Path::new(&dest).join("添加应用.png"),&rgba,600,560,image::ColorType::Rgba8).unwrap();
     }
     click(&mut h,point(&out,"记事本"));
-    let out=draw(&mut h,vec![]);
+    let mut out=draw(&mut h,vec![]);
     click(&mut h,point(&out,"添加"));
+    out.textures_delta.clear();
     assert!(!h.app.avoidance.open);
     assert_eq!(h.app.settings.avoid_apps.len(),1);
     h.app.settings.avoid_browsers=false;h.app.settings.save();
     let loaded=crate::model::Settings::load();
     assert!(!loaded.avoid_browsers);assert!(loaded.browser_minimal);
     assert_eq!(loaded.avoid_apps,h.app.settings.avoid_apps);
-    let mut out=draw(&mut h,vec![]);raster.update_textures(&out.textures_delta);
-    for _ in 0..40{std::thread::sleep(std::time::Duration::from_millis(20));out=draw(&mut h,vec![]);raster.update_textures(&out.textures_delta);}
+    let mut out=draw(&mut h,vec![]);raster.update_textures(&out.textures_delta);out.textures_delta.clear();
+    for _ in 0..40{std::thread::sleep(std::time::Duration::from_millis(20));out=draw(&mut h,vec![]);raster.update_textures(&out.textures_delta);out.textures_delta.clear();}
     assert!(!out.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="记事本")),"图标区不应常驻显示应用名称");
     if let Some(dest)=std::env::var_os("DAOZAI_AVOID_PREVIEW_DIR") {
         raster.buf.fill([0.0,0.0,0.0,1.0]);raster.draw(&h.ctx.tessellate(out.shapes.clone(),out.pixels_per_point),out.pixels_per_point);
@@ -6675,7 +6702,7 @@ fn avoidance_icon_area_stays_one_row_and_scrolls() {
     draw(&mut h,vec![]);let many=draw(&mut h,vec![]);
     assert!((text(&many,footer).top()-baseline).abs()<1.0,"应用增多时始终保持单行高度");
     let first=text(&many,"A");let pointer=first.center();
-    draw(&mut h,vec![egui::Event::PointerMoved(pointer),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-150.0),phase:egui::TouchPhase::Move,modifiers:Default::default()}]);
+    draw(&mut h,vec![egui::Event::PointerMoved(pointer),egui::Event::MouseWheel{unit:egui::MouseWheelUnit::Point,delta:egui::vec2(0.0,-150.0),phase:egui::TouchPhase::Move,modifiers:Default::default(),source:egui::MouseWheelSource::Unknown}]);
     let mut scrolled=draw(&mut h,vec![]);for _ in 0..30{scrolled=draw(&mut h,vec![]);}
     assert!((text(&scrolled,footer).top()-text(&many,footer).top()).abs()<1.0,"滚动图标不能移动区域下方内容");
     assert!(scrolled.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="A" && t.visual_bounding_rect().left()<first.left()-10.0)) || !scrolled.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="A")),"应能滚动查看后续应用");
@@ -7594,7 +7621,7 @@ fn memory_profile_long_listening_session(){
         format!("匿名={:>6.1}MB 文件映射={:>6.1}MB",kb("RssAnon:"),kb("RssFile:"))
     }
     fn report(label:&str,h:&H){
-        let [w,hgt]=h.ctx.fonts(|f|f.font_image_size());
+        let [w,hgt]=h.ctx.fonts(|f|f.font_image_resolution());
         let tex:usize=h.ctx.tex_manager().read().allocated().map(|(_,m)|m.bytes_used()).sum();
         let galleys=h.ctx.fonts(|f|f.num_galleys_in_cache());
         // 图集在 CPU 端按 f32 存覆盖率，显卡端再按 RGBA 存一份。
@@ -8035,7 +8062,7 @@ fn side_dock_file_drag_opens_the_shelf_and_drop_saves_it(){
             let env=Env{t:h.t,clock:"09:41:00".into(),cursor:Some(at),..Default::default()};
             let mut raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(w,hgt))),time:Some(h.t),focused:true,..Default::default()};
             if hovered {raw.hovered_files.push(egui::HoveredFile{path:Some(path.clone()),..Default::default()});}
-            if dropped {raw.dropped_files.push(egui::DroppedFile{path:Some(path.clone()),..Default::default()});}
+            if dropped {raw.dropped_files.push(test_dropped_file(path.clone()));}
             let app=&mut h.app;let mut out=None;
             let _=h.ctx.run_ui(raw, |ui|{out=Some(app.frame(ui,Rect::from_min_size(ui.max_rect().min,Vec2::new(w,hgt)),&env));});
             out.unwrap()

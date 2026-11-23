@@ -56,7 +56,7 @@ impl App {
         let art_size=if with_lyrics {44.0}else{62.0};
         let art_y=if with_lyrics {23.0}else{13.0};
         if let Some((image,texture))=&self.music_artwork {
-            let [w,h]=image.size;
+            let [w,h]=image.resolution();
             let (uw,vh)=if w>h {(h as f32/w as f32,1.0)}else{(1.0,w as f32/h as f32)};
             let uv=Rect::from_center_size(Pos2::new(0.5,0.5),egui::vec2(uw,vh));
             c.painter.add(egui::epaint::RectShape::filled(c.rect(44.0,art_y,art_size,art_size),10.0*c.s,Color32::WHITE).with_texture(texture.id(),uv));
