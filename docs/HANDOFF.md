@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-23 21:10
+> **最后更新**：2026-11-23 21:50
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -1803,4 +1803,4 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 根因：WinRT 监听器直连 `receive_notification_from`（`main.rs:497`），该路径把正文按普通通知 `otp::extract → mail_privacy::mask` 打码，卡片取不到明文；`notify_phone` 里的 `auto_copy_otp → Cmd::CopyOtp` 从未执行。用户设置 `auto_copy_otp=1` / `phone_alerts=1`，非开关问题。
 - 修复：`receive_notification_from` 对 `phone_channel(&id) && unread.is_none()` 改走 `notify_phone`；新增单测 `winrt_phone_sms_otp_uses_card_and_auto_copy`（标题「手机 · 短信」、正文保留明码、`CopyOtp("834921")`）。提交 `8118370`，CHANGELOG `60a5e20`。
 - 版本升级：Cargo.toml/Cargo.lock 1.2.4→1.2.5（`7f5a467`，**Cargo.lock 只同步包版本号，未加依赖**）。全量 lib **1404 passed / 0 failed / 131 ignored**、bin **11 passed**。
-- 1.2.5 本地包已打但**未上传/未部署**：`dist/Daozai-Setup-v1.2.5-x64.exe` 8,888,312 B / sha `53465b8fe84b98`；`dist/Daozai-v1.2.5-windows-x64.zip` 11,038,401 B / sha `68d8ea9d3ff552a`；包内 exe sha `5de9f2ec556f355d`。发布文案草稿：WorkBuddy 工作区 `release-notes-v1.2.5.md`。等用户确认文案与实机验证后再上传。
+- **【21:49 已发布】** 用户确认文案后已推送 `main` 与 tag `v1.2.5`，并发布 https://github.com/cayww/daozai-custom/releases/tag/v1.2.5 ，含 2 个资产：`Daozai-Setup-v1.2.5-x64.exe` 8,888,312 B / sha `53465b8fe84b98`、`Daozai-v1.2.5-windows-x64.zip` 11,038,401 B / sha `68d8ea9d3ff552a`；包内 exe sha `5de9f2ec556f355d`。API 复核资产数量/大小/sha 一致；文案草稿留档 WorkBuddy 工作区 `release-notes-v1.2.5.md`。**仍未部署到本机**。
