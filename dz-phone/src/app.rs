@@ -2102,6 +2102,11 @@ impl App {
     pub fn open_settings(&mut self){
         self.settings_open=true;
         self.settings_focus_requested=true;
+        // 用户要求：开着「自动检查更新」时，每次打开设置页都主动查一次 releases，
+        // 有新版本就弹窗提醒（绕过 24h 间隔与同版本去重）。
+        if self.settings.update_check {
+            self.updates.request_check_on_settings_open();
+        }
     }
     pub fn open_settings_category(&mut self,category:usize){
         self.settings_category=category.min(3);

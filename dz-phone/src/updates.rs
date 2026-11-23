@@ -56,6 +56,8 @@ pub(crate) struct State {
     history_path: Option<PathBuf>,
     /// 安装脚本已就绪、需要外壳让进程真正退出（只关视窗不够，托盘还在脚本就等不到退出）。
     exit_requested: bool,
+    /// 打开设置页时请求一次主动检查（绕过 24h 间隔与手动 30s 冷却，强制弹窗）。
+    check_on_settings_open: bool,
 }
 
 impl Drop for State {
@@ -109,7 +111,25 @@ impl State {
         true
     }
 
+    /// 打开设置页时由 App 调用：请求一次主动检查。
+    /// 用 automatic=false 发起，保证发现新版本必定弹窗（不受 notified_version 去重影响）。
+    pub(crate) fn request_check_on_settings_open(&mut self) {
+        self.check_on_settings_open = true;
+    }
+
+    /// 强制发起一次检查：绕过 24 小时间隔与手动 30 秒冷却（已有检查在进行中除外）。
+    fn begin_check_forced(&mut self, ctx: &egui::Context, load: impl FnOnce() -> Result<Option<Release>, String> + Send + 'static) {
+        if self.rx.is_some() { return; }
+        // 绕过手动 30 秒冷却（用户明确要「每次打开设置页都查」）。
+        self.manual_check_after = None;
+        self.begin_check(ctx, false, load);
+    }
+
     pub(crate) fn poll(&mut self, ctx: &egui::Context) {
+        // 打开设置页触发的主动检查：清标志并立刻发起（必弹窗）。
+        if std::mem::take(&mut self.check_on_settings_open) {
+            self.begin_check_forced(ctx, check);
+        }
         loop {
             let event = match self.rx.as_ref().map(|rx| rx.try_recv()) {
                 Some(Ok(event)) => event,
@@ -687,6 +707,29 @@ mod tests {
             state.manual_check_after = Some(Instant::now());
             assert!(state.begin_check(&ctx, false, || Ok(None)));
         }
+    }
+
+    #[test]
+    fn settings_open_forces_check_and_shows_dialog_for_known_version(){
+        // 用户要「打开设置页就检测、有新版就弹窗」：即使处于手动 30s 冷却、
+        // 即使该版本已通知过，也要发起检查并弹窗。
+        let ctx = egui::Context::default();
+        let mut state = State::default();
+        state.notified_version = Some("v9.9.9".into());      // 已通知过
+        state.manual_check_after = Some(Instant::now() + Duration::from_secs(30)); // 冷却中
+        state.request_check_on_settings_open();
+        assert!(state.check_on_settings_open);
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| state.poll(ui.ctx()));
+        assert!(!state.check_on_settings_open, "请求标志应被 poll 消费");
+        assert!(state.rx.is_some(), "应强制发起检查（绕过手动冷却）");
+        assert!(state.manual_check_after.is_none(), "强制检查应清掉手动冷却");
+        // 模拟检查返回：新版本 + 自动检查=false → 必弹窗（不去重）
+        let release = Release { version: "v9.9.9".into(), notes: String::new(), page: RELEASES.into(), package: None };
+        let (tx, rx) = mpsc::channel();
+        state.rx = Some(rx);
+        tx.send(Event::Checked(Ok(Some(release)))).unwrap();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| state.poll(ui.ctx()));
+        assert!(state.dialog_open, "已通知过的版本也应弹窗（用户要求每次都提醒）");
     }
 
     #[test]
