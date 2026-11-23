@@ -1816,4 +1816,5 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 后续按用户要求直接启用 egui 0.37 的系统字体回退：`Cargo.toml` 增加同 rev 的 `egui_system_font_provider`，`theme::load_fonts` 用 `ctx.set_font_providers(vec![Arc::new(SystemFontProvider::new())])` 安装；自定义 runner 不走 eframe native 集成，必须显式安装。该改动只做了 `cargo check --lib --tests --bins --examples`，按用户要求未跑全量测试；未重新打包。
 - 按用户要求继续启用其他“比现状好”的可选项：`eframe` 增加 `system_fonts` feature（examples/eframe 路径也一致），`egui` 增加 `rayon`（并行 tessellation）与 `monochrome_emoji_fonts`（emoji 兜底）；D3D11 sampler 从 `MIN_MAG_MIP_LINEAR` 改为 `MIN_MAG_LINEAR_MIP_POINT`（字体图集无有用 mip 链，避免采样到更糊的 mip 层）。仅 `cargo check --lib --tests --bins --examples` 通过，未跑全量测试、未重新打包。
 - 结论：0.35 → 56f3a0e 的提交里没有专门修“文字毛刺/抗锯齿”的提交；系统字体提供者只改善缺字/CJK 回退，毛刺是否改善需实机观察。
+- **1.2.7 本地包（2026-11-24）**：包含系统字体 provider / `system_fonts`、`rayon`、`monochrome_emoji_fonts` 与无 mip 采样改动。`Daozai-Setup-v1.2.7-x64.exe` 9,185,752 B / sha `079e29279cdbcf3c`；`Daozai-v1.2.7-windows-x64.zip` 11,508,245 B / sha `c6a7cd9971bcc29c`；包内 exe sha `1a38bc67e0439e7b`。提交 `64fa8ce`。未上传 release、未部署。
 - 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear、兼容渲染截图与系统字体回退效果。
