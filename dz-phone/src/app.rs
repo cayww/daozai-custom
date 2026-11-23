@@ -400,6 +400,8 @@ pub enum Cmd {
     CalendarImport,
     /// 重启岛仔（切换渲染方式后生效）。
     RestartApp,
+    /// 应用内更新已就绪：摘托盘后退出，让安装脚本替换 exe（它会拉起新进程）。
+    ExitForUpdate,
 }
 
 /// 毛玻璃皮肤下原生窗口区域的组成部分（相对 `win` 左上角，逻辑点）。

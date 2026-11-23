@@ -54,6 +54,8 @@ pub(crate) struct State {
     automatic_check: bool,
     notified_version: Option<String>,
     history_path: Option<PathBuf>,
+    /// 安装脚本已就绪、需要外壳让进程真正退出（只关视窗不够，托盘还在脚本就等不到退出）。
+    exit_requested: bool,
 }
 
 impl Drop for State {
@@ -90,6 +92,11 @@ impl State {
 
     fn manual_wait(&self) -> Duration {
         self.manual_check_after.map(|t| t.saturating_duration_since(Instant::now())).unwrap_or_default()
+    }
+
+    /// 取走「安装已就绪、需要进程退出」请求（只消费一次）。
+    pub(crate) fn take_exit_request(&mut self) -> bool {
+        std::mem::take(&mut self.exit_requested)
     }
 
     fn begin_check(&mut self, ctx: &egui::Context, automatic: bool, load: impl FnOnce() -> Result<Option<Release>, String> + Send + 'static) -> bool {
@@ -144,6 +151,11 @@ impl State {
                 }
                 Event::Installed => {
                     self.rx = None;
+                    // 只关视窗不足以让安装脚本继续：脚本要等本进程退出才替换 exe
+                    // （apply.ps1 的 WaitForExit）。托盘图标还在 → 进程不退出 → 脚本
+                    // 60 秒超时写 error.txt；此时 rx 已清空没人接收，UI 永久卡在
+                    // 「正在准备重启…」。改为请求外壳走完整退出流程（摘托盘 + exit）。
+                    self.exit_requested = true;
                     ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
                 }
             }
@@ -827,6 +839,20 @@ mod tests {
             assert!(next >= before + delay && next <= Instant::now() + delay);
             assert_eq!(!state.message.is_empty(), disconnected);
         }
+    }
+
+    #[test]
+    fn installed_requests_process_exit_not_just_window_close(){
+        // 回归：安装脚本要等岛仔进程退出才替换 exe。只发 ViewportCommand::Close
+        // 时托盘还在、进程不退出 → 脚本 WaitForExit 超时 → UI 永久卡「正在准备重启…」。
+        let mut state = State::default();
+        let (tx, rx) = mpsc::channel(); state.rx = Some(rx);
+        tx.send(Event::Installed).unwrap();
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| state.poll(ui.ctx()));
+        assert!(state.rx.is_none(), "安装就绪后应清空接收端");
+        assert!(state.take_exit_request(), "安装就绪必须请求外壳退出进程，而不只是关视窗");
+        assert!(!state.take_exit_request(), "退出请求应只消费一次");
     }
 
     #[test]

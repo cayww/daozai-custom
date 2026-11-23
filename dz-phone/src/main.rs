@@ -719,6 +719,14 @@ impl Shell {
                         std::process::exit(0);
                     }else{self.app.say("无法重新启动岛仔，请从托盘退出后手动打开");}
                 }
+                Cmd::ExitForUpdate=>{
+                    // 应用内更新：installer 脚本已校验并暂存好新 exe，正等本进程退出。
+                    // 不要拉新进程——脚本替换完 exe 后会自己 Start-Process。
+                    // 必须摘托盘再 exit，否则进程残留 → 脚本 WaitForExit 超时 → 更新失败。
+                    self.app.save_window_before_exit();
+                    #[cfg(windows)] if let Some(tray)=&self.tray {tray.exit_process();}
+                    std::process::exit(0);
+                }
                 Cmd::Open(p) => {if let Err(e)=open_path(&p){self.app.say(e);}},
                 Cmd::OpenUrl(url)=>{
                     if let Some(url)=daozai::mail::web_url(&url) {

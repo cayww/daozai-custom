@@ -5085,6 +5085,9 @@ impl App {
             self.weather_source.close();
         }
         self.updates.poll(ctx);
+        // 更新脚本已就绪：交给外壳走完整退出（摘托盘 + exit），否则只关视窗时
+        // 托盘还在、进程不退出，脚本替换 exe 会超时，UI 卡在「正在准备重启…」。
+        if self.updates.take_exit_request() { self.pending.push(crate::app::Cmd::ExitForUpdate); }
         self.updates.dialog_ui(ctx);
         if !self.settings_open {
             return;
