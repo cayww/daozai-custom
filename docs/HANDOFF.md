@@ -1792,3 +1792,8 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **⑦ ViewportInfo 字段**：新增 `child_viewport_geometry()`，每帧按子窗口原生 DPI 填 `outer_rect` / `monitor_size` / `title`；最小化返回 None。`settings_window::restore` 不再因 `outer_rect=None` 退化为硬编码边框估算。新增单测 `child_viewport_info_gets_outer_rect_and_monitor_size`。
 - **验证**：全量 `cargo test --locked --release --lib -- --test-threads=1` = **1403 passed / 0 failed / 131 ignored**；bin **11 passed / 0 failed**；`cargo check --locked --lib --tests --bins` 通过；release exe sha `a5970d2bcdf538f7`。三份改动文件仍为纯 LF（已与 HEAD 对比 CRLF/LF 计数）。
 - **状态**：提交 `38ee776`（本地，**未 push**）；未打包、未部署。**⑤ 的设备丢失路径只做了代码级与单测验证，需实机显卡重置 / 远程桌面断开复现确认**；⑥⑦ 亦需跨屏/高 DPI 实机确认。低优先级 `device_event` / accesskit / 首帧 viewport 命令仍未做。工作日志路径同上（不在项目仓库）。
+
+### 7.0zza 本地重打 1.2.4 安装包（2026-11-23 21:15–21:16）
+- 用 `dz-phone/scripts/package.ps1` 从当前 HEAD `c2dd732` 重打（版本沿用 1.2.4，用户早前明确要求）。首次运行被 2 分钟默认超时中断在 `Building 321/322`，**不是脚本/代码错误**；加大超时重跑成功。
+- 产物（`dz-phone/dist/`，gitignored）：`Daozai-Setup-v1.2.4-x64.exe` 8,884,310 B，sha `8c660650a94b0cd6e`（完整值见 `SHA256SUMS.txt`）；`Daozai-v1.2.4-windows-x64.zip` 11,033,907 B，sha `4b85385d15c3a0eb`；包内 exe sha `c09afb55ec86b584`。安装包版本信息 `FileVersion=1.2.4`。
+- **重要**：这是**本地新包**，与 GitHub release v1.2.4 上已发布的旧包（setup `74879703097f5a36`、ZIP `21bbb3943b64a2df`）**不是同一份**，勿混用；本轮未上传 release、未部署。下次打包前须先删 `dz-phone/dist/Daozai-v1.2.4-windows-x64` 暂存目录，否则脚本报 "Package directory already exists"。
