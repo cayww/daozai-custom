@@ -1797,3 +1797,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 用 `dz-phone/scripts/package.ps1` 从当前 HEAD `c2dd732` 重打（版本沿用 1.2.4，用户早前明确要求）。首次运行被 2 分钟默认超时中断在 `Building 321/322`，**不是脚本/代码错误**；加大超时重跑成功。
 - 产物（`dz-phone/dist/`，gitignored）：`Daozai-Setup-v1.2.4-x64.exe` 8,884,310 B，sha `8c660650a94b0cd6e`（完整值见 `SHA256SUMS.txt`）；`Daozai-v1.2.4-windows-x64.zip` 11,033,907 B，sha `4b85385d15c3a0eb`；包内 exe sha `c09afb55ec86b584`。安装包版本信息 `FileVersion=1.2.4`。
 - **重要**：这是**本地新包**，与 GitHub release v1.2.4 上已发布的旧包（setup `74879703097f5a36`、ZIP `21bbb3943b64a2df`）**不是同一份**，勿混用；本轮未上传 release、未部署。下次打包前须先删 `dz-phone/dist/Daozai-v1.2.4-windows-x64` 暂存目录，否则脚本报 "Package directory already exists"。
+
+### 7.0zzb 1.2.5 发布准备暂停 + WinRT 短信验证码修复（2026-11-23 21:20–21:42）
+- 用户要求打包上传 1.2.5、上传前检查文案；随后实测发现**短信验证码按「手机连接」普通通知显示、没有验证码卡片、也不自动复制**，明确要求先不发布。
+- 根因：WinRT 监听器直连 `receive_notification_from`（`main.rs:497`），该路径把正文按普通通知 `otp::extract → mail_privacy::mask` 打码，卡片取不到明文；`notify_phone` 里的 `auto_copy_otp → Cmd::CopyOtp` 从未执行。用户设置 `auto_copy_otp=1` / `phone_alerts=1`，非开关问题。
+- 修复：`receive_notification_from` 对 `phone_channel(&id) && unread.is_none()` 改走 `notify_phone`；新增单测 `winrt_phone_sms_otp_uses_card_and_auto_copy`（标题「手机 · 短信」、正文保留明码、`CopyOtp("834921")`）。提交 `8118370`，CHANGELOG `60a5e20`。
+- 版本升级：Cargo.toml/Cargo.lock 1.2.4→1.2.5（`7f5a467`，**Cargo.lock 只同步包版本号，未加依赖**）。全量 lib **1404 passed / 0 failed / 131 ignored**、bin **11 passed**。
+- 1.2.5 本地包已打但**未上传/未部署**：`dist/Daozai-Setup-v1.2.5-x64.exe` 8,888,312 B / sha `53465b8fe84b98`；`dist/Daozai-v1.2.5-windows-x64.zip` 11,038,401 B / sha `68d8ea9d3ff552a`；包内 exe sha `5de9f2ec556f355d`。发布文案草稿：WorkBuddy 工作区 `release-notes-v1.2.5.md`。等用户确认文案与实机验证后再上传。
