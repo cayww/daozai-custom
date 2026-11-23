@@ -1813,4 +1813,6 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 验证：`cargo check --locked --lib --tests --bins --examples` 通过；播放图标连续性测试把画布从 64pt 扩到 96pt，避开 0.37 严格 clip_rect 边界采样。`compact_font_atlas_preserves_settings_pixels_at_multiple_scales` 曾偶发一次图集上限 2048 / scale2 大面积差异，复测稳定通过；测试加了 `DAOZAI_FONT_DEBUG_DIR` 可选导出 before/after PNG 以便复现。最终 release lib **1404 passed / 0 failed / 131 ignored**，release bin **11 passed / 0 failed**。debug 测试仍有旧 helper 未 clear TexturesDelta 的 debug_assert 和布局差异失败，属测试适配未完成，不是发行构建问题。
 - 版本升至 **1.2.6**（仅本分支；与 main 已发布 1.2.5 区分）。状态：**研究分支，未合并 main、未发布、未部署**。
 - **本地包已打（2026-11-24）**：`dz-phone/dist/Daozai-Setup-v1.2.6-x64.exe` 8,645,885 B / sha `0589de891dac74b9`；`dz-phone/dist/Daozai-v1.2.6-windows-x64.zip` 10,851,948 B / sha `542dccbacdcc75d2`；包内 exe sha `1473042ce598bad6`。完整 sha 见 `dz-phone/dist/SHA256SUMS.txt`。未上传 release、未部署。
-- 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear 与兼容渲染截图。
+- 后续按用户要求直接启用 egui 0.37 的系统字体回退：`Cargo.toml` 增加同 rev 的 `egui_system_font_provider`，`theme::load_fonts` 用 `ctx.set_font_providers(vec![Arc::new(SystemFontProvider::new())])` 安装；自定义 runner 不走 eframe native 集成，必须显式安装。该改动只做了 `cargo check --lib --tests --bins --examples`，按用户要求未跑全量测试；未重新打包。
+- 结论：0.35 → 56f3a0e 的提交里没有专门修“文字毛刺/抗锯齿”的提交；系统字体提供者只改善缺字/CJK 回退，毛刺是否改善需实机观察。
+- 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear、兼容渲染截图与系统字体回退效果。

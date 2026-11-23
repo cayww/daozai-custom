@@ -113,6 +113,11 @@ fn font_dirs() -> Vec<PathBuf> {
 /// 装载三档字重。每档 = 拉丁字体 + 中文回退 + 韩文回退；缺哪个就跳过，最后兜底 egui 内置字体。
 pub fn load_fonts(ctx: &egui::Context) {
     ctx.set_fonts(shared_fonts().clone());
+    // egui 0.37 的系统字体回退：自定义 runner 没有走 eframe 的 native 集成，
+    // 所以这里显式安装，让缺字（尤其 CJK/符号）走系统字体而不是内置字体兜底。
+    ctx.set_font_providers(vec![std::sync::Arc::new(
+        egui_system_font_provider::SystemFontProvider::new(),
+    )]);
 }
 
 fn shared_fonts()->&'static FontDefinitions {
