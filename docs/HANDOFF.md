@@ -1997,7 +1997,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **产物**：exe `785b1e966f38705e`，桌面 `daozai-text-rescale-test\daozai.exe` 供实机对比。ui_probe 冻结背景截图未捕到岛仔（透明/DComp 窗口抓屏限制），交由用户实机验证。
 - **状态**：实验在独立分支，**main 未受影响**（仍 `1bfc4c6`，ahead 20 未 push）；安装目录已恢复 main 正式版。待用户对比黑线是否消失 + 是否引入抖动，再决定合并/放弃/折中。
 
-### 7.0zzy egui 升到上游 HEAD 90431d（2026-11-25 00:06–00:20，提交 `ec19bd1`，本地 main 未 push）
+### 7.0zzza egui 升到上游 HEAD 90431d（2026-11-25 00:06–00:20，提交 `ec19bd1`，本地 main 未 push）
 
 - **用户要求**：把 egui 升到最新提交 `90431d979ab1faae2de6d9f736e9d33ca0d31956`（emilk/egui HEAD，workspace 版本仍 0.37.0）。
 - **上游差异**：旧 pin `56f3a0e` → 新 pin 只多 3 个提交：①`eframe::try_get_value`（纯新增，容错读取持久化数据）；②web canvas Ctrl+A 阻止原生拖拽（不涉及桌面）；③`Fix CJK glyphs sitting too high and getting clipped (#8804)`（`epaint/src/text/text_layout.rs`：回退字体字形统一按主字体 `font_ascent` 落基线，修中英/emoji 混排时 CJK 被顶高裁切）。**无公开 API 破坏，应用源码零改动。**
