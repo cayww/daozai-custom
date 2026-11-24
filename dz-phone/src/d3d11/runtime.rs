@@ -293,12 +293,12 @@ impl D3d11Runtime {
     pub fn shared_renderer(&self) -> Rc<RefCell<Renderer>> { self.egui_renderer.clone() }
     /// 第一次启动：新建 egui Context。恢复路径请用 `new_with_ctx` 保留原 Context，
     /// 否则 Shell / 后台线程手里的旧 Context 会和新渲染栈脱节（repaint 与字体图集全断）。
-    pub fn new(window: &winit::window::Window) -> windows::core::Result<Self> {
-        Self::new_with_ctx(window, egui::Context::default())
+    pub fn new(window: &winit::window::Window, prefer_dgpu: bool) -> windows::core::Result<Self> {
+        Self::new_with_ctx(window, egui::Context::default(), prefer_dgpu)
     }
 
     /// 用既有 egui Context 重建 D3D11 栈（suspended/resume、设备丢失恢复共用）。
-    pub fn new_with_ctx(window: &winit::window::Window, egui_ctx: egui::Context) -> windows::core::Result<Self> {
+    pub fn new_with_ctx(window: &winit::window::Window, egui_ctx: egui::Context, prefer_dgpu: bool) -> windows::core::Result<Self> {
         use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let RawWindowHandle::Win32(h) = window.window_handle().unwrap().as_raw() else {
             return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL));
@@ -317,7 +317,7 @@ impl D3d11Runtime {
             }
         }
         eprintln!("[d3d11] create_device_swap {}x{} hwnd={:?}", size.width, size.height, h.hwnd.get());
-        let (device, ctx, swap, dcomp) = match Self::create_device_swap(HWND(h.hwnd.get() as _), size.width, size.height) {
+        let (device, ctx, swap, dcomp) = match Self::create_device_swap(HWND(h.hwnd.get() as _), size.width, size.height, prefer_dgpu) {
             Ok(v) => { eprintln!("[d3d11] device/swap/dcomp OK"); v }
             Err(e) => { eprintln!("[d3d11] device/swap FAILED: {:?}", e); return Err(e); }
         };
@@ -351,10 +351,63 @@ impl D3d11Runtime {
         })
     }
 
-    fn create_device_swap(window: HWND, w: u32, h: u32)
+    /// 根据启动期快照选择 D3D11 适配器。
+    ///
+    /// 关闭独显偏好时保持原来的行为：直接用 DXGI 的默认（第 0 个）适配器。
+    /// 开启时枚举适配器，跳过软件适配器和 Microsoft Basic Render Driver，
+    /// 优先独立显存更大的卡；没有独显则退回默认适配器。
+    fn choose_adapter(factory: &IDXGIFactory2, prefer_dgpu: bool) -> windows::core::Result<IDXGIAdapter> {
+        if !prefer_dgpu {
+            return unsafe { factory.EnumAdapters(0) };
+        }
+
+        let factory1: IDXGIFactory1 = factory.cast()?;
+        let mut best_discrete: Option<(u64, String, IDXGIAdapter1)> = None;
+        for index in 0..16u32 {
+            let adapter = match unsafe { factory1.EnumAdapters1(index) } {
+                Ok(adapter) => adapter,
+                Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
+                Err(error) => return Err(error),
+            };
+            let desc = unsafe { adapter.GetDesc1()? };
+            if desc.Flags & (DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0 || desc.VendorId == 0x1414 {
+                continue;
+            }
+            let score = Self::adapter_score(&desc);
+            let name = String::from_utf16_lossy(
+                &desc.Description[..desc.Description.iter().position(|&c| c == 0).unwrap_or(128)],
+            );
+            if score & (1u64 << 62) != 0
+                && best_discrete.as_ref().map_or(true, |(s, _, _)| score > *s)
+            {
+                best_discrete = Some((score, name, adapter));
+            }
+        }
+
+        if let Some((score, name, adapter)) = best_discrete {
+            eprintln!("[d3d11] adapter selected: {name} (score {score})");
+            return adapter.cast();
+        }
+        eprintln!("[d3d11] no discrete adapter found, falling back to default");
+        unsafe { factory.EnumAdapters(0) }
+    }
+
+    fn adapter_score(desc: &DXGI_ADAPTER_DESC1) -> u64 {
+        // NVIDIA / AMD 基本都是独显；Intel 只有在独立显存达到 1 GiB 时才按独显排序
+        // （新版 Arc 独显满足，核显通常不满足）。
+        let discrete = matches!(desc.VendorId, 0x10DE | 0x1002)
+            || (desc.VendorId == 0x8086 && desc.DedicatedVideoMemory >= 1024 * 1024 * 1024);
+        let mut score = (desc.DedicatedVideoMemory.min(u64::MAX as usize) as u64).min(u64::MAX - 1);
+        if discrete {
+            score = score.saturating_add(1u64 << 62);
+        }
+        score
+    }
+
+    fn create_device_swap(window: HWND, w: u32, h: u32, prefer_dgpu: bool)
         -> windows::core::Result<(ID3D11Device, ID3D11DeviceContext, IDXGISwapChain1, DcompState)> {
         let factory: IDXGIFactory2 = unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }?;
-        let adapter: IDXGIAdapter = unsafe { factory.EnumAdapters(0) }?;
+        let adapter = Self::choose_adapter(&factory, prefer_dgpu)?;
         let mut device = None;
         let mut ctx = None;
         unsafe {
@@ -884,5 +937,21 @@ mod readback_tests {
             0x00, 0x00, 0xff, 0x40, 0xff, 0xff, 0xff, 0xff, // 顶行：蓝、白
             0xff, 0x00, 0x00, 0xff, 0x00, 0xff, 0x00, 0x80, // 底行：红、绿
         ]);
+    }
+
+    #[test]
+    fn adapter_score_prefers_discrete_over_integrated() {
+        let mut igpu = DXGI_ADAPTER_DESC1::default();
+        igpu.VendorId = 0x8086;
+        igpu.DedicatedVideoMemory = 128 * 1024 * 1024;
+        let mut dgpu = DXGI_ADAPTER_DESC1::default();
+        dgpu.VendorId = 0x10DE;
+        dgpu.DedicatedVideoMemory = 4 * 1024 * 1024 * 1024;
+        assert!(D3d11Runtime::adapter_score(&dgpu) > D3d11Runtime::adapter_score(&igpu));
+
+        let mut intel_arc = DXGI_ADAPTER_DESC1::default();
+        intel_arc.VendorId = 0x8086;
+        intel_arc.DedicatedVideoMemory = 8 * 1024 * 1024 * 1024;
+        assert!(D3d11Runtime::adapter_score(&intel_arc) > D3d11Runtime::adapter_score(&igpu));
     }
 }

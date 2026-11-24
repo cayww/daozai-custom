@@ -139,10 +139,10 @@ impl Shell {
     }
 
     /// D3D11 自绘栈构造：直接接收 egui Context 与窗口 HWND（不经 eframe CreationContext）。
-    fn new(egui_ctx: egui::Context, hwnd: windows::Win32::Foundation::HWND) -> Self {
+    fn new(egui_ctx: egui::Context, hwnd: windows::Win32::Foundation::HWND, opts: Options) -> Self {
         diagnostics::graphics();
         diagnostics::startup("加载本地配置");
-        let mut app = App::new(&egui_ctx, Options::default());
+        let mut app = App::new(&egui_ctx, opts);
         // D3D11 自绘栈无 wgpu 渲染状态兼容模式；保留字段仅为设置页「需重启」提示。
         app.render_compat_running=false;
         #[cfg(feature="record")] let quota_demo=std::env::var("DAOZAI_QUOTA_DEMO").is_ok();
@@ -1153,7 +1153,6 @@ fn run() -> eframe::Result<()> {
     // 启动期快照：设置页用它与当前 settings 比较，判断"改了但未重启"以显示立即重启按钮。
     // DGPU 偏好是产品设置；选卡逻辑目前由 D3D11 运行时决定（见 d3d11/runtime.rs）。
     let boot = daozai::model::Settings::load();
-    std::env::set_var("DAOZAI_LIQUID_PREFER_DGPU", if boot.liquid_prefer_dgpu { "1" } else { "0" });
     // 注意：必须用 --profile memprof 构建（带符号，Rust 帧才能符号化）；taskkill /F 没有报告。
     #[cfg(feature = "memprof")]
     let memprof = {
@@ -1161,7 +1160,7 @@ fn run() -> eframe::Result<()> {
         dhat::Profiler::builder().file_name(path).build()
     };
     #[cfg(windows)]
-    { winit_runner::run().map_err(|e| eframe::Error::AppCreation(Box::new(std::io::Error::other(e.to_string())))) }
+    { winit_runner::run(boot.liquid_prefer_dgpu).map_err(|e| eframe::Error::AppCreation(Box::new(std::io::Error::other(e.to_string())))) }
     #[cfg(not(windows))]
     {
         let _ = _opts;

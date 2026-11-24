@@ -53,7 +53,7 @@ fn health_badges_confirm_independently_and_do_not_record_water(){
 #[test]
 fn health_pending_survives_restart_and_day_change(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=due();
-    h.app=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9});h.frame(vec![]);
+    h.app=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9,..Default::default()});h.frame(vec![]);
     h.t+=24.0*3600.0;
     let env=Env{t:h.t,clock:"09:41:00".into(),today:"2026-10-29".into(),..Default::default()};
     let _=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(crate::app::CANVAS_W,WIN_H))),time:Some(h.t),..Default::default()}, |ui|{
@@ -77,7 +77,7 @@ fn health_actions_clear_pending_and_keep_messenger_unread(){
     h.click_text("喝一口");assert_eq!(h.app.water.drunk_ml,250);
     click_badge(&mut h,"sit");
     assert_eq!(h.app.pending_messengers.len(),1,"处理健康提醒不影响微信未读");
-    h.app=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9});h.frame(vec![]);
+    h.app=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9,..Default::default()});h.frame(vec![]);
     assert_eq!(h.app.health_pending,[false,false],"处理结果已保存");
 }
 

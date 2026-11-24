@@ -81,6 +81,8 @@ struct SubWindow {
 }
 
 struct DaozaiApp {
+    /// 启动期独显偏好快照，传给 D3D11 runtime 与设置页重启提示。
+    prefer_dgpu: bool,
     attrs: WindowAttributes,
     window: Option<Window>,
     runtime: Option<D3d11Runtime>,
@@ -99,8 +101,8 @@ struct DaozaiApp {
 }
 
 impl DaozaiApp {
-    fn new(attrs: WindowAttributes) -> Self {
-        Self { attrs, window: None, runtime: None, shell: None,
+    fn new(attrs: WindowAttributes, prefer_dgpu: bool) -> Self {
+        Self { prefer_dgpu, attrs, window: None, runtime: None, shell: None,
                subs: HashMap::new(), sub_ids: HashMap::new(), pending_close: Vec::new(),
                egui_ctx: None, next_repaint: None, device_lost_pending: false }
     }
@@ -129,7 +131,7 @@ impl DaozaiApp {
     fn recreate_graphics(&mut self, window: &Window) -> bool {
         let Some(ctx) = self.egui_ctx.clone() else { return false };
         let Some(hwnd) = Self::hwnd(window) else { return false };
-        match D3d11Runtime::new_with_ctx(window, ctx.clone()) {
+        match D3d11Runtime::new_with_ctx(window, ctx.clone(), self.prefer_dgpu) {
             Ok(runtime) => {
                 self.runtime = Some(runtime);
                 if let Some(sh) = self.shell.as_mut() {
@@ -316,7 +318,7 @@ impl ApplicationHandler<Wakeup> for DaozaiApp {
         // 关键：设备重置 / 系统 suspend 后重建 D3D 栈时沿用同一个 Context，
         // 否则 Shell、后台线程手里的旧 Context 与字体图集/repaint callback 全部脱节。
         let ctx = self.egui_ctx.clone().unwrap_or_else(egui::Context::default);
-        let runtime = match D3d11Runtime::new_with_ctx(&window, ctx.clone()) {
+        let runtime = match D3d11Runtime::new_with_ctx(&window, ctx.clone(), self.prefer_dgpu) {
             Ok(r) => r,
             Err(e) => { eprintln!("[d3d11] runtime init failed: {e}"); el.exit(); return; }
         };
@@ -402,7 +404,10 @@ impl ApplicationHandler<Wakeup> for DaozaiApp {
 
         // Shell 承载全部 app 状态与后台服务：suspend 时保留，resume 只重建窗口绑定。
         if self.shell.is_none() {
-            self.shell = Some(Shell::new(ctx.clone(), hwnd));
+            self.shell = Some(Shell::new(ctx.clone(), hwnd, daozai::app::Options {
+                liquid_prefer_dgpu_boot: self.prefer_dgpu,
+                ..Default::default()
+            }));
         } else if let Some(sh) = self.shell.as_mut() {
             sh.native = daozai::native::Window::new(hwnd, ctx.clone());
             sh.placed = false;
@@ -606,7 +611,7 @@ fn build_glass_params(ppp: f32, liquid: bool, dock: daozai::model::Dock) -> Glas
 }
 
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(prefer_dgpu: bool) -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::<Wakeup>::with_user_event().build()?;
     let _ = REPAINT_PROXY.set(event_loop.create_proxy());
     let attrs = WindowAttributes::default()
@@ -617,7 +622,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_active(false)
         .with_resizable(false)
         .with_no_redirection_bitmap(true);
-    let mut app = DaozaiApp::new(attrs);
+    let mut app = DaozaiApp::new(attrs, prefer_dgpu);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
@@ -677,7 +682,7 @@ mod root_scale_tests {
 
     #[test]
     fn repaint_scheduling_keeps_the_earliest_deadline() {
-        let mut app = DaozaiApp::new(WindowAttributes::default());
+        let mut app = DaozaiApp::new(WindowAttributes::default(), true);
         let base = Instant::now();
         let later = base + Duration::from_millis(100);
         let earlier = base + Duration::from_millis(20);

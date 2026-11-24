@@ -50,7 +50,7 @@ fn main()->eframe::Result<()> {
         cc.egui_ctx.on_begin_pass("检查窗口保持屏幕外",std::sync::Arc::new(|ctx|{
             if ctx.viewport_id()!=egui::ViewportId::ROOT{ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-10000.0,-10000.0)));}
         }));
-        let app=App::new(&cc.egui_ctx,Options{fetch_lyrics:false,pet_idle:1e9});
+        let app=App::new(&cc.egui_ctx,Options{fetch_lyrics:false,pet_idle:1e9,..Default::default()});
         Ok(Box::new(Probe{app,frame:0,last:Instant::now(),intervals:vec![],textures:0,bytes:0}))
     }))
 }

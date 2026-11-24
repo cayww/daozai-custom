@@ -4176,10 +4176,10 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                                 let before=app.settings.liquid_prefer_dgpu;
                                 setting_row(ui,"优先独立显卡","让液态玻璃尽量使用独显，重启生效",&mut app.settings.liquid_prefer_dgpu);
                                 if before!=app.settings.liquid_prefer_dgpu {app.settings.save();}
-                                settings_hint(ui,"混合显卡机器建议开启；当前 D3D11 栈的选卡策略仍在完善");
+                                settings_hint(ui,"混合显卡机器建议开启：启动时会枚举 DXGI 适配器，跳过软件显卡，优先使用独立显存更大的显卡；没有独显时自动回退默认显卡");
                                 // 与启动期开关一致：改了重启才生效的设置就直接给「立即重启」。
                                 // 启动值由 main.rs 写进环境变量（建窗前快照），无需额外字段。
-                                let dgpu_boot=std::env::var("DAOZAI_LIQUID_PREFER_DGPU").map(|v|v!="0").unwrap_or(app.settings.liquid_prefer_dgpu);
+                                let dgpu_boot=app.opts.liquid_prefer_dgpu_boot;
                                 if app.settings.liquid_prefer_dgpu!=dgpu_boot {
                                     ui.horizontal(|ui|{
                                         ui.label(egui::RichText::new("优先独显重启岛仔后生效").size(12.0).color(Color32::from_rgb(230,150,40)));

@@ -105,7 +105,7 @@ mod tests {
         let dest=std::path::PathBuf::from(std::env::var_os("DAOZAI_LISTENING_PREVIEW").expect("需指定预览目录"));
         std::fs::create_dir_all(&dest).unwrap();
         std::env::set_var("DAOZAI_DATA_DIR",std::env::temp_dir().join(format!("daozai-listening-{}",std::process::id())));
-        let ctx=egui::Context::default();let mut app=App::new(&ctx,Options{fetch_lyrics:false,pet_idle:1e9});
+        let ctx=egui::Context::default();let mut app=App::new(&ctx,Options{fetch_lyrics:false,pet_idle:1e9,..Default::default()});
         app.settings.pet=true;app.settings.minimal=false;app.settings.island_lyrics=false;
         let mut scenes=Vec::new();let mut start=0.0;
         for (index,expression) in MUSIC_EXPRESSIONS.into_iter().enumerate() {

@@ -24,7 +24,7 @@ fn changing_songs_does_not_retain_per_song_animation_state(){
     let root=std::env::temp_dir().join(format!("daozai-lyrics-memory-{}",std::process::id()));
     std::env::set_var("DAOZAI_DATA_DIR",&root);
     for expanded in [false,true] {
-    let ctx=egui::Context::default();let mut app=App::new(&ctx,Options{fetch_lyrics:false,pet_idle:1e9});
+    let ctx=egui::Context::default();let mut app=App::new(&ctx,Options{fetch_lyrics:false,pet_idle:1e9,..Default::default()});
     app.settings.island_lyrics=true;app.settings.pet=false;
     if expanded{app.show_page(0);}
     let lyrics=daozai::lyrics::parse_lrc("[00:00]切歌后的当前歌词\n[00:10]下一句歌词");

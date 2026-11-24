@@ -1323,7 +1323,7 @@ impl H {
         let dir = std::env::temp_dir().join(format!("daozai-test-{}-{}", std::process::id(), rand_id()));
         std::env::set_var("DAOZAI_DATA_DIR", &dir);
         let ctx = egui::Context::default();
-        let app = App::new(&ctx, Options { fetch_lyrics: false, pet_idle: 1e9 });
+        let app = App::new(&ctx, Options { fetch_lyrics: false, pet_idle: 1e9, ..Default::default() });
         Self { ctx, app, t: 0.0, cursor: None,cmds:vec![],region:Rect::NOTHING,hit:Rect::NOTHING,animating:false,shapes:Vec::new(), bt:Vec::new(),media:Default::default(),power:(None,false),network:None,system_idle:None,screen_locked:false,fullscreen:false,browser_at_top:None,file_drop_zone:None,hovered_files:vec![],dropped_files:vec![],repaint:std::time::Duration::MAX }
     }
     fn frame(&mut self, events: Vec<egui::Event>) {
@@ -3316,7 +3316,7 @@ fn page_visibility_is_saved_and_sets_the_starting_page() {
     let settings=crate::model::Settings::load();
     assert!(!settings.show_battery);
     assert_eq!(settings.visible_pages,[false,true,true,false,true,true,true,true,true]);
-    let restarted=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9});
+    let restarted=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9,..Default::default()});
     assert_eq!(restarted.page(),1);
     assert_eq!(restarted.settings.visible_pages,settings.visible_pages);
     assert!(!restarted.settings.show_battery);
@@ -6123,7 +6123,7 @@ fn page_order_persists_and_controls_navigation() {
     h.app.settings.save();
     let settings=crate::model::Settings::load();
     assert_eq!(settings.page_order,[5,2,0,1,3,4,6,7,8]);
-    let restarted=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9});
+    let restarted=App::new(&h.ctx,Options{fetch_lyrics:false,pet_idle:1e9,..Default::default()});
     assert_eq!(restarted.page(),5);
     for page in [1,3,4,6,7,8] {h.app.set_page_visible(page,false);}
     h.hover(Pos2::new(WIN_W/2.0,12.0),1.0);

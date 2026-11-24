@@ -282,11 +282,13 @@ pub struct Options {
     pub fetch_lyrics: bool,
     /// 吉祥物在多久无操作后出现（秒）。
     pub pet_idle: f64,
+    /// 启动期的独显偏好快照：设置页据此提示需重启，避免用全局环境变量。
+    pub liquid_prefer_dgpu_boot: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Self { fetch_lyrics: true, pet_idle: 45.0 }
+        Self { fetch_lyrics: true, pet_idle: 45.0, liquid_prefer_dgpu_boot: true }
     }
 }
 

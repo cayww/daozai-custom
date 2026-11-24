@@ -1820,4 +1820,6 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 过时的 egui 0.35 API 已清理：`Id::new` → `Id::unique`、`TextEdit::vertical_align(Align)` → `align(Align2::LEFT_CENTER)`、`Ui::id` → `scope_id`、`TextureHandle/ImageData/ColorImage::size` → `resolution`、`size_vec2` → `resolution_vec2`。`ImeEvent::Enabled/Disabled` 在 0.37 仅 deprecated 但仍保留语义，测试与 app 处理处加局部 `#[allow(deprecated)]`，避免改坏输入法模拟。`cargo check --lib --tests --bins --examples` 的 deprecated warning 从 121 降到 0。
 - 设置页窗口阴影闪动：根因是每帧都发 `ViewportCommand::SetTheme`，DWM 反复重描窗口阴影。新增 `App::settings_window_theme_sent`，只在深浅主题真正变化时发送；相关测试改为断言主题未变时不重复 SetTheme。
 - 验证：release bin 11 passed；release lib 1403 passed / 1 failed / 131 ignored，唯一失败 `messenger::windows::tests::exited_messenger_accounts_are_removed_individually`，与真实企业微信/微信进程列表有关，和本次改动无关。
-- 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear、兼容渲染截图、系统字体回退与设置页阴影。
+- D3D11 选卡策略已完善：`main.rs` 启动时把 `Settings::load().liquid_prefer_dgpu` 显式传给 `winit_runner::run(prefer_dgpu)`，不再写 `DAOZAI_LIQUID_PREFER_DGPU` 环境变量；`D3d11Runtime::create_device_swap` 按快照选择适配器。关闭时保持原 `EnumAdapters(0)`；开启时枚举前 16 个 `IDXGIAdapter1`，跳过软件适配器与 Microsoft Basic Render Driver，按「独立显存更大 + 独显优先（NVIDIA/AMD，Intel 独立显存 ≥1GiB 视为独显）」排序；找不到独显则回退默认适配器。设备重建沿用同一快照。设置页「优先独立显卡」文案已同步改为该行为说明。
+- 验证：`cargo check --lib --tests --bins --examples` 通过；release lib **1405 passed / 0 failed / 131 ignored**，bin **11 passed / 0 failed**。
+- 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear、兼容渲染截图、系统字体回退、设置页阴影与混合显卡选卡。
