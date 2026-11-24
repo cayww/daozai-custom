@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-23 21:50
+> **最后更新**：2026-11-25 00:20
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -11,6 +11,7 @@
 
 | 项目 | 当前值 |
 |---|---|
+| **egui pin（2026-11-25）** | `90431d979ab1faae2de6d9f736e9d33ca0d31956`（提交 `ec19bd1`，0.37.0，1412 passed；未打包部署） |
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-134 已打包、未部署（最新，2026-11-19）**：`installer\daozai-setup-custom-134.exe`（11,109,904 B，包 sha `1f2f9df72d88b08d`，0.6.66，内含 exe `2ebc1313b2241ad6` + bridge `9832e44f133f5ac0`，构建自 main `912d636`= 在 950433b 基础上仅更新版本号；1373 passed；静默安装验证通过，详见 §7.0ad）。**custom-133**：`installer\daozai-setup-custom-133.exe`（11,241,513 B，包 sha `a9455e0ad655bb9f`，内含 exe `02786373d87ba563` + bridge `f1ae28626c9db18e`，构建自 main 工作树（告警清理 `2ea229a` + 液态玻璃按钮缩小 + 关配置弹窗收起 + INSTALL-NOTES 反馈日志说明，提交 `14bb37f`）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
 | **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。**【2026-11-21 16:00 更新】当前活跃分支=`research/egui035-migration`（egui 0.35 迁移研究线），HEAD=`6ca92e0`，本行上方旧值（2342d3c/merge-v0666-selective）是主线历史快照、非当前检出；研究分支 release exe sha `60ca4a035ec5eb10`（高 DPI 背景放大修复后，未部署）。详见 §7.0zzg.13。** **【2026-11-22 11:45 更新】同一研究分支 HEAD=`ccff129`（修设置大小/刘海形状/非液态皮肤玻璃残影，见 §7.0zzn），release exe sha `0f2dec64b11eb4c1`，全量 1389 passed；未部署。** **【2026-11-22 15:40 更新】同一研究分支 HEAD=`20d9f6a`，当前 release exe sha `711166f844695b3c`（target/release + 桌面预览目录，已启动 PID 37788）：修刘海展开玻璃铺不满——上轮改 notch_sdf 圆角时 qy 写成 abs(p.y)+(b.y-r)，底部整条判为岛体外致玻璃透明；改 -(p.y)-(b.y-r) 后铺满（数值验证）。同时删掉已移到 shader 的死代码 shape::shadow_ring + 测试。light_follow 测试通过。** **【2026-11-22 21:05 更新】同一研究分支 HEAD=`83459b6`（文字缩放 6% 死区，隔离阻尼比尾振，见 §7.0zzp），release exe sha `136be0d614d9eddec2`（已启动 PID 15688），全量 1391 passed / 0 failed。** **【2026-11-22 20:40 更新】同一研究分支 HEAD=`7cf3b9f`（分栏容器改高斯模糊磨砂、去暗底，见 §7.0zzp），release exe sha `c6b38aea44220ef9`（已启动 PID 21532）；全量 1391 passed / 0 failed / 131 ignored。** **【15:18 历史】HEAD=`81099ba`，exe `560394fee86cb218`（`D:\code\daozai-custom\dz-phone\target\release\daozai.exe` + 桌面预览目录 daozai.exe，已启动）：对照迁移前 5f5b428 找到两个真正根因并修复——① 删除 paint_gpu_glass 里迁移时多加的 rect_stroke 圆角白边（与 shader 刘海轮廓双影不重叠）；② 投影从 egui 移进 HLSL（D3D11 先玻璃后 egui，egui 阴影必然盖住玻璃；迁移前 wgpu 顺序相反才没事），用 SDF 高斯衰减画外阴影，set_shadow→lightcfg.z 传开关。此前 c263a3d/855f56c/c0830c6 修了刘海圆角方向、左右停靠控件 ppp、投影去肩部。教训：迁移 bug 必须先 git 对照迁移前完整绘制流程（含顺序），别自己推导。全量 1392 passed / 2 failed（messenger 基线 flaky）/ 131 ignored；未再全测。早前安装包 daozai-liquid-setup-63 已过时勿用。**|
@@ -1995,3 +1996,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **实验改动**：`galley_shape` 去掉 transform/inset，改为从 `g.job` 重建 LayoutJob、font size 乘 s 后重排，直接画在 `self.pos(p)`。死区/弹簧隔离本分支暂不生效（预期代价：弹簧时文字每帧重排，可能重现高低不齐/抖动）。构建通过（4 个 unused 警告为预期），未跑全量（研究分支）。
 - **产物**：exe `785b1e966f38705e`，桌面 `daozai-text-rescale-test\daozai.exe` 供实机对比。ui_probe 冻结背景截图未捕到岛仔（透明/DComp 窗口抓屏限制），交由用户实机验证。
 - **状态**：实验在独立分支，**main 未受影响**（仍 `1bfc4c6`，ahead 20 未 push）；安装目录已恢复 main 正式版。待用户对比黑线是否消失 + 是否引入抖动，再决定合并/放弃/折中。
+
+### 7.0zzy egui 升到上游 HEAD 90431d（2026-11-25 00:06–00:20，提交 `ec19bd1`，本地 main 未 push）
+
+- **用户要求**：把 egui 升到最新提交 `90431d979ab1faae2de6d9f736e9d33ca0d31956`（emilk/egui HEAD，workspace 版本仍 0.37.0）。
+- **上游差异**：旧 pin `56f3a0e` → 新 pin 只多 3 个提交：①`eframe::try_get_value`（纯新增，容错读取持久化数据）；②web canvas Ctrl+A 阻止原生拖拽（不涉及桌面）；③`Fix CJK glyphs sitting too high and getting clipped (#8804)`（`epaint/src/text/text_layout.rs`：回退字体字形统一按主字体 `font_ascent` 落基线，修中英/emoji 混排时 CJK 被顶高裁切）。**无公开 API 破坏，应用源码零改动。**
+- **改动**：`dz-phone/Cargo.toml` 6 处 rev（含 Linux eframe / Windows egui-winit）+ 注释；`Cargo.lock` 11 个 egui 系 crate 的 source 换 rev，版本均 0.37.0，**无其他依赖版本漂移**。
+- **验证**：`cargo build --locked --release --bin daozai --bin daozai-bridge` 通过；release lib 全量 **1412 passed / 0 failed / 131 ignored**（5m56s，串行隔离数据目录）；release bin **11 passed / 0 failed**；`cargo check --locked --release --examples` 通过。exe sha256 前16：`b4ac9366954efeed`（daozai）、`543c598181b8a33b5`（daozai-bridge）。
+- **状态**：提交 `ec19bd1` 在本地 main，**未 push、未打包、未部署**；构建前停掉运行中的 daozai.exe（PID 19872），未重启；dist 的 v1.3.0 安装包不含此升级。新 CJK 基线是否改善文字观感/是否影响布局像素需用户实机确认。
