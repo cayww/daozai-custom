@@ -689,19 +689,6 @@ impl LyricLayoutCache {
 /// egui 0.35 移除了 raw_scroll_delta，只保留逐帧平滑的 smooth_scroll_delta。
 /// 岛仔的翻页/列表滚动是自定义交互，需要 0.31 的「本帧滚轮原始增量」语义：
 /// 从本帧事件里按 unit 换算后直接求和（等价旧 raw_scroll_delta.y）。
-/// tooltip（剪贴板预览/长文）显示标记：由 `pages.rs` 的 `on_hover_ui` 闭包每帧刷新时间戳。
-/// 岛仔的翻页/列表滚动是自定义交互，在 UI 绘制之前执行；刚画过 tooltip 时把滚轮
-/// 留给 tooltip 里的 ScrollArea，而不是消费掉去翻页/翻列表。
-pub(crate) const CLIP_TOOLTIP_KEY: &str = "daozai.clip.tooltip.at";
-
-/// 最近是否绘制过剪贴板 tooltip（120ms 内）。
-pub(crate) fn tooltip_open_last_frame(ctx: &egui::Context) -> bool {
-    const FRESH_MS: i64 = 120;
-    let now = chrono::Local::now().timestamp_millis();
-    ctx.data(|d| d.get_temp::<i64>(egui::Id::new(CLIP_TOOLTIP_KEY)))
-        .is_some_and(|at| now - at < FRESH_MS)
-}
-
 pub(crate) fn raw_scroll_y(ctx: &egui::Context) -> f32 {
     ctx.input(|i| {
         i.events.iter().filter_map(|e| match e {
@@ -2754,12 +2741,7 @@ impl App {
             if (left || right) && !self.todo_choosing {
                 self.wheel_delta=0.0;
                 self.navigate_page(right);
-            } else if scroll!=0.0 && tooltip_open_last_frame(&ctx) {
-                // tooltip 开着：滚轮归 ScrollArea，这里只清空累积量避免下次误翻。
-                self.wheel_delta=0.0;
             } else if scroll!=0.0 {
-                // 注意：tooltip（剪贴板预览/长文）开着时不进这个分支，
-                // 滚轮留给 tooltip 里的 ScrollArea，避免被这里消费去翻列表/翻页。
                 let cursor=env.cursor.unwrap()-self.content_origin(win).to_vec2();
                 let mail_reading=inside && self.page==5 && self.mail.open_uid.is_some();
                 let mail_list=self.page==5 && !self.mail.accounts.is_empty() && self.mail.open_uid.is_none() && self.mail_list_bounds().contains(cursor);
