@@ -1984,3 +1984,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **S3**：`app.rs` 的 `hud_notice` 同步比较从 title+body+at 简化为 title+at——先验证所有 notice 更新都是整条 `Some(Alert)` 替换并刷新 `at=self.t`（alert 518 行 / 队列取出 1704 行），无原地改 body 不动 at 的路径，故比 at 足够且避免每帧比较长正文。
 - **验证**：`cargo check --locked --lib --bins` 通过且 input_keys 警告消除；全量 **1412 passed / 0 failed / 131 ignored**；release exe `8e064bc7606447e6`，部署安装目录、启动 PID 20000。
 - **状态**：提交 `441a89c` 本地 main 未 push；dist 的 v1.3.0 包（19:10）仍不含本轮所有修复，需重打。
+
+### 7.0zzx 实验分支：文字改回原项目重排方案（2026-11-24 21:00–21:15，分支 `research/text-rescale-like-upstream` 提交 `e5885ef`）
+
+- **用户问题**：原项目 Renly1994/xiaotang-daozai 没有文字黑线，定制版有，为什么？用户要求单开分支用原项目方法实验。
+- **根因对比（已查证，非推测）**：
+  - 原项目 `src/paint.rs`：`Card::font() = font(size * s)`，galley 按**最终字号**栅格化，直接 `self.pos()` 绘制，**不 transform mesh** → 无 UV 越界。
+  - 定制版 `dz-phone/src/paint/mod.rs`：`galley()` 用基准字号 `font(size)`，`galley_shape()` 用 `TSTransform` 缩放 mesh + `inset_text_uv` 补丁。放大时顶点被拉开、UV 不变 → 线性采样采到图集相邻黑色像素 = 文字上方黑线（`inset_text_uv` 注释原文）。
+  - 黑线是**定制版文字缩放死区/弹簧隔离机制**（`TEXT_SCALE_DEADZONE`、`7a579d2`、`ba7fa43`）的副产品，原项目无此机制自然无此问题。
+- **实验改动**：`galley_shape` 去掉 transform/inset，改为从 `g.job` 重建 LayoutJob、font size 乘 s 后重排，直接画在 `self.pos(p)`。死区/弹簧隔离本分支暂不生效（预期代价：弹簧时文字每帧重排，可能重现高低不齐/抖动）。构建通过（4 个 unused 警告为预期），未跑全量（研究分支）。
+- **产物**：exe `785b1e966f38705e`，桌面 `daozai-text-rescale-test\daozai.exe` 供实机对比。ui_probe 冻结背景截图未捕到岛仔（透明/DComp 窗口抓屏限制），交由用户实机验证。
+- **状态**：实验在独立分支，**main 未受影响**（仍 `1bfc4c6`，ahead 20 未 push）；安装目录已恢复 main 正式版。待用户对比黑线是否消失 + 是否引入抖动，再决定合并/放弃/折中。
