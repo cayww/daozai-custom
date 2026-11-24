@@ -1879,3 +1879,13 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 包内 exe sha `e9c7e724282e363c`，FileVersion=1.3.0（安装包本身也是 1.3.0）。
 - **注意**：这是**本地重打的同版本包**，与 10:53 那次 v1.3.0（旧 exe）不同，sha 已变；未做静默安装验证、未部署、未发 GitHub release。旧包 sha 见 git 历史/旧 SHA256SUMS。
 - **状态**：本地 main 领先 origin 11 个提交，未 push；工作树干净。未部署到 `D:\software\Daozai`（避免打断用户）；要装请用上面的新包并核对 sha。
+
+### 7.0zzk 收起态歌词居中 + 关宠物收空位（2026-11-24 17:20–17:30，提交 `652e9f2`，本地未 push）
+
+- **现象**：用户实测收起态短歌词（如「间奏」）非常偏右；关宠物后歌词前面仍有大空隙。
+- **根因一（空位）**：`lyric_lane()` 无条件按宠物占位算 `text_left`（`pet_center+LANE_PET_HALF+LANE_TEXT_GAP`），关宠物时 48px 贴图位照留。
+- **根因二（偏右）**：上一版居中用 `local_cx - text_w/2`，但 `local_cx` 是相对 **base 原点**的坐标，而 `text_left/lane_right` 是相对 **岛体左缘 left** 的偏移——两套坐标系混用，把歌词整体右移约 `left`（≈width/2）距离，短歌词尤其明显。
+- **修复**：`lyric_lane_geometry(rings, pet_on)` 关宠物时 `text_left=art_right+LANE_TEXT_GAP`（封面后缘直接接歌词，收回约 52px）；`lyric_centered_left(center_in_lane, text_left, lane_right, text_w)` 以 `width/2`（岛体中心相对 left 的偏移）为基准居中，夹在封面/宠物与播放条之间，长歌词仍横向滚动。两个纯函数 + 单测（`lyric_lane_leaves_no_gap_when_pet_is_off` / `lyric_text_centers_on_island_midline`，含「间奏」短文本用例）。`cfg!(test)` 仍返回 None 沿用官方坐标。
+- **验证**：`cargo check --locked --lib --tests` 通过；坐标系修复前全量 1409 passed / 0 failed；**坐标系修复后按用户要求未跑全量测试**（用户说「先不测试」），仅编译通过。release exe `57fe17678d1e56f5`，已启动 PID 24016 供用户实机验证。
+- **注意**：本次 `pages.rs` 也被卷入一行——用户自己把 tooltip 图片预览从 180×100 又改到 160×80（工作树未提交改动），一并提交。
+- **状态**：提交 `652e9f2` 本地 main 未 push（origin/main 已在 `7971165`）；未打包、未部署。待用户确认短歌词居中与关宠物空位回收效果。
