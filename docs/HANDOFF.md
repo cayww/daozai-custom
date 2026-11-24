@@ -1852,3 +1852,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **坑**：egui 0.37 没有公开的全局 `is_tooltip_open()` / `prev_pass_state()`（后者是 pub(crate)），`Context::frame_nr()` 也不存在；只能用 `ctx.data` 自己传状态 + `chrono::Local::now().timestamp_millis()` 作时间基准。`ScrollArea::show()` 的 `inner` 是闭包的返回值（`()`），不能取 `.response.hovered()`，要在闭包内用 `ui.response()`。
 - **验证**：`cargo check --locked --lib` 通过；剪贴板相关 14 个测试全过；release exe sha `eea7dd5fe7194d08`，已启动 PID 27716 供用户实机验证。
 - **状态**：提交 `bad5555` 本地 main，**未 push、未打包、未部署**。待用户确认：hover 长文 tooltip 内滚动只滚文字、不触发列表翻页；鼠标在列表上时滚轮仍翻列表。
+
+### 7.0zzh 撤销 tooltip 滚动方案，长文字改省略号（2026-11-24 16:01–16:09，提交 `90145a2`，本地未 push）
+
+- **用户决定**：`bad5555` 的 tooltip 滚动隔离实测仍不能可靠滚动，明确要求撤销——「保证 hover 弹窗完整就行，多出的内容省略号」。
+- **回退**：`app.rs` 完全恢复到 `bad5555^`（diff 为空）：删 `CLIP_TOOLTIP_KEY` / `tooltip_open_last_frame` 及滚轮分支的让行逻辑；`pages.rs` 移除 ScrollArea 与滚轮时间戳标记，文字改 240 字 + `…` 截断。图片放大预览保留（无滚动需求，不受影响）。
+- **结论**：岛仔自定义滚轮翻页（`App::frame`，UI 绘制前执行，直接读并清空 `MouseWheel`）与 egui ScrollArea 的事件竞争难彻底隔离；放弃滚动，以弹窗完整为优先。
+- **验证**：`cargo check --locked --lib` 通过；剪贴板相关 14 个测试全过；release exe `cf585159c13d4ead`，已启动 PID 16316。
+- **状态**：提交 `90145a2` 本地 main，**未 push、未打包、未部署**。此前 `eb0b215`/`52b7c70`/`bad5555`/`90145a2` 等均在本地。
