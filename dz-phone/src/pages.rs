@@ -1249,6 +1249,7 @@ impl App {
             c.text(label_x, y + 3.8, &text, size::BODY, W::Regular, Color32::from_gray(235), H::Left);
             c.text(318.0, y + 3.5, &clip.at, size::TINY, W::Regular, theme::DIM, H::Right);
             let full_text = clip.text.clone();
+            let tip_ctx = c.ui.ctx().clone();
             let r = r.on_hover_ui(move |ui| {
                 if let Some(tex) = &hover_tex {
                     // 图片预览：等比缩放到最大 340×240，避免大图撑爆屏幕。
@@ -1260,6 +1261,7 @@ impl App {
                     ui.label("点击复制图片");
                 } else {
                     // 文字全文可滚动，不再 400 字截断。
+                    let mut hovering_scroll = false;
                     egui::ScrollArea::vertical()
                         .id_salt(("clip-tip", index))
                         .max_height(200.0)
@@ -1267,7 +1269,15 @@ impl App {
                             ui.set_width(ui.available_width().max(160.0));
                             ui.label(&full_text);
                             ui.label("点击复制");
+                            // 只有鼠标真正在滚动区上时，才让岛仔的滚轮逻辑放行——
+                            // 否则 tooltip 刚弹出、鼠标还在列表上时滚轮会「什么都不做」。
+                            hovering_scroll = ui.response().contains_pointer();
                         });
+                    if hovering_scroll {
+                        tip_ctx.data_mut(|d| d.insert_temp(
+                            egui::Id::new(crate::app::CLIP_TOOLTIP_KEY),
+                            chrono::Local::now().timestamp_millis()));
+                    }
                 }
             });
             let pin = c.hit(323.0, y - 9.0, 18.0, 18.0, ("clip-pin", index)).on_hover_text(if clip.pinned { "取消固定" } else { "固定（清空时保留）" });
