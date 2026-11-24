@@ -1922,3 +1922,13 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 编译 `cargo check --locked --lib --tests` 通过；release exe `9c5268385450535b`，已部署安装目录、启动 PID 35980（未备份——回滚后就是 KTV 前的 `463c2b9` 状态，旧备份 `daozai.exe.bak-pre-karaoke` 仍在）。
 - 歌词居中系列修复（`463c2b9` 可用区居中、关宠物收空位）保留。
 - **状态**：本地 main 未 push；dist 的 v1.3.0 包仍旧，需重打。
+
+### 7.0zzr 输入语言/大小写提示状态修复（2026-11-24 18:23–18:56，提交 `7ce6bee`，本地未 push）
+
+- **用户反馈**：切换中英文和大小写的逻辑有问题，岛上显示的切换状态可能对不上；快速切换时响应停留在上次状态。
+- **根因 1（大小写对不上）**：`system.rs` 后台采样线程用 `GetKeyState(VK_CAPITAL)`——该 API 读**调用线程消息队列**的键盘状态，后台线程从不处理键盘消息，故滞后/恒旧。改用 `GetAsyncKeyState`（全局异步状态）。
+- **根因 2（快速切换滞后）**：`main.rs` 用实时 `keys.allows()` 判断授权、发出提示后 `clear()`。快速连按（中→英→中）时第二次按键覆盖第一次授权，第一条 observation 发出提示后 `clear()` 又误清第二次授权，第二条状态变化被吞 → 停在「英语」。
+- **修复**：`Observation` 新增 `input_switch` 字段，system 采样线程在 `State::read()` **之前**取 `switch_recent()` 存入（读 IME 耗时可能使窗口过期）；main 用 `observation.input_switch` 作授权，移除实时 `allows()` 与 `clear()`。`SwitchKeys::allows/clear` 保留供测试与 hook 使用。
+- **副作用权衡**：不再按 context 校验按键授权，但 `Monitor::observe` 的 context 变化分支仍静默同步切窗口，故切窗口瞬间不弹提示，可接受。
+- **验证**：`cargo check --locked --lib --bins` 通过；`input::` 相关 17 passed / 0 failed / 1 ignored（含新增 `each_observation_keeps_its_own_switch_authorization`）。**未跑全量测试**。release exe `5e3c9d5392e6f171`，备份安装版到 `daozai.exe.bak-pre-inputfix` 并部署、启动 PID 22120。
+- **状态**：提交 `7ce6bee` 本地 main 未 push；dist 的 v1.3.0 包仍不含此修复。待用户真机验证（需实际按 Shift / Ctrl+Shift / Caps Lock）。
