@@ -1251,17 +1251,17 @@ impl App {
             let full_text = clip.text.clone();
             let r = r.on_hover_ui(move |ui| {
                 if let Some(tex) = &hover_tex {
-                    // 图片预览：等比缩放到最大 340×240，避免大图撑爆屏幕。
+                    // 图片预览：画布只有 270 高，条目在 y≈44–124，tooltip 向下展开
+                    // 必须够矮才不超窗口底部、阴影不被裁。压到 220×120 + 一行说明。
                     let size = tex.resolution_vec2();
-                    let scale = (340.0 / size.x).min(240.0 / size.y).min(1.0);
+                    let scale = (220.0 / size.x).min(120.0 / size.y).min(1.0);
                     let shown = if scale < 1.0 { size * scale } else { size };
                     ui.add(egui::Image::new((tex.id(), shown)).fit_to_exact_size(shown));
-                    ui.label(&full_text); // 「图片 W×H」
-                    ui.label("点击复制图片");
+                    ui.label(format!("{full_text} · 点击复制"));
                 } else {
                     // 长文字省略号截断，保证 tooltip 完整不超屏。
                     // 用 ScrollArea 会被岛仔的自定义滚轮翻页抢走事件，滚不动。
-                    const TIP_CHARS: usize = 240;
+                    const TIP_CHARS: usize = 180;
                     let chars: Vec<char> = full_text.chars().collect();
                     let tip: String = if chars.len() > TIP_CHARS {
                         format!("{}…", chars[..TIP_CHARS].iter().collect::<String>())
