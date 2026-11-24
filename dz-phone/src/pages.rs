@@ -668,7 +668,7 @@ impl App {
         let ring_a = 1.0 - smoothstep(0.0, 0.6, vt);
         if ring_a > 0.0 {
             let k = 1.0 + 0.22 * vt;
-            let rc = c.faded(ring_a).scaled(292.0, 78.0, k);
+            let rc = c.faded(ring_a).scaled_text(292.0, 78.0, k, 1.0);
             Self::progress_ring(&rc, 292.0, 78.0, 33.0, 6.0, f, theme::WATER_TRACK, theme::BLUE);
             rc.text(292.0, 86.0, &format!("{pct:.0}"), 26.0, W::Bold, theme::WHITE, H::Center);
             paint::droplet(&rc, 287.0, 97.0, 7.0, theme::CYAN);
@@ -1327,7 +1327,7 @@ impl App {
         let order = self.todos.display_order(&env.today);
         let count = order.len();
         let pop = self.todo_pop.pos.abs().min(0.4);
-        let hc = c.scaled(60.0, 50.0, 1.0 + pop * 0.25);
+        let hc = c.scaled_text(60.0, 50.0, 1.0 + pop * 0.25, 1.0);
         let w = hc.text(42.0, 61.0, &format!("{done}"), size::HERO, W::Bold, if done > 0 && done == total { theme::GREEN } else { theme::WHITE }, H::Left);
         hc.text(42.0 + w, 61.0, &format!("/{total}"), size::HERO, W::Bold, theme::WHITE, H::Left);
         c.text(42.0, 78.0, "已完成", size::SMALL, W::Regular, theme::GRAY, H::Left);

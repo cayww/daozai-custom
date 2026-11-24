@@ -11,7 +11,6 @@ use eframe::egui::emath::TSTransform;
 use eframe::egui::epaint::Shape;
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, Response, Sense, Stroke, Vec2};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
-use std::sync::Arc;
 
 /// 文字缩放死区：卡片弹簧缩放倍率在 1±6% 以内时，文字按基准字号画，
 /// 不继承尾振。按下时 14% 的放大仍然保留（超过死区）。见 `Card::paint_galley`。
@@ -31,64 +30,9 @@ pub enum TextScale {
     Damped,
     /// 冻结在基准字号：入场动画里只让容器动，文字不参与缩放。
     Frozen,
-    /// 静态倍率：按最终字号重新排版并缓存，不做 mesh transform / UV 内缩。
+    /// 静态倍率：按最终字号重新排版并缓存，不做 mesh transform。
     /// 只用于逐帧不变的 `k`；弹簧动画请用 `scaled()` 走 `Damped`，否则每帧重排会抖。
     Reflow,
-}
-
-/// 把文字 mesh 的 UV 向每个字形 quad 中心内缩 `amount` 个 texel（0..=1，每边一半）。
-///
-/// 弹簧放大文字时，mesh 顶点被放大但 UV 不变，GPU 线性采样会在字形 quad 边缘
-/// 采到图集里相邻的空白/黑色像素，表现为「1」顶上或长按按钮文字上方的小黑线。
-/// 字体图集的 UV 是 texel 坐标，所以 1.0 texel 就是 `1/atlas_size`。
-///
-/// `amount` 必须随缩放比连续变化、且只在放大（s>1）时生效：早先按
-/// `|s-1|>1%` 硬开关、每次内缩整整 1 texel，弹簧回弹经过阈值时字形会突然
-/// 变瘦一下再弹回（用户看到的就是文字上下抽动）。
-fn inset_text_uv(shape: &mut Shape, atlas_size: [usize; 2], amount: f32) {
-    let amount = amount.clamp(0.0, 1.0);
-    if amount <= 0.0 {
-        return;
-    }
-    let Shape::Text(text_shape) = shape else {
-        return;
-    };
-    if atlas_size[0] == 0 || atlas_size[1] == 1 {
-        return;
-    }
-    let texel_u = amount / atlas_size[0] as f32;
-    let texel_v = amount / atlas_size[1] as f32;
-    let galley = Arc::make_mut(&mut text_shape.galley);
-    for placed in &mut galley.rows {
-        let row = Arc::make_mut(&mut placed.row);
-        let range = row.visuals.glyph_vertex_range.clone();
-        let vertices = &mut row.visuals.mesh.vertices;
-        for quad in vertices[range].chunks_exact_mut(4) {
-            let min_u = quad.iter().map(|v| v.uv.x).fold(f32::INFINITY, f32::min);
-            let max_u = quad
-                .iter()
-                .map(|v| v.uv.x)
-                .fold(f32::NEG_INFINITY, f32::max);
-            let min_v = quad.iter().map(|v| v.uv.y).fold(f32::INFINITY, f32::min);
-            let max_v = quad
-                .iter()
-                .map(|v| v.uv.y)
-                .fold(f32::NEG_INFINITY, f32::max);
-            let span_u = max_u - min_u;
-            let span_v = max_v - min_v;
-            if span_u <= 0.0 || span_v <= 0.0 {
-                continue;
-            }
-            let fx = ((span_u - texel_u) / span_u).max(0.0);
-            let fy = ((span_v - texel_v) / span_v).max(0.0);
-            let cu = (min_u + max_u) * 0.5;
-            let cv = (min_v + max_v) * 0.5;
-            for v in quad {
-                v.uv.x = cu + (v.uv.x - cu) * fx;
-                v.uv.y = cv + (v.uv.y - cv) * fy;
-            }
-        }
-    }
 }
 
 /// `Damped` 模式下由卡片缩放比 `k` 求文字缩放比。
@@ -219,13 +163,18 @@ impl<'a> Card<'a> {
         c.s = self.s * k;
         c.text_anchor = Some((Pos2::new(cx, cy), self.s));
         c.text_k = None;
+        // Reflow 只适用于逐帧不变的 k；若再套一层弹簧，必须退回 Damped，
+        // 否则逐帧变化的 s 会触发 layout_job 每帧重排（抖动 + 图集开销）。
+        if c.text_scale == TextScale::Reflow {
+            c.text_scale = TextScale::Auto;
+        }
         c
     }
     /// 静态缩放：容器按 `k` 放大，文字按最终字号重新排版后直接画在屏幕上。
     ///
     /// 与 [`Self::scaled`] 的区别：`k` 必须逐帧不变，`galley_shape()` 会以
     /// `font(size * s)` 重排一次并命中 egui 的 galley 缓存，因此不会产生
-    /// 「放大位图字形 → 采到图集相邻黑像素」的黑线，也不需要 `inset_text_uv`。
+    /// 「放大位图字形 → 采到图集相邻黑像素」的黑线，也不需要任何 UV 补丁。
     /// 弹簧/逐帧变化的 `k` 请继续用 `scaled()`，否则每帧重排会抖。
     pub fn scaled_static(&self, cx: f32, cy: f32, k: f32) -> Self {
         let mut c = self.clone();
@@ -304,7 +253,7 @@ impl<'a> Card<'a> {
     /// 抖动的本质就是同一段文字在相邻帧生成了不同顶点。
     pub fn galley_shape(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) -> Shape {
         // 静态倍率：按最终字号重排（LayoutJob 完整参与缓存键，固定 k 会命中缓存），
-        // 直接画在 self.pos(p) 上；不做 mesh transform，也不内缩 UV。
+        // 直接画在 self.pos(p) 上；不做 mesh transform。
         if matches!(self.text_scale, TextScale::Reflow) {
             let s = self.s;
             if (s - 1.0).abs() < 1e-4 {
@@ -344,15 +293,6 @@ impl<'a> Card<'a> {
         }
         let mut shape = Shape::galley(p, g, color);
         shape.transform(TSTransform::new(origin, s));
-        // 只在放大时内缩 UV，且内缩量随缩放比连续增长：
-        // 硬开关会让弹簧回弹经过阈值时字形突变一次（看起来像文字抖一下）。
-        if s > 1.0 {
-            let amount = ((s - 1.0) / 0.12).clamp(0.0, 1.0);
-            if amount > 1e-3 {
-                let atlas = self.ui.ctx().fonts(|f| f.font_image_resolution());
-                inset_text_uv(&mut shape, atlas, amount);
-            }
-        }
         shape
     }
     pub fn text_w(&self, t: &str, size: f32, w: W) -> f32 {
@@ -984,50 +924,6 @@ mod gradient_tests {
         }
     }
 
-    /// UV 内缩必须只在放大时生效、且随缩放比连续变化。
-    #[test]
-    fn text_uv_inset_is_one_sided_and_continuous() {
-        fn uv_sum(shape: &Shape) -> f64 {
-            let Shape::Text(t) = shape else {
-                panic!("期望文字图元")
-            };
-            let mut sum = 0.0f64;
-            for row in &t.galley.rows {
-                let range = row.visuals.glyph_vertex_range.clone();
-                for quad in row.visuals.mesh.vertices[range].chunks_exact(4) {
-                    let min_u = quad.iter().map(|v| v.uv.x).fold(f32::INFINITY, f32::min) as f64;
-                    let max_u = quad
-                        .iter()
-                        .map(|v| v.uv.x)
-                        .fold(f32::NEG_INFINITY, f32::max) as f64;
-                    sum += max_u - min_u;
-                }
-            }
-            sum
-        }
-        let ctx = egui::Context::default();
-        let raw = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(200.0))),
-            ..Default::default()
-        };
-        let _ = ctx.run_ui(raw, |ui| {
-            let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
-            let g = c.galley("＋ 新增", 9.0, W::Regular, Color32::WHITE);
-            let at = |k: f32| {
-                let cc = c.scaled(40.0, 24.0, k).text_scale(TextScale::Follow);
-                uv_sum(&cc.galley_shape(Pos2::new(4.0, 14.0), g.clone(), Color32::WHITE))
-            };
-            let base = at(1.0);
-            // 缩小不该动 UV：早先 |s-1|>1% 的硬开关会在这里把字形缩瘦一圈。
-            assert_eq!(at(0.9), base, "缩小不应触发 UV 内缩");
-            // 放大时连续收缩，且 1% 放大只内缩一点点（不是整 texel 硬跳）。
-            let a = at(1.01);
-            let b = at(1.02);
-            assert!(a < base && b < a, "UV 应随放大单调内缩：{base} / {a} / {b}");
-            assert!((base - a) / base < 0.02, "1% 放大内缩应极小：{base} → {a}");
-        });
-    }
-
     #[test]
     fn static_scaled_text_reflows_at_final_size_and_caches() {
         let ctx = egui::Context::default();
@@ -1048,11 +944,35 @@ mod gradient_tests {
                 panic!("期望文字图元")
             };
             assert!(
-                Arc::ptr_eq(&ta.galley, &tb.galley),
+                std::sync::Arc::ptr_eq(&ta.galley, &tb.galley),
                 "固定倍率必须命中 galley 缓存"
             );
             let size = ta.galley.job.sections[0].format.font_id.size;
             assert!((size - 14.4).abs() < 1e-3, "应按最终字号重排：{size}");
+        });
+    }
+
+    #[test]
+    fn scaled_after_static_reflow_falls_back_to_damped() {
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(200.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+            let g = c.galley("静态后弹簧", 12.0, W::Regular, Color32::WHITE);
+            // Reflow 卡片若再套一层弹簧，必须退回 Damped，不能按逐帧变化的 s 重排。
+            let cc = c.scaled_static(40.0, 24.0, 1.2).scaled(40.0, 24.0, 1.02);
+            let shape = cc.galley_shape(Pos2::new(4.0, 14.0), g, Color32::WHITE);
+            let Shape::Text(t) = shape else {
+                panic!("期望文字图元")
+            };
+            assert_eq!(
+                t.galley.job.sections[0].format.font_id.size,
+                12.0,
+                "Reflow 后再 scaled() 必须退回 Damped，字体不能按变化后的 s 重排"
+            );
         });
     }
 
