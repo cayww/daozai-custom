@@ -1835,3 +1835,11 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 兼容：旧 `clipboard.json` 无 `image` 字段照常读取；JSON 里带 `..` / 斜杠的文件名被拒（路径穿越防护）。
 - **验证**：`cargo check --locked --lib --tests` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1409 passed / 0 failed / 131 ignored**（新增 4 个 clipboard 单测 + 1 个 UI 测试）；release exe sha `3f62fe69a679ecf5`（`dz-phone/target/release/daozai.exe`）。改动 4 文件：`app.rs +3`、`clipboard.rs +294/-29`、`pages.rs +45/-17`、`ui_tests.rs +23`；换行符与 HEAD 一致（前三 LF、`ui_tests.rs` CRLF）。**Cargo.toml / Cargo.lock 未改**。
 - **状态**：提交 `eb0b215` 在 main 本地，**未 push、未打包、未部署、未实机验证**——部署时用户正在运行预览版（PID 16700，`%LOCALAPPDATA%\Programs\Daozai\daozai.exe`），为避免打断使用未停进程。**待实机验证**：真正复制一张截图 → 置物架→剪贴板分栏出现缩略图 → 点条目把图粘到画图/微信能还原。工作日志在 `C:\Users\cay\WorkBuddy\2026-11-24-14-23-45\.workbuddy\memory\2026-11-24.md`（**不在项目仓库**）。
+
+### 7.0zzf 剪贴板图片「不生效」真因 + hover 预览（2026-11-24 15:10–15:45，提交 `52b7c70`，本地未 push）
+
+- **现象**：用户跑 `dz-phone/target/release/daozai.exe` 后复制图片，历史里没出现。诊断日志（`DAOZAI_CLIPBOARD_DEBUG=1`，写 `diagnostics/clipboard.log`，只记格式/尺寸不记内容）显示：`formats text=false dib=true dibv5=true bitmap=true` → `dib=OK 1569x909` → `content=Image` → 落盘成功。说明用户当时跑的是修复前的 exe；真因是上一版只认 `BI_RGB` 压缩的 DIB，而截图工具给的是 `BI_BITFIELDS`（compression=3），被 `compression != 0` 直接拒绝。
+- **修复**（`clipboard.rs`）：`read_dib_locked` 支持 `BI_BITFIELDS=3`（跳过 12B 掩码）/`BI_ALPHABITFIELDS=6`（16B）；其他压缩（RLE/JPEG/PNG）仍跳过并写诊断。新增 `read_bitmap_locked`：只提供 `CF_BITMAP`（HBITMAP）时用 `GetObjectW`+`GetDIBits` 取 32bpp BGRA 兜底，全透明 alpha 当不透明。诊断日志改为环境变量 `DAOZAI_CLIPBOARD_DEBUG=1` 才写，默认零开销。
+- **hover 预览**（`pages.rs`）：剪贴板条目从 `on_hover_text`（400 字截断）改为 `on_hover_ui`——图片条目显示等比放大预览（最大 340×240，用已缓存的 `clip_thumbs` 纹理）+ 尺寸/点击提示；文字条目用 `ScrollArea(max_height=200)` 显示全文可滚动，不再截断。`TextureHandle::size_vec2` 改 `resolution_vec2`（0.37 已 rename）。
+- **验证**：grep 编译 `cargo check --locked --lib` 通过；剪贴板相关 14 个测试全过（含之前的 1409 全量基线，本轮未再跑全量）；release exe `fb7693cade1388b5`（诊断版）/ 最终源码待重建。构建踩坑：用户正在跑的 exe 占用导致 `failed to remove file ... 拒绝访问 (os error 5)`，停掉 PID 后重建成功。
+- **状态**：提交 `52b7c70` 本地 main，**未 push、未打包、未部署**。已启动 `fb7693cade1388b5`（PID 33504）供用户实机验证 hover 预览与滚动。**待确认**：① 图片 hover 显示放大图；② 长文字 hover 可滚动；③ 复制图片进历史（已由日志实证）。
