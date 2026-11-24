@@ -656,6 +656,10 @@ impl App {
                 {
                     old.source == a.source
                 }
+                // HUD 瞬时状态（输入语言/大写锁定/音量/网络/电源/蓝牙）共用同一个通知槽：
+                // 新状态直接替换旧状态，不排队。否则从「大写锁定」切到「输入语言」时
+                // 只能等旧通知 2.5s 过期才显示，快速切换会一直显示上一次的状态。
+                _ if a.is_hud() && old.is_hud() => true,
                 _ => {
                     old.source == a.source
                         && old.title == a.title
