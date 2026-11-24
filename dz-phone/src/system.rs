@@ -14,7 +14,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetLastInputInfo, LASTINPUTINFO, SetActiveWindow, keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    GetKeyState, GetLastInputInfo, LASTINPUTINFO, SetActiveWindow, keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::UI::Notifications::Management::{
@@ -99,9 +99,11 @@ impl Snapshot {
                 else if p.NetworkAdapter().ok().and_then(|a|a.IanaInterfaceType().ok())==Some(6){NetworkKind::Ethernet}
                 else{NetworkKind::Other}
             }).unwrap_or_default();
-            // Caps Lock 必须读全局异步状态：后台采样线程没有消息队列，
-            // GetKeyState 读的是调用线程队列里的状态，会滞后/恒旧。
-            Self{volume,audio_endpoint,network,network_kind,caps:GetAsyncKeyState(0x14)&1!=0}
+            // Caps Lock 必须用 GetKeyState 读 toggle 位：低位表示「锁定是否开启」，
+            // 且调用不清标志。GetAsyncKeyState 的低位是「自上次调用以来按过没」（会清标志），
+            // 连续采样会导致开启/关闭来回跳，每次按键弹两条假提示。
+            // 后台线程无消息队列只影响「刚按下那一刻」的即时性，1 秒轮询足以跟上。
+            Self{volume,audio_endpoint,network,network_kind,caps:GetKeyState(0x14)&1!=0}
         }
     }
     pub fn changes(&self, old: &Self) -> Vec<(String, String)> {
