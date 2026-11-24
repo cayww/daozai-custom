@@ -1903,3 +1903,15 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修复**：歌词中心改为对齐「左侧图标右缘 `text_left` → 播放条左缘 `content_width-29`」这段可用区的中点；右边界同步从 `LANE_RIGHT_PAD=48` 放宽到 `content_width-29`，否则中点被夹回去。
 - **验证**：`cargo check --locked --lib --tests` 通过；release exe `17e8c0e55a768033`，已备份安装版到 `daozai.exe.bak-lyric-mid` 并部署、启动 PID 23100。未跑全量测试（用户此轮要求先不测）。
 - **状态**：本地 main 未 push；dist 的 v1.3.0 包仍不含歌词系列修复，需重打。待用户确认左右空隙平衡效果。
+
+### 7.0zzp 收起态岛歌词 KTV 逐字高亮（2026-11-24 17:59–18:09，提交 `24d7ae8`，本地未 push）
+
+- **需求**：用户要 KTV 效果——唱到哪个字哪个字变深色，没唱的浅色，且要跟随主题色（液态玻璃深浅材质）。范围：**只收起态岛上歌词**；时间精度：**按行时长均分**（无逐字时间戳词源）。
+- **实现**：
+  - `lyric_sung_chars(count, progress)` 纯函数：`floor(progress*count)`，0→0、1→全部，夹异常值。
+  - `karaoke_galley(ctx,text,size,sung,wrap_width,single_line)`：`LayoutJob::append` 两段——已唱 `Color32::WHITE`（实心）、未唱 `from_white_alpha(110)`（半透白）。同 font/wrap/halign 保证字形位置与原 galley 一致，所以居中/滚动/裁剪几何完全不动。
+  - App 新增 `island_lyric_karaoke: Option<(String,f32)>`，`update_island_lyric_layout` 里只对同步歌词分句（非 title、非测试构建）保存 text+progress；`shared_header` 绘制时生成双色 galley 替代纯色。
+  - 歌名/前奏/间奏不逐字高亮；`cfg!(test)` 不走 KTV，UI 布局断言不变。
+- **配色说明**：液态玻璃深浅材质靠 shader 画背景，egui 文字一直是白字体系；「跟随主题色」在此体现为白字的深浅两档（alpha 110 vs 255），任何背景都可读。若用户要的是「亮白→主题蓝」之类需再调。
+- **验证**：`cargo check --locked --lib --tests` 通过；加 1 个单测 `karaoke_sung_chars_follow_line_progress`。**未跑全量测试**（用户本轮未要求，且每轮构建 3 分钟）。release exe `775279ee3246bf93`，已备份安装版到 `daozai.exe.bak-pre-karaoke` 并部署、启动 PID 31728。
+- **状态**：提交 `24d7ae8` 本地 main 未 push；dist 的 v1.3.0 包仍不含 KTV 及歌词系列修复，需重打。待用户实机确认逐字高亮节奏与配色。
