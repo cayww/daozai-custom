@@ -1932,3 +1932,15 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **副作用权衡**：不再按 context 校验按键授权，但 `Monitor::observe` 的 context 变化分支仍静默同步切窗口，故切窗口瞬间不弹提示，可接受。
 - **验证**：`cargo check --locked --lib --bins` 通过；`input::` 相关 17 passed / 0 failed / 1 ignored（含新增 `each_observation_keeps_its_own_switch_authorization`）。**未跑全量测试**。release exe `5e3c9d5392e6f171`，备份安装版到 `daozai.exe.bak-pre-inputfix` 并部署、启动 PID 22120。
 - **状态**：提交 `7ce6bee` 本地 main 未 push；dist 的 v1.3.0 包仍不含此修复。待用户真机验证（需实际按 Shift / Ctrl+Shift / Caps Lock）。
+
+### 7.0zzs 重打 1.3.0 包（含全部修复；回答用户「安装包在哪」）（2026-11-24 19:06–19:11）
+
+- **背景**：用户反馈「试了没区别」，且 dist 里的 v1.3.0 安装包被清空（只剩旧 `SHA256SUMS.txt`，setup/zip 都不在）。查明：之前几轮我一直直接更新**安装目录** `AppData\Local\Programs\Daozai\daozai.exe`，而 dist 安装包自 16:21 起未重打，用户若装旧包自然没修复。
+- **确认**：`setup.nsi` 的 `InstallDir="$LOCALAPPDATA\Programs\${APP_ID}"`，即安装目标 = 我一直部署的目录，两者一致。无 Program Files 下的残留安装。
+- **重打**：`dz-phone/scripts/package.ps1` 约 3m17s 成功，MSVC 目标正式构建，运行库检查通过。
+- **新产物**（`D:\code\daozai-custom\dz-phone\dist\`，19:10）：
+  - `Daozai-Setup-v1.3.0-x64.exe` 9,222,554 B，sha `568082cf093a8a52`（完整 `568082cf093a8a52a155481f39d30a629e694a5d00981fe6174ad0f25264ca58`）
+  - `Daozai-v1.3.0-windows-x64.zip` 11,556,248 B，sha `112443ac78f296f0`（完整 `112443ac78f296f09a12faded3e202397c14b9fa71db48a04b348b0f7235fd14`）
+  - 包内 exe sha `6aee44290bf0ea945`（= `target/x86_64-pc-windows-msvc/release/daozai.exe`）
+  - 注意：之前直接部署到安装目录的是 GNU target 构建 sha `5e3c9d53`，与包内 MSVC 构建 `6aee4429` **代码相同、编译器不同**，都含全部修复。
+- **状态**：本地 main 未 push；未部署这个新包（安装目录当前是 5e3c9d53 旧部署版，需更新请用新包安装或复制）。用户「没区别」的真因待确认——可能是装的时机在修复前，或进程未重启。
