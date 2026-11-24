@@ -39,15 +39,15 @@ imap-proto = { path = "vendor/imap-proto" }
 ureq = { path = "vendor/ureq" }
 # egui/eframe/egui-winit vendor patches removed for egui 0.35.
 # The legacy wgpu/D3D12/WGSL stack is gone; rendering is D3D11 + winit only.
-# Research branch: pin all egui crates to upstream main commit 56f3a0e.
+# Pin all egui crates to upstream main commit 90431d9.
 
 [dependencies]
-eframe = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false, features = ["glow", "default_fonts", "system_fonts"] }
-egui = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", features = ["rayon", "monochrome_emoji_fonts"] }
+eframe = { git = "https://github.com/emilk/egui.git", rev = "90431d979ab1faae2de6d9f736e9d33ca0d31956", default-features = false, features = ["glow", "default_fonts", "system_fonts"] }
+egui = { git = "https://github.com/emilk/egui.git", rev = "90431d979ab1faae2de6d9f736e9d33ca0d31956", features = ["rayon", "monochrome_emoji_fonts"] }
 log = "0.4"
 dhat = { version = "0.3", optional = true }
-egui_extras = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false, features = ["svg", "image"] }
-egui_system_font_provider = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab" }
+egui_extras = { git = "https://github.com/emilk/egui.git", rev = "90431d979ab1faae2de6d9f736e9d33ca0d31956", default-features = false, features = ["svg", "image"] }
+egui_system_font_provider = { git = "https://github.com/emilk/egui.git", rev = "90431d979ab1faae2de6d9f736e9d33ca0d31956" }
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -68,7 +68,7 @@ rquickjs = "0.8"
 
 # Linux 下 winit 至少要一个后端才能编译（只用于开发/录制，正式目标是 Windows）。
 [target.'cfg(target_os = "linux")'.dependencies]
-eframe = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false, features = ["glow", "default_fonts", "system_fonts", "x11"] }
+eframe = { git = "https://github.com/emilk/egui.git", rev = "90431d979ab1faae2de6d9f736e9d33ca0d31956", default-features = false, features = ["glow", "default_fonts", "system_fonts", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
@@ -76,7 +76,7 @@ tungstenite = { version = "0.28", default-features = false, features = ["handsha
 clipboard-win = "5.4.3"
 memmap2 = "0.9.12"
 # D3D11 自绘栈（从 egui-directx11 移植到 windows 0.58）：winit 事件循环 + egui 平台桥
-egui-winit = { git = "https://github.com/emilk/egui.git", rev = "56f3a0e09308c96c117d1532bbede2f15d47eeab", default-features = false }
+egui-winit = { git = "https://github.com/emilk/egui.git", rev = "90431d979ab1faae2de6d9f736e9d33ca0d31956", default-features = false }
 winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 windows = { version = "0.58", features = [
   "Win32_Foundation",
