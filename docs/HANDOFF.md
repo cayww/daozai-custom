@@ -1944,3 +1944,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 包内 exe sha `6aee44290bf0ea945`（= `target/x86_64-pc-windows-msvc/release/daozai.exe`）
   - 注意：之前直接部署到安装目录的是 GNU target 构建 sha `5e3c9d53`，与包内 MSVC 构建 `6aee4429` **代码相同、编译器不同**，都含全部修复。
 - **状态**：本地 main 未 push；未部署这个新包（安装目录当前是 5e3c9d53 旧部署版，需更新请用新包安装或复制）。用户「没区别」的真因待确认——可能是装的时机在修复前，或进程未重启。
+
+### 7.0zzt 实测定位：Caps Lock 假提示刷屏才是真因（2026-11-24 19:16–19:45，提交 `bff7785`，本地未 push）
+
+- **用户反馈三轮「没改善」后停止盲改，加 `DAOZAI_INPUT_DEBUG=1` 毫秒日志实测**（`input.log` 只记布局/模式/授权元数据，不记输入内容）。
+- **实测结论（推翻前两轮推测）**：
+  - 中英文切换**本就正常且快**：`KEY Shift按下 → ~100ms 后采样读到 native 变化 → 弹出「英语/中文」`，内容全对。所以 §7.0zzr 的 input_switch 授权改造并未解决用户问题（但逻辑合理，保留）。
+  - Caps Lock **每次按键弹两条假提示**：日志 6 次「已开启/已关闭」变化 vs 用户只按 3 次；且按 Shift 时也跟着弹。假提示覆盖掉输入语言提示 → 用户看到「内容不对、很慢」。
+- **真因**：§7.0zzr 把 `GetKeyState(VK_CAPITAL)` 改成 `GetAsyncKeyState`。后者低位是「自上次调用以来按过没」（**调用会清标志**），连续采样 1/0 交替产生假 toggle；`GetKeyState` 低位才是锁定状态、调用不清标志。已回退。
+- **教训**：Windows 键盘状态 API 语义差异——GetKeyState 的 VK_CAPITAL 低位=锁定状态（toggle），GetAsyncKeyState 低位=自上次调用以来按下过（一次性）。改这个 API 前必须查语义 + 实测，别靠推测。
+- **验证**：`cargo check --locked --lib --bins` 通过；input:: 17 passed / 0 failed；release exe `e5fffdb0e2484832`，部署安装目录、启动 PID 29320（未跑全量测试）。诊断日志代码已全部移除。
+- **状态**：提交 `bff7785` 本地 main 未 push；dist 的 v1.3.0 包（19:10 打的）**不含此修复**，需重打。待用户真机确认 Caps 不再刷屏。
