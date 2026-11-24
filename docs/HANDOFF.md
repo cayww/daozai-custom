@@ -1975,3 +1975,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **验证**：`cargo check --locked --lib --tests` 通过；全量 **1412 passed / 0 failed / 131 ignored**；release exe `f70a3cc0c64aab82`，部署安装目录、启动 PID 28608。
 - **状态**：本地 main 未 push；dist 的 v1.3.0 包（19:10）不含此修复，需重打。待用户实机确认同类切换即时刷新。
 - **教训**：通知「入队/替换」与「绘制快照同步」是两层；只修入队层不够，绘制层的 hud_notice 同步条件（只比 title）是隐藏的第二道闸。
+
+### 7.0zzw 代码审查 3 条建议（2026-11-24 20:45–20:55，提交 `441a89c`，本地未 push）
+
+- 用户对输入/通知链路改动问「有无性能或安全问题」，用 code-review-assistant 做专项审查：无 Blocker、无已确认安全漏洞；1 个 Warning（切换授权放弃 context 校验，用户未要求改，保留）+ 3 条 Suggestion（用户要求全采用）。
+- **S1**：`Observation` 去掉 derive PartialEq/Eq 改为手动实现，`eq` 只比 system/input/fullscreen，排除瞬时 `input_switch`——切换窗口 500ms 后标志翻转不再多发 observation + repaint。
+- **S2**：`main.rs` 的 `input_keys` 加 RAII 注释 + `#[allow(dead_code)]`：该句柄必须活到 Shell 结束（Drop 卸载 WH_KEYBOARD_LL，钩子维护 SWITCH_AT），此前构建有误导性 dead_code 警告。
+- **S3**：`app.rs` 的 `hud_notice` 同步比较从 title+body+at 简化为 title+at——先验证所有 notice 更新都是整条 `Some(Alert)` 替换并刷新 `at=self.t`（alert 518 行 / 队列取出 1704 行），无原地改 body 不动 at 的路径，故比 at 足够且避免每帧比较长正文。
+- **验证**：`cargo check --locked --lib --bins` 通过且 input_keys 警告消除；全量 **1412 passed / 0 failed / 131 ignored**；release exe `8e064bc7606447e6`，部署安装目录、启动 PID 20000。
+- **状态**：提交 `441a89c` 本地 main 未 push；dist 的 v1.3.0 包（19:10）仍不含本轮所有修复，需重打。
