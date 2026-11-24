@@ -1823,3 +1823,15 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - D3D11 选卡策略已完善：`main.rs` 启动时把 `Settings::load().liquid_prefer_dgpu` 显式传给 `winit_runner::run(prefer_dgpu)`，不再写 `DAOZAI_LIQUID_PREFER_DGPU` 环境变量；`D3d11Runtime::create_device_swap` 按快照选择适配器。关闭时保持原 `EnumAdapters(0)`；开启时枚举前 16 个 `IDXGIAdapter1`，跳过软件适配器与 Microsoft Basic Render Driver，按「独立显存更大 + 独显优先（NVIDIA/AMD，Intel 独立显存 ≥1GiB 视为独显）」排序；找不到独显则回退默认适配器。设备重建沿用同一快照。设置页「优先独立显卡」文案已同步改为该行为说明。
 - 验证：`cargo check --lib --tests --bins --examples` 通过；release lib **1405 passed / 0 failed / 131 ignored**，bin **11 passed / 0 failed**。
 - 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear、兼容渲染截图、系统字体回退、设置页阴影与混合显卡选卡。
+
+### 7.0zzc 剪贴板历史支持图片（2026-11-24 14:30–15:05，提交 `eb0b215`，本地未 push）
+
+- **缘起**：用户升级到 egui 0.37 后看到 `Context::copy_image` / `Event::PasteImage` 相关提交（#5533/#8472/#8715），问能否接进岛仔剪贴板。核查发现三条提交**早已在锁定的 `56f3a0e` (0.37.0) 里**，但走 egui-winit 的 `clipboard` feature（arboard），与岛仔独立的 `AddClipboardFormatListener` + `clipboard-win` 链路是两回事；`copy_image` 是「应用主动写」方向，且打不上 `HISTORY_COPY_FORMAT` 自我记录标记。用户确认目标是「历史支持图片」并授权动 Cargo.lock，但评估后**决定不开 feature、不动 lock**，纯 Win32 实现（见下）。
+- **实现**：
+  - `clipboard.rs`：`Clip` 加 `image: Option<ImageMeta>`（文件名+宽高，纯 basename）；图片落盘 `%APPDATA%\Daozai\clip-images\*.png`，JSON 只存元数据；上限 4000×4000 / 12MB RGBA；`push_image` 与文字共用 24h/固定/MAX_RECENT 规则，清理时删对应 PNG。
+  - Windows 监听线程：`read_clipboard()` 一次 OpenClipboard 内先读 `CF_UNICODETEXT`，无文字才读 `CF_DIB`/`CF_DIBV5`（只认 BI_RGB 的 24/32bpp），BGRA→RGBA、`biHeight` 负值处理 top-down；沿用 `excluded()` 敏感过滤与 `HISTORY_COPY_FORMAT` 自我记录标记。
+  - 再次复制：`copy_history_image()` 从 PNG 还原为 CF_DIB（32bpp BGRA 自下而上）+ 打 `HISTORY_COPY_FORMAT`，避免截图→复制→又记一条。
+  - `pages.rs`：剪贴板分栏给图片条目画 16×16 缩略图（`App.clip_thumbs` 按文件名缓存纹理），文字区从 x=68 右移到 88；新增 `App::copy_clip()` 统一文字/图片的复制入口；空态文案改为「文字和图片」。
+  - 兼容：旧 `clipboard.json` 无 `image` 字段照常读取；JSON 里带 `..` / 斜杠的文件名被拒（路径穿越防护）。
+- **验证**：`cargo check --locked --lib --tests` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1409 passed / 0 failed / 131 ignored**（新增 4 个 clipboard 单测 + 1 个 UI 测试）；release exe sha `3f62fe69a679ecf5`（`dz-phone/target/release/daozai.exe`）。改动 4 文件：`app.rs +3`、`clipboard.rs +294/-29`、`pages.rs +45/-17`、`ui_tests.rs +23`；换行符与 HEAD 一致（前三 LF、`ui_tests.rs` CRLF）。**Cargo.toml / Cargo.lock 未改**。
+- **状态**：提交 `eb0b215` 在 main 本地，**未 push、未打包、未部署、未实机验证**——部署时用户正在运行预览版（PID 16700，`%LOCALAPPDATA%\Programs\Daozai\daozai.exe`），为避免打断使用未停进程。**待实机验证**：真正复制一张截图 → 置物架→剪贴板分栏出现缩略图 → 点条目把图粘到画图/微信能还原。工作日志在 `C:\Users\cay\WorkBuddy\2026-11-24-14-23-45\.workbuddy\memory\2026-11-24.md`（**不在项目仓库**）。
