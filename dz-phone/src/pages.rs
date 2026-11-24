@@ -1223,6 +1223,7 @@ impl App {
                 c.circle(58.0, y, 2.2, Color32::from_gray(110));
             }
             let mut label_x = 68.0;
+            let mut hover_tex: Option<egui::TextureHandle> = None;
             if let Some(meta) = &clip.image {
                 // 图片条目画 16×16 缩略图；纹理按需解码，缓存按文件名。
                 let tex = self.clip_thumbs.get(&meta.file).cloned().or_else(|| {
@@ -1238,6 +1239,7 @@ impl App {
                 if let Some(tex) = tex {
                     c.painter.image(tex.id(), c.rect(68.0, y - 8.0, 16.0, 16.0),
                         Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                    hover_tex = Some(tex); // tooltip 里画放大预览用
                 } else {
                     c.fill(68.0, y - 8.0, 16.0, 16.0, 3.0, theme::BTN);
                 }
@@ -1246,8 +1248,28 @@ impl App {
             let text = c.fit(&crate::clipboard::preview(&clip.text), size::BODY, W::Regular, 222.0 - (label_x - 68.0));
             c.text(label_x, y + 3.8, &text, size::BODY, W::Regular, Color32::from_gray(235), H::Left);
             c.text(318.0, y + 3.5, &clip.at, size::TINY, W::Regular, theme::DIM, H::Right);
-            let tip: String = clip.text.chars().take(400).collect();
-            let r = r.on_hover_text(format!("{tip}{}\n点击复制", if clip.text.chars().count() > 400 { "…" } else { "" }));
+            let full_text = clip.text.clone();
+            let r = r.on_hover_ui(move |ui| {
+                if let Some(tex) = &hover_tex {
+                    // 图片预览：等比缩放到最大 340×240，避免大图撑爆屏幕。
+                    let size = tex.resolution_vec2();
+                    let scale = (340.0 / size.x).min(240.0 / size.y).min(1.0);
+                    let shown = if scale < 1.0 { size * scale } else { size };
+                    ui.add(egui::Image::new((tex.id(), shown)).fit_to_exact_size(shown));
+                    ui.label(&full_text); // 「图片 W×H」
+                    ui.label("点击复制图片");
+                } else {
+                    // 文字全文可滚动，不再 400 字截断。
+                    egui::ScrollArea::vertical()
+                        .id_salt(("clip-tip", index))
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width().max(160.0));
+                            ui.label(&full_text);
+                            ui.label("点击复制");
+                        });
+                }
+            });
             let pin = c.hit(323.0, y - 9.0, 18.0, 18.0, ("clip-pin", index)).on_hover_text(if clip.pinned { "取消固定" } else { "固定（清空时保留）" });
             paint::pin(c, 332.0, y, 9.0, if clip.pinned || pin.hovered() { theme::BLUE } else { theme::GRAY });
             let delete = c.hit(345.0, y - 9.0, 17.0, 18.0, ("clip-delete", index)).on_hover_text("删除这条记录");

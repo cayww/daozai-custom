@@ -403,20 +403,33 @@ mod win {
     }
     thread_local! { static STATE: RefCell<Option<State>> = const { RefCell::new(None) }; }
 
+    /// 剪贴板诊断：默认关闭（不写盘）。排查「复制图片没进历史」时设
+    /// `DAOZAI_CLIPBOARD_DEBUG=1` 启动，日志写到 diagnostics/clipboard.log。
+    /// 只写格式/尺寸等元数据，不写剪贴板文字或图片内容。
+    fn diag(line: &str) {
+        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ENABLED.get_or_init(|| std::env::var_os("DAOZAI_CLIPBOARD_DEBUG").is_some()) { return; }
+        let dir = crate::model::config_dir().join("diagnostics");
+        crate::resources::append_log(&dir, "clipboard.log", line);
+    }
+
     unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         if msg == WM_CLIPBOARDUPDATE {
+            diag(&format!("event pid={} enabled={}", std::process::id(), STATE.with(|s| s.borrow().as_ref().is_some_and(|st| st.shared.is_enabled()))));
             STATE.with(|state| {
                 if let Some(state) = state.borrow().as_ref() {
                     if state.shared.is_enabled() {
                         match read_clipboard(hwnd) {
                             Some(Content::Text { text, from_history }) => {
+                                diag(&format!("content=Text len={} from_history={from_history}", text.chars().count()));
                                 if state.shared.record_update(&text, from_history) { (state.repaint)(); }
                             }
                             Some(Content::Image { meta, from_history }) => {
+                                diag(&format!("content=Image {}x{} file={} from_history={from_history}", meta.width, meta.height, meta.file));
                                 // 历史条目写回时也带标记，避免截图→复制→又记一条。
                                 if !from_history && state.shared.record_image(meta) { (state.repaint)(); }
                             }
-                            None => {}
+                            None => diag("content=None"),
                         }
                     }
                 }
@@ -454,29 +467,53 @@ mod win {
     /// 两者共用一次 OpenClipboard，避免同一帧反复抢剪贴板。
     unsafe fn read_clipboard(hwnd: HWND) -> Option<Content> {
         let has_text = IsClipboardFormatAvailable(CF_UNICODETEXT.0 as u32).is_ok();
-        let has_dib = IsClipboardFormatAvailable(clipboard_win::formats::CF_DIB).is_ok()
-            || IsClipboardFormatAvailable(clipboard_win::formats::CF_DIBV5).is_ok();
-        if !has_text && !has_dib { return None; }
+        let has_dib = IsClipboardFormatAvailable(clipboard_win::formats::CF_DIB).is_ok();
+        let has_dibv5 = IsClipboardFormatAvailable(clipboard_win::formats::CF_DIBV5).is_ok();
+        let has_bitmap = IsClipboardFormatAvailable(clipboard_win::formats::CF_BITMAP).is_ok();
+        diag(&format!("formats text={has_text} dib={has_dib} dibv5={has_dibv5} bitmap={has_bitmap}"));
+        if !has_text && !has_dib && !has_dibv5 && !has_bitmap { return None; }
         // 其他程序可能正占用剪贴板，稍等重试几次。
         let mut opened = false;
         for _ in 0..5 {
             if OpenClipboard(hwnd).is_ok() { opened = true; break; }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        if !opened { return None; }
+        if !opened { diag("open=FAIL"); return None; }
         let content = (|| {
-            if excluded() { return None; }
+            let is_excluded = excluded();
+            if is_excluded { diag("excluded=YES"); return None; }
             let from_history = clipboard_win::register_format(super::HISTORY_COPY_FORMAT)
                 .is_some_and(|format| IsClipboardFormatAvailable(format.get()).is_ok());
             if has_text {
                 if let Some(text) = read_text_locked() {
                     return Some(Content::Text { text, from_history });
                 }
+                diag("text_read=FAIL try image");
             }
-            // 没文字才认图片：复制带文字说明的图时优先记文字，避免一条变两条。
-            let rgba = read_dib_locked()?;
-            let meta = super::save_image_png(&rgba.0, rgba.1, rgba.2)?;
-            Some(Content::Image { meta, from_history })
+            // 读图：DIB / DIBV5 / BITMAP 都试。图片和文字可同时存在，
+            // 但同一次通知只记一条——这里只在没拿到文字时才记图。
+            match read_dib_locked() {
+                Some((rgba, w, h)) => {
+                    diag(&format!("dib=OK {}x{} bytes={}", w, h, rgba.len()));
+                    match super::save_image_png(&rgba, w, h) {
+                        Some(meta) => Some(Content::Image { meta, from_history }),
+                        None => { diag("save_png=FAIL (too large or write error)"); None }
+                    }
+                }
+                None => {
+                    diag("dib=FAIL");
+                    if has_bitmap {
+                        // CF_BITMAP 是 GDI 对象句柄，需要用 GetDIBits 转成 DIB。
+                        match read_bitmap_locked() {
+                            Some((rgba, w, h)) => {
+                                diag(&format!("bitmap=OK {}x{}", w, h));
+                                super::save_image_png(&rgba, w, h).map(|meta| Content::Image { meta, from_history })
+                            }
+                            None => { diag("bitmap=FAIL"); None }
+                        }
+                    } else { None }
+                }
+            }
         })();
         let _ = CloseClipboard();
         content
@@ -519,12 +556,20 @@ mod win {
             let height = i32::from_le_bytes(data[8..12].try_into().ok()?);
             let bpp = u16::from_le_bytes(data[14..16].try_into().ok()?);
             let compression = u32::from_le_bytes(data[16..20].try_into().ok()?);
-            if width <= 0 || height == 0 || compression != 0 || (bpp != 24 && bpp != 32) { return None; }
+            // BI_RGB=0 无掩码；BI_BITFIELDS=3 / BI_ALPHABITFIELDS=6 在 header 后有 RGB(A) 掩码。
+            // 只认常见的 32bpp BGRA / 24bpp BGR 掩码布局，其他压缩格式（RLE/JPEG/PNG）跳过。
+            let mask_bytes = match compression {
+                0 => 0,
+                3 => { if bpp != 32 { return None; } 12 }
+                6 => { if bpp != 32 { return None; } 16 }
+                _ => { diag(&format!("dib unsupported compression={compression} bpp={bpp}")); return None; }
+            };
+            if width <= 0 || height == 0 || (bpp != 24 && bpp != 32) { return None; }
             let (w, h) = (width as u32, height.unsigned_abs());
             let stride = ((w as usize * bpp as usize + 31) / 32) * 4;
             let top_down = height < 0;
             let extra = if format == clipboard_win::formats::CF_DIBV5 { 124 - 40 } else { 0 };
-            let offset = header + extra;
+            let offset = header + extra + mask_bytes;
             let need = offset.checked_add(stride.checked_mul(h as usize)?)?;
             if need > total { return None; }
             let mut rgba = vec![0u8; w as usize * h as usize * 4];
@@ -546,6 +591,46 @@ mod win {
         })();
         let _ = GlobalUnlock(memory);
         out
+    }
+
+    /// 调用者已 OpenClipboard。CF_BITMAP 是 HBITMAP 句柄，用 GetDIBits 取 32bpp BGRA 再转 RGBA。
+    unsafe fn read_bitmap_locked() -> Option<(Vec<u8>, u32, u32)> {
+        use windows::Win32::Graphics::Gdi::{
+            GetObjectW, GetDIBits, GetDC, ReleaseDC, BITMAP, BITMAPINFO, BITMAPINFOHEADER,
+            BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+        };
+        let handle = GetClipboardData(clipboard_win::formats::CF_BITMAP).ok()?;
+        let hbmp = windows::Win32::Graphics::Gdi::HBITMAP(handle.0);
+        let mut bm = BITMAP::default();
+        let got = GetObjectW(HGDIOBJ(hbmp.0), std::mem::size_of::<BITMAP>() as i32,
+            Some(&mut bm as *mut BITMAP as *mut core::ffi::c_void));
+        if got == 0 || bm.bmWidth <= 0 || bm.bmHeight == 0 { return None; }
+        let (w, h) = (bm.bmWidth as u32, bm.bmHeight.unsigned_abs());
+        if w == 0 || h == 0 || w.saturating_mul(h) > super::MAX_IMAGE_PIXELS { return None; }
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w as i32,
+                biHeight: -(h as i32), // 顶向下，省一次翻转
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut px = vec![0u8; (w as usize) * (h as usize) * 4];
+        let dc = GetDC(None);
+        let lines = GetDIBits(dc, hbmp, 0, h, Some(px.as_mut_ptr() as *mut core::ffi::c_void), &mut bmi, DIB_RGB_COLORS);
+        ReleaseDC(None, dc);
+        if lines == 0 { return None; }
+        // BGRA → RGBA；全透明当作不透明（部分 GDI 截图 alpha 恒 0）。
+        let opaque = px.chunks_exact(4).all(|p| p[3] == 0);
+        for p in px.chunks_exact_mut(4) {
+            p.swap(0, 2);
+            if opaque { p[3] = 255; }
+        }
+        Some((px, w, h))
     }
 
     pub fn run(shared: Shared, repaint: Box<dyn Fn() + Send>, stop: &Stop) -> windows::core::Result<()> {
