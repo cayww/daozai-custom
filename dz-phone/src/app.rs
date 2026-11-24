@@ -2584,12 +2584,15 @@ impl App {
         self.tick(env, dt, elapsed);
         self.sync_device(env);
         self.tick_alerts();
-        // 避免每帧双重 clone：先按 title 比较，仅标题变化时才克隆一次到 hud_notice。
-        // （draw_notice 需要 &mut self，其入参的 clone 无法省，这里是唯一安全可省的一处。）
-        let title_changed=self.notice.as_ref().map(|a|&a.title)!=self.hud_notice.as_ref().map(|a|&a.title);
+        // hud_notice 是实际绘制用的快照。必须按 title+body+at 比较同步：
+        // 同类 HUD 切换（中文→英文、大写→小写）title 不变但 body/at 变了，
+        // 旧逻辑只比 title 导致绘制层永远显示第一次的内容。
+        // （draw_notice 需要 &mut self，其入参的 clone 无法省，这里仅变化时才 clone。）
+        let content_changed=self.notice.as_ref().map(|a|(&a.title,&a.body,a.at))
+            !=self.hud_notice.as_ref().map(|a|(&a.title,&a.body,a.at));
         let has_notice=self.notice.is_some();
-        if title_changed||!has_notice {self.notice_details=false;}
-        if title_changed {if let Some(a)=self.notice.as_ref(){self.hud_notice=Some(a.clone());}}
+        if content_changed||!has_notice {self.notice_details=false;}
+        if content_changed {if let Some(a)=self.notice.as_ref(){self.hud_notice=Some(a.clone());}}
         self.hud_alpha=anim::approach(self.hud_alpha,if has_notice{1.0}else{0.0},if has_notice{16.0}else{8.0},dt);
         if !has_notice && self.hud_alpha<0.003 {self.hud_notice=None;}
         let notice_target=if !self.notice.as_ref().is_some_and(|a|a.messenger().is_some()) && self.compact_notices()&&(self.notice.is_some()||self.t<self.notification_bell_until) {44.0}else{0.0};
