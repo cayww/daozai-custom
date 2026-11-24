@@ -1955,3 +1955,14 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **教训**：Windows 键盘状态 API 语义差异——GetKeyState 的 VK_CAPITAL 低位=锁定状态（toggle），GetAsyncKeyState 低位=自上次调用以来按下过（一次性）。改这个 API 前必须查语义 + 实测，别靠推测。
 - **验证**：`cargo check --locked --lib --bins` 通过；input:: 17 passed / 0 failed；release exe `e5fffdb0e2484832`，部署安装目录、启动 PID 29320（未跑全量测试）。诊断日志代码已全部移除。
 - **状态**：提交 `bff7785` 本地 main 未 push；dist 的 v1.3.0 包（19:10 打的）**不含此修复**，需重打。待用户真机确认 Caps 不再刷屏。
+
+### 7.0zzu 实测定位：HUD 通知排队才是"状态延迟"真因（2026-11-24 20:02–20:22，提交 `2e331f1`，本地未 push）
+
+- **用户反馈**：状态对了但延迟大——切大写后切回小写，仍显示大写直到消失；中英文也一样。用户建议「复用旧通知刷新状态」（正解）。
+- **实测（通知层日志 ALERT/ENQUEUE/REPLACE/QUEUE/SHOW）**：
+  - 同类 HUD 之间即时 REPLACE：`键盘输入语言/中文` → `英语` 每 200ms 正确替换。
+  - 跨类型排队：`ENQUEUE 键盘输入语言/英语 current_notice=大写锁定/已关闭 -> QUEUE (wait)`，两条输入语言通知都排队，直到 `SHOW from queue` 才显示——旧 HUD 2.5s 过期期间新状态不显示。
+- **修复**：`enqueue_alert` 的 `same_event` 加一条 `_ if a.is_hud() && old.is_hud() => true`——所有 HUD 瞬时状态共用通知槽，新状态直接替换当前 notice，不排队。用户「复用旧通知刷新状态」的建议即此。
+- **诊断排除**：TSF compartment（`tsf_compartments()` 探针）在后台采样线程恒读 `(0,0)`，社区推荐的 TSF 路线在岛仔架构下不可用，已移除探针函数；IMM32 的 `imm_native` 随 Shift 100ms 内正确翻转，检测没问题。所有临时诊断代码已清除。
+- **验证**：`cargo check --locked --lib --bins` 通过；全量 **1412 passed / 0 failed / 131 ignored**；release exe `c67fc2074e3246b0`，部署安装目录、启动 PID 24464。
+- **状态**：提交 `2e331f1` 本地 main 未 push；dist 的 v1.3.0 包（19:10）不含此修复，需重打。待用户实机确认快速切换即时刷新。
