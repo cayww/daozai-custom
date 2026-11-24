@@ -1225,6 +1225,8 @@ pub struct App {
     pub(crate) notice_rules: model::NoticeRules,
     /// 剪贴板列表快照：(版本号, 共享列表)。只在版本变化时重建，避免每帧克隆整份历史。
     pub(crate) clip_snapshot: (u64, std::sync::Arc<Vec<crate::clipboard::Clip>>),
+    /// 剪贴板图片缩略图纹理，按 PNG 文件名缓存；历史条目消失时回收。
+    pub(crate) clip_thumbs: std::collections::HashMap<String, egui::TextureHandle>,
     /// 关键词缓存：(源字符串, 小写词表)。命中判断在绘制路径上，不能每次都 split + 小写。
     pub(crate) keyword_src: String,
     pub(crate) keywords: Vec<String>,
@@ -1520,6 +1522,7 @@ impl App {
             status_icons:Default::default(),
             notice_rules:model::NoticeRules::load(),
             clip_snapshot:(u64::MAX,std::sync::Arc::new(Vec::new())),
+            clip_thumbs:std::collections::HashMap::new(),
             keyword_src:String::new(),
             keywords:Vec::new(),
             quota_alerted:Default::default(),

@@ -2772,6 +2772,29 @@ fn wheel_overflowing_todos_stay_at_both_edges(){
 }
 
 #[test]
+fn clipboard_image_entry_renders_without_panicking() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.show_page(3);h.app.shelf_tab=1;
+    {
+        let mut hist=h.app.clipboard.lock();
+        hist.items.clear();
+        hist.push_image(crate::clipboard::ImageMeta { file: "missing-thumb.png".into(), width: 1200, height: 800 }, "10:00");
+    }
+    h.hover(H::local(209.0,60.0),1.2);
+    h.frame(vec![]);
+    // 缩略图文件不存在时画占位块，条目文字与尺寸仍要出现。
+    let drawn: Vec<String> = h.shapes.iter().filter_map(|s| if let egui::Shape::Text(t)=&s.shape {Some(t.galley.text().to_string())} else {None}).collect();
+    assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("1200"))),
+        "图片条目应显示尺寸描述，实际绘制：{drawn:?}");
+    // 点击条目本体不应崩溃；Windows 下会因为找不到 PNG 走复制失败分支。
+    h.hover(H::local(209.0,60.0),0.5);
+    h.click(H::local(200.0,44.0));
+    h.frame(vec![]);
+    assert_eq!(h.app.clipboard.lock().items.len(),1,"点击复制不应改动历史");
+}
+
+#[test]
 fn wheel_clipboard_stays_at_both_edges() {
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let mut h=H::new();

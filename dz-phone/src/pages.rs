@@ -36,6 +36,21 @@ fn cover_colors(title: &str) -> (Color32, Color32) {
 }
 
 impl App {
+    /// 复制一条剪贴板历史：图片走 Win32 DIB 写回并带自我记录标记，文字沿用原链路。
+    fn copy_clip(&mut self, clip: &crate::clipboard::Clip, _cmds: &mut Vec<Cmd>) {
+        if let Some(meta) = &clip.image {
+            #[cfg(windows)]
+            self.say(if crate::clipboard::copy_history_image(meta) { "已复制图片" } else { "复制失败，请重试" });
+            #[cfg(not(windows))]
+            { let _ = meta; self.say("复制失败，请重试"); }
+        } else {
+            #[cfg(windows)]
+            self.say(if crate::clipboard::copy_history(&clip.text) { "已复制" } else { "复制失败，请重试" });
+            #[cfg(not(windows))]
+            _cmds.push(Cmd::Copy(clip.text.clone()));
+        }
+    }
+
     // ================= 音乐 / 网页视频 =================
     /// 音乐展开页。
     pub(crate) fn page_music(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
@@ -1084,7 +1099,7 @@ impl App {
         if !self.settings.clipboard_history {
             c.dashed(42.0, 32.0, 335.0, 91.0, 12.0, 1.2, Color32::from_gray(70), 0.0);
             c.text(209.5, 66.0, "剪贴板记录已关闭", 12.0, W::Semibold, theme::WHITE, H::Center);
-            c.text(209.5, 82.0, "开启后，最近复制的文字会出现在这里", size::TINY, W::Regular, theme::GRAY, H::Center);
+            c.text(209.5, 82.0, "开启后，最近复制的文字和图片会出现在这里", size::TINY, W::Regular, theme::GRAY, H::Center);
             let (r, bc) = if glassy {
                 paint::glass_capsule(c, 179.5, 92.0, 60.0, 20.0, "clip-enable", 0.16, 0.42)
             } else {
@@ -1118,6 +1133,9 @@ impl App {
         };
         let rows = if searching { CLIP_ROWS - 1 } else { CLIP_ROWS };
         self.clip_first = self.clip_first.min(n.saturating_sub(rows));
+        // 图片缩略图纹理缓存：key 是文件名，只在首次见到某张图时解码上传。
+        // 用 clip_snapshot 的版本号驱动，历史清理后自动丢弃失效纹理。
+        self.clip_thumbs.retain(|file, _| items.iter().any(|c| c.image.as_ref().is_some_and(|im| &im.file == file)));
 
         // 右上：条数与「清空」（只清未固定的）。
         if recent > 0 {
@@ -1151,7 +1169,7 @@ impl App {
             c.dashed(42.0, 32.0, 335.0, 91.0, 12.0, 1.2, Color32::from_gray(70), 0.0);
             if query.is_empty() {
                 paint::clipboard_glyph(c, 209.5, 58.0, 22.0, Color32::from_gray(200), Color32::from_gray(80));
-                c.text(209.5, 93.0, "复制的文字会出现在这里", 12.0, W::Semibold, theme::WHITE, H::Center);
+                c.text(209.5, 93.0, "复制的文字和图片会出现在这里", 12.0, W::Semibold, theme::WHITE, H::Center);
                 c.text(209.5, 108.0, "记录保存在本机，重新打开仍可查看", size::TINY, W::Regular, theme::GRAY, H::Center);
             } else {
                 c.text(209.5, 70.0, "没有匹配的记录", 12.0, W::Semibold, theme::WHITE, H::Center);
@@ -1185,13 +1203,7 @@ impl App {
             self.clip_sel=self.clip_sel.min(n-1);
             if self.clip_sel<self.clip_first { self.clip_first=self.clip_sel; }
             if self.clip_sel>=self.clip_first+rows { self.clip_first=self.clip_sel+1-rows; }
-            if enter {
-                let text=items[shown[self.clip_sel]].text.clone();
-                #[cfg(windows)]
-                self.say(if crate::clipboard::copy_history(&text) { "已复制" } else { "复制失败，请重试" });
-                #[cfg(not(windows))]
-                _cmds.push(Cmd::Copy(text));
-            }
+            if enter { self.copy_clip(&items[shown[self.clip_sel]], _cmds); }
         }
         let mut action: Option<(usize, u8)> = None; // 0 复制 1 固定 2 删除
         for (row, index) in shown.iter().copied().skip(self.clip_first).take(rows).enumerate() {
@@ -1210,8 +1222,29 @@ impl App {
             } else {
                 c.circle(58.0, y, 2.2, Color32::from_gray(110));
             }
-            let text = c.fit(&crate::clipboard::preview(&clip.text), size::BODY, W::Regular, 210.0);
-            c.text(68.0, y + 3.8, &text, size::BODY, W::Regular, Color32::from_gray(235), H::Left);
+            let mut label_x = 68.0;
+            if let Some(meta) = &clip.image {
+                // 图片条目画 16×16 缩略图；纹理按需解码，缓存按文件名。
+                let tex = self.clip_thumbs.get(&meta.file).cloned().or_else(|| {
+                    let path = crate::model::config_dir().join("clip-images").join(&meta.file);
+                    let bytes = std::fs::read(&path).ok()?;
+                    let img = image::load_from_memory(&bytes).ok()?.into_rgba8();
+                    let ci = egui::ColorImage::from_rgba_unmultiplied(
+                        [img.width() as usize, img.height() as usize], img.as_raw());
+                    let tex = c.ui.ctx().load_texture(meta.file.clone(), ci, egui::TextureOptions::LINEAR);
+                    self.clip_thumbs.insert(meta.file.clone(), tex.clone());
+                    Some(tex)
+                });
+                if let Some(tex) = tex {
+                    c.painter.image(tex.id(), c.rect(68.0, y - 8.0, 16.0, 16.0),
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                } else {
+                    c.fill(68.0, y - 8.0, 16.0, 16.0, 3.0, theme::BTN);
+                }
+                label_x = 88.0;
+            }
+            let text = c.fit(&crate::clipboard::preview(&clip.text), size::BODY, W::Regular, 222.0 - (label_x - 68.0));
+            c.text(label_x, y + 3.8, &text, size::BODY, W::Regular, Color32::from_gray(235), H::Left);
             c.text(318.0, y + 3.5, &clip.at, size::TINY, W::Regular, theme::DIM, H::Right);
             let tip: String = clip.text.chars().take(400).collect();
             let r = r.on_hover_text(format!("{tip}{}\n点击复制", if clip.text.chars().count() > 400 { "…" } else { "" }));
@@ -1224,12 +1257,7 @@ impl App {
             else if r.clicked() { action = Some((index, 0)); }
         }
         match action {
-            Some((index, 0)) => {
-                #[cfg(windows)]
-                self.say(if crate::clipboard::copy_history(&items[index].text) { "已复制" } else { "复制失败，请重试" });
-                #[cfg(not(windows))]
-                _cmds.push(Cmd::Copy(items[index].text.clone()));
-            }
+            Some((index, 0)) => self.copy_clip(&items[index], _cmds),
             Some((index, 1)) => {
                 if !self.clipboard.lock().toggle_pin(index) { self.say(format!("最多固定 {} 条", crate::clipboard::MAX_PINNED)); }
             }
