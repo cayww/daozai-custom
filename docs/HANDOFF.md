@@ -1915,3 +1915,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **配色说明**：液态玻璃深浅材质靠 shader 画背景，egui 文字一直是白字体系；「跟随主题色」在此体现为白字的深浅两档（alpha 110 vs 255），任何背景都可读。若用户要的是「亮白→主题蓝」之类需再调。
 - **验证**：`cargo check --locked --lib --tests` 通过；加 1 个单测 `karaoke_sung_chars_follow_line_progress`。**未跑全量测试**（用户本轮未要求，且每轮构建 3 分钟）。release exe `775279ee3246bf93`，已备份安装版到 `daozai.exe.bak-pre-karaoke` 并部署、启动 PID 31728。
 - **状态**：提交 `24d7ae8` 本地 main 未 push；dist 的 v1.3.0 包仍不含 KTV 及歌词系列修复，需重打。待用户实机确认逐字高亮节奏与配色。
+
+### 7.0zzq 撤销 KTV 逐字高亮（2026-11-24 18:23–18:27，revert `f970754`，本地未 push）
+
+- 用户实测后要求撤销，不需要逐字高亮。`git revert 24d7ae8` 精确回滚功能代码（2 insertions/73 deletions），`lyric_sung_chars`/`karaoke_galley`/`island_lyric_karaoke` 全部清除；文档提交 `a171ce0` 保留作为历史。
+- 编译 `cargo check --locked --lib --tests` 通过；release exe `9c5268385450535b`，已部署安装目录、启动 PID 35980（未备份——回滚后就是 KTV 前的 `463c2b9` 状态，旧备份 `daozai.exe.bak-pre-karaoke` 仍在）。
+- 歌词居中系列修复（`463c2b9` 可用区居中、关宠物收空位）保留。
+- **状态**：本地 main 未 push；dist 的 v1.3.0 包仍旧，需重打。
