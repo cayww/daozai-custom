@@ -4634,10 +4634,7 @@ fn settings_tab_title(tab: usize) -> &'static str {
         .find(|(_, start, end, _)| (*start..=*end).contains(&tab))
         .map_or("通用", |g| g.0)
 }
-#[cfg(test)]
-pub(crate) fn settings_tab_group_for_tests(tab: usize) -> &'static str {
-    settings_tab_title(tab)
-}
+
 
 /// 「浏览器下载」卡片：始终显示安装指引（打开浏览器扩展页和扩展文件夹、复制路径）。
 /// Chrome/Edge 从 33 版起封死了本地扩展的静默安装，只能开发者模式加载，所以做成引导而非自动装。

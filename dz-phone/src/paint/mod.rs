@@ -7,9 +7,9 @@
 //! `pub use` 重新导出，调用方仍写 `paint::battery(...)`。
 
 use crate::theme::{font, W};
-use eframe::egui::{self, Color32, FontId, Id, Pos2, Rect, Response, Sense, Stroke, Vec2};
-use eframe::egui::epaint::Shape;
 use eframe::egui::emath::TSTransform;
+use eframe::egui::epaint::Shape;
+use eframe::egui::{self, Color32, FontId, Pos2, Rect, Response, Sense, Stroke, Vec2};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::Arc;
 
@@ -47,8 +47,12 @@ fn inset_text_uv(shape: &mut Shape, atlas_size: [usize; 2], amount: f32) {
     if amount <= 0.0 {
         return;
     }
-    let Shape::Text(text_shape) = shape else { return };
-    if atlas_size[0] == 0 || atlas_size[1] == 1 { return }
+    let Shape::Text(text_shape) = shape else {
+        return;
+    };
+    if atlas_size[0] == 0 || atlas_size[1] == 1 {
+        return;
+    }
     let texel_u = amount / atlas_size[0] as f32;
     let texel_v = amount / atlas_size[1] as f32;
     let galley = Arc::make_mut(&mut text_shape.galley);
@@ -58,12 +62,20 @@ fn inset_text_uv(shape: &mut Shape, atlas_size: [usize; 2], amount: f32) {
         let vertices = &mut row.visuals.mesh.vertices;
         for quad in vertices[range].chunks_exact_mut(4) {
             let min_u = quad.iter().map(|v| v.uv.x).fold(f32::INFINITY, f32::min);
-            let max_u = quad.iter().map(|v| v.uv.x).fold(f32::NEG_INFINITY, f32::max);
+            let max_u = quad
+                .iter()
+                .map(|v| v.uv.x)
+                .fold(f32::NEG_INFINITY, f32::max);
             let min_v = quad.iter().map(|v| v.uv.y).fold(f32::INFINITY, f32::min);
-            let max_v = quad.iter().map(|v| v.uv.y).fold(f32::NEG_INFINITY, f32::max);
+            let max_v = quad
+                .iter()
+                .map(|v| v.uv.y)
+                .fold(f32::NEG_INFINITY, f32::max);
             let span_u = max_u - min_u;
             let span_v = max_v - min_v;
-            if span_u <= 0.0 || span_v <= 0.0 { continue }
+            if span_u <= 0.0 || span_v <= 0.0 {
+                continue;
+            }
             let fx = ((span_u - texel_u) / span_u).max(0.0);
             let fy = ((span_v - texel_v) / span_v).max(0.0);
             let cu = (min_u + max_u) * 0.5;
@@ -251,7 +263,11 @@ impl<'a> Card<'a> {
         font(size, w)
     }
     pub fn galley(&self, t: &str, size: f32, w: W, color: Color32) -> std::sync::Arc<egui::Galley> {
-        self.painter.layout_no_wrap(crate::rtl_text::display(t).into_owned(), font(size, w), color)
+        self.painter.layout_no_wrap(
+            crate::rtl_text::display(t).into_owned(),
+            font(size, w),
+            color,
+        )
     }
     /// 在局部坐标 p（未缩放）绘制已排版的 galley：先缩放 mesh 到屏幕，再平移 origin。
     ///
@@ -267,21 +283,17 @@ impl<'a> Card<'a> {
     ///
     /// 拆出来是为了让测试能逐位比较「不同弹簧相位下字形 mesh 是否稳定」——
     /// 抖动的本质就是同一段文字在相邻帧生成了不同顶点。
-    pub fn galley_shape(
-        &self,
-        p: Pos2,
-        g: std::sync::Arc<egui::Galley>,
-        color: Color32,
-    ) -> Shape {
+    pub fn galley_shape(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) -> Shape {
         let (mut origin, mut s) = (self.origin.to_vec2(), self.s);
         let mode = match self.text_scale {
             TextScale::Auto if self.text_anchor.is_some() => TextScale::Damped,
             TextScale::Auto => TextScale::Follow,
             explicit => explicit,
         };
-        if let (Some((pivot, base_s)), true) =
-            (self.text_anchor, matches!(mode, TextScale::Damped | TextScale::Frozen))
-        {
+        if let (Some((pivot, base_s)), true) = (
+            self.text_anchor,
+            matches!(mode, TextScale::Damped | TextScale::Frozen),
+        ) {
             let base_s = base_s.max(1e-6);
             let k = s / base_s;
             let k_text = match (mode, self.text_k) {
@@ -316,7 +328,12 @@ impl<'a> Card<'a> {
     pub fn text(&self, x: f32, base: f32, t: &str, size: f32, w: W, color: Color32, h: H) -> f32 {
         let g = self.galley(t, size, w, color);
         let gw = g.size().x;
-        let asc = g.rows.first().and_then(|r| r.glyphs.first()).map(|g| g.pos.y).unwrap_or(size);
+        let asc = g
+            .rows
+            .first()
+            .and_then(|r| r.glyphs.first())
+            .map(|g| g.pos.y)
+            .unwrap_or(size);
         let mut p = Pos2::new(x, base) - Vec2::new(0.0, asc);
         match h {
             H::Left => {}
@@ -327,12 +344,18 @@ impl<'a> Card<'a> {
         gw
     }
     /// 以字形的实际可见范围对齐垂直中心，保持中英文状态文字居中。
-    pub fn centered_text(&self, x:f32, cy:f32, t:&str, size:f32, w:W, color:Color32, h:H) {
-        if t.is_empty(){return;}
-        let g=self.galley(t,size,w,color);
-        let dx=match h {H::Left=>0.0,H::Center=>g.size().x/2.0,H::Right=>g.size().x};
-        let pos=Pos2::new(x,cy)-Vec2::new(dx,g.mesh_bounds.center().y);
-        self.paint_galley(pos,g,color);
+    pub fn centered_text(&self, x: f32, cy: f32, t: &str, size: f32, w: W, color: Color32, h: H) {
+        if t.is_empty() {
+            return;
+        }
+        let g = self.galley(t, size, w, color);
+        let dx = match h {
+            H::Left => 0.0,
+            H::Center => g.size().x / 2.0,
+            H::Right => g.size().x,
+        };
+        let pos = Pos2::new(x, cy) - Vec2::new(dx, g.mesh_bounds.center().y);
+        self.paint_galley(pos, g, color);
     }
     /// 超宽时末尾加省略号。
     pub fn fit(&self, t: &str, size: f32, w: W, max_w: f32) -> String {
@@ -392,7 +415,11 @@ impl<'a> Card<'a> {
                 }
             }
             out.push(chars[start..n].iter().collect());
-            start = if n == limit && limit < total { limit + 1 } else { n };
+            start = if n == limit && limit < total {
+                limit + 1
+            } else {
+                n
+            };
         }
         // 行数用尽仍有剩余内容（含刚被挤出的换行）：最后一行加省略号。
         if out.len() == max_lines && start < total {
@@ -405,11 +432,17 @@ impl<'a> Card<'a> {
 
     // ---------- 图形 ----------
     pub fn fill(&self, x: f32, y: f32, w: f32, h: f32, r: f32, color: Color32) {
-        self.painter.rect_filled(self.rect(x, y, w, h), r * self.s, color);
+        self.painter
+            .rect_filled(self.rect(x, y, w, h), r * self.s, color);
     }
     pub fn stroke(&self, x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, color: Color32) {
         let rc = self.stroke_rect(x, y, w, h, width);
-        self.painter.rect_stroke(rc, r * self.s, Stroke::new(width * self.s, color), egui::StrokeKind::Middle);
+        self.painter.rect_stroke(
+            rc,
+            r * self.s,
+            Stroke::new(width * self.s, color),
+            egui::StrokeKind::Middle,
+        );
     }
     /// 描边路径矩形：1~2 物理像素的细线落到像素中心（线才正好盖满一整行/列像素），
     /// 更粗的线保持边界对齐，避免整条边凭空偏半像素。
@@ -426,12 +459,17 @@ impl<'a> Card<'a> {
         }
     }
     pub fn circle(&self, x: f32, y: f32, r: f32, color: Color32) {
-        self.painter.circle_filled(self.snapped_pos(x, y), r * self.s, color);
+        self.painter
+            .circle_filled(self.snapped_pos(x, y), r * self.s, color);
     }
     pub fn ring(&self, x: f32, y: f32, r: f32, width: f32, color: Color32) {
         // 圆心对齐到像素中心：静态圆点/圆环在不同缩放下的覆盖比例才稳定。
         // 半径保持连续，动画中的进度圆环不会被量化成 1px 台阶。
-        self.painter.circle_stroke(self.snapped_pos(x, y), r * self.s, Stroke::new(width * self.s, color));
+        self.painter.circle_stroke(
+            self.snapped_pos(x, y),
+            r * self.s,
+            Stroke::new(width * self.s, color),
+        );
     }
     /// 线段端点：轴对齐且 ≤2 物理像素宽时，横向坐标落到像素中心，
     /// 1px 分隔线/图标竖笔正好盖满一整列像素；斜线原样保留（硬对齐会破坏斜率）。
@@ -454,15 +492,18 @@ impl<'a> Card<'a> {
     }
     pub fn seg(&self, a: (f32, f32), b: (f32, f32), width: f32, color: Color32) {
         let [p0, p1] = self.seg_points(a, b, width);
-        self.painter.line_segment([p0, p1], Stroke::new(width * self.s, color));
+        self.painter
+            .line_segment([p0, p1], Stroke::new(width * self.s, color));
     }
     pub fn path(&self, pts: &[(f32, f32)], width: f32, color: Color32) {
         let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.pos(x, y)).collect();
-        self.painter.add(egui::Shape::line(v, Stroke::new(width * self.s, color)));
+        self.painter
+            .add(egui::Shape::line(v, Stroke::new(width * self.s, color)));
     }
     pub fn poly(&self, pts: &[(f32, f32)], color: Color32) {
         let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.pos(x, y)).collect();
-        self.painter.add(egui::Shape::convex_polygon(v, color, Stroke::NONE));
+        self.painter
+            .add(egui::Shape::convex_polygon(v, color, Stroke::NONE));
     }
     /// 圆弧描边（角度单位弧度，0 = 正右，顺时针为正）。
     pub fn arc(&self, cx: f32, cy: f32, r: f32, a0: f32, a1: f32, width: f32, color: Color32) {
@@ -484,7 +525,10 @@ impl<'a> Card<'a> {
         for i in 0..=n {
             let a = i as f32 / n as f32 * TAU;
             // 中间加一圈 45% 处的半透明，近似高斯衰减
-            mesh.colored_vertex(c + Vec2::angled(a) * r * 0.45 * self.s, color.gamma_multiply(0.45));
+            mesh.colored_vertex(
+                c + Vec2::angled(a) * r * 0.45 * self.s,
+                color.gamma_multiply(0.45),
+            );
             mesh.colored_vertex(c + Vec2::angled(a) * r * self.s, Color32::TRANSPARENT);
         }
         for i in 0..n as u32 {
@@ -496,26 +540,49 @@ impl<'a> Card<'a> {
         self.painter.add(egui::Shape::mesh(mesh));
     }
     /// 圆角竖直渐变，沿用 egui 的边缘抗锯齿。
-    pub fn vgrad(&self, x: f32, y: f32, w: f32, h: f32, radius:f32, top: Color32, bottom: Color32) {
+    pub fn vgrad(
+        &self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radius: f32,
+        top: Color32,
+        bottom: Color32,
+    ) {
         let r = self.rect(x, y, w, h);
-        let shapes=vec![egui::epaint::ClippedShape{
-            clip_rect:self.painter.clip_rect(),
-            shape:egui::Shape::rect_filled(r,radius*self.s,Color32::WHITE),
-            transform_after_tessellation:egui::epaint::emath::TSTransform::IDENTITY,
+        let shapes = vec![egui::epaint::ClippedShape {
+            clip_rect: self.painter.clip_rect(),
+            shape: egui::Shape::rect_filled(r, radius * self.s, Color32::WHITE),
+            transform_after_tessellation: egui::epaint::emath::TSTransform::IDENTITY,
         }];
-        for primitive in self.ui.ctx().tessellate(shapes,self.ui.ctx().pixels_per_point()) {
-            if let egui::epaint::Primitive::Mesh(mut mesh)=primitive.primitive {
-                mesh.texture_id=egui::TextureId::default();
+        for primitive in self
+            .ui
+            .ctx()
+            .tessellate(shapes, self.ui.ctx().pixels_per_point())
+        {
+            if let egui::epaint::Primitive::Mesh(mut mesh) = primitive.primitive {
+                mesh.texture_id = egui::TextureId::default();
                 for vertex in &mut mesh.vertices {
-                    let t=((vertex.pos.y-r.top())/r.height()).clamp(0.0,1.0);
-                    vertex.color=alpha(mix(top,bottom,t),vertex.color.a() as f32/255.0);
+                    let t = ((vertex.pos.y - r.top()) / r.height()).clamp(0.0, 1.0);
+                    vertex.color = alpha(mix(top, bottom, t), vertex.color.a() as f32 / 255.0);
                 }
                 self.painter.add(egui::Shape::mesh(mesh));
             }
         }
     }
     /// 虚线圆角框；`phase` 让虚线沿边「流动」。
-    pub fn dashed(&self, x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, color: Color32, phase: f32) {
+    pub fn dashed(
+        &self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        r: f32,
+        width: f32,
+        color: Color32,
+        phase: f32,
+    ) {
         let mut pts = Vec::new();
         let corner = |cx: f32, cy: f32, a0: f32, pts: &mut Vec<Pos2>| {
             for i in 0..=8 {
@@ -531,36 +598,76 @@ impl<'a> Card<'a> {
         let dash = 4.0 * self.s;
         let gap = 3.5 * self.s;
         let off = (phase * self.s).rem_euclid(dash + gap);
-        let shapes = egui::Shape::dashed_line_with_offset(&pts, Stroke::new(width * self.s, color), &[dash], &[gap], off);
+        let shapes = egui::Shape::dashed_line_with_offset(
+            &pts,
+            Stroke::new(width * self.s, color),
+            &[dash],
+            &[gap],
+            off,
+        );
         self.painter.extend(shapes);
     }
 
     // ---------- 交互 ----------
-    pub fn hit(&self, x: f32, y: f32, w: f32, h: f32, id: impl std::hash::Hash + std::fmt::Debug) -> Response {
+    pub fn hit(
+        &self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        id: impl std::hash::Hash + std::fmt::Debug,
+    ) -> Response {
         let rect = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
-        let sense = if self.live { Sense::click() } else { Sense::hover() };
+        let sense = if self.live {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
         let id = egui::Id::unique(("card", self.live, id));
         self.ui.interact(rect, id, sense)
     }
 
-    pub fn hit_drag(&self,x:f32,y:f32,w:f32,h:f32,id:impl std::hash::Hash+std::fmt::Debug)->Response {
-        let rect=self.rect(x,y,w,h).intersect(self.painter.clip_rect());
-        self.ui.interact(rect,egui::Id::unique(("card-drag",self.live,id)),if self.live{Sense::click_and_drag()}else{Sense::hover()})
+    pub fn hit_drag(
+        &self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        id: impl std::hash::Hash + std::fmt::Debug,
+    ) -> Response {
+        let rect = self.rect(x, y, w, h).intersect(self.painter.clip_rect());
+        self.ui.interact(
+            rect,
+            egui::Id::unique(("card-drag", self.live, id)),
+            if self.live {
+                Sense::click_and_drag()
+            } else {
+                Sense::hover()
+            },
+        )
     }
     /// 悬停 / 按下的平滑过渡量（0..1）。
     pub fn hover_t(&self, r: &Response) -> (f32, f32) {
         let ctx = self.ui.ctx();
         let h = ctx.animate_bool_with_time(r.id.with("h"), self.live && r.hovered(), 0.14);
-        let p = ctx.animate_bool_with_time(r.id.with("p"), self.live && r.is_pointer_button_down_on(), 0.07);
+        let p = ctx.animate_bool_with_time(
+            r.id.with("p"),
+            self.live && r.is_pointer_button_down_on(),
+            0.07,
+        );
         (h, p)
     }
-
 }
 
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    Color32::from_rgba_premultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
+    Color32::from_rgba_premultiplied(
+        l(a.r(), b.r()),
+        l(a.g(), b.g()),
+        l(a.b(), b.b()),
+        l(a.a(), b.a()),
+    )
 }
 
 pub fn alpha(c: Color32, a: f32) -> Color32 {
@@ -572,26 +679,41 @@ mod gradient_tests {
     use super::*;
     #[test]
     fn regression_play_icon_has_no_internal_seam() {
-        for ppp in [1.0,1.25,1.5,2.0] {
-            for scale in [0.9,1.0,1.4] {
-                for offset in [0.0,0.25,0.5,0.75] {
-                    for (size,color) in [11.0,15.0].into_iter().flat_map(|size|[Color32::WHITE,Color32::from_gray(22),Color32::from_white_alpha(128)].map(|color|(size,color))) {
-                        let ctx=egui::Context::default();ctx.set_zoom_factor(ppp);
-                        let center=Pos2::new(30.0+offset,26.0+offset);
-                        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(96.0))),..Default::default()};
-                        let output=ctx.run_ui(raw, |ui|{
-                            let card=Card::new(ui,Pos2::ZERO,ui.max_rect()).scaled(center.x,center.y,scale);
-                            play_pause(&card,center.x,center.y,size,0.0,color);
+        for ppp in [1.0, 1.25, 1.5, 2.0] {
+            for scale in [0.9, 1.0, 1.4] {
+                for offset in [0.0, 0.25, 0.5, 0.75] {
+                    for (size, color) in [11.0, 15.0].into_iter().flat_map(|size| {
+                        [
+                            Color32::WHITE,
+                            Color32::from_gray(22),
+                            Color32::from_white_alpha(128),
+                        ]
+                        .map(|color| (size, color))
+                    }) {
+                        let ctx = egui::Context::default();
+                        ctx.set_zoom_factor(ppp);
+                        let center = Pos2::new(30.0 + offset, 26.0 + offset);
+                        let raw = egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(96.0))),
+                            ..Default::default()
+                        };
+                        let output = ctx.run_ui(raw, |ui| {
+                            let card = Card::new(ui, Pos2::ZERO, ui.max_rect())
+                                .scaled(center.x, center.y, scale);
+                            play_pause(&card, center.x, center.y, size, 0.0, color);
                         });
-                        let mut raster=crate::preview_raster::Raster::new((96.0*ppp) as usize,(96.0*ppp) as usize);
+                        let mut raster = crate::preview_raster::Raster::new(
+                            (96.0 * ppp) as usize,
+                            (96.0 * ppp) as usize,
+                        );
                         raster.update_textures(&output.textures_delta);
-                        raster.draw(&ctx.tessellate(output.shapes,ppp),ppp);
-                        let y=(center.y*ppp).floor() as usize;
+                        raster.draw(&ctx.tessellate(output.shapes, ppp), ppp);
+                        let y = (center.y * ppp).floor() as usize;
                         // egui 0.37 applies clip_rect strictly; keep the canvas wide enough
                         // that all sampled triangle interior points stay inside it.
-                        for dx in [-0.5,0.0,0.5,1.0,1.5] {
-                            let x=((center.x+dx*scale)*ppp).floor() as usize;
-                            let expected=color.a() as f32/255.0;
+                        for dx in [-0.5, 0.0, 0.5, 1.0, 1.5] {
+                            let x = ((center.x + dx * scale) * ppp).floor() as usize;
+                            let expected = color.a() as f32 / 255.0;
                             assert!((raster.buf[y*raster.w+x][3]-expected).abs()<0.02,"播放三角形内部应连续：ppp={ppp}, scale={scale}, offset={offset}, dx={dx}, alpha={}",raster.buf[y*raster.w+x][3]);
                         }
                     }
@@ -602,56 +724,107 @@ mod gradient_tests {
 
     #[test]
     fn long_email_links_do_not_create_hundreds_of_layouts() {
-        let ctx=egui::Context::default();
-        let text=format!("https://example.com/{}","newsletter-link-".repeat(40));
-        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(500.0))),..Default::default()};
-        let _=ctx.run_ui(raw, |ui|{
-            egui::CentralPanel::default().show(ui,|ui|{
-                let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
-                let before=ui.ctx().fonts(|f|f.num_galleys_in_cache());
-                let fitted=c.fit(&text,10.5,W::Regular,180.0);
+        let ctx = egui::Context::default();
+        let text = format!("https://example.com/{}", "newsletter-link-".repeat(40));
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(500.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+                let before = ui.ctx().fonts(|f| f.num_galleys_in_cache());
+                let fitted = c.fit(&text, 10.5, W::Regular, 180.0);
                 assert!(fitted.ends_with('…'));
-                assert!(c.text_w(&fitted,10.5,W::Regular)<=180.0);
-                let layouts=ui.ctx().fonts(|f|f.num_galleys_in_cache())-before;
-                assert!(layouts<=20,"长邮件链接只需少量排版，不应逐字重排：{layouts}");
+                assert!(c.text_w(&fitted, 10.5, W::Regular) <= 180.0);
+                let layouts = ui.ctx().fonts(|f| f.num_galleys_in_cache()) - before;
+                assert!(
+                    layouts <= 20,
+                    "长邮件链接只需少量排版，不应逐字重排：{layouts}"
+                );
                 println!("长链接排版次数：{layouts}");
             });
         });
     }
     #[test]
     fn text_fitting_preserves_short_text_and_unicode_results() {
-        let ctx=egui::Context::default();
-        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(500.0))),..Default::default()};
-        let _=ctx.run_ui(raw, |ui|{egui::CentralPanel::default().show(ui,|ui|{
-            let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
-            for text in ["", "a", "收到新的邮件与验证码", "会议提醒 🌴 完整标题", "https://example.com/short"] {
-                for width in [0.0,10.0,40.0,80.0,300.0] {
-                    let expected=if c.text_w(text,10.5,W::Regular)<=width{text.into()}else{
-                        let chars:Vec<_>=text.chars().collect();(1..chars.len()).rev().map(|n|chars[..n].iter().collect::<String>()+"…").find(|s|c.text_w(s,10.5,W::Regular)<=width).unwrap_or_else(||"…".into())
-                    };
-                    assert_eq!(c.fit(text,10.5,W::Regular,width),expected,"宽度 {width} 的文字裁剪应保持原来的显示结果");
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(500.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+                for text in [
+                    "",
+                    "a",
+                    "收到新的邮件与验证码",
+                    "会议提醒 🌴 完整标题",
+                    "https://example.com/short",
+                ] {
+                    for width in [0.0, 10.0, 40.0, 80.0, 300.0] {
+                        let expected = if c.text_w(text, 10.5, W::Regular) <= width {
+                            text.into()
+                        } else {
+                            let chars: Vec<_> = text.chars().collect();
+                            (1..chars.len())
+                                .rev()
+                                .map(|n| chars[..n].iter().collect::<String>() + "…")
+                                .find(|s| c.text_w(s, 10.5, W::Regular) <= width)
+                                .unwrap_or_else(|| "…".into())
+                        };
+                        assert_eq!(
+                            c.fit(text, 10.5, W::Regular, width),
+                            expected,
+                            "宽度 {width} 的文字裁剪应保持原来的显示结果"
+                        );
+                    }
                 }
-            }
-        });});
+            });
+        });
     }
     #[test]
     fn cover_gradient_keeps_all_four_corners_clear() {
-        let ctx=egui::Context::default();
-        let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::splat(100.0))),..Default::default()};
-        let output=ctx.run_ui(raw, |ui|{
-                let c=Card::new(ui,Pos2::ZERO,ui.max_rect());
-                c.vgrad(20.0,20.0,62.0,62.0,13.0,Color32::RED,Color32::BLUE);
-            });
-        let meshes:Vec<_>=output.shapes.into_iter().filter_map(|s|if let egui::Shape::Mesh(m)=s.shape{Some(m)}else{None}).collect();
-        let covers=|point:Pos2|meshes.iter().any(|m|m.indices.chunks_exact(3).any(|tri|{
-            let [a,b,c]=[m.vertices[tri[0] as usize].pos,m.vertices[tri[1] as usize].pos,m.vertices[tri[2] as usize].pos];
-            let cross=|a:Pos2,b:Pos2|(b.x-a.x)*(point.y-a.y)-(b.y-a.y)*(point.x-a.x);
-            let signs=[cross(a,b),cross(b,c),cross(c,a)];
-            signs.iter().all(|s|*s>=0.0)||signs.iter().all(|s|*s<=0.0)
-        }));
-        assert!(covers(Pos2::new(51.0,51.0)),"封面中心需要被绘制");
-        for (x,y) in [(20.5,20.5),(81.5,20.5),(20.5,81.5),(81.5,81.5)] {
-            assert!(!covers(Pos2::new(x,y)),"渐变不能覆盖圆角之外的区域");
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(100.0))),
+            ..Default::default()
+        };
+        let output = ctx.run_ui(raw, |ui| {
+            let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+            c.vgrad(20.0, 20.0, 62.0, 62.0, 13.0, Color32::RED, Color32::BLUE);
+        });
+        let meshes: Vec<_> = output
+            .shapes
+            .into_iter()
+            .filter_map(|s| {
+                if let egui::Shape::Mesh(m) = s.shape {
+                    Some(m)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let covers = |point: Pos2| {
+            meshes.iter().any(|m| {
+                m.indices.chunks_exact(3).any(|tri| {
+                    let [a, b, c] = [
+                        m.vertices[tri[0] as usize].pos,
+                        m.vertices[tri[1] as usize].pos,
+                        m.vertices[tri[2] as usize].pos,
+                    ];
+                    let cross = |a: Pos2, b: Pos2| {
+                        (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x)
+                    };
+                    let signs = [cross(a, b), cross(b, c), cross(c, a)];
+                    signs.iter().all(|s| *s >= 0.0) || signs.iter().all(|s| *s <= 0.0)
+                })
+            })
+        };
+        assert!(covers(Pos2::new(51.0, 51.0)), "封面中心需要被绘制");
+        for (x, y) in [(20.5, 20.5), (81.5, 20.5), (20.5, 81.5), (81.5, 81.5)] {
+            assert!(!covers(Pos2::new(x, y)), "渐变不能覆盖圆角之外的区域");
         }
     }
     #[test]
@@ -758,9 +931,21 @@ mod gradient_tests {
                     let cc = c.scaled_text(124.0, 18.0, k_shape, k_text);
                     coords(&cc.galley_shape(Pos2::new(4.0, 14.0), g.clone(), Color32::WHITE))
                 };
-                assert_eq!(at(1.0, 1.0), at(1.14, 1.0), "ppp={ppp} 按压放大不应写进字形");
-                assert_eq!(at(1.14, 1.0), at(0.9, 1.0), "ppp={ppp} 回弹缩小同样不写字形");
-                assert_ne!(at(1.0, 1.0), at(1.0, 1.08), "ppp={ppp} 显式 k_text 仍要放大文字");
+                assert_eq!(
+                    at(1.0, 1.0),
+                    at(1.14, 1.0),
+                    "ppp={ppp} 按压放大不应写进字形"
+                );
+                assert_eq!(
+                    at(1.14, 1.0),
+                    at(0.9, 1.0),
+                    "ppp={ppp} 回弹缩小同样不写字形"
+                );
+                assert_ne!(
+                    at(1.0, 1.0),
+                    at(1.0, 1.08),
+                    "ppp={ppp} 显式 k_text 仍要放大文字"
+                );
             });
         }
     }
@@ -777,7 +962,10 @@ mod gradient_tests {
                 let range = row.visuals.glyph_vertex_range.clone();
                 for quad in row.visuals.mesh.vertices[range].chunks_exact(4) {
                     let min_u = quad.iter().map(|v| v.uv.x).fold(f32::INFINITY, f32::min) as f64;
-                    let max_u = quad.iter().map(|v| v.uv.x).fold(f32::NEG_INFINITY, f32::max) as f64;
+                    let max_u = quad
+                        .iter()
+                        .map(|v| v.uv.x)
+                        .fold(f32::NEG_INFINITY, f32::max) as f64;
                     sum += max_u - min_u;
                 }
             }
@@ -807,8 +995,16 @@ mod gradient_tests {
     }
 
     #[test]
-    fn wrap_matches_char_by_char_reference() {        // 旧的逐字符算法：只作为新二分折行的行为基准。
-        fn reference(c: &Card, t: &str, size: f32, w: W, max_w: f32, max_lines: usize) -> Vec<String> {
+    fn wrap_matches_char_by_char_reference() {
+        // 旧的逐字符算法：只作为新二分折行的行为基准。
+        fn reference(
+            c: &Card,
+            t: &str,
+            size: f32,
+            w: W,
+            max_w: f32,
+            max_lines: usize,
+        ) -> Vec<String> {
             let mut out: Vec<String> = Vec::new();
             let mut cur = String::new();
             let mut used = 0usize;
@@ -891,7 +1087,11 @@ mod gradient_tests {
                     let f = (v * c.ppp).fract().abs();
                     f < 1e-3 || 1.0 - f < 1e-3
                 };
-                for (x, y, w, h) in [(0.3, 0.7, 10.1, 6.2), (12.34, 5.67, 33.3, 4.4), (-2.2, 8.8, 7.7, 7.7)] {
+                for (x, y, w, h) in [
+                    (0.3, 0.7, 10.1, 6.2),
+                    (12.34, 5.67, 33.3, 4.4),
+                    (-2.2, 8.8, 7.7, 7.7),
+                ] {
                     let r = c.rect(x, y, w, h);
                     for e in [r.min.x, r.max.x, r.min.y, r.max.y] {
                         assert!(on_grid(e), "ppp={ppp} 矩形边 {e} 应落在设备像素边界");
@@ -905,7 +1105,10 @@ mod gradient_tests {
                 let sr = c.stroke_rect(1.0, 2.0, 20.0, 9.0, 1.0);
                 for e in [sr.min.x, sr.max.x, sr.min.y, sr.max.y] {
                     let v = e * c.ppp - 0.5;
-                    assert!((v - v.round()).abs() < 1e-3, "ppp={ppp} 细描边 {e} 应在像素中心");
+                    assert!(
+                        (v - v.round()).abs() < 1e-3,
+                        "ppp={ppp} 细描边 {e} 应在像素中心"
+                    );
                 }
                 // 轴对齐细线对齐到像素中心，斜线端点保持原位。
                 let [a, b] = c.seg_points((1.3, 1.0), (1.3, 8.0), 1.0);
@@ -943,8 +1146,12 @@ pub(crate) fn chrome_mark(c: &Card) -> usize {
 /// 把 `from` 起画的图形登记为「玻璃材质」：浅材质下不再被映射成暗雾
 /// （white_alpha 的 premultiplied 亮度很低，通用换色会把它当成深色压成墨雾）。
 pub(crate) fn chrome_since(c: &Card, from: usize) {
-    crate::skin_paint::tone_since(c.ui.ctx(), c.painter.layer_id(), from,
-                                  crate::skin_paint::keep_glass_chrome);
+    crate::skin_paint::tone_since(
+        c.ui.ctx(),
+        c.painter.layer_id(),
+        from,
+        crate::skin_paint::keep_glass_chrome,
+    );
 }
 
 pub fn glass_chip(c: &Card, x: f32, y: f32, w: f32, h: f32, r: f32, level: f32) {
@@ -955,18 +1162,47 @@ pub fn glass_chip(c: &Card, x: f32, y: f32, w: f32, h: f32, r: f32, level: f32) 
     let lv = level.clamp(0.0, 1.0);
     let r = r.min(w.min(h) * 0.5);
     // 主体：极淡的白。静止时几乎只有一圈边，悬停才「亮起来」。
-    c.fill(x, y, w, h, r, Color32::from_white_alpha((10.0 + 30.0 * lv) as u8));
+    c.fill(
+        x,
+        y,
+        w,
+        h,
+        r,
+        Color32::from_white_alpha((10.0 + 30.0 * lv) as u8),
+    );
     // 顶部内高光：玻璃厚度的来源。整块高度做渐变，越往下越透明，
     // 这样不会切出一条和圆角对不上的横边。
-    c.vgrad(x, y, w, h, r, Color32::from_white_alpha((22.0 + 24.0 * lv) as u8), Color32::TRANSPARENT);
+    c.vgrad(
+        x,
+        y,
+        w,
+        h,
+        r,
+        Color32::from_white_alpha((22.0 + 24.0 * lv) as u8),
+        Color32::TRANSPARENT,
+    );
     // 底部内暗边：下缘「实」一点，不然整片会飘。
     if h >= 8.0 {
         let inset = r * 0.8;
-        c.fill(x + inset, y + h - 1.0, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_black_alpha(28));
+        c.fill(
+            x + inset,
+            y + h - 1.0,
+            (w - inset * 2.0).max(1.0),
+            1.0,
+            0.5,
+            Color32::from_black_alpha(28),
+        );
     }
     // 白边 1.5px：液态玻璃要细、要亮，粗了就成描边贴纸。
-    c.stroke(x + 0.75, y + 0.75, w - 1.5, h - 1.5, (r - 0.75).max(0.0), 1.5,
-             Color32::from_white_alpha((120.0 + 60.0 * lv) as u8));
+    c.stroke(
+        x + 0.75,
+        y + 0.75,
+        w - 1.5,
+        h - 1.5,
+        (r - 0.75).max(0.0),
+        1.5,
+        Color32::from_white_alpha((120.0 + 60.0 * lv) as u8),
+    );
     chrome_since(c, from);
 }
 
@@ -977,10 +1213,29 @@ pub fn glass_disc(c: &Card, cx: f32, cy: f32, r: f32, level: f32) {
     }
     let from = chrome_mark(c);
     let lv = level.clamp(0.0, 1.0);
-    c.circle(cx, cy, r, Color32::from_white_alpha((10.0 + 28.0 * lv) as u8));
+    c.circle(
+        cx,
+        cy,
+        r,
+        Color32::from_white_alpha((10.0 + 28.0 * lv) as u8),
+    );
     // 上半圈内高光（光源在上方，和 GPU 那边的 line/rim 同一个约定）。
-    c.arc(cx, cy, r - 0.8, PI * 1.12, PI * 1.88, 1.1, Color32::from_white_alpha((26.0 + 30.0 * lv) as u8));
-    c.ring(cx, cy, (r - 0.75).max(0.5), 1.5, Color32::from_white_alpha((110.0 + 60.0 * lv) as u8));
+    c.arc(
+        cx,
+        cy,
+        r - 0.8,
+        PI * 1.12,
+        PI * 1.88,
+        1.1,
+        Color32::from_white_alpha((26.0 + 30.0 * lv) as u8),
+    );
+    c.ring(
+        cx,
+        cy,
+        (r - 0.75).max(0.5),
+        1.5,
+        Color32::from_white_alpha((110.0 + 60.0 * lv) as u8),
+    );
     chrome_since(c, from);
 }
 
@@ -998,14 +1253,27 @@ pub fn glass_groove(c: &Card, x: f32, y: f32, w: f32, h: f32) {
     if h >= 6.0 {
         // 上缘阴影（光被槽壁挡掉）
         let inset = (r * 0.9).min(w * 0.4);
-        c.fill(x + inset, y, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_black_alpha(56));
+        c.fill(
+            x + inset,
+            y,
+            (w - inset * 2.0).max(1.0),
+            1.0,
+            0.5,
+            Color32::from_black_alpha(56),
+        );
     }
     // 下缘反光：只有 1px，多一道就脏
     let inset = (r * 0.9).min(w * 0.4);
-    c.fill(x + inset, y + h - 1.0, (w - inset * 2.0).max(1.0), 1.0, 0.5, Color32::from_white_alpha(26));
+    c.fill(
+        x + inset,
+        y + h - 1.0,
+        (w - inset * 2.0).max(1.0),
+        1.0,
+        0.5,
+        Color32::from_white_alpha(26),
+    );
     chrome_since(c, from);
 }
-
 
 /// 胶囊按钮：悬停提亮、按下轻微缩小，返回 (响应, 内容画布)。
 pub fn capsule<'a>(
@@ -1043,7 +1311,15 @@ pub fn glass_capsule<'a>(
     let (ht, pt) = c.hover_t(&r);
     let k = 1.0 - 0.05 * pt;
     let inner = c.scaled(x + w / 2.0, y + h / 2.0, k);
-    glass_chip(&inner, x, y, w, h, h / 2.0, (level + ht * hover_boost).clamp(0.0, 1.0));
+    glass_chip(
+        &inner,
+        x,
+        y,
+        w,
+        h,
+        h / 2.0,
+        (level + ht * hover_boost).clamp(0.0, 1.0),
+    );
     (r, inner)
 }
 
@@ -1053,4 +1329,3 @@ mod chase;
 mod icons;
 pub use chase::chase;
 pub use icons::*;
-
