@@ -440,7 +440,7 @@ impl App {
         let hand = if self.pomo.running { (self.t as f32 * 1.2) % TAU } else { 0.0 };
         if resting {
             let t=if self.pomo.running && crate::bar_layout::animations_enabled(){self.t as f32}else{0.0};
-            crate::focus_bar::tea(&c.scaled(rx,ry,2.2),rx,ry,frac,t);
+            crate::focus_bar::tea(&c.scaled_static(rx,ry,2.2),rx,ry,frac,t);
         }else{paint::stopwatch(c, rx, ry + 0.5, 15.5, hand * run, theme::WHITE);}
 
         let secs = self.pomo.remaining.max(0.0).ceil() as u32;
@@ -542,7 +542,7 @@ impl App {
         let kx = lerp(172.0, 186.0, on);
         c.circle(kx, 46.0, 8.0, theme::WHITE);
         let ink = mix(Color32::from_gray(140), accent, on.clamp(0.0, 1.0));
-        paint::bell(&c.scaled(kx, 46.0, 0.9), kx, 46.0, ink, 0.0);
+        paint::bell(&c.scaled_static(kx, 46.0, 0.9), kx, 46.0, ink, 0.0);
         if sw.clicked() {
             if sit {
                 self.settings.sit_remind = !self.settings.sit_remind;
@@ -1576,7 +1576,7 @@ impl App {
                 let from=paint::chrome_mark(c);
                 if glassy { paint::glass_chip(c, 182.0,33.0,100.0,19.0,6.0, 0.10); } else { c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD); }
                 paint::chrome_since(c,from);
-                (c.hit(182.0,33.0,100.0,19.0,"mail-account-filter"),c.scaled(232.0,42.5,1.0))
+                (c.hit(182.0,33.0,100.0,19.0,"mail-account-filter"),c.scaled_static(232.0,42.5,1.0))
             };
             b_acct.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
             if hit_acct.on_hover_text("选择要看的邮箱账号").clicked(){
@@ -1619,7 +1619,7 @@ impl App {
                 let from=paint::chrome_mark(c);
                 if glassy { paint::glass_chip(c, 182.0,33.0,100.0,19.0,6.0, 0.10); } else { c.fill(182.0,33.0,100.0,19.0,6.0,theme::CARD); }
                 paint::chrome_since(c,from);
-                (c.hit(182.0,33.0,100.0,19.0,"mail-account-filter"),c.scaled(232.0,42.5,1.0))
+                (c.hit(182.0,33.0,100.0,19.0,"mail-account-filter"),c.scaled_static(232.0,42.5,1.0))
             };
             b_acct.text(232.0,47.0,&c.fit(&filter_label,10.0,W::Semibold,96.0),10.0,W::Semibold,if self.mail.manage.account_filter.is_some(){theme::WHITE}else{theme::GRAY},H::Center);
             if hit_acct.on_hover_text(format!("选择要看的邮箱账号\n当前模式：{}",if self.settings.mail_sync_operations{"同步邮箱"}else{"仅本机"})).clicked(){

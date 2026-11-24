@@ -53,7 +53,7 @@ fn liquid(points:&[(f32,f32)],fraction:f32,t:f32)->Vec<(f32,f32)>{
 }
 
 fn tomato(c:&Card,x:f32,y:f32,fraction:f32,t:f32){
-    let c=c.scaled(x,y,0.82);
+    let c=c.scaled_static(x,y,0.82);
     let outline=tomato_outline(x,y+0.7);let ink=theme::RED_TOP;
     fill_polygon(&c,&outline,paint::mix(theme::CARD,ink,0.11));
     fill_polygon(&c,&liquid(&outline,fraction,t),ink);

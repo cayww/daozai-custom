@@ -31,6 +31,9 @@ pub enum TextScale {
     Damped,
     /// 冻结在基准字号：入场动画里只让容器动，文字不参与缩放。
     Frozen,
+    /// 静态倍率：按最终字号重新排版并缓存，不做 mesh transform / UV 内缩。
+    /// 只用于逐帧不变的 `k`；弹簧动画请用 `scaled()` 走 `Damped`，否则每帧重排会抖。
+    Reflow,
 }
 
 /// 把文字 mesh 的 UV 向每个字形 quad 中心内缩 `amount` 个 texel（0..=1，每边一半）。
@@ -218,6 +221,22 @@ impl<'a> Card<'a> {
         c.text_k = None;
         c
     }
+    /// 静态缩放：容器按 `k` 放大，文字按最终字号重新排版后直接画在屏幕上。
+    ///
+    /// 与 [`Self::scaled`] 的区别：`k` 必须逐帧不变，`galley_shape()` 会以
+    /// `font(size * s)` 重排一次并命中 egui 的 galley 缓存，因此不会产生
+    /// 「放大位图字形 → 采到图集相邻黑像素」的黑线，也不需要 `inset_text_uv`。
+    /// 弹簧/逐帧变化的 `k` 请继续用 `scaled()`，否则每帧重排会抖。
+    pub fn scaled_static(&self, cx: f32, cy: f32, k: f32) -> Self {
+        let mut c = self.clone();
+        let center = self.pos(cx, cy);
+        c.origin = center + (self.origin - center) * k;
+        c.s = self.s * k;
+        c.text_scale = TextScale::Reflow;
+        c.text_anchor = None;
+        c.text_k = None;
+        c
+    }
     /// 卡片按 `k_shape` 缩放，但文字只按 `k_text` 缩放。
     ///
     /// 按压果冻（14%、ζ≈0.5）会让文字 mesh 每帧被不同的 `k` 重采样一遍，
@@ -284,6 +303,21 @@ impl<'a> Card<'a> {
     /// 拆出来是为了让测试能逐位比较「不同弹簧相位下字形 mesh 是否稳定」——
     /// 抖动的本质就是同一段文字在相邻帧生成了不同顶点。
     pub fn galley_shape(&self, p: Pos2, g: std::sync::Arc<egui::Galley>, color: Color32) -> Shape {
+        // 静态倍率：按最终字号重排（LayoutJob 完整参与缓存键，固定 k 会命中缓存），
+        // 直接画在 self.pos(p) 上；不做 mesh transform，也不内缩 UV。
+        if matches!(self.text_scale, TextScale::Reflow) {
+            let s = self.s;
+            if (s - 1.0).abs() < 1e-4 {
+                return Shape::galley(self.pos(p.x, p.y), g, color);
+            }
+            let mut job = (*g.job).clone();
+            for section in &mut job.sections {
+                section.format.font_id.size *= s;
+            }
+            job.wrap.max_width *= s;
+            let reflowed = self.ui.ctx().fonts_mut(|f| f.layout_job(job));
+            return Shape::galley(self.pos(p.x, p.y), reflowed, color);
+        }
         let (mut origin, mut s) = (self.origin.to_vec2(), self.s);
         let mode = match self.text_scale {
             TextScale::Auto if self.text_anchor.is_some() => TextScale::Damped,
@@ -991,6 +1025,34 @@ mod gradient_tests {
             let b = at(1.02);
             assert!(a < base && b < a, "UV 应随放大单调内缩：{base} / {a} / {b}");
             assert!((base - a) / base < 0.02, "1% 放大内缩应极小：{base} → {a}");
+        });
+    }
+
+    #[test]
+    fn static_scaled_text_reflows_at_final_size_and_caches() {
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(200.0))),
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| {
+            let c = Card::new(ui, Pos2::ZERO, ui.max_rect());
+            let base = c.galley("静态缩放", 12.0, W::Regular, Color32::WHITE);
+            let shape = || {
+                c.scaled_static(40.0, 24.0, 1.2)
+                    .galley_shape(Pos2::new(4.0, 14.0), base.clone(), Color32::WHITE)
+            };
+            let a = shape();
+            let b = shape();
+            let (Shape::Text(ta), Shape::Text(tb)) = (&a, &b) else {
+                panic!("期望文字图元")
+            };
+            assert!(
+                Arc::ptr_eq(&ta.galley, &tb.galley),
+                "固定倍率必须命中 galley 缓存"
+            );
+            let size = ta.galley.job.sections[0].format.font_id.size;
+            assert!((size - 14.4).abs() < 1e-3, "应按最终字号重排：{size}");
         });
     }
 

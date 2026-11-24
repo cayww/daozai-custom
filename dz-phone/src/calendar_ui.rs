@@ -162,7 +162,7 @@ mod tests {
         }, |ui|{egui::CentralPanel::default().show(ui,|ui|{
             let c=Card::new(ui,egui::Pos2::ZERO,ui.clip_rect());
             source_icon(&c,Source::Calendar(Some(calendar::Provider::DingTalk)),0.0,0.0,20.0);
-            source_icon(&c.scaled(50.0,0.0,1.5),Source::Calendar(Some(calendar::Provider::DingTalk)),50.0,0.0,20.0);
+            source_icon(&c.scaled_static(50.0,0.0,1.5),Source::Calendar(Some(calendar::Provider::DingTalk)),50.0,0.0,20.0);
         });});
         let first=frame(&ctx);let sizes=first.textures_delta.set.values().flatten().map(|delta|delta.image.resolution()).collect::<Vec<_>>();
         assert!(sizes.contains(&[32,32]) && sizes.contains(&[48,48]),"图标应按实际物理像素过滤，而非直接缩小原始大图：{sizes:?}");

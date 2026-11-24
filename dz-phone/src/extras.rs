@@ -221,7 +221,7 @@ pub(crate) fn notice_badge(c: &Card, x: f32, y: f32, a: &Alert) {
             15.0,
         );
     } else {
-        notice_icon(&c.scaled(x, y, 0.85), x, y, a);
+        notice_icon(&c.scaled_static(x, y, 0.85), x, y, a);
     }
 }
 pub(crate) fn messenger_icon(c: &Card, x: f32, y: f32, source: crate::app::Messenger) {
@@ -360,9 +360,9 @@ fn notice_icon(c: &Card, x: f32, y: f32, a: &Alert) {
             crate::calendar_ui::source_icon(c, source, x - 14.0, y - 14.0, 28.0);
         }
         "专注计时" => {
-            crate::paint::stopwatch(&c.scaled(x, y, 0.65), x, y, 8.0, 0.0, theme::RED_TOP)
+            crate::paint::stopwatch(&c.scaled_static(x, y, 0.65), x, y, 8.0, 0.0, theme::RED_TOP)
         }
-        _ => crate::paint::bell(&c.scaled(x, y, 1.7), x, y, theme::GRAY, 0.0),
+        _ => crate::paint::bell(&c.scaled_static(x, y, 1.7), x, y, theme::GRAY, 0.0),
     }
 }
 
@@ -2285,7 +2285,7 @@ impl App {
         }
         if let Some((meeting, _)) = &a.meeting {
             let secondary = Color32::from_gray(174);
-            notice_icon(&nc.scaled(34.0, 46.0, 36.0 / 28.0), 34.0, 46.0, a);
+            notice_icon(&nc.scaled_static(34.0, 46.0, 36.0 / 28.0), 34.0, 46.0, a);
             let now = chrono::Local::now();
             let start = chrono::DateTime::from_timestamp(meeting.start, 0)
                 .unwrap()
