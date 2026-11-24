@@ -45,6 +45,12 @@
 - debug 构建下仍有少量测试 helper 未正确清理 `TexturesDelta`，会触发 egui 0.37 的 debug_assert；发行构建与 release 测试不受影响。
 - 字体“毛刺”没有上游直接修复项；本版本通过系统字体回退与采样策略改善，是否完全符合预期需实机确认。
 
+## 本地构建产物
+
+- `Daozai-Setup-v1.3.0-x64.exe`：9,185,043 B，SHA256 `55f2d0b3f82e8ced9c17a7f73ab423810004121ea00a48abf17b25ec8e3ba0e8`
+- `Daozai-v1.3.0-windows-x64.zip`：11,508,760 B，SHA256 `273a22125546bc6ff0f2e90b6e397d8604c2ccb57ca701aa163e8aa3d66d4d4a`
+- 包内 `daozai.exe` SHA256：`169fee70a6ddc87fa8f5e1617e042b46b44b2e6b5a86a0aac0be4bc683e84785`
+
 ## 上传前确认
 
 - [ ] 文案是否认可
