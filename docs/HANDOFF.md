@@ -1966,3 +1966,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **诊断排除**：TSF compartment（`tsf_compartments()` 探针）在后台采样线程恒读 `(0,0)`，社区推荐的 TSF 路线在岛仔架构下不可用，已移除探针函数；IMM32 的 `imm_native` 随 Shift 100ms 内正确翻转，检测没问题。所有临时诊断代码已清除。
 - **验证**：`cargo check --locked --lib --bins` 通过；全量 **1412 passed / 0 failed / 131 ignored**；release exe `c67fc2074e3246b0`，部署安装目录、启动 PID 24464。
 - **状态**：提交 `2e331f1` 本地 main 未 push；dist 的 v1.3.0 包（19:10）不含此修复，需重打。待用户实机确认快速切换即时刷新。
+
+### 7.0zzv hud_notice 按内容同步，修同类通知不刷新（2026-11-24 20:24–20:36，提交 `e864f8e`，本地未 push）
+
+- **用户反馈**：§7.0zzu 的 HUD 共用通知槽只让「大写↔中英文」跨类型切换实时，但「大写↔小写」「中文↔英文」同类切换通知仍不更新。
+- **根因**：`app.rs` 的绘制快照 `hud_notice` 只在 **title 变化**时从 `notice` 同步（原注释「避免每帧双重 clone」）。同类 HUD 切换 title 相同、body/at 不同 → 绘制层永远显示第一次的内容。日志显示 notice 层明明 REPLACE 了，但绘制没跟上，完全吻合。
+- **修复**：同步条件改为按 `title + body + at` 比较，任一变化即同步；仍只在变化时 clone，无每帧开销。
+- **验证**：`cargo check --locked --lib --tests` 通过；全量 **1412 passed / 0 failed / 131 ignored**；release exe `f70a3cc0c64aab82`，部署安装目录、启动 PID 28608。
+- **状态**：本地 main 未 push；dist 的 v1.3.0 包（19:10）不含此修复，需重打。待用户实机确认同类切换即时刷新。
+- **教训**：通知「入队/替换」与「绘制快照同步」是两层；只修入队层不够，绘制层的 hud_notice 同步条件（只比 title）是隐藏的第二道闸。
