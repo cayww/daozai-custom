@@ -31,7 +31,7 @@ pub struct Snapshot {
     pub network_kind: NetworkKind,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Eq)]
 pub struct Observation {
     pub system: Snapshot,
     pub input: Option<crate::input::State>,
@@ -40,6 +40,16 @@ pub struct Observation {
     /// 不能在主循环消费时实时判断——快速连按时后一次按键会覆盖前一次的授权，
     /// 且发出提示后 clear() 会误清掉下一次切换的授权，导致响应停留在上次状态。
     pub input_switch: bool,
+}
+impl PartialEq for Observation {
+    /// input_switch 是瞬时授权标志：切换窗口 500ms 后从 true 翻回 false，
+    /// 若参与相等性判断，会在状态未变时多发一条 observation + request_repaint。
+    /// 它只在随状态一起送达时有意义，状态没变就无需重发。
+    fn eq(&self, other: &Self) -> bool {
+        self.system == other.system
+            && self.input == other.input
+            && self.fullscreen == other.fullscreen
+    }
 }
 
 /// 跨进程输入法查询和 COM 状态采样留在后台，只在状态改变时唤醒界面。

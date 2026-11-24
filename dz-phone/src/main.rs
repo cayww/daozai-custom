@@ -52,7 +52,11 @@ struct Shell {
     system_rx: std::sync::mpsc::Receiver<daozai::system::Observation>,
     fullscreen: Option<daozai::display_layout::Bounds>,
     input_state:daozai::input::Monitor,
+    // RAII 句柄：不能删。Shortcuts 的 Drop 负责卸载 WH_KEYBOARD_LL 钩子，
+    // 钩子维护 SWITCH_AT，供采样线程判断切换窗口。字段本身不再被读取，
+    // 但句柄必须活到 Shell 结束，否则钩子泄漏。
     #[cfg(windows)]
+    #[allow(dead_code)]
     input_keys:Option<daozai::input::Shortcuts>,
     #[cfg(windows)]
     incoming: Option<daozai::system::Notifications>,

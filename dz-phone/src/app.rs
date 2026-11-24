@@ -2584,12 +2584,14 @@ impl App {
         self.tick(env, dt, elapsed);
         self.sync_device(env);
         self.tick_alerts();
-        // hud_notice 是实际绘制用的快照。必须按 title+body+at 比较同步：
-        // 同类 HUD 切换（中文→英文、大写→小写）title 不变但 body/at 变了，
-        // 旧逻辑只比 title 导致绘制层永远显示第一次的内容。
+        // hud_notice 是实际绘制用的快照。按 title+at 比较同步：
+        // 同类 HUD 切换（中文→英文、大写→小写）title 不变但每次 alert 都刷新
+        // at=self.t，旧逻辑只比 title 导致绘制层永远显示第一次的内容。
+        // 所有 notice 更新都是整条 Some(Alert) 替换并刷新 at，没有原地改 body
+        // 不动 at 的路径，所以比 at 足够，且避免每帧比较可能很长的通知正文。
         // （draw_notice 需要 &mut self，其入参的 clone 无法省，这里仅变化时才 clone。）
-        let content_changed=self.notice.as_ref().map(|a|(&a.title,&a.body,a.at))
-            !=self.hud_notice.as_ref().map(|a|(&a.title,&a.body,a.at));
+        let content_changed=self.notice.as_ref().map(|a|(&a.title,a.at))
+            !=self.hud_notice.as_ref().map(|a|(&a.title,a.at));
         let has_notice=self.notice.is_some();
         if content_changed||!has_notice {self.notice_details=false;}
         if content_changed {if let Some(a)=self.notice.as_ref(){self.hud_notice=Some(a.clone());}}
