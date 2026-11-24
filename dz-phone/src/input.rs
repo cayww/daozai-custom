@@ -252,6 +252,20 @@ mod tests {
         assert_eq!(monitor.observe(Some(chinese(Some(true))),keys.allows(context,now)),None,"一个切换动作只能用于一次提示");
     }
     #[test]
+    fn each_observation_keeps_its_own_switch_authorization(){
+        // 快速连按（中→英→中）：每条状态变化各带自己的授权，互不覆盖。
+        // 旧逻辑在主循环实时判断 + 提示后 clear，第二次切换的授权会被误清，
+        // 导致最后停在「英语」。修法：授权随采样结果一起送达。
+        let mut monitor=Monitor::new(Some(chinese(Some(true))));
+        // 第一条：切英文，带授权 → 提示。
+        assert_eq!(monitor.observe(Some(chinese(Some(false))),true),Some("英语"));
+        // 第二条：紧接切回中文，仍带自己的授权 → 必须提示「中文」，不能被上一条 clear 影响。
+        assert_eq!(monitor.observe(Some(chinese(Some(true))),true),Some("中文"));
+        // 无按键授权的自动变化仍静默。
+        assert_eq!(monitor.observe(Some(chinese(Some(false))),false),None);
+    }
+
+    #[test]
     fn input_shortcuts_are_detected_in_both_modifier_orders(){
         let now=Instant::now();let context=(1,11);
         for (first,second) in [(0xa2,0xa0),(0xa0,0xa2),(0xa4,0xa0),(0x5b,0x20)]{

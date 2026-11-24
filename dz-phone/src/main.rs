@@ -445,9 +445,11 @@ impl Shell {
         {
             while let Ok(observation)=self.system_rx.try_recv(){
                 let next=observation.input;
-                let manual=next.is_some_and(|state|self.input_keys.as_ref().is_some_and(|keys|keys.allows(state.context)));
+                // 授权随 observation 一起送达：采样时刻的按键窗口，而不是消费时刻的实时状态。
+                // 快速连按时实时判断会让后一次按键覆盖前一次，发出提示后 clear() 又会
+                // 误清掉下一次的授权，导致提示停留在上一次切换。
+                let manual=next.is_some_and(|_|observation.input_switch);
                 if let Some(label)=self.input_state.observe(next,manual){
-                    if let Some(keys)=&self.input_keys{keys.clear();}
                     if self.app.settings.system_hud{self.app.alert("键盘输入语言",label,5,false);}
                 }
                 let new=observation.system;

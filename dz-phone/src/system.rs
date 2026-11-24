@@ -14,7 +14,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, GetLastInputInfo, LASTINPUTINFO, SetActiveWindow, keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    GetAsyncKeyState, GetLastInputInfo, LASTINPUTINFO, SetActiveWindow, keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::UI::Notifications::Management::{
@@ -36,20 +36,28 @@ pub struct Observation {
     pub system: Snapshot,
     pub input: Option<crate::input::State>,
     pub fullscreen: Option<crate::display_layout::Bounds>,
+    /// 采样这一刻是否处于切换按键窗口内。必须随状态一起送达，
+    /// 不能在主循环消费时实时判断——快速连按时后一次按键会覆盖前一次的授权，
+    /// 且发出提示后 clear() 会误清掉下一次切换的授权，导致响应停留在上次状态。
+    pub input_switch: bool,
 }
 
 /// 跨进程输入法查询和 COM 状态采样留在后台，只在状态改变时唤醒界面。
 pub fn observe(ctx:eframe::egui::Context,initial:Snapshot,input:Option<crate::input::State>)->Receiver<Observation> {
     let(tx,rx)=mpsc::sync_channel(1);
     std::thread::Builder::new().name("daozai-system".into()).spawn(move||{
-        let mut current=Observation{system:initial,input,fullscreen:None};
+        let mut current=Observation{system:initial,input,fullscreen:None,input_switch:false};
         let mut delivered=None;
         let mut sampled=crate::poll_clock::PollClock::default();
         let mut input_at=sampled;
         loop {
             let identity=crate::input::State::identity();
             let changed=identity.map(|state|(state.context,state.layout))!=current.input.map(|state|(state.context,state.layout));
-            if changed || crate::input::switch_recent() || input_at.ready(std::time::Duration::from_secs(1)){
+            let switching=crate::input::switch_recent();
+            if changed || switching || input_at.ready(std::time::Duration::from_secs(1)){
+                // 先取授权再读状态：SendMessageTimeout 到 IME 可能耗时，读完之后 500ms
+                // 窗口可能已过；用读之前的时刻判断，保证这次状态变化带上正确的授权。
+                current.input_switch=switching;
                 current.input=crate::input::State::read();input_at=crate::poll_clock::PollClock::now();
             }
             if sampled.ready(std::time::Duration::from_millis(500)){
@@ -91,7 +99,9 @@ impl Snapshot {
                 else if p.NetworkAdapter().ok().and_then(|a|a.IanaInterfaceType().ok())==Some(6){NetworkKind::Ethernet}
                 else{NetworkKind::Other}
             }).unwrap_or_default();
-            Self{volume,audio_endpoint,network,network_kind,caps:GetKeyState(0x14)&1!=0}
+            // Caps Lock 必须读全局异步状态：后台采样线程没有消息队列，
+            // GetKeyState 读的是调用线程队列里的状态，会滞后/恒旧。
+            Self{volume,audio_endpoint,network,network_kind,caps:GetAsyncKeyState(0x14)&1!=0}
         }
     }
     pub fn changes(&self, old: &Self) -> Vec<(String, String)> {
