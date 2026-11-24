@@ -1867,3 +1867,15 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **调整**：图片预览压到 220×120、说明合并一行（`{尺寸} · 点击复制`）；文字条目截断 240→180 字。tooltip 完整显示、阴影不再被裁。
 - **验证**：`cargo check --locked --lib` 通过；release exe `9612bdb06f8f4ff0`，已启动 PID 22704 供实机验证。
 - **状态**：提交 `c570cfa` 本地 main，**未 push、未打包、未部署**。
+
+### 7.0zzj 重打 1.3.0 安装包（含剪贴板图片功能 + 用户微调 tooltip）（2026-11-24 16:18–16:22）
+
+- 用户自己把图片预览尺寸从 220×120 改成 180×100（`pages.rs` 一行），提交 `50f9a5a`；随后要求重新打包。
+- 打包前：停掉运行中的 daozai（PID 22704）；删 `dz-phone/dist/` 里旧 v1.3.0 产物（staging 目录 + setup + zip + SHA256SUMS.txt）——脚本明确要求 staging 目录不存在，否则报 "Package directory already exists"。
+- 打包：`dz-phone/scripts/package.ps1`（默认从当前工作区全量构建 + check-runtime + NSIS + ZIP + sha），约 2m59s 完成，运行库检查通过（无外部 C/C++ 运行库依赖）。
+- **产物**（`dz-phone/dist/`，gitignored）：
+  - `Daozai-Setup-v1.3.0-x64.exe` 9,222,840 B，sha `09b3e3e9bfa1ef48`（完整 `09b3e3e9bfa1ef48ab4e3e67f8a37652e7fe8c15756908f8ac455c68cfa2b710`）
+  - `Daozai-v1.3.0-windows-x64.zip` 11,556,201 B，sha `ab2a50b919b165a1`（完整 `ab2a50b919b165a1e7a38ab9bb286f27bdb06b337b4406eefa07eb6df0441cab`）
+  - 包内 exe sha `e9c7e724282e363c`，FileVersion=1.3.0（安装包本身也是 1.3.0）。
+- **注意**：这是**本地重打的同版本包**，与 10:53 那次 v1.3.0（旧 exe）不同，sha 已变；未做静默安装验证、未部署、未发 GitHub release。旧包 sha 见 git 历史/旧 SHA256SUMS。
+- **状态**：本地 main 领先 origin 11 个提交，未 push；工作树干净。未部署到 `D:\software\Daozai`（避免打断用户）；要装请用上面的新包并核对 sha。
