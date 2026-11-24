@@ -67,6 +67,24 @@ const LYRIC_BASE_SIZE: f32 = 11.0;
 const SCROLL_DWELL: f32 = 1.0;      // 句首/句尾停留，先让人看清开头
 const SCROLL_MIN_SPEED: f32 = 22.0; // px/s，约每秒 2 个汉字
 const SCROLL_MAX_SPEED: f32 = 90.0;
+/// 歌词态左侧固定通道的几何（相对胶囊左沿）。关宠物时不留 48px 贴图位，
+/// 封面后缘直接接歌词，避免「关了宠物还空一大段」。纯函数供单测覆盖。
+pub(crate) fn lyric_lane_geometry(rings: usize, pet_on: bool) -> (f32, f32) {
+    let art_right = if rings > 0 { 36.0 + rings as f32 * 20.0 } else { 32.0 };
+    if !pet_on { return (art_right, art_right + LANE_TEXT_GAP); }
+    let pet_center = art_right + LANE_PET_HALF + LANE_ART_GAP;
+    (pet_center, pet_center + LANE_PET_HALF + LANE_TEXT_GAP)
+}
+
+/// 歌词左沿（相对岛体左缘 `left`）：优先让歌词中心对齐岛体中心，
+/// 空间不足时夹在左边界 `text_left`（不压封面/宠物）与右边界 `lane_right`（不压播放条）之间。
+/// 注意 `center_in_lane` 必须是「岛体中心相对 left 的偏移」（= width/2），
+/// 不能传相对 base 原点的 `local_cx`——两套坐标系混用会把歌词整体右移。
+pub(crate) fn lyric_centered_left(center_in_lane: f32, text_left: f32, lane_right: f32, text_w: f32) -> f32 {
+    let centered = center_in_lane - text_w / 2.0;
+    centered.max(text_left).min((lane_right - text_w).max(text_left))
+}
+
 pub(crate) const HUD_TRACK_X: f32 = 48.0;
 pub(crate) const HUD_TRACK_W: f32 = 150.0;
 pub const BAR_W_MIN: f32 = 44.0; // 极简小条
@@ -2412,20 +2430,17 @@ impl App {
     pub(crate) fn pet_space(&self)->f32 {if self.pet_enabled(){44.0}else{0.0}}
     fn lyric_focus_space(&self)->f32 {if self.pomo.running{crate::focus_bar::LYRIC_WIDTH+10.0}else{0.0}}
     fn lyric_bar_width(&self)->f32 {LYRIC_BAR_W+if self.pet_enabled(){48.0}else{0.0}+self.lyric_focus_space()}
-    /// 歌词态左侧固定通道：电量环 → 封面 → 吉祥物，歌词只在通道右侧排版。
+    /// 歌词态左侧固定通道：电量环 → 封面 →（可选）吉祥物，歌词只在通道右侧排版。
     /// 返回 (宠物中心, 歌词左界)，均为相对胶囊左边缘 `left` 的偏移。
     /// 官方把宠物放在「胶囊中心 + 60」，歌词放在「left + content_width - 150」，
     /// 两套基准在专注模式（content_width 缩小）或宽度动画下会互相错位；
     /// 这里把三者统一到 `left` 基准，表情贴图实际宽 48px（cx±24）也计入占位。
+    /// 关闭宠物时不给吉祥物留空位：封面后缘直接接歌词，避免前面一大段空白。
     /// 测试构建返回 None，沿用官方坐标，避免影响 UI 测试的布局断言。
     fn lyric_lane(&self)->Option<(f32,f32)> {
         if cfg!(test) {return None;}
         // 本机与手机电量各自独立，两个环都在时左侧通道要留双份位置。
-        let rings=self.battery_ring_count() as f32;
-        let art_right=if rings>0.0 {36.0+rings*20.0}else{32.0};
-        let pet_center=art_right+LANE_PET_HALF+LANE_ART_GAP;
-        let text_left=pet_center+LANE_PET_HALF+LANE_TEXT_GAP;
-        Some((pet_center,text_left))
+        Some(lyric_lane_geometry(self.battery_ring_count(), self.pet_enabled()))
     }
     /// 歌词排版宽度：右侧给播放指示留出 30px；测试构建保持官方 220px。
     fn lyric_text_width(&self)->f32 {
@@ -4436,15 +4451,14 @@ impl App {
             }
             let shown=c.ui.ctx().animate_value_with_time(id,index as f32,0.18);
             let fade=1.0-(index as f32-shown).abs().min(1.0);
-            // 歌词固定在电量环/封面/宠物右侧的通道里，并在剩余区域居中；
-            // 测试构建沿用官方坐标。galley 本身是左对齐绘制的，这里手动补偿居中。
+            // 歌词通道以岛体中心（吸附时的屏幕中线）为基准居中：
+            // galley 左对齐绘制，手动把中心补偿到 local_cx；左侧固定通道是硬边界，
+            // 文字再长也不许盖住封面/宠物。测试构建沿用官方坐标。
+            let text_w=galley.size().x/c.s;
             let lyric_left=match self.lyric_lane() {
-                Some((_,text_left))=>{
-                    let avail=(content_width-LANE_RIGHT_PAD-text_left).max(90.0);
-                    // 短歌词在歌词通道内完整居中；长歌词放不下时由后面的横向滚动接管。
-                    let centering=(avail-galley.size().x/c.s).max(0.0)/2.0;
-                    text_left+centering
-                },
+                // 岛体中心相对左缘 left 的偏移 = width/2（left = local_cx - width/2）。
+                // 传 local_cx 会混用 base 原点与 left 两套坐标系，把歌词整体右移。
+                Some((_,text_left))=>lyric_centered_left(width/2.0,text_left,content_width-LANE_RIGHT_PAD,text_w),
                 None=>content_width-LYRIC_BAR_W/2.0,
             };
             // 长歌词横向滚动：句首停留后匀速推进，到尾部停住，换句复位。
@@ -5296,6 +5310,33 @@ mod lyric_scroll_tests {
         assert!((lyric_scroll_offset(2.0,30.0,100.0)-30.0).abs()<0.01);
         // 到尾部就停住，不会滚出空白。
         assert_eq!(lyric_scroll_offset(60.0,30.0,100.0),100.0);
+    }
+
+    #[test]
+    fn lyric_lane_leaves_no_gap_when_pet_is_off(){
+        // 关宠物：封面后缘直接接歌词，不能留 48px 的宠物空位。
+        let (pet_on_center, pet_on_left)=lyric_lane_geometry(1,true);
+        let (_, pet_off_left)=lyric_lane_geometry(1,false);
+        assert_eq!(pet_on_center, 36.0+20.0+LANE_PET_HALF+LANE_ART_GAP);
+        assert_eq!(pet_on_left, pet_on_center+LANE_PET_HALF+LANE_TEXT_GAP);
+        assert_eq!(pet_off_left, 36.0+20.0+LANE_TEXT_GAP);
+        assert!((pet_on_left-pet_off_left).abs() > 40.0, "关宠物应收回约 52px 空位");
+        // 无电量环时基准是 32。
+        let (_, no_ring_off)=lyric_lane_geometry(0,false);
+        assert_eq!(no_ring_off, 32.0+LANE_TEXT_GAP);
+    }
+
+    #[test]
+    fn lyric_text_centers_on_island_midline(){
+        // 岛宽 320，中心相对左缘 = 160；文字宽 120 → 左沿 100，中心正好 160。
+        let (text_left,lane_right,text_w,center)=(60.0,280.0,120.0,160.0);
+        assert_eq!(lyric_centered_left(center,text_left,lane_right,text_w),100.0,
+            "短歌词中心必须落在岛体中线，不能像旧代码那样整体右移");
+        // 短文字（如「间奏」）同样居中：宽 24 → 左沿 148，中心 160。
+        assert_eq!(lyric_centered_left(160.0,60.0,280.0,24.0),148.0);
+        // 岛体很窄/文字很长时夹在通道内，不越界。
+        assert_eq!(lyric_centered_left(80.0,60.0,280.0,120.0),60.0);
+        assert_eq!(lyric_centered_left(300.0,60.0,280.0,120.0),160.0);
     }
 
     #[test]
