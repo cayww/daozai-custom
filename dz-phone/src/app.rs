@@ -4456,9 +4456,16 @@ impl App {
             // 文字再长也不许盖住封面/宠物。测试构建沿用官方坐标。
             let text_w=galley.size().x/c.s;
             let lyric_left=match self.lyric_lane() {
-                // 岛体中心相对左缘 left 的偏移 = width/2（left = local_cx - width/2）。
-                // 传 local_cx 会混用 base 原点与 left 两套坐标系，把歌词整体右移。
-                Some((_,text_left))=>lyric_centered_left(width/2.0,text_left,content_width-LANE_RIGHT_PAD,text_w),
+                Some((_,text_left))=>{
+                    // 歌词对齐「左侧图标右缘 → 播放条左缘」这段可用区的中点，
+                    // 让左右空隙视觉相等。只对齐岛体中心(width/2)会因左侧图标占位
+                    // 而让右边空出一大段。播放条中心在 content_width-21、宽约 15.6，
+                    // 左缘取 content_width-29 留一点余量。
+                    let gap_right=content_width-29.0;
+                    let mid=(text_left+gap_right)/2.0;
+                    // 右边界用播放条左缘（而非 LANE_RIGHT_PAD），否则中点被夹回去。
+                    lyric_centered_left(mid,text_left,gap_right,text_w)
+                },
                 None=>content_width-LYRIC_BAR_W/2.0,
             };
             // 长歌词横向滚动：句首停留后匀速推进，到尾部停住，换句复位。
