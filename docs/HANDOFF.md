@@ -1843,3 +1843,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **hover 预览**（`pages.rs`）：剪贴板条目从 `on_hover_text`（400 字截断）改为 `on_hover_ui`——图片条目显示等比放大预览（最大 340×240，用已缓存的 `clip_thumbs` 纹理）+ 尺寸/点击提示；文字条目用 `ScrollArea(max_height=200)` 显示全文可滚动，不再截断。`TextureHandle::size_vec2` 改 `resolution_vec2`（0.37 已 rename）。
 - **验证**：grep 编译 `cargo check --locked --lib` 通过；剪贴板相关 14 个测试全过（含之前的 1409 全量基线，本轮未再跑全量）；release exe `fb7693cade1388b5`（诊断版）/ 最终源码待重建。构建踩坑：用户正在跑的 exe 占用导致 `failed to remove file ... 拒绝访问 (os error 5)`，停掉 PID 后重建成功。
 - **状态**：提交 `52b7c70` 本地 main，**未 push、未打包、未部署**。已启动 `fb7693cade1388b5`（PID 33504）供用户实机验证 hover 预览与滚动。**待确认**：① 图片 hover 显示放大图；② 长文字 hover 可滚动；③ 复制图片进历史（已由日志实证）。
+
+### 7.0zzg 剪贴板 tooltip 滚动不再被列表翻页拦截（2026-11-24 15:47–16:00，提交 `bad5555`，本地未 push）
+
+- **现象**：hover 剪贴板条目弹出的长文 ScrollArea 滚动时，滚轮被岛仔自己的列表翻页/翻页逻辑抢走，tooltip 内容滚不动。
+- **根因**：`App::frame` 的自定义滚轮处理（2737 行起）在 UI 绘制**之前**执行，直接 `raw_scroll_y(&ctx)` 读原始 `MouseWheel` 事件并 `retain` 清空，完全不管 tooltip；`pages.rs` 的 `on_hover_ui` 在同一次 UI pass 的更晚阶段才注册 ScrollArea，事件已被消费。
+- **修复**：`pages.rs` 文字 tooltip 的 ScrollArea 在 `ui.response().contains_pointer()` 为真（鼠标真的移入滚动区）时，把当前毫秒时间戳写进 `ctx.data` 的 `CLIP_TOOLTIP_KEY`；`app.rs` 的滚轮分支先查该标记（`tooltip_open_last_frame`，120ms 内有效），命中则跳过翻页、不清空 `MouseWheel` 事件，让 egui 的 ScrollArea 正常消费。鼠标还在列表上未移入 tooltip 时标记不写，滚轮照常翻列表——避免「tooltip 刚弹出就滚不动」的死角。
+- **坑**：egui 0.37 没有公开的全局 `is_tooltip_open()` / `prev_pass_state()`（后者是 pub(crate)），`Context::frame_nr()` 也不存在；只能用 `ctx.data` 自己传状态 + `chrono::Local::now().timestamp_millis()` 作时间基准。`ScrollArea::show()` 的 `inner` 是闭包的返回值（`()`），不能取 `.response.hovered()`，要在闭包内用 `ui.response()`。
+- **验证**：`cargo check --locked --lib` 通过；剪贴板相关 14 个测试全过；release exe sha `eea7dd5fe7194d08`，已启动 PID 27716 供用户实机验证。
+- **状态**：提交 `bad5555` 本地 main，**未 push、未打包、未部署**。待用户确认：hover 长文 tooltip 内滚动只滚文字、不触发列表翻页；鼠标在列表上时滚轮仍翻列表。
