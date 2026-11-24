@@ -85,6 +85,47 @@ pub(crate) fn lyric_centered_left(center_in_lane: f32, text_left: f32, lane_righ
     centered.max(text_left).min((lane_right - text_w).max(text_left))
 }
 
+/// KTV 逐字高亮：按本句时间进度推算「唱到第几个字」。
+/// 无逐字时间戳时按字数均分，0 → 0 个字唱完，1 → 全部唱完。
+/// 标点/空格也算一个字位，唱过去时不突兀。
+pub(crate) fn lyric_sung_chars(count: usize, progress: f32) -> usize {
+    if count == 0 { return 0; }
+    (progress.clamp(0.0, 1.0) * count as f32).floor() as usize
+}
+
+/// 生成 KTV 双色 galley：已唱的字实心（深），未唱的字半透明（浅）。
+/// 两段用同一 font / wrap / halign，保证字形位置与纯色 galley 完全一致——
+/// 居中、滚动、裁剪几何都沿用原 galley，只把绘制换成这版。
+pub(crate) fn karaoke_galley(
+    ctx: &egui::Context,
+    text: &str,
+    size: f32,
+    sung: usize,
+    wrap_width: f32,
+    single_line: bool,
+) -> std::sync::Arc<egui::Galley> {
+    let text = crate::rtl_text::display(text).into_owned();
+    let font = theme::font(size, W::Semibold);
+    let mut job = egui::text::LayoutJob::default();
+    job.halign = egui::Align::Min;
+    job.wrap.break_anywhere = !single_line;
+    if single_line { job.wrap.max_rows = 1; }
+    let chars: Vec<char> = text.chars().collect();
+    let split = sung.min(chars.len());
+    let deep = Color32::WHITE;                       // 唱过：实心白（深色）
+    let light = Color32::from_white_alpha(110);      // 未唱：半透白（浅色）
+    if split > 0 {
+        job.append(&chars[..split].iter().collect::<String>(), 0.0,
+            egui::TextFormat::simple(font.clone(), deep));
+    }
+    if split < chars.len() {
+        job.append(&chars[split..].iter().collect::<String>(), 0.0,
+            egui::TextFormat::simple(font, light));
+    }
+    job.wrap.max_width = if single_line { f32::INFINITY } else { wrap_width };
+    ctx.fonts_mut(|fonts| fonts.layout_job(job))
+}
+
 pub(crate) const HUD_TRACK_X: f32 = 48.0;
 pub(crate) const HUD_TRACK_W: f32 = 150.0;
 pub const BAR_W_MIN: f32 = 44.0; // 极简小条
@@ -1114,6 +1155,8 @@ pub struct App {
     pub(crate) ly_worker: Option<std::thread::JoinHandle<()>>,
     pub(crate) show_lyrics: bool,
     island_lyric_layout: Option<std::sync::Arc<egui::Galley>>,
+    /// KTV 逐字高亮：当前句文本与本句进度（0..1），绘制时据此分深浅两段。
+    island_lyric_karaoke: Option<(String, f32)>,
     island_lyric_cache: Option<LyricLayoutCache>,
     /// 长歌词滚动参数；Some 表示当前句放不下、正在横向滚动。
     island_lyric_scroll: Option<LyricScroll>,
@@ -1476,6 +1519,7 @@ impl App {
             ly_worker: None,
             show_lyrics: initial_lyrics,
             island_lyric_layout: None,
+            island_lyric_karaoke: None,
             island_lyric_cache: None,
             island_lyric_scroll: None,
             island_lyric_scroll_key: (None,String::new()),
@@ -2315,7 +2359,7 @@ impl App {
     }
 
     fn update_island_lyric_layout(&mut self,ctx:&egui::Context) {
-        if !self.island_lyrics_active(){self.island_lyric_layout=None;self.island_lyric_scroll=None;return;}
+        if !self.island_lyrics_active(){self.island_lyric_layout=None;self.island_lyric_karaoke=None;self.island_lyric_scroll=None;return;}
         // 文本与时间窗先取成自有值：下面要写 self 的字段，不能还借着 self.ly。
         let current=self.island_lyric().map(|(index,line)|(index,line.to_owned()));
         let lyrics=self.ly.lyrics.as_ref().filter(|lyrics|lyric_key_matches(&self.ly.key,&self.media)
@@ -2404,6 +2448,9 @@ impl App {
         }
         self.island_lyric_scroll=(overflow>0.5)
             .then_some(LyricScroll{overflow,speed:lyric_scroll_speed(overflow,window.unwrap_or(0.0))});
+        // KTV：歌名/前奏/间奏不做逐字高亮，只有同步歌词的分句才变色。
+        self.island_lyric_karaoke=(!cfg!(test) && !title && current.is_some())
+            .then(||(text.clone(),progress));
         self.island_lyric_layout=Some(galley);
     }
 
@@ -4479,7 +4526,18 @@ impl App {
                 Some((_,text_left))=>c.clipped(left+text_left,0.0,(content_width-LANE_RIGHT_PAD-text_left).max(90.0),BAR_H),
                 None=>c.clone(),
             };
-            lyric_c.painter.galley(position,galley,if lyric.is_some(){theme::WHITE}else{theme::GRAY});
+            // KTV 逐字高亮：已唱实心白、未唱半透白。双色 galley 只在绘制时生成，
+            // 几何（居中/滚动/裁剪）仍用上面的纯色 galley，两者字形位置一致。
+            if let Some((k_text,k_progress))=&self.island_lyric_karaoke {
+                let chars: Vec<char> = k_text.chars().collect();
+                let sung=lyric_sung_chars(chars.len(),*k_progress);
+                let single=self.island_lyric_scroll.is_some();
+                let color_galley=karaoke_galley(c.ui.ctx(),k_text,LYRIC_BASE_SIZE,sung,
+                    self.lyric_text_width(),single);
+                lyric_c.painter.galley(position,color_galley,Color32::WHITE);
+            } else {
+                lyric_c.painter.galley(position,galley,if lyric.is_some(){theme::WHITE}else{theme::GRAY});
+            }
             paint::playback_bars(&c,left+content_width-21.0,center_y,self.t,self.media.playing,theme::WHITE);
             if self.pomo.running {
                 let alpha=smoothstep(0.88,1.0,(width-content_width)/self.lyric_focus_space());
@@ -5331,6 +5389,19 @@ mod lyric_scroll_tests {
         // 无电量环时基准是 32。
         let (_, no_ring_off)=lyric_lane_geometry(0,false);
         assert_eq!(no_ring_off, 32.0+LANE_TEXT_GAP);
+    }
+
+    #[test]
+    fn karaoke_sung_chars_follow_line_progress(){
+        // 10 个字：进度 0 没唱、0.25 唱 2 个、0.99 唱 9 个、1.0 全唱。
+        assert_eq!(lyric_sung_chars(10,0.0),0);
+        assert_eq!(lyric_sung_chars(10,0.25),2);
+        assert_eq!(lyric_sung_chars(10,0.99),9);
+        assert_eq!(lyric_sung_chars(10,1.0),10);
+        // 进度异常值被夹紧，空文本安全。
+        assert_eq!(lyric_sung_chars(10,-0.5),0);
+        assert_eq!(lyric_sung_chars(10,2.0),10);
+        assert_eq!(lyric_sung_chars(0,0.5),0);
     }
 
     #[test]
