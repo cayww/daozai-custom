@@ -1254,7 +1254,7 @@ impl App {
                     // 图片预览：画布只有 270 高，条目在 y≈44–124，tooltip 向下展开
                     // 必须够矮才不超窗口底部、阴影不被裁。压到 220×120 + 一行说明。
                     let size = tex.resolution_vec2();
-                    let scale = (220.0 / size.x).min(120.0 / size.y).min(1.0);
+                    let scale = (180.0 / size.x).min(100.0 / size.y).min(1.0);
                     let shown = if scale < 1.0 { size * scale } else { size };
                     ui.add(egui::Image::new((tex.id(), shown)).fit_to_exact_size(shown));
                     ui.label(format!("{full_text} · 点击复制"));
