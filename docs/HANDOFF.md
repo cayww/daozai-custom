@@ -14,7 +14,6 @@
 | **上游合并（2026-11-25 20:30）** | **新分支 `merge-upstream-v0670` HEAD=`9dad7c8`**（双亲：`017108d` + 上游 `0615f19`=v0.6.70），已合入上游 418 提交（v0.6.66–v0.6.70）。141 处冲突按「定制优先」解决：保留 egui 0.37 pin / D3D11＋液态玻璃 / 版本 1.3.0 / ZCode / 定制通知与邮件行为；新增插件集市/SDK、性能与无线设备页、Antigravity、rtl_text、蓝牙设备图标等未冲突模块已纳入。Cargo.toml 增加 sdk-js/sdk-material/sdk-wasm 特性（material 去掉 eframe/direct-composition，改走自绘栈），Cargo.lock 已由 Cargo 重算。release 构建通过，**全量 1456 passed / 0 failed / 138 ignored**。未部署、未推 origin。详见 §7.0zze。 |
 | **egui pin（2026-11-25）** | `90431d979ab1faae2de6d9f736e9d33ca0d31956`（提交 `ec19bd1`，0.37.0，1412 passed；未打包部署） |
 | **文字缩放（2026-11-25）** | 静态倍率走 `TextScale::Reflow` 重排缓存（15 处）；动画文字恒字号、`inset_text_uv` 已删；1413 passed，未部署 |
-| **工作树注意（2026-11-23）** | **当前 main 工作树有约 30 个文件的未提交审查修复（两轮）**：第一轮通知日志打码 / 通知线程重试 / CopyOtp / IMAP connect_timeout / 日历负时长 / focus minutes；第二轮 Fluid 纹理缓存 / 删 renderer.rs 回退链与未接线横幅 API / 邮件 spawn 失败提示 / file: 白名单+桥拦截 / sha256+凭据工具抽取 / 删死方法 / 脚本凭据转义 / 3 个基线测试断言修正。**编译通过、全量 1401 passed / 0 failed / 131 ignored**（基线原有 3 个失败已修）。P2-8 会议扫描改数据签名缓存（非纯时间节流，保留即时提醒）、P2-9 消除通知卡切换的重复 clone，均已第三轮重修完成。**已提交并推送 main `a3b37c4`、tag `v1.2.4` 已推、GitHub release v1.2.4 已发布（含安装包+ZIP，sha 校验一致）、未部署**：`dz-phone\dist\Daozai-Setup-v1.2.4-x64.exe` sha `74879703097f5a36`（8,878,702 B）、ZIP sha `21bbb3943b64a2df`（11,030,564 B）。release：https://github.com/cayww/daozai-custom/releases/tag/v1.2.4。详见 `C:\Users\cay\WorkBuddy AI\2026-11-23-17-18-54\岛仔代码审查报告.md`。另：部署目录 `CUSTOM_BUILD.txt`=custom-135 与文档 custom-129 不一致，待核实。 |
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-134 已打包、未部署（最新，2026-11-19）**：`installer\daozai-setup-custom-134.exe`（11,109,904 B，包 sha `1f2f9df72d88b08d`，0.6.66，内含 exe `2ebc1313b2241ad6` + bridge `9832e44f133f5ac0`，构建自 main `912d636`= 在 950433b 基础上仅更新版本号；1373 passed；静默安装验证通过，详见 §7.0ad）。**custom-133**：`installer\daozai-setup-custom-133.exe`（11,241,513 B，包 sha `a9455e0ad655bb9f`，内含 exe `02786373d87ba563` + bridge `f1ae28626c9db18e`，构建自 main 工作树（告警清理 `2ea229a` + 液态玻璃按钮缩小 + 关配置弹窗收起 + INSTALL-NOTES 反馈日志说明，提交 `14bb37f`）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
 | **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。**【2026-11-21 16:00 更新】当前活跃分支=`research/egui035-migration`（egui 0.35 迁移研究线），HEAD=`6ca92e0`，本行上方旧值（2342d3c/merge-v0666-selective）是主线历史快照、非当前检出；研究分支 release exe sha `60ca4a035ec5eb10`（高 DPI 背景放大修复后，未部署）。详见 §7.0zzg.13。** **【2026-11-22 11:45 更新】同一研究分支 HEAD=`ccff129`（修设置大小/刘海形状/非液态皮肤玻璃残影，见 §7.0zzn），release exe sha `0f2dec64b11eb4c1`，全量 1389 passed；未部署。** **【2026-11-22 15:40 更新】同一研究分支 HEAD=`20d9f6a`，当前 release exe sha `711166f844695b3c`（target/release + 桌面预览目录，已启动 PID 37788）：修刘海展开玻璃铺不满——上轮改 notch_sdf 圆角时 qy 写成 abs(p.y)+(b.y-r)，底部整条判为岛体外致玻璃透明；改 -(p.y)-(b.y-r) 后铺满（数值验证）。同时删掉已移到 shader 的死代码 shape::shadow_ring + 测试。light_follow 测试通过。** **【2026-11-22 21:05 更新】同一研究分支 HEAD=`83459b6`（文字缩放 6% 死区，隔离阻尼比尾振，见 §7.0zzp），release exe sha `136be0d614d9eddec2`（已启动 PID 15688），全量 1391 passed / 0 failed。** **【2026-11-22 20:40 更新】同一研究分支 HEAD=`7cf3b9f`（分栏容器改高斯模糊磨砂、去暗底，见 §7.0zzp），release exe sha `c6b38aea44220ef9`（已启动 PID 21532）；全量 1391 passed / 0 failed / 131 ignored。** **【15:18 历史】HEAD=`81099ba`，exe `560394fee86cb218`（`D:\code\daozai-custom\dz-phone\target\release\daozai.exe` + 桌面预览目录 daozai.exe，已启动）：对照迁移前 5f5b428 找到两个真正根因并修复——① 删除 paint_gpu_glass 里迁移时多加的 rect_stroke 圆角白边（与 shader 刘海轮廓双影不重叠）；② 投影从 egui 移进 HLSL（D3D11 先玻璃后 egui，egui 阴影必然盖住玻璃；迁移前 wgpu 顺序相反才没事），用 SDF 高斯衰减画外阴影，set_shadow→lightcfg.z 传开关。此前 c263a3d/855f56c/c0830c6 修了刘海圆角方向、左右停靠控件 ppp、投影去肩部。教训：迁移 bug 必须先 git 对照迁移前完整绘制流程（含顺序），别自己推导。全量 1392 passed / 2 failed（messenger 基线 flaky）/ 131 ignored；未再全测。早前安装包 daozai-liquid-setup-63 已过时勿用。**|
@@ -1717,14 +1716,97 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **【20:55 追加修正·文字抖动的阻尼归因】**：用户实测「阻尼比调到最大，文字抖动就不明显」。此前 20:45 的审查结论「`c.scaled()+centered_text` 不会造成上下抖动」**只对了一半**：文字*中心*确实是不动点（`b.pos(124,18)≡c.pos(124,18)`），但字形*尺寸*随 `b.s` 连续缩放，所以上下边缘会胀缩，肉眼看就是上下抖。完整链路：`extras.rs` 阻尼比滑杆 → `settings.liquid_zeta`（默认 0.5，范围 0.1–1.0）→ `app.rs:3683-3705` 每帧 `ctl_press[i].tune(300*sk, zt)` / `ctl_appear[i].tune(320*sk, zt)` → `anim.rs::Spring::tune` 的 `c=2ζ√k` 决定过冲/振荡 → `ctl_scale()`（appear=0.82+0.18·pos，press=0.14·sk·pos）→ `c.scaled(124,18,k)` → `Card::paint_galley` 的 `Shape::transform(origin,s)` 缩放 mesh 顶点。**ζ<1 过冲振荡（appear ζ=0.55 约 13%、press ζ=0.5 约 16%），ζ=1 单调收敛**，所以调大阻尼能消除抖动。c2a826a 把旧的 1/8pt 字号量化换成 mesh 连续缩放后，尾振不再被死区吞掉，故重新可见。非 GPU 分支 `paint::capsule` 用 `hover_t`/`animate_bool_with_time`，不吃 `liquid_zeta`。修法候选：文字用未缩放 `c` 画（彻底解耦但按钮放大时字不跟着大）／给文字的 s 加死区或量化（推荐，保留按下放大、吞掉尾振）／文字单独用 ζ=1 弹簧。
 - **【已实施 21:05，提交 `83459b6`】** 采用「给文字的 s 加死区」：`Card::scaled` 记录 `(不动点局部坐标, 基准 s)` 到新字段 `text_pivot`；`Card::paint_galley` 在 `|k-1| < 0.06`（`TEXT_SCALE_DEADZONE`）时把文字锁回基准缩放，并重算 origin 使不动点屏幕位置不变（否则 s=1 会让文字跑偏）。UV 内缩判断也改用生效后的 s。效果：ζ 的 13%/16% 尾振（|k-1|≈0.02）被吞掉，按下 14% 放大仍保留。全局生效，所有经 `scaled()` 的卡片文字都受益，调用点无需改。全量 1391 passed / 0 failed / 131 ignored；exe `136be0d614d9eddec2`，桌面预览目录已同步（旧版备份 `daozai.exe.prev-before-text-deadzone`），PID 15688。
 
+### 7.0zzq paint 分层重构 + 像素对齐 + 文字缩放策略显式化（2026-11-22 21:17–21:35，提交 `ff02623`）
+- **用户诉求**：先审查 `paint.rs`（是干嘛的、是不是缩放/动画、是不是无损缩放），认为它带来的抖动 bug 太多该重构；批准阶段①的 1+2+3（原话「123开始，不进行全量测试」）。
+- **定位**：`paint.rs` 是**绘制层**——`Card` 把面板局部逻辑点映射到屏幕（裁剪/整体透明度/`live` 交互开关），外加全部矢量图标；动画在 `anim.rs`（Spring）+ `app.rs:update_ctl_springs`（`ctl_press`/`ctl_appear`），不在这里。所谓「无损缩放」在位图字形图集上不存在：epaint 0.35 `texture_atlas.rs` 图集恒 `TextureOptions::LINEAR`（无 mipmap），`TextShape::transform` 只缩 mesh 顶点不改 UV，任意 `s` 都是重采样；社区唯一认可做法=固定字号排版 + Transform 缩放（`c2a826a` 已采用，egui #3197 / Bevy B0005），真正无损要 MSDF 或 DirectWrite 矢量文字（egui Issue #56 多年未做），成本大，不做。
+- **改动**（`dz-phone/src/paint/`）：
+  1. **拆文件**：`mod.rs` = Card/文字/图形/交互/玻璃控件；`icons.rs` = 全部矢量图标 + `FileKind`/`file_kind`/`file_glyph` + `clock_width`/`clock` + `pin`/`clipboard_glyph`；`chase.rs` = `CHASE_ROWS` + `chase`。`mod.rs` 末尾 `pub use icons::*; pub use chase::chase;`，`paint::battery(...)`/`paint::chase(...)` 等外部路径全部不变；Card 公有字段继续 pub（`pages.rs:1611 row.s=c.s` 这类直接赋值保留）。
+  2. **像素对齐**：Card 新增私有 `ppp`（`Card::new` 时取 `ctx.pixels_per_point()`），公开 `snap`/`snap_center`/`snapped_pos`。`rect()` 把屏幕边对齐到整像素边界（填充/渐变/裁剪/命中框统一）；`stroke()` 对 ≤2 物理像素的细线把路径对齐到像素中心，1px 白边不再被两个像素各吃一半。`circle/ring/path/seg` 暂不对齐——圆形与斜线本来靠抗锯齿，硬对齐反而破坏图标形状。
+  3. **文字缩放**：新增 `pub enum TextScale { Auto, Follow, Damped, Frozen }` + `Card::text_scale(mode)`；默认 `Auto`（发生过 `scaled()` 时等价 `Damped`，行为与旧 6% 死区一致）。旧实现在死区边界从 1.0 硬跳回 k（字号瞬跳 6%），现改为 `damped_text_scale()`：死区内冻结；`[死区,2×死区]` smoothstep 平滑过渡；更远处跟随 k（按压 14% 完整保留）并量化到 1/64，稳定重采样相位。`text_pivot` 更名 `text_anchor`，语义不变（后写覆盖=只补偿最内层弹簧）。
+- **验证**：`cargo check --lib` 通过（paint 无新增警告）；`cargo test --lib paint::gradient_tests -- --test-threads=1` = **5 passed**（新增 `text_scale_damps_tail_without_boundary_jump`）；`cargo build --release` 成功，exe sha256 前 16 位 `66cd6f33540c2a91`。旧进程（PID 12784，构建时锁住 exe 导致首次 remove 失败）停止后，用新 exe 启动（PID 31496，`target\release\daozai.exe`）。**按用户要求未跑全量测试**，视觉待实机确认。
+- **风险/后续**：像素对齐会让绘制位置移动 ≤0.5 物理像素，布局类 UI 测试未跑；若实机发现整体偏半像素，先检查 `snap`/`snap_center` 的选择。`chase` 每帧重建 mesh、`vgrad` 每帧 `tessellate`、`wrap` O(n²) 未动（阶段②）；无损缩放需 MSDF/DirectWrite（阶段③）。
+
+### 7.0zzr paint 阶段②：追光缓存 + 折行二分（2026-11-22 21:36–21:42，提交 `ad04048`）
+- **背景**：阶段①合入后用户「继续」，按既定阶段②处理 paint 内的两处热点；`vgrad` 每帧 `ctx.tessellate` 经评估只对可见渐变块调用一次，未改（避免为不可测量收益引入回归）。
+- **追光 mesh 缓存**（`src/paint/chase.rs`）：
+  - 新增 `ChaseKey{x0,head,y,thick,tint,hot,s,origin,ppp}` + `ChaseCache{key,mesh}`，存 `ctx.data`（id = `("paint::chase", ui.id())`）。
+  - 播放头量化 `HEAD_QUANTUM=0.25` DIP、`hot` 量化 1/256 后再**同时用于缓存键和建 mesh**——命中与冷重建的顶点完全一致（有测试 `chase_mesh_cache_reuses_subpixel_steps`：0.1 DIP 命中、跨格重建、冷热 mesh 相等）。
+  - 收益：播放时头部每帧只走 ~0.02 DIP，原来每帧重算 ~7000 顶点 × 8 个 `exp/powf`；现在每跨 0.25 DIP 才重建一次，其余帧只克隆已有 mesh。
+- **折行改二分**（`src/paint/mod.rs` `wrap`）：每行二分定位折行点（O(log n) 次排版/行），旧实现每加一个字符重排整行，长错误信息 O(n²)。贪心语义逐条保持（行内尽量满、单字符超宽保留、`\n` 保留空行、`max_lines` 截断走 `fit`）；`max_lines==0` 显式返回空。
+  - 新增测试 `wrap_matches_char_by_char_reference`：把旧逐字符算法留在测试里当基准，对 9 段文本（中文/长 URL/连续换行/表情/混排）× 5 种宽度 × 4 种行数断言结果**完全一致**。
+- **验证**：`cargo test --lib paint:: -- --test-threads=1` = **16 passed**（paint 7 个 + skin_paint 9 个，0.92s）；`cargo check --lib` paint 无警告；`compact_` 像素回归 3 个测试在阶段①后已通过（本轮仅改折行/网格缓存，未再跑）。release 构建成功，exe sha256 前 16 位 `dd4ce428b646eb17`；旧进程停止后新 exe 启动（PID 32032），桌面预览目录已同步（旧版备份 `daozai.exe.prev-before-phase2`）。
+- **剩余（阶段③）**：`vgrad` 预烘焙、`circle/ring/seg` 像素对齐、`inset_text_uv` 每帧深拷贝 galley、MSDF / DirectWrite 矢量文字（真无损）。
+
+### 7.0zzs paint 像素对齐补全：圆点/圆环/轴对齐细线（2026-11-22 21:44–21:50，提交 `2f95230`）
+- **背景**：阶段①只对齐了矩形填充与描边，圆形与斜线当时判断「硬对齐会破坏图标形状」而跳过；用户继续推进后，只补安全的那一半：
+  - `circle`/`ring`：圆心走 `snapped_pos`（像素中心），**半径保持连续**——静态圆点覆盖比例稳定，进度圆环动画不会被量化成 1px 台阶。
+  - `seg`：新增 `seg_points()`，仅当线段轴对齐（端点差 <0.01）且 `width*s*ppp<=2` 时把横向坐标放到像素中心；斜线端点原样返回（不影响图标斜率）。
+  - `stroke`：抽成 `stroke_rect()`，语义未变（薄线中心、粗线边界），便于测试。
+- **新增测试** `pixel_snapping_lands_on_device_pixels`（ppp 1.0/1.25/1.5/2.0）：矩形四边落在设备像素网格、最小 1px 不被吞成 0、薄描边落像素中心、垂直细线中心对齐而斜线端点不动。
+- **验证**：`cargo test --lib paint:: -- --test-threads=1` = **17 passed**；`compact_` 像素回归 3 个测试仍通过（73.75s，共 8 passed）；release 构建成功；exe sha256 前 16 位 `10d7734798ff3394`，新进程 PID 17428；桌面预览目录同步，旧版备份 `daozai.exe.prev-before-snap2`。
+- **剩余**：`vgrad` 预烘焙、`inset_text_uv` 每帧 deep copy galley 缓存、MSDF/DirectWrite（阶段③）。
+
+### 7.0zzt 锁定「量化格内字形不动」不变量（2026-11-22 21:52–21:54，提交随后）
+- `paint_galley` 拆成 `paint_galley` + 纯函数 `galley_shape(pos, galley, color) -> Shape`：后者返回已按当前 `s`/`TextScale` 变形（含 `inset_text_uv`）的图元，绘制函数只剩 `painter.add`。
+- 新增测试 `scaled_text_mesh_holds_still_inside_one_quantum_cell`（ppp 1.0/1.5，中英混排文本）：
+  - 死区内 `k=1.0` 与 `k=1.0+死区/2` 的行网格/顶点逐位相同；
+  - 同一量化格内 `k=1.2` 与 `k=1.2+1/256` 逐位相同；
+  - 跨两格 `k=1.2+1/32` 必须不同（防止死区+量化把动画吞掉）。
+  - 这是抖动的可执行定义：**相邻帧同一段文字生成了不同顶点**。
+- 验证：`cargo test --lib paint:: -- --test-threads=1` = **18 passed**；release 构建 2m47s；exe sha256 前 16 位 `205b1e2375b4c578`，PID 26072；预览目录同步，旧版备份 `daozai.exe.prev-before-galley-shape`。
+
+### 7.0zzu 去掉文字缩放量化：修「长按新增按钮松手文字上下抽动」（2026-11-22 22:00–22:06）
+- 用户反馈：日程页「＋ 新增」长按再松手，文字上下抖动。
+- 层级排查（`calendar_ui.rs:274-288`）：命中区 `c.hit(101,9,46,18,"calendar-add-local")` 画在**未缩放**页卡上；玻璃本体要么由 GPU 透镜画（`Ctl::CalAdd` 已在 app.rs:3580 注册给 `pick_ctl`），要么由 `paint::capsule()` 返回 `(Response, Card)`；文字 `b.centered_text(124,18,...)` 画在 `b = c.scaled(124,18,ctl_scale(CalAdd))` 上——只有这张缩放卡带 `text_anchor`，才走 `Damped`。
+- 根因：`CTL_PRESS=(300,0.5)` 欠阻尼 + `CTL_PRESS_SCALE=0.14*sk`，松手时 k 在 1.16 ↔ 0.84 之间摆；`Damped` 里我加的 1/64 量化每档 ≈0.016 缩放比，回弹一次跨 ~20 档，60fps 下几乎每帧跳一档 → 文字逐帧整档变大变小，看起来就是上下抽动。量化只在死区附近有意义，而死区本来就把那一带锁死了。
+- 修法：`damped_text_scale` 只保留 `|k-1|<6% → 1.0` + `[6%,12%]` smoothstep 过渡 + 更远**连续跟随** k；删掉 `TEXT_SCALE_QUANTUM`。同步更新测试：`text_scale_damps_tail_without_boundary_jump` 增加「死区外连续单调、相邻采样差 ≤0.01」；`scaled_text_mesh_holds_still_inside_deadzone` 改为「死区内逐位相同、死区外连续变化」。
+- 验证：paint 测试 18 passed；release 构建 2m45s；exe sha256 前 16 位 `e2b83718140d08da`，PID 11536；预览目录同步，备份 `daozai.exe.prev-before-noquant`。
+
+### 7.0zzv 文字 UV 内缩硬开关 → 连续内缩（2026-11-22 22:07–22:12）
+- 用户反馈去掉量化后「还是一样的」：说明抽动不是量化造成的。
+- 第二嫌疑：`inset_text_uv` 原先按 `|s-1|>1%` **硬开关**，每次内缩整整 1 texel（每边 0.5 texel）。弹簧回弹时 s 在 1.16↔0.84 间反复穿过阈值，每次穿过字形都突然缩瘦一圈又恢复——正好表现成文字上下抽动。
+- 修法：
+  - 只在放大侧（`s>1`）触发，缩小不再动 UV（缩小时本来就不会采到相邻 texel）；
+  - 内缩量 `amount=((s-1)/0.12).clamp(0,1)` 连续增长，`inset_text_uv(shape, atlas, amount)` 按 amount 缩放每边 0.5 texel；
+  - `amount<=1e-3` 直接跳过，避免 `Arc::make_mut` 的无谓深拷贝。
+- 新增测试 `text_uv_inset_is_one_sided_and_continuous`：`k=0.9` 时 UV 与 `k=1.0` 完全相同；`k=1.01` 只内缩一点点（相对 <2%），`1.02` 比 `1.01` 更收，单调。
+- 验证：paint 测试 19 passed；release 构建 2m59s；exe sha256 前 16 位 `37378ea0fbe42150`，PID 32748；预览目录同步，备份 `daozai.exe.prev-before-uvinset`。
+
+### 7.0zzw 文字缩放与按压弹簧解耦（2026-11-22 22:20–22:26）
+- A/B 结论：把「＋ 新增」的 GPU 透镜换成矢量胶囊、文字仍由 `ctl_scale` 驱动 → **照样抖**。
+  非液态皮肤不抖是因为 `paint::capsule` 按压缩放只有 5%，落在 6% 死区内文字根本不重排，
+  不是有效对照。
+- 机制：`TextShape::transform` 只缩顶点不改 UV，位图字形被每帧不同的 k 重采样，
+  边缘覆盖率连续变化 → 9pt 小字看起来上下抽。
+- 修法：
+  - `Card` 新增私有 `text_k: Option<f32>` 与 `pub fn scaled_text(cx,cy,k_shape,k_text)`：
+    玻璃按 `k_shape` 缩放，文字按显式 `k_text` 缩放；`scaled()` 仍写 `None`（跟随 s）。
+  - `galley_shape` 取值顺序：`Frozen`→1.0；`Some(explicit)`→explicit；`Damped`→死区函数；否则 k。
+  - `app.rs` 新增 `ctl_text_scale(ctl)` = `0.82+0.18*appear`（只跟入场，不含按压果冻）。
+  - `calendar_ui.rs` 的「＋ 新增」改用 `scaled_text(ctl_scale, ctl_text_scale)`：玻璃照旧弹 14%，
+    文字按压时 k=1、字形 mesh 逐帧一致。
+- 测试 `scaled_text_ignores_press_spring_when_text_k_fixed`：k_shape 1.0/1.14/0.9 且 k_text=1.0
+  时行 pos 与全部顶点逐位相同；k_text=1.08 时必须不同。paint 测试 20 passed。
+- 部署 exe `41ab30c53797941d`，PID 33296，备份 `daozai.exe.prev-before-statictext`。
+
+### 7.0zzx 入场也不缩放文字（2026-11-22 22:24–22:30）
+- 用户实测：解耦按压后「长按不抖了」，但**翻页到日程页**入场时文字仍上下抖。
+- 机制：`ctl_appear` 目标 = `reveal`，而 `reveal` 由高度弹簧 `h.pos` 归一化后 smoothstep 得到；
+  翻到日程页 `expanded_height()` 从 PH 变 CALENDAR_H，高度弹簧换目标并回振 → `appear` 跟着回振
+  → 文字 k 每帧变化重采样 → 入场也抖。按压与入场是同一个病根，只是激励源不同。
+- 修法：`＋ 新增` 的 `scaled_text(k_shape, 1.0)` —— 文字恒按 1.0 画，玻璃照旧吃 `ctl_scale`
+  （按压 14% + 入场 spring）。字形 mesh 逐帧完全一致，物理上不会再抖。
+- 相应删掉 `App::ctl_text_scale`（已无调用点，避免 dead_code）。
+- 部署 exe `6e78b71047f52a61`，PID 21796，备份 `daozai.exe.prev-before-frozentry`。
+
 ### 7.0zzy 补齐 eframe 0.35 自研事件循环缺口：截图动作回灌 + 精确重绘（2026-11-23 20:18–20:40，提交 `e34f70f`）
 - **来源与接手状态**：用户给 `C:\Users\cay\WorkBuddy AI\2026-11-23-17-18-54\HANDOFF-交接给新Agent.md` 要求继续。接手时 `main` HEAD=`a3b37c4`（tag `v1.2.4` 已推、release 已发），工作树只有 `winit_runner.rs` 的**设置页缩放冻结修复**（上一轮未提交、未实机验证）。本轮把该修复与下面两项一起提交为 `e34f70f`，**本地提交，未 push**。
-- **① ActionRequested 回灌（§4①，`d3d11/runtime.rs`）**：`process_viewport_commands` 只把 `Screenshot/Cut/Copy/Paste` 写进 `actions`，原代码从不读取。照 eframe 0.35 `glow_integration.rs:715-747` 补消费端：主窗口 `render()` 和 `PlainWindow::paint_output()/render()` 都在 **Present 之前** drain；Screenshot 用 staging texture `CopyResource` 读回，BGRA 自下而上 → 顶原点 RGBA 预乘 `ColorImage`，注入下一帧 `RawInput.events`；Paste 读系统剪贴板并规范化 CRLF。新增单测锁行翻转/通道序/RowPitch padding。
+- **① ActionRequested 回灌（桌面 HANDOFF §4①，`d3d11/runtime.rs`）**：`process_viewport_commands` 只把 `Screenshot/Cut/Copy/Paste` 写进 `actions`，原代码从不读取。照 eframe 0.35 `glow_integration.rs:715-747` 补消费端：主窗口 `render()` 和 `PlainWindow::paint_output()/render()` 都在 **Present 之前** drain；Screenshot 用 staging texture `CopyResource` 读回，BGRA 自下而上 → 顶原点 RGBA 预乘 `ColorImage`，注入下一帧 `RawInput.events`；Paste 读系统剪贴板并规范化 CRLF。新增单测锁行翻转/通道序/RowPitch padding。
 - **②③ repaint 调度（`winit_runner.rs`）**：user event 从 `()` 改为 `Wakeup::{Repaint{viewport_id,when,cumulative_pass_nr}, LayoutDirty}`，照 eframe `run.rs:299-332` 用 `ctx.cumulative_pass_nr_for(id)` 丢弃过期请求。`about_to_wait` 只在 `next_repaint` 到期时画，无请求时 `WaitUntil(now+60s)` 长睡；旧固定 16ms 心跳删除 → 空闲不再 60fps 空转，app 的隐藏 1fps / 静止 15fps 请求终于生效。
 - **④ 主窗口 resize（`winit_runner.rs`）**：`window_event` 不再丢弃 `repaint`；`Resized`/`ScaleFactorChanged` 强制即时重绘。子窗口输入 repaint 同时请求子窗口 Redraw 与父窗口绘制（immediate viewport UI 只在父窗口 `draw_main` 里跑）。
 - **缩放冻结修复保留**：子窗口 resize 置 `layout_dirty` → 发 `Wakeup::LayoutDirty` → 在 `user_event` 里用 `with_event_loop_context` 直接补跑父窗口（Windows 模态 sizing 循环里 `about_to_wait` 会停摆，不能只约下一帧）；`draw_main` 末尾清标记。
 - **验证**：`cargo check --locked --lib --tests --bins` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1402 passed / 0 failed / 131 ignored**；主程序 bin 10 passed（含新增 2 项单测：`readback_tests::screenshot_readback_flips_rows_and_swaps_bgra_to_rgba`、`root_scale_tests::repaint_scheduling_keeps_the_earliest_deadline`）；release exe sha `b7c92525f185de5f`（`dz-phone/target/release/daozai.exe`）。换行符已核对：改动文件仍为纯 LF。
-- **状态与待办**：**未打包、未部署、未实机验证**——需用户拖设置页边框确认缩放跟手、观察空闲 CPU 是否下降；兼容渲染路径当前 `native.wants_frames()` 恒 false，截图回灌属机制补齐，暂无实机触发点。剩余 eframe 缺口见 §4⑤⑥⑦：设备丢失/suspended 恢复、子窗口位置持久化（`process::exit` 不跑 Drop）、viewport info 缺 `monitor_size/outer_rect`；低优先级 `device_event`/accesskit/首帧 viewport 命令未做。工作日志在 `C:\Users\cay\WorkBuddy\2026-11-23-20-18-17\.workbuddy\memory\2026-11-23.md`（**不在项目仓库**）。
+- **状态与待办**：**未打包、未部署、未实机验证**——需用户拖设置页边框确认缩放跟手、观察空闲 CPU 是否下降；兼容渲染路径当前 `native.wants_frames()` 恒 false，截图回灌属机制补齐，暂无实机触发点。剩余 eframe 缺口见桌面 HANDOFF §4⑤⑥⑦：设备丢失/suspended 恢复、子窗口位置持久化（`process::exit` 不跑 Drop）、viewport info 缺 `monitor_size/outer_rect`；低优先级 `device_event`/accesskit/首帧 viewport 命令未做。工作日志在 WorkBuddy 工作区 `.workbuddy/memory/2026-11-23.md`（**不在项目仓库**）。
 
 ### 7.0zzz 补齐 §4⑤⑥⑦：设备恢复 / 位置持久化 / 子窗口几何（2026-11-23 20:43–21:10，提交 `38ee776`）
 - **⑤ 设备丢失 / suspended 恢复**：`d3d11/runtime.rs` 新增 `new_with_ctx()`，重建 D3D 栈时复用原 egui Context；`FrameStats.device_lost` 由 Present 的 `DXGI_ERROR_DEVICE_REMOVED/RESET` 触发。`winit_runner.rs` 的 `suspended` 只丢 window/runtime/viewport 缓存，**保留 Shell 与 Context**；`resumed` 重建 D3D 栈、重绑 `native::Window`（subclass/hook/拖放按 HWND 注册）、重置 `placed`，并用 `device_lost_pending` 在事件方法末尾（避开 `&Window` 与 `&mut self` 借用冲突）重建；失败按 500ms 退避。
@@ -1743,7 +1825,26 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 根因：WinRT 监听器直连 `receive_notification_from`（`main.rs:497`），该路径把正文按普通通知 `otp::extract → mail_privacy::mask` 打码，卡片取不到明文；`notify_phone` 里的 `auto_copy_otp → Cmd::CopyOtp` 从未执行。用户设置 `auto_copy_otp=1` / `phone_alerts=1`，非开关问题。
 - 修复：`receive_notification_from` 对 `phone_channel(&id) && unread.is_none()` 改走 `notify_phone`；新增单测 `winrt_phone_sms_otp_uses_card_and_auto_copy`（标题「手机 · 短信」、正文保留明码、`CopyOtp("834921")`）。提交 `8118370`，CHANGELOG `60a5e20`。
 - 版本升级：Cargo.toml/Cargo.lock 1.2.4→1.2.5（`7f5a467`，**Cargo.lock 只同步包版本号，未加依赖**）。全量 lib **1404 passed / 0 failed / 131 ignored**、bin **11 passed**。
-- **【21:49 已发布】** 用户确认文案后已推送 `main` 与 tag `v1.2.5`，并发布 https://github.com/cayww/daozai-custom/releases/tag/v1.2.5 ，含 2 个资产：`Daozai-Setup-v1.2.5-x64.exe` 8,888,312 B / sha `53465b8fe84b98`、`Daozai-v1.2.5-windows-x64.zip` 11,038,401 B / sha `68d8ea9d3ff552a`；包内 exe sha `5de9f2ec556f355d`。API 复核资产数量/大小/sha 一致；文案草稿留档 `C:\Users\cay\WorkBuddy\2026-11-23-20-18-17\release-notes-v1.2.5.md`。**仍未部署到本机**。
+- **【21:49 已发布】** 用户确认文案后已推送 `main` 与 tag `v1.2.5`，并发布 https://github.com/cayww/daozai-custom/releases/tag/v1.2.5 ，含 2 个资产：`Daozai-Setup-v1.2.5-x64.exe` 8,888,312 B / sha `53465b8fe84b98`、`Daozai-v1.2.5-windows-x64.zip` 11,038,401 B / sha `68d8ea9d3ff552a`；包内 exe sha `5de9f2ec556f355d`。API 复核资产数量/大小/sha 一致；文案草稿留档 WorkBuddy 工作区 `release-notes-v1.2.5.md`。**仍未部署到本机**。
+
+### 7.0zzc egui 0.37 研究分支（2026-11-23 23:20–00:10，分支 `research/egui-main-56f3a0e`）
+- 用户要求单独分支升级到 emilk/egui commit `56f3a0e09308c96c117d1532bbede2f15d47eeab`（workspace 0.37.0，edition 2024，rust-version 1.95）。`eframe/egui/egui_extras/egui-winit` 全部改为 git rev；`log` 因 eframe 要求 `^0.4.35` 从 0.4.34 升到 0.4.35。
+- 主要 API 迁移：`ColorImage.pixels/size` 字段 → `pixels()/pixels_mut()/size()`；`TexturesDelta.set` 改为 `HashMap<TextureId, SmallVec<[ImageDelta;1]>>` 且 Drop 前有未应用 delta 会 debug_assert，渲染端改为借用遍历 + clone ImageData；`DroppedFile` 变 trait（测试加 `TestDroppedFile`）；`Event::Screenshot` 改为 `ScreenshotCallback`，兼容渲染用 `Shell::compat_shot` 跨帧接结果；`PaintWhileHidden` no-op；`schedule_repaint` 不再补 `predicted_dt`（0.37 已不预减一帧）。
+- `Primitive::Clear` 已实现：D3D11 后端新增无混合 blend state，把 Clear rect 与 clip_rect 相交后生成透明黑四边形，按原始 op 顺序与 Mesh 交替绘制并恢复普通 blend state（不再忽略 Shape::Clear）。
+- `examples/lyrics_switch_memory.rs` 的 `font_image_size()` 已改为 `font_image_resolution()`；`cargo check --examples` 通过。
+- 验证：`cargo check --locked --lib --tests --bins --examples` 通过；播放图标连续性测试把画布从 64pt 扩到 96pt，避开 0.37 严格 clip_rect 边界采样。`compact_font_atlas_preserves_settings_pixels_at_multiple_scales` 曾偶发一次图集上限 2048 / scale2 大面积差异，复测稳定通过；测试加了 `DAOZAI_FONT_DEBUG_DIR` 可选导出 before/after PNG 以便复现。最终 release lib **1404 passed / 0 failed / 131 ignored**，release bin **11 passed / 0 failed**。debug 测试仍有旧 helper 未 clear TexturesDelta 的 debug_assert 和布局差异失败，属测试适配未完成，不是发行构建问题。
+- 版本升至 **1.2.6**（仅本分支；与 main 已发布 1.2.5 区分）。状态：**研究分支，未合并 main、未发布、未部署**。
+- **本地包已打（2026-11-24）**：`dz-phone/dist/Daozai-Setup-v1.2.6-x64.exe` 8,645,885 B / sha `0589de891dac74b9`；`dz-phone/dist/Daozai-v1.2.6-windows-x64.zip` 10,851,948 B / sha `542dccbacdcc75d2`；包内 exe sha `1473042ce598bad6`。完整 sha 见 `dz-phone/dist/SHA256SUMS.txt`。未上传 release、未部署。
+- 后续按用户要求直接启用 egui 0.37 的系统字体回退：`Cargo.toml` 增加同 rev 的 `egui_system_font_provider`，`theme::load_fonts` 用 `ctx.set_font_providers(vec![Arc::new(SystemFontProvider::new())])` 安装；自定义 runner 不走 eframe native 集成，必须显式安装。该改动只做了 `cargo check --lib --tests --bins --examples`，按用户要求未跑全量测试；未重新打包。
+- 按用户要求继续启用其他“比现状好”的可选项：`eframe` 增加 `system_fonts` feature（examples/eframe 路径也一致），`egui` 增加 `rayon`（并行 tessellation）与 `monochrome_emoji_fonts`（emoji 兜底）；D3D11 sampler 从 `MIN_MAG_MIP_LINEAR` 改为 `MIN_MAG_LINEAR_MIP_POINT`（字体图集无有用 mip 链，避免采样到更糊的 mip 层）。仅 `cargo check --lib --tests --bins --examples` 通过，未跑全量测试、未重新打包。
+- 结论：0.35 → 56f3a0e 的提交里没有专门修“文字毛刺/抗锯齿”的提交；系统字体提供者只改善缺字/CJK 回退，毛刺是否改善需实机观察。
+- **1.2.7 本地包（2026-11-24，重打包）**：包含系统字体 provider / `system_fonts`、`rayon`、`monochrome_emoji_fonts`、无 mip 采样、过时 API 清理、设置页阴影修复与 messenger 测试修复。`Daozai-Setup-v1.2.7-x64.exe` 9,185,938 B / sha `6d186749d1c07d5a3`；`Daozai-v1.2.7-windows-x64.zip` 11,508,101 B / sha `04d18ebd0e8aca9e3`；包内 exe sha `a8225fe067f505e8`。提交 `1b3633e`。未上传 release、未部署。
+- 过时的 egui 0.35 API 已清理：`Id::new` → `Id::unique`、`TextEdit::vertical_align(Align)` → `align(Align2::LEFT_CENTER)`、`Ui::id` → `scope_id`、`TextureHandle/ImageData/ColorImage::size` → `resolution`、`size_vec2` → `resolution_vec2`。`ImeEvent::Enabled/Disabled` 在 0.37 仅 deprecated 但仍保留语义，测试与 app 处理处加局部 `#[allow(deprecated)]`，避免改坏输入法模拟。`cargo check --lib --tests --bins --examples` 的 deprecated warning 从 121 降到 0。
+- 设置页窗口阴影闪动：根因是每帧都发 `ViewportCommand::SetTheme`，DWM 反复重描窗口阴影。新增 `App::settings_window_theme_sent`，只在深浅主题真正变化时发送；相关测试改为断言主题未变时不重复 SetTheme。
+- 验证：release bin 11 passed；release lib 1403 passed / 1 failed / 131 ignored，唯一失败 `messenger::windows::tests::exited_messenger_accounts_are_removed_individually`，与真实企业微信/微信进程列表有关，和本次改动无关。
+- D3D11 选卡策略已完善：`main.rs` 启动时把 `Settings::load().liquid_prefer_dgpu` 显式传给 `winit_runner::run(prefer_dgpu)`，不再写 `DAOZAI_LIQUID_PREFER_DGPU` 环境变量；`D3d11Runtime::create_device_swap` 按快照选择适配器。关闭时保持原 `EnumAdapters(0)`；开启时枚举前 16 个 `IDXGIAdapter1`，跳过软件适配器与 Microsoft Basic Render Driver，按「独立显存更大 + 独显优先（NVIDIA/AMD，Intel 独立显存 ≥1GiB 视为独显）」排序；找不到独显则回退默认适配器。设备重建沿用同一快照。设置页「优先独立显卡」文案已同步改为该行为说明。
+- 验证：`cargo check --lib --tests --bins --examples` 通过；release lib **1405 passed / 0 failed / 131 ignored**，bin **11 passed / 0 failed**。
+- 下一步若继续：①清掉所有测试 helper 的 TexturesDelta；②实机验证 D3D11 Clear、兼容渲染截图、系统字体回退、设置页阴影与混合显卡选卡。
 
 ### 7.0zzc 剪贴板历史支持图片（2026-11-24 14:30–15:05，提交 `eb0b215`，本地未 push）
 
