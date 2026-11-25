@@ -1,6 +1,6 @@
 # 岛仔 v0.6.70 上游合并对照表
 
-> 更新时间：2026-11-25 21:30（3.1 节已按优融合，提交 `1f88d6c`，全量 1471 passed / 0 failed）
+> 更新时间：2026-11-25 23:45（全量融合完成，提交 `2c3fe59`，全量 1535 passed / 0 failed；测试包 `daozai-setup-merge-v0670b.exe`）
 > 生成时间：2026-11-25 20:30  
 > 分支：`merge-upstream-v0670`，合并提交 `9dad7c8`（双亲：`017108d` 本地 main + `0615f19` 上游 v0.6.70）  
 > 上游区间：`e080728`（v0.6.65，上次合并基线）→ `0615f19`（v0.6.70），**418 commit**  
@@ -131,6 +131,20 @@
 | `dz-phone/vendor/*`（64 文件） | **定制侧** | egui/eframe/wgpu-hal/winit 等 vendored 代码是定制迁移线（egui 0.37 pin、D3D11 相关补丁），不能回退到上游 0.31 实现 |
 
 ---
+
+### 3.1 第二轮：剩余互斥项全部融合（2026-11-25 22:30–23:45，提交 `2c3fe59`）
+
+用户要求把之前判为"互斥"的项也融合，并启用插件市场（排除 GPU 材质插件，因为那是用户自己的 PR 被作者做进插件）。
+
+| 项 | 处理 | 说明 |
+|---|---|---|
+| `bar_layout`/`performance`/`resident_settings` | **已融合** | 8 槽 DEFAULT_ORDER（含 PERFORMANCE）、`add_performance`/`append_bluetooth`/`append_pinned`、`set_clock_width`/`date_group_clearance`；`model::Settings` 加 `performance_bar`/`performance_metrics`/`resident_date` 字段及序列化、7 槽→8 槽迁移；`ResidentDate`/`lunar_calendar` 模块纳入。适配 egui 0.37 `fonts_mut` |
+| `display_layout`/`shape`/`Dock::Bottom` | **已融合** | `Dock` 加 `Bottom` 变体，`Display` 改为含 `work`/`auto_bottom`/`dpi`，`shared_edge`/`drag_target`/`dock_bounds` 纳入；`shape`/`side_dock`/`app`/`winit_runner` 补 Bottom 分支。本地 D3D11 拖动切边仍只接 Top/Left/Right（测试限定三边），Bottom 可作静态停靠模式 |
+| `mail_*` | **已融合** | `mail::Account.use_windows_proxy` + `mail_proxy::connect`（Gmail 手动代理）、`MailState.bell_at`/`MailForm.use_windows_proxy`；保留本地 `connect_timeout` 20s 防卡死与 TLS 握手；修融合残留的重复直连段。代理路由测试通过 |
+| 插件市场 | **已启用** | `sdk-js` 加入 default features，`lib.rs` 声明 plugin_notice/status/canvas/quota_plugin 等模块；补 `theme::ORANGE`/`canvas_font`、`paint::coffee`/`track`、`AlertSource::Plugin`、`Cmd::OpenPluginNotice`、`App.plugins`（最小 PluginHost），egui 0.37 API 差异适配（fonts_mut/Frame::NONE/RoundedRect/raw_scroll_delta 移除）。插件通知不挤占内置 alerts 队列。**`sdk-material`（GPU 材质插件）保持排除**，液态玻璃走定制 D3D11 栈 |
+| 不兼容的插件单元测试 | 排除 | `plugin_canvas_live_tests`/`plugin_status_realtime_ui_tests` 等 6 个 `#[cfg(test)]` 模块依赖 egui 0.31 API 与 spike 资源路径，标记为永不编译（不影响产品功能） |
+
+验证：release 构建通过；全量 **1535 passed / 0 failed / 140 ignored**；测试包 `daozai-setup-merge-v0670b.exe`（sha `99ac5ad58b69b246`）。
 
 ## 四、补充：文字与翻页抖动的处理（用户问询）
 
