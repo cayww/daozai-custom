@@ -738,7 +738,8 @@ impl App {
                 input.union(arrow)
             }).inner
         });
-        self.weather.cities.update(&self.weather.city_input,self.t);
+        if !ui.is_enabled() {return false;}
+        if !ui.ctx().input(|i|i.events.iter().any(|e|matches!(e,egui::Event::Ime(egui::ImeEvent::Enabled|egui::ImeEvent::Preedit{..})))){self.weather.cities.update(&self.weather.city_input,self.t);}
         if self.weather.cities.pending() && self.weather.city_input.trim().chars().count()>=2 {ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));}
         let mut selected=None;
         let saved=self.settings.weather_saved.clone();
@@ -1104,22 +1105,32 @@ impl App {
     pub(crate) fn weather_settings(&mut self, ui: &mut egui::Ui) {
         use crate::extras::{settings_card, settings_hint, settings_label};
         use crate::settings_theme::color;
+        // 已打开的候选浮层不会继承父级禁用状态。
         let ctx=ui.ctx().clone();
         let accent=color(&ctx,Color32::from_rgb(96,164,255),Color32::from_rgb(34,108,220));
         ui.add_space(4.0);
+        // 当前天气放在最上面；所选来源还没应用时不显示，避免把默认源的数据混进和风草稿。
+        let applied=self.weather_source.displayed==self.weather_source.selected;
+        if applied {
+            self.weather_settings_hero(ui);
+            ui.add_space(5.0);
+            ui.horizontal_wrapped(|ui|{
+                ui.label(egui::RichText::new("天气数据来自").size(11.5).color(ui.visuals().weak_text_color()));
+                let source=self.weather_source.displayed;ui.hyperlink_to(source.name(),source.url());
+                ui.label(egui::RichText::new("· 离线时保留上次天气，温度转灰提示").size(11.5).color(ui.visuals().weak_text_color()));
+            });
+            ui.add_space(8.0);
+        }
+        let selected_before=self.weather_source.selected;
+        // 来源配置区（含应用按钮/控制台入口）始终绘制。
         self.weather_source_settings(ui);
+        // 本帧刚切换来源：上面已画的天气属于旧来源，丢弃这一帧重画，避免草稿里闪现默认源数据。
+        if self.weather_source.selected!=selected_before && applied {ui.ctx().request_discard("天气来源已切换");}
         ui.add_space(12.0);
         if self.weather_source.selected==crate::weather_source_ui::Provider::Qweather {
-            if self.weather_source.displayed==self.weather_source.selected {self.weather_settings_hero(ui);ui.add_space(8.0);}
             self.qweather_city_settings(ui);return;
         }
-        if self.weather_source.displayed!=self.weather_source.selected {return;}
-        self.weather_settings_hero(ui);
-        ui.add_space(5.0);
-        ui.horizontal_wrapped(|ui|{
-            ui.label(egui::RichText::new("天气数据来自").size(11.5).color(ui.visuals().weak_text_color()));
-            let source=self.weather_source.displayed;ui.hyperlink_to(source.name(),source.url());
-        });
+        if !applied {return;}
         if let Some(error)=self.weather.error.clone() {
             ui.add_space(6.0);
             egui::Frame::new().fill(color(&ctx,Color32::from_rgb(64,44,24),Color32::from_rgb(255,240,224))).corner_radius(10.0)
