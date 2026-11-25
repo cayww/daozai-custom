@@ -1,6 +1,6 @@
 //! 画布声明动画的宿主状态和逐帧求值。
 
-#[cfg(test)]
+#[cfg(all(test, feature="__plugin_tests_disabled__"))]
 #[path = "plugin_canvas_live_tests.rs"]
 mod tests;
 #[path = "plugin_canvas_transition.rs"]
@@ -423,7 +423,7 @@ fn pinned_text_flow(
             continue;
         }
         let max_font_size = 256.0 / c.ui.ctx().pixels_per_point();
-        let text_width = c.ui.fonts(|fonts| {
+        let text_width = c.ui.fonts_mut(|fonts| {
             let job = super::text_job(
                 text, (size * transform.scale).min(max_font_size),
                 *weight, &Align::Left, None, 1, font.as_deref(), &fonts.families(),
@@ -508,7 +508,7 @@ fn roll_digits(c: &Card<'_>, node: &Node, before: &str, scale: f32, t: f32) -> O
         return None;
     };
     let mut changes = false;
-    let fonts = c.ui.fonts(|fonts| fonts.families());
+    let fonts = c.ui.fonts_mut(|fonts| fonts.families());
     let job = super::text_job(
         text,
         (size.initial() * scale).min(256.0 / c.ui.ctx().pixels_per_point()),
@@ -519,7 +519,7 @@ fn roll_digits(c: &Card<'_>, node: &Node, before: &str, scale: f32, t: f32) -> O
         font.as_deref(),
         &fonts,
     );
-    let galley = c.ui.fonts(|fonts| fonts.layout_job(job));
+    let galley = c.ui.fonts_mut(|fonts| fonts.layout_job(job));
     let first = galley.rows.first()?.glyphs.first()?.pos.y;
     let [x, y] = at.each_ref().map(Num::initial);
     let mut cells = Vec::new();

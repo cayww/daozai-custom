@@ -106,6 +106,7 @@ impl App {
                     duration: 4.5,
                     bluetooth: None,
                     meeting: None,
+                    status: None,
                     unread: None,
                 };
                 let source = &completion.source;
@@ -121,7 +122,8 @@ impl App {
                     self.clear_plugin_notice_alerts(Some(&removed.source), Some(&removed.id));
                 }
                 self.plugin_notice_ui.unread.push_front(completion);
-                self.enqueue_alert(alert, false);
+                // 插件通知走 plugin_notice_ui 独立未读队列，不进通用 alerts（避免挤掉内置提醒）。
+                let _ = alert;
             }
             Event::StatusChanged { source, mut card } => {
                 if !self.settings.notification_preview {
@@ -363,7 +365,7 @@ fn action_label(notice: &Completion, status: bool) -> &str {
     notice.action_label.as_deref().unwrap_or(if status { "执行操作" } else if notice.title.is_some() { "打开" } else { "回会话" })
 }
 
-fn button(c: &Card, x: f32, y: f32, width: f32, text: &str, id: impl std::hash::Hash) -> bool {
+fn button(c: &Card, x: f32, y: f32, width: f32, text: &str, id: impl std::hash::Hash + std::fmt::Debug) -> bool {
     let hit = c.hit(x, y, width, 24.0, id);
     let (hover, press) = c.hover_t(&hit);
     let inner = c.scaled(x + width / 2.0, y + 12.0, 1.0 - 0.05 * press);

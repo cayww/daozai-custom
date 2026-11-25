@@ -76,7 +76,7 @@ impl ResidentDay {
 
     pub(crate) fn group_width(&self, ctx: &egui::Context, clock: Option<&str>) -> f32 {
         let measure = |text: &str, size: f32, weight: W| {
-            ctx.fonts(|fonts| {
+            ctx.fonts_mut(|fonts| {
                 fonts
                     .layout_no_wrap(text.to_owned(), theme::font(size, weight), theme::WHITE)
                     .size()

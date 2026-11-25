@@ -28,6 +28,8 @@ path = "src/bin/daozai-record/main.rs"
 required-features = ["record"]
 
 [features]
+# 上游 v0.6.70 插件集市默认启用；GPU 材质插件（sdk-material）排除，液态玻璃走定制 D3D11。
+default = ["sdk-js"]
 record = []
 # 内存剖析：cargo build --features memprof。Profiler 在进程退出时把 dhat-heap.json
 # 写到工作目录，main 里再挪进 data\diagnostics；配合 DAOZAI_MEMPROF_EXIT=<秒> 自动优雅退出。

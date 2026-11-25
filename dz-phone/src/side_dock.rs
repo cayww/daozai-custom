@@ -73,6 +73,7 @@ impl App {
             Dock::Top => Rect::from_min_size(Pos2::new(win.center().x - w / 2.0, win.top() + gap), Vec2::new(w, h)),
             Dock::Left => Rect::from_min_size(Pos2::new(win.left() + gap, win.center().y - h / 2.0), Vec2::new(w, h)),
             Dock::Right => Rect::from_min_size(Pos2::new(win.right() - gap - w, win.center().y - h / 2.0), Vec2::new(w, h)),
+            Dock::Bottom => Rect::from_min_size(Pos2::new(win.center().x - w / 2.0, win.bottom() - gap - h), Vec2::new(w, h)),
         }
     }
 
@@ -93,7 +94,7 @@ impl App {
         match self.dock() {
             Dock::Left => Rect::from_min_max(Pos2::new(win.left(), rect.top()), rect.max),
             Dock::Right => Rect::from_min_max(rect.min, Pos2::new(win.right(), rect.bottom())),
-            Dock::Top => rect,
+            Dock::Top | Dock::Bottom => rect,
         }
     }
 

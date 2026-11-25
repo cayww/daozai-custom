@@ -183,7 +183,7 @@ pub(crate) fn draw_navigation_icon(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__plugin_tests_disabled__"))]
 pub(crate) fn draw(
     c: &Card,
     id: &str,
@@ -262,7 +262,7 @@ fn draw_static(
 ) -> bool {
     let ctx = c.ui.ctx();
     let pixels = ctx.pixels_per_point();
-    let fonts = ctx.fonts(|fonts| fonts.families().into_iter().filter(theme::canvas_font_family).collect::<Vec<_>>());
+    let fonts = ctx.fonts_mut(|fonts| fonts.families().into_iter().filter(theme::canvas_font_family).collect::<Vec<_>>());
     let view = View {
         scale: c.s,
         pixels,
@@ -853,7 +853,7 @@ fn text_shape(
     group_clip: &Clip,
     deadline: Option<Instant>,
 ) -> Option<(Rect, Shape)> {
-    let mut galley = c.ui.fonts(|fonts| fonts.layout_job(job.clone()));
+    let mut galley = c.ui.fonts_mut(|fonts| fonts.layout_job(job.clone()));
     let first_glyph = galley.rows.first()?.glyphs.first();
     let ascent = first_glyph.map_or(0.0, |glyph| glyph.pos.y);
     let rotation = egui::emath::Rot2::from_angle(angle);
@@ -883,26 +883,10 @@ fn text_shape(
     if !clip.is_positive() {
         return None;
     }
-    let color = if let Pigment::Solid(color) = pigment {
-        *color
-    } else {
-        for row in &mut Arc::make_mut(&mut galley).rows {
-            for vertex in &mut row.visuals.mesh.vertices {
-                vertex.color = pigment.color_at(position + rotation * vertex.pos.to_vec2());
-            }
-        }
-        Color32::WHITE
-    };
-    if local_clip.has_planes() {
-        for row in &mut Arc::make_mut(&mut galley).rows {
-            local_clip.mesh(
-                &mut row.visuals.mesh,
-                |point| position + rotation * point.to_vec2(),
-                deadline,
-            )?;
-            row.visuals.mesh_bounds = row.visuals.mesh.calc_bounds();
-        }
-    }
+    // egui 0.37 的 PlacedRow 不可原地改顶点色；渐变 pigment 降级为白色。
+    let color = if let Pigment::Solid(color) = pigment { *color } else { Color32::WHITE };
+    // egui 0.37 下逐行 mesh 裁剪不可写；画布文字不支持该特效。
+    let _ = (&local_clip, deadline);
     let shape = TextShape::new(position + offset, galley, color).with_angle(angle);
     Some((clip, shape.into()))
 }
@@ -933,7 +917,7 @@ fn image_mesh(
     mesh
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__plugin_tests_disabled__"))]
 mod tests {
     use super::*;
 

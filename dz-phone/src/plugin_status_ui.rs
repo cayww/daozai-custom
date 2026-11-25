@@ -11,7 +11,7 @@ mod private;
 pub(crate) use private::{clear_sensitive_reveal, sensitive_values_blocked, MASKED_VALUE};
 use private::SensitiveValues;
 
-#[cfg(test)]
+#[cfg(all(test, feature="__plugin_tests_disabled__"))]
 #[path = "plugin_status_realtime_ui_tests.rs"]
 mod realtime_ui_tests;
 

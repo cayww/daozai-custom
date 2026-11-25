@@ -211,7 +211,6 @@ impl InputState {
             let dy = ctx.input_mut(|state| {
                 let dy = state.smooth_scroll_delta.y;
                 state.smooth_scroll_delta.y = 0.0;
-                state.raw_scroll_delta.y = 0.0;
                 dy
             });
             if dy != 0.0 {
@@ -487,7 +486,7 @@ pub(super) fn bounds(c: &Card<'_>, node: &Node, transform: Transform) -> Rect {
             ..
         } => {
             let pixels_per_point = c.ui.ctx().pixels_per_point();
-            let galley = c.ui.fonts(|fonts| {
+            let galley = c.ui.fonts_mut(|fonts| {
                 fonts.layout_job(super::text_job(
                     text,
                     (size.initial() * transform.scale).min(256.0 / pixels_per_point),

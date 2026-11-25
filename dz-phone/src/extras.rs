@@ -12,6 +12,8 @@ pub(crate) enum AlertSource {
     Internal,
     Messenger(crate::app::Messenger),
     External(String),
+    #[cfg(windows)]
+    Plugin { source: String, id: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +115,8 @@ impl Alert {
     pub(crate) fn messenger(&self) -> Option<crate::app::Messenger> {
         match &self.source {
             AlertSource::Messenger(client) => Some(*client),
+            #[cfg(windows)]
+            AlertSource::Plugin { .. } => None,
             AlertSource::External(id) => {
                 crate::app::Messenger::from_notification_id(id).filter(|client| {
                     client.adapter().capture == crate::messenger::Capture::SystemToast
@@ -608,7 +612,7 @@ impl App {
         };
         self.enqueue_alert(a, false);
     }
-    fn enqueue_alert(&mut self, a: Alert, system: bool) {
+    pub(crate) fn enqueue_alert(&mut self, a: Alert, system: bool) {
         // 通知仅保存在本次运行的内存中。
         if a.source == AlertSource::Internal
             || matches!(&a.source,AlertSource::External(id) if id=="mail-code")
@@ -1644,6 +1648,8 @@ impl App {
         let allowed = |a: &Alert| match &a.source {
             AlertSource::Internal => !self.fullscreen_hidden || a.health().is_none(),
             AlertSource::Messenger(client) => client.enabled(&self.settings),
+            #[cfg(windows)]
+            AlertSource::Plugin { .. } => true,
             AlertSource::External(id) => {
                 // 手机通道与状态总线不走应用名单：手机看 phone_alerts，状态总线常放行。
                 let phone = crate::system::phone_channel(id);
@@ -5725,7 +5731,7 @@ impl App {
                             settings_control_row(ui,"邮箱",56.0,|ui|{
                                 ui.add_sized([input_width,30.0],egui::TextEdit::singleline(&mut self.mail.form.email).align(egui::Align2::LEFT_CENTER).hint_text("输入邮箱地址"))
                             });
-                            let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:self.mail.form.email.clone(),provider:self.mail.form.provider,enabled:true};
+                            let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:self.mail.form.email.clone(),provider:self.mail.form.provider,use_windows_proxy:self.mail.form.use_windows_proxy,enabled:true};
                             let unsupported=target.endpoint().err().as_deref()==Some(crate::mail::MICROSOFT_UNSUPPORTED);
                             if unsupported{ui.add(egui::Label::new(crate::mail::MICROSOFT_UNSUPPORTED).wrap());}
                             ui.add_enabled_ui(!unsupported,|ui|{
@@ -5737,26 +5743,26 @@ impl App {
                             ui.horizontal(|ui|{
                                 if ui.button("测试连接").clicked(){
                                     let email=self.mail.form.email.trim().to_string();
-                                    let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                    let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:email.clone(),provider:self.mail.form.provider,use_windows_proxy:self.mail.form.use_windows_proxy,enabled:true};
                                     if !email.contains('@'){self.mail.note="请先填邮箱地址".into();}
                                     else if let Err(error)=target.endpoint(){self.mail.note=error;}
                                     else if self.mail.form.password.is_empty(){self.mail.note="请先填授权码（不是邮箱登录密码）".into();}
                                     else{
                                         self.mail.testing=Some(email.clone());
                                         self.mail.note=format!("{email}：正在测试连接…");
-                                        self.pending.push(Cmd::MailTest(crate::mail::Account {custom: (self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()), email:email.clone(),provider:self.mail.form.provider,enabled:true},self.mail.form.password.clone()));
+                                        self.pending.push(Cmd::MailTest(crate::mail::Account {custom: (self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()), email:email.clone(),provider:self.mail.form.provider,use_windows_proxy:self.mail.form.use_windows_proxy,enabled:true},self.mail.form.password.clone()));
                                     }
                                 }
                                 if ui.button("保存并开始监控").clicked(){
                                     let email=self.mail.form.email.trim().to_string();
-                                    let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                    let target=crate::mail::Account{custom:(self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()),email:email.clone(),provider:self.mail.form.provider,use_windows_proxy:self.mail.form.use_windows_proxy,enabled:true};
                                     if !email.contains('@'){self.mail.note="请先填邮箱地址".into();}
                                     else if let Err(error)=target.endpoint(){self.mail.note=error;}
                                     else if self.mail.form.password.is_empty(){self.mail.note="请先填授权码（不是邮箱登录密码）".into();}
                                     else{
                                         match crate::mail::secrets::save(&target.credential_key(),&self.mail.form.password){
                                             Ok(())=>{
-                                                let account=crate::mail::Account {custom: (self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()), email:email.clone(),provider:self.mail.form.provider,enabled:true};
+                                                let account=crate::mail::Account {custom: (self.mail.form.provider==crate::mail::Provider::Custom).then(||self.mail.form.custom.clone()), email:email.clone(),provider:self.mail.form.provider,use_windows_proxy:self.mail.form.use_windows_proxy,enabled:true};
                                                 if let Some(slot)=self.mail.accounts.iter_mut().find(|a|a.email.eq_ignore_ascii_case(&email)){*slot=account;}else{self.mail.accounts.push(account);}
                                                 self.mail.form.password.clear();
                                                 self.mail.note=format!("{email}：已保存，正在连接…");

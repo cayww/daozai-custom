@@ -219,6 +219,16 @@ impl<'a> Card<'a> {
         c
     }
 
+    /// 圆环轨道（插件状态进度用，上游 v0.6.70）。
+    pub fn track(&self, cx: f32, cy: f32, r: f32, width: f32, color: egui::Color32) {
+        let pts: Vec<egui::Pos2> = (0..96)
+            .map(|i| {
+                let a = i as f32 / 96.0 * std::f32::consts::TAU;
+                self.pos(cx + r * a.cos(), cy + r * a.sin())
+            })
+            .collect();
+        self.painter.add(egui::Shape::line(pts, egui::Stroke::new(width, color)));
+    }
     // ---------- 文字（y 一律是基线，跨字体对齐稳定） ----------
     //
     // 字体缩放策略（2026-11-22 重构，彻底解决液态皮肤弹簧动画文字抖动）：
@@ -1311,3 +1321,12 @@ mod chase;
 mod icons;
 pub use chase::chase;
 pub use icons::*;
+
+/// 插件状态用的咖啡杯图标（上游 v0.6.70）。
+#[cfg(feature = "sdk-js")]
+pub fn coffee(c: &Card, x: f32, y: f32, color: egui::Color32) {
+    c.stroke(x - 4.5, y - 2.0, 7.6, 6.0, 1.8, 1.1, color);
+    c.arc(x + 3.4, y + 1.0, 1.8, -std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2, 1.1, color);
+    c.seg((x - 2.0, y - 5.8), (x - 2.0, y - 3.8), 1.0, color);
+    c.seg((x + 0.6, y - 6.4), (x + 0.6, y - 3.8), 1.0, color);
+}

@@ -9,6 +9,26 @@ pub mod display_layout;
 pub mod diagnostics_tool;
 pub mod rtl_text;
 mod mail_privacy;
+// 上游 v0.6.70 插件体系（集市/通知/状态插件）；GPU 材质插件（sdk-material）不启用，
+// 液态玻璃仍走定制 D3D11 栈。
+#[cfg(windows)]
+mod plugin_notice;
+#[cfg(windows)]
+mod plugin_notice_settings;
+#[cfg(windows)]
+mod plugin_notice_ui;
+#[cfg(feature = "sdk-js")]
+mod quota_plugin;
+#[cfg(feature = "sdk-js")]
+mod plugin_canvas;
+#[cfg(feature = "sdk-js")]
+mod plugin_canvas_ui;
+#[cfg(feature = "sdk-js")]
+mod plugin_setting_catalog;
+#[cfg(feature = "sdk-js")]
+mod plugin_status;
+#[cfg(feature = "sdk-js")]
+mod plugin_status_ui;
 pub mod poll_clock;
 pub mod resources;
 pub mod anim;
@@ -53,6 +73,9 @@ mod pet;
 mod pet_expressions;
 mod bar_layout;
 mod resident_settings;
+pub mod lunar_calendar;
+pub mod resident_date;
+pub mod performance;
 mod avoidance;
 mod focus_bar;
 #[cfg(windows)]

@@ -274,7 +274,7 @@ impl<'a> Interaction<'a> {
             .char_limit(field.max)
             .interactive(c.live && self.enabled);
         if let Some(anchor) = anchor {
-            input = input.frame(false).margin(egui::Margin::symmetric((6.0 * c.s).round() as i8, 0));
+            input = input.frame(egui::Frame::NONE).margin(egui::Margin::symmetric((6.0 * c.s).round() as i8, 0));
             if let Some(hint) = &anchor.placeholder {
                 input = input.hint_text(hint);
             }

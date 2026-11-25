@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 // ---------- 颜色（原版逐像素取色，少量为审美微调） ----------
 pub const RED: Color32 = Color32::from_rgb(242, 48, 70);
+/// 插件状态色（上游 v0.6.70）。
+pub const ORANGE: Color32 = Color32::from_rgb(255, 138, 61);
 pub const RED_TOP: Color32 = Color32::from_rgb(253, 104, 92);
 pub const BLUE: Color32 = Color32::from_rgb(62, 172, 248);
 pub const BLUE_DEEP: Color32 = Color32::from_rgb(13, 69, 128);
@@ -312,4 +314,11 @@ mod tests {
             "字体字节不能在每个排版上下文中产生完整副本");
         for (name,font) in &fonts.font_data {assert!(std::sync::Arc::ptr_eq(font,&cloned.font_data[name]));}
     }
+}
+
+/// 插件画布字体（定制版用系统字体，暂不加载插件包内字体）。
+pub(crate) fn canvas_font_family(_family: &egui::FontFamily) -> bool { false }
+pub(crate) fn canvas_font(size: f32, _weight: W, _name: Option<&str>, _installed: &[egui::FontFamily]) -> egui::FontId {
+    // 定制版用系统字体，忽略插件包内字体。
+    egui::FontId::proportional(size)
 }

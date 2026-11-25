@@ -168,20 +168,22 @@ impl IslandShape {
 pub enum Dock {
     #[default]
     Top,
+    /// 底部停靠（上游 v0.6.70：向上展开并跟随自动隐藏的任务栏）。
+    Bottom,
     Left,
     Right,
 }
 
 impl Dock {
-    pub const ALL: [Dock; 3] = [Dock::Top, Dock::Left, Dock::Right];
+    pub const ALL: [Dock; 4] = [Dock::Top, Dock::Bottom, Dock::Left, Dock::Right];
     pub fn key(self) -> &'static str {
-        match self { Self::Top => "top", Self::Left => "left", Self::Right => "right" }
+        match self { Self::Top => "top", Self::Bottom => "bottom", Self::Left => "left", Self::Right => "right" }
     }
     pub fn parse(value: &str) -> Self {
-        match value { "left" => Self::Left, "right" => Self::Right, _ => Self::Top }
+        match value { "bottom" => Self::Bottom, "left" => Self::Left, "right" => Self::Right, _ => Self::Top }
     }
     pub fn label(self) -> &'static str {
-        match self { Self::Top => "顶部", Self::Left => "左侧", Self::Right => "右侧" }
+        match self { Self::Top => "顶部", Self::Bottom => "底部", Self::Left => "左侧", Self::Right => "右侧" }
     }
     pub fn is_side(self) -> bool { self != Self::Top }
 }
@@ -196,6 +198,24 @@ pub const ISLAND_OFFSET_MAX: i32 = 100;
 pub fn island_size_value(value: u32) -> u32 {
     let value = value.clamp(ISLAND_SIZE_MIN, ISLAND_SIZE_MAX);
     (value + ISLAND_SIZE_STEP / 2) / ISLAND_SIZE_STEP * ISLAND_SIZE_STEP
+}
+
+/// 收起时与时钟并排显示的日期（上游 v0.6.70 常驻日期）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ResidentDate {
+    #[default]
+    Off,
+    Gregorian,
+    LunarOnly,
+    Lunar,
+}
+impl ResidentDate {
+    pub fn key(self) -> &'static str {
+        match self { Self::Off => "off", Self::Gregorian => "gregorian", Self::LunarOnly => "lunar-only", Self::Lunar => "lunar" }
+    }
+    pub fn parse(value: &str) -> Self {
+        match value { "gregorian" => Self::Gregorian, "lunar-only" => Self::LunarOnly, "lunar" => Self::Lunar, _ => Self::Off }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -266,6 +286,11 @@ pub struct Settings {
     pub show_clock: bool,
     pub show_battery: bool,
     pub show_weather: bool,
+    /// 常驻栏性能槽的样式与指标（上游 v0.6.70）。
+    pub performance_bar: crate::performance::BarStyle,
+    pub performance_metrics: u16,
+    /// 收起时常驻日期模式（上游 v0.6.70）。
+    pub resident_date: ResidentDate,
     pub clock_12h: bool,
     pub clock_period: u8,
     pub clock_seconds: bool,
@@ -422,7 +447,7 @@ impl OpenAnim {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_clock: true, show_battery: true, show_weather: true, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true; 9], page_order: [0,1,2,3,4,5,6,7,8], show_clock: true, show_battery: true, show_weather: true, performance_bar: Default::default(), performance_metrics: 7, resident_date: ResidentDate::Off, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
     }
 }
 
@@ -516,6 +541,8 @@ impl Settings {
                     if order.len()==6 && !order.contains(&crate::bar_layout::WEATHER) {
                         if let Some(clock)=order.iter().position(|slot|*slot==crate::bar_layout::CLOCK){order.insert(clock+1,crate::bar_layout::WEATHER);}
                     }
+                    // 上游 v0.6.70：7 槽旧配置补性能槽，沿用旧顺序。
+                    if order.len()==7 && !order.contains(&crate::bar_layout::PERFORMANCE) {order.push(crate::bar_layout::PERFORMANCE);}
                     if crate::bar_layout::valid_order(&order){s.resident_order=order;}
                 }
                 "page_order" => {
@@ -533,6 +560,9 @@ impl Settings {
                 "clock_12h" => s.clock_12h = v == "1",
                 "clock_seconds" => s.clock_seconds = v == "1",
                 "show_battery" => s.show_battery = v != "0",
+                "performance_bar" => s.performance_bar = crate::performance::BarStyle::parse(&v),
+                "performance_metrics" => s.performance_metrics = v.parse::<u16>().unwrap_or(s.performance_metrics) & 0x1ff,
+                "resident_date" => s.resident_date = ResidentDate::parse(&v),
                 "show_clock" => s.show_clock = v != "0",
                 "show_weather" => s.show_weather = v != "0",
                 "visible_pages" if (6..=9).contains(&v.len()) && v.bytes().all(|b| b==b'0' || b==b'1') => {
@@ -635,6 +665,9 @@ impl Settings {
                 ("clock_12h".into(), (self.clock_12h as u8).to_string()),
                 ("clock_seconds".into(), (self.clock_seconds as u8).to_string()),
                 ("show_battery".into(), (self.show_battery as u8).to_string()),
+                ("performance_bar".into(), self.performance_bar.key().into()),
+                ("performance_metrics".into(), self.performance_metrics.to_string()),
+                ("resident_date".into(), self.resident_date.key().into()),
                 ("show_clock".into(), (self.show_clock as u8).to_string()),
                 ("show_weather".into(), (self.show_weather as u8).to_string()),
                 ("read_notifications".into(),(self.read_notifications as u8).to_string()),

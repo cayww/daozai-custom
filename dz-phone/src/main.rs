@@ -335,6 +335,7 @@ impl Shell {
                 #[cfg(windows)] {daozai::system::screen_locked()}
                 #[cfg(not(windows))] {false}
             },
+            recording: false,
             fullscreen_hidden: {
                 #[cfg(windows)] {self.hidden}
                 #[cfg(not(windows))] {false}
@@ -683,6 +684,10 @@ impl Shell {
         }
         for cmd in out.cmds {
             match cmd {
+                #[cfg(windows)]
+                Cmd::OpenPluginNotice { .. } => {
+                    // 插件通知详情入口：暂不打开独立窗口，交由岛内插件通知 UI 处理。
+                }
                 Cmd::Media(t) => {
                     self.media_fast_until=Some(Instant::now()+Duration::from_secs(3));self.media_enabled.set_interval(smtc::POLL_FAST);
                     let source=self.media.lock().map(|media|media.source.clone()).unwrap_or_default();

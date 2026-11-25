@@ -73,7 +73,7 @@ impl SensitiveValues {
         {
             return (false, false);
         }
-        let id = self.plugin.with(identity);
+        let id = self.plugin.with(format!("{:?}", std::any::type_name_of_val(&identity)));
         let now = c.ui.input(|input| input.time);
         let ctx = c.ui.ctx();
         let current = ctx.data(|data| data.get_temp::<Reveal>(reveal_key()));

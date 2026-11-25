@@ -127,6 +127,8 @@ fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
     }
 }
 pub(crate) const PAGE_NAMES: [&str; 9] = ["音乐", "专注", "健康", "置物架", "待办", "邮箱", "AI 额度", "日程", "天气"];
+/// 上游 v0.6.70 性能页（第 10 页，常驻栏性能槽引用；暂不加入 PAGE_NAMES 岛体主界面）。
+pub(crate) const PERFORMANCE_PAGE: usize = 9;
 pub(crate) const PAGE_SETTINGS_TABS: [usize; 9] = [1,2,3,5,4,7,11,8,12];
 
 // ---------- 动效参数 ----------
@@ -329,6 +331,8 @@ pub struct Env {
     pub idle_seconds: Option<f64>,
     /// 当前会话是否处于锁屏（Win + L、自动锁屏、唤醒后的登录界面）。
     pub screen_locked: bool,
+    /// 是否正在录屏（插件敏感值遮挡用；上游 v0.6.70）。
+    pub recording: bool,
     /// 因「全屏时隐藏」而隐藏岛体，沿用外壳对设置和所在屏幕的判断。
     pub fullscreen_hidden: bool,
     /// 前台浏览器的顶部是否与岛重叠；岛仔自身窗口或暂不可读时为 None。
@@ -376,6 +380,9 @@ pub enum NotificationSound { Silent, System, Health }
 /// 交给外壳执行的副作用。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cmd {
+    /// 上游插件通知详情入口。
+    #[cfg(windows)]
+    OpenPluginNotice { source: String, id: String, session: String },
     Media(Transport),
     Open(PathBuf),
     ViewMessenger(Unread),
@@ -839,6 +846,8 @@ pub(crate) struct MailState {
     pub reader_focus: bool,
     /// 已经提醒过的会议，键是 `UID + DTSTART`（邮件和日历两条来源共用）。
     pub fired: std::collections::HashSet<String>,
+    /// 邮件新到时铃铛动画起点（上游 v0.6.66：仅验证码提醒也能在岛上有反馈）。
+    pub bell_at: Option<f64>,
 }
 
 #[derive(Default)]
@@ -848,6 +857,8 @@ pub(crate) struct MailForm {
     pub email: String,
     pub password: String,
     pub show: bool,
+    /// Gmail 手动代理开关（上游 v0.6.70）。
+    pub use_windows_proxy: bool,
     /// 设置页的「添加邮箱」弹窗是否打开。
     pub open: bool,
 }
@@ -967,6 +978,15 @@ const CENTER_GUIDE_RANGE: f32 = 24.0;
 const CENTER_SWEEP: f64 = 0.55;
 /// 已居中的提示色（绿）：岛体描边、外发光和扫光统一用它，颜色本身就是「对准了」。
 const CENTER_TINT: (f32, f32, f32) = (88.0, 222.0, 140.0);
+
+/// 本地插件包宿主的最小占位（上游 sdk_spike 示例未纳入；插件市场核心功能不依赖）。
+#[cfg(any(feature="sdk-js",feature="sdk-wasm"))]
+#[derive(Default)]
+pub(crate) struct PluginHost;
+#[cfg(any(feature="sdk-js",feature="sdk-wasm"))]
+impl PluginHost {
+    pub(crate) fn pinned_order_settings(&mut self, _ui: &mut egui::Ui) {}
+}
 
 pub struct App {
     pub opts: Options,
@@ -1319,6 +1339,12 @@ pub struct App {
     bt_initialized: bool,
     /// v0.5.5：邮件账号、最近邮件与设置表单。
     pub(crate) mail: MailState,
+    /// 上游插件通知 UI/宿主（sdk-js；材质插件不启用）。
+    pub(crate) plugin_notice_ui: crate::plugin_notice_ui::NoticeUi,
+    pub(crate) plugin_notice_host: crate::plugin_notice_settings::NoticeHost,
+    /// 本地插件包宿主（sdk-js/sdk-wasm）。
+    #[cfg(any(feature="sdk-js",feature="sdk-wasm"))]
+    pub(crate) plugins: PluginHost,
     /// 岛内详情与独立阅读窗口各保留一份排版缓存。
     mail_lines_cache: Vec<(std::sync::Arc<str>, std::sync::Arc<str>, u32, std::sync::Arc<Vec<crate::mail_format::Line>>)>,
     /// v0.5.6：日历（CalDAV）配置、未来 24 小时事件与设置表单。
@@ -1590,6 +1616,10 @@ impl App {
                 if !saved_mail_filter.is_empty() { manage.account_filter = Some(saved_mail_filter); }
                 MailState { accounts: mail::load_accounts(), manage, ..Default::default() }
             },
+            plugin_notice_ui: Default::default(),
+            plugin_notice_host: Default::default(),
+            #[cfg(any(feature="sdk-js",feature="sdk-wasm"))]
+            plugins: PluginHost::default(),
             mail_lines_cache: Vec::new(),
            calendar: CalendarState::load(),
             quota: crate::quota_ui::State::load(),
@@ -1937,14 +1967,14 @@ impl App {
             self.mail.form.password = "invalid-auth-code".into();
             self.mail.note = "test@qq.com：正在测试连接…".into();
             self.pending.push(Cmd::MailTest(
-                Account { custom: None, email: "test@qq.com".into(), provider: Provider::Qq, enabled: true },
+                Account{ custom: None, email: "test@qq.com".into(), provider: Provider::Qq, use_windows_proxy:false,enabled: true },
                 "invalid-auth-code".into(),
             ));
             return;
         }
         self.mail.accounts = vec![
-            Account { custom: None, email: "demo@qq.com".into(), provider: Provider::Qq, enabled: false },
-            Account { custom: None, email: "demo@icloud.com".into(), provider: Provider::ICloud, enabled: false },
+            Account{ custom: None, email: "demo@qq.com".into(), provider: Provider::Qq, use_windows_proxy:false,enabled: false },
+            Account{ custom: None, email: "demo@icloud.com".into(), provider: Provider::ICloud, use_windows_proxy:false,enabled: false },
         ];
         for a in &self.mail.accounts {
             self.mail.status.insert(a.email.clone(), Status::Ready);
@@ -2643,7 +2673,7 @@ impl App {
                 layout.x[bar::PET]=Some(pet_center-base/2.0);
             }
         }
-        self.resident.step(layout,dt,ctx.style_of(egui::Theme::Dark).animation_time>0.0&&bar::animations_enabled());
+        self.resident.step(layout,dt,ctx.style_of(egui::Theme::Dark).animation_time>0.0&&bar::animations_enabled(),false);
         if self.opts.fetch_lyrics {
             self.poll_lyrics();
         }
@@ -4080,7 +4110,7 @@ impl App {
                 let cursor=cursor-screen.min;
                 let edges=[(model::Dock::Top,cursor.y.max(0.0)),(model::Dock::Left,cursor.x.max(0.0)),(model::Dock::Right,(screen.width()-cursor.x).max(0.0))];
                 let &(nearest,distance)=edges.iter().min_by(|a,b|a.1.total_cmp(&b.1)).unwrap();
-                let current=edges.iter().find(|(dock,_)|*dock==self.dock()).unwrap().1;
+                let current=edges.iter().find(|(dock,_)|*dock==self.dock()).map(|(_,d)|*d).unwrap_or(cursor.y.max(0.0));
                 // 靠近新边缘才换边；角落保留缓冲，防止横竖形态来回跳变。
                 let mut target=Some(nearest).filter(|dock|*dock!=self.dock() && distance<=64.0 && distance+24.0<current);
                 // 左右对侧：过了中线、明显更靠近另一侧就换过去，不必甩到屏幕尽头；中线附近留缓冲不来回跳。
@@ -4188,6 +4218,7 @@ impl App {
             // 屏幕中轴相对岛体中心的位置（与窗口跟随同源，不会差一帧）。
             let off=self.placement_offset()*travel;
             let (out,edge)=match dock {
+                model::Dock::Bottom=>(-Vec2::Y,panel.center_top()),
                 model::Dock::Top=>(Vec2::Y,Pos2::new(panel.center().x,panel.bottom())),
                 model::Dock::Left=>(Vec2::X,Pos2::new(panel.right(),panel.center().y)),
                 model::Dock::Right=>(-Vec2::X,Pos2::new(panel.left(),panel.center().y)),

@@ -584,11 +584,12 @@ fn build_glass_params(ppp: f32, liquid: bool, dock: daozai::model::Dock) -> Glas
     let bw = b[2] * ppp;
     let bh = b[3] * ppp;
     p.bounds = [bx, h - by - bh, bw, bh];
-    // extra.w = 停靠方向（0=Top, 1=Left, 2=Right），shader 用它把刘海肩部旋到贴边侧。
+    // extra.w = 停靠方向（0=Top, 1=Left, 2=Right, 3=Bottom），shader 用它把刘海肩部旋到贴边侧。
     let dock_code = match dock {
         daozai::model::Dock::Top => 0.0,
         daozai::model::Dock::Left => 1.0,
         daozai::model::Dock::Right => 2.0,
+        daozai::model::Dock::Bottom => 3.0,
     };
     p.extra = [u.radius * ppp, cw, h, dock_code];
     // 光学强度（折射/色散/模糊，单位 CSS px）同样转设备像素；morph/material 无量纲不缩放。

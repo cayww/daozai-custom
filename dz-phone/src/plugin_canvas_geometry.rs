@@ -4,7 +4,7 @@ use crate::plugin_canvas::{Bounds, Cap, Num, PathCommand, Point};
 use eframe::{
     egui::{emath::Rot2, pos2, vec2, Color32, Pos2, Rect, Vec2},
     epaint::{
-        tessellator::path::rounded_rectangle, CornerRadiusF32, CubicBezierShape, Mesh, PathShape,
+        tessellator::path::rounded_rectangle, CornerRadiusF32, RoundedRect, CubicBezierShape, Mesh, PathShape,
         QuadraticBezierShape, Stroke, Tessellator, Vertex,
     },
 };
@@ -305,13 +305,10 @@ pub(super) fn rectangle(bounds: &Bounds, corners: &[Num; 4], transform: Transfor
         // 在最终缩放下细分圆角，然后施加旋转。
         rounded_rectangle(
             &mut points,
-            rect * transform.scale,
-            CornerRadiusF32 {
-                nw: nw * transform.scale,
-                ne: ne * transform.scale,
-                se: se * transform.scale,
-                sw: sw * transform.scale,
-            },
+            RoundedRect::new(rect * transform.scale, CornerRadiusF32 {
+                nw: nw * transform.scale, ne: ne * transform.scale,
+                se: se * transform.scale, sw: sw * transform.scale,
+            }),
         );
         let rotation = Rot2::from_angle(transform.angle);
         for point in &mut points {

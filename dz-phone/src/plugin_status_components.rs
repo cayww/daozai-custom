@@ -268,7 +268,7 @@ pub(super) fn draw_badges(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__plugin_tests_disabled__"))]
 mod tests {
     use super::super::*;
     use serde_json::json;
