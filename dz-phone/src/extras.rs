@@ -4392,6 +4392,7 @@ pub(crate) fn settings_tab_module(tab: usize) -> Option<usize> {
         8 => Some(CALENDAR_PAGE),
         11 => Some(QUOTA_PAGE),
         12 => Some(WEATHER_PAGE),
+        15 => Some(PERFORMANCE_PAGE),
         _ => None,
     }
 }
@@ -5227,7 +5228,7 @@ impl App {
                         });
                         settings_label(ui,"功能页面");
                         settings_card(ui,|ui|{
-                            let descriptions=["播放控制与同步歌词","番茄钟与休息计时","喝水与久坐提醒","临时收纳文件位置","任务清单与到期提醒","邮件摘要与验证码","Agent 剩余额度和账号切换","月历、邮件邀请与工作日程","当地天气与七日预报"];
+                            let descriptions=["播放控制与同步歌词","番茄钟与休息计时","喝水与久坐提醒","临时收纳文件位置","任务清单与到期提醒","邮件摘要与验证码","Agent 剩余额度和账号切换","月历、邮件邀请与工作日程","当地天气与七日预报","CPU、GPU、内存等实时指标"];
                             ui.label(egui::RichText::new("拖动左侧手柄调整顺序；关闭的功能不在后台运行，不同步也不提醒，已有数据保留。").size(11.5).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             #[derive(Clone)]
                             struct PageDrag(usize);

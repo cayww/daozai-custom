@@ -990,7 +990,7 @@ impl App {
                 // 液位条：从左边长出来，越靠后的名次越淡。
                 let k = 1. - i as f32 * 0.16;
                 let lw = (right - left + 6.) * share;
-                c.hgrad(left - 3., row_y, lw, 18., 5., alpha(color, 0.05 * k), alpha(color, 0.20 * k));
+                c.fill(left - 3., row_y, lw, 18., 5., alpha(color, 0.12 * k));
                 c.seg((left - 3. + lw - 0.7, row_y + 4.), (left - 3. + lw - 0.7, row_y + 14.), 1.2, alpha(mix(color, Color32::WHITE, 0.4), 0.8 * k));
                 let base = row_y + 13.;
                 program_icon(c, left, base - 10.5, 13., program, color);
@@ -1510,7 +1510,7 @@ fn metric_chip(ui: &mut egui::Ui, label: &str, color: Color32, on: bool) -> egui
     use crate::settings_theme::color as theme_color;
     let ctx = ui.ctx().clone();
     let font = egui::FontId::proportional(12.);
-    let text_w = ctx.fonts(|f| f.layout_no_wrap(label.into(), font.clone(), Color32::WHITE).size().x);
+    let text_w = ctx.fonts_mut(|f| f.layout_no_wrap(label.into(), font.clone(), Color32::WHITE).size().x);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(text_w + 30., 26.), egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let dark = ui.visuals().dark_mode;

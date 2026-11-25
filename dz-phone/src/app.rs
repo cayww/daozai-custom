@@ -126,10 +126,10 @@ fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
         painter.rect_filled(r,radius+d,Color32::from_black_alpha((255.0*a*strength) as u8));
     }
 }
-pub(crate) const PAGE_NAMES: [&str; 9] = ["音乐", "专注", "健康", "置物架", "待办", "邮箱", "AI 额度", "日程", "天气"];
+pub(crate) const PAGE_NAMES: [&str; 10] = ["音乐", "专注", "健康", "置物架", "待办", "邮箱", "AI 额度", "日程", "天气", "系统性能"];
 /// 上游 v0.6.70 性能页（第 10 页，常驻栏性能槽引用；暂不加入 PAGE_NAMES 岛体主界面）。
 pub(crate) const PERFORMANCE_PAGE: usize = 9;
-pub(crate) const PAGE_SETTINGS_TABS: [usize; 9] = [1,2,3,5,4,7,11,8,12];
+pub(crate) const PAGE_SETTINGS_TABS: [usize; 10] = [1,2,3,5,4,7,11,8,12,15];
 
 // ---------- 动效参数 ----------
 /// 等待超过这个时长才做「轻微胀大」反馈；更短的等待保持静止，
@@ -1037,7 +1037,7 @@ pub struct App {
     /// progress 短暂跌破 0.985 —— 这个窗口比 0.55s 的滑入动画长一点，盖住收敛期，
     /// 避免翻页刚结束又掉回矢量版闪一次边。
     flip_glass_until: f64,
-    dots: [Spring; 9],
+    dots: [Spring; 10],
     wheel_delta: f32,
     wheel_at: f64,
     wheel_page_at: f64,
@@ -1352,6 +1352,8 @@ pub struct App {
     pub(crate) quota: crate::quota_ui::State,
     /// 天气页的当前数据与后台拉取状态。
     pub(crate) weather: crate::weather::State,
+    /// 系统性能采样（上游 v0.6.70 性能页）。
+    pub(crate) performance: crate::performance::Monitor,
     pub(crate) weather_source: crate::weather_source_ui::State,
     pub(crate) updates: crate::updates::State,
     pub(crate) resident: bar::Motion,
@@ -1624,6 +1626,7 @@ impl App {
            calendar: CalendarState::load(),
             quota: crate::quota_ui::State::load(),
             weather,
+            performance: Default::default(),
             weather_source,
             updates: crate::updates::State::load(model::config_dir().join("update-check.json")),
             resident: Default::default(), resident_power:(None,false), phone_resident:(None,false), phone_power: Default::default(),
@@ -2673,6 +2676,11 @@ impl App {
                 layout.x[bar::PET]=Some(pet_center-base/2.0);
             }
         }
+        // 性能采样：仅在性能页可见或常驻性能槽开启时 tick。
+        let performance_visible=!env.fullscreen_hidden && !env.screen_locked &&
+            (self.open&&self.page==PERFORMANCE_PAGE || self.settings.show_performance && self.notice.is_none());
+        self.performance.tick(self.module_on(PERFORMANCE_PAGE),performance_visible,self.open&&self.page==PERFORMANCE_PAGE,&ctx);
+        if self.page!=PERFORMANCE_PAGE {self.performance.view=None;}
         self.resident.step(layout,dt,ctx.style_of(egui::Theme::Dark).animation_time>0.0&&bar::animations_enabled(),false);
         if self.opts.fetch_lyrics {
             self.poll_lyrics();
@@ -4826,7 +4834,13 @@ impl App {
     fn nav(&mut self, c: &Card) {
         let pages: Vec<_>=self.settings.page_order.iter().copied().filter(|page|self.settings.visible_pages[*page]).collect();
         if pages.len()<2 { return; }
-        let arrow_y=if self.page==6||self.page==8{88.0}else{68.0};
+        // 上游 v0.6.70：停靠方式决定箭头锚点，切页改变面板高度时仍可原地点击。
+        let anchor_y=if self.page==6||self.page==8{88.0}else{68.0};
+        let arrow_y=match self.dock() {
+            model::Dock::Top=>anchor_y,
+            model::Dock::Bottom=>c.to_local(c.painter.clip_rect().center_bottom()).y-(PH-anchor_y),
+            model::Dock::Left|model::Dock::Right=>anchor_y+(self.h.pos-PH)/2.0,
+        };
         let l = c.hit(8.0, arrow_y-13.0, 26.0, 26.0, "nav-l");
         let r = c.hit(385.0, arrow_y-13.0, 26.0, 26.0, "nav-r");
         let (lh, _lp) = c.hover_t(&l);
@@ -4878,6 +4892,7 @@ impl App {
             5 => self.page_mail(c, env, cmds),
             6 => self.page_quota(c),
             8 => self.page_weather(c,env,cmds),
+            PERFORMANCE_PAGE => self.page_performance(c),
             CALENDAR_PAGE => self.page_calendar(c,env),
             _ => self.page_settings(c),
         }

@@ -76,6 +76,7 @@ mod resident_settings;
 pub mod lunar_calendar;
 pub mod resident_date;
 pub mod performance;
+mod performance_ui;
 mod avoidance;
 mod focus_bar;
 #[cfg(windows)]
