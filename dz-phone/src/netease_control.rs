@@ -363,7 +363,7 @@ pub fn seek(seconds:f64)->bool{
     if !valid(seconds)||cooling_down(){return false;}
     let cfg=config();
     match seek_inner(seconds,&cfg,
-        ||super::netease_timeline::timeline().map(|(position,_)|position),
+        ||super::netease_timeline::timeline(true).map(|(position,_)|position),
         |delay|std::thread::sleep(delay)){
         // 跳转成功后把新基准告诉 elog 状态机：客户端不会写 setPlayingPosition，
         // 不注入的话岛上的进度条和歌词会停在旧位置继续外推。
@@ -859,10 +859,10 @@ mod tests{
     fn live_cdp_seek_probe(){
         let cfg=config();
         for command in &cfg.commands{
-            let before=super::super::netease_timeline::timeline();
+            let before=super::super::netease_timeline::timeline(true);
             let reply=evaluate(cfg.port,&expression(command,20.0));
             thread::sleep(Duration::from_millis(700));
-            let after=super::super::netease_timeline::timeline();
+            let after=super::super::netease_timeline::timeline(true);
             println!("{command}: before={before:?} after={after:?} reply={reply:?}");
         }
     }

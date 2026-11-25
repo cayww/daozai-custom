@@ -176,7 +176,9 @@ pub(crate) fn device_icon(c: &Card, kind: crate::bt::DeviceKind, x: f32, y: f32,
         crate::bt::DeviceKind::Phone => {
             egui::include_image!("../assets/device-icons/smartphone-bold.svg")
         }
-        crate::bt::DeviceKind::Other => {
+        // 上游新增的设备类型（耳夹/骨传导/助听器等）先用通用蓝牙图标兜底，
+        // 保留定制版原有图标映射不因上游枚举扩展而编译失败。
+        _ => {
             egui::include_image!("../assets/device-icons/bluetooth-linear.svg")
         }
     };

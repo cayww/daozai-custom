@@ -78,7 +78,11 @@ impl State {
             }
         }
     }
-    pub(crate) fn close(&mut self){if self.opened{self.opened=false;self.persist();}}
+    pub(crate) fn close(&mut self)->bool{
+        let was_open=std::mem::take(&mut self.opened);
+        if was_open{self.persist();}
+        was_open
+    }
     fn persist(&mut self){
         if self.current==self.saved{return;}
         let (Some(path),Some(current))=(&self.path,self.current)else{return;};

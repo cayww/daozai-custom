@@ -68,7 +68,7 @@ struct Shell {
     opening_messenger:Option<(app::Unread,Instant)>,
     /// 后台线程正在唤起消息客户端。
     #[cfg(windows)]
-    tray_opening:Option<(app::Unread,std::sync::mpsc::Receiver<Result<(),OpenError>>)>,
+    tray_opening:Option<(app::Unread,std::sync::mpsc::Receiver<Result<messenger::Target,OpenError>>)>,
     #[cfg(windows)]
     hidden: bool,
     /// 毛玻璃皮肤的背景亮度采样（仅毛玻璃皮肤运行）。
@@ -495,9 +495,9 @@ impl Shell {
             let previous_pending=self.app.pending_messengers.clone();
             for event in self.messengers.poll_taskbar(&ctx,&self.app.settings){match event{
                 TaskbarEvent::Status(client,status)=>self.app.set_messenger_status(client,status),
-                TaskbarEvent::Message(unread)=>{
-                    if self.messengers.track_unread(unread)==Err(OpenError::Exited){continue;}
-                    self.app.receive_messenger_reminder(unread);
+                TaskbarEvent::Message(unread,target)=>{
+                    // 上游 v0.6.70：按窗口样式确认账号，修钉钉 9.x 误报「无法确认账号」。
+                    if let Some(unread)=self.messengers.register_taskbar(unread,target){self.app.receive_messenger_reminder(unread);}
                 }
             }}
             if let Some(rx)=&self.incoming {
@@ -533,7 +533,7 @@ impl Shell {
             if let Some((unread,rx))=&self.tray_opening {
                 let unread=*unread;
                 match rx.try_recv(){
-                    Ok(Ok(()))=>{
+                    Ok(Ok(_target))=>{
                         self.tray_opening=None;
                         if !self.confirm_messenger_open(unread){
                             self.opening_messenger=Some((unread,Instant::now()));
