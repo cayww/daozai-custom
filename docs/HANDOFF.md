@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-25 01:56
+> **最后更新**：2026-11-25 11:27
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -2025,3 +2025,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   4. Flutter [#162949](https://github.com/flutter/flutter/issues/162949)（Impeller 下缩放文字抖动）确认这类问题在别的引擎也存在：部分是像素吸附的预期行为，部分是渲染浮点误差（其修复 PR #162480）。进一步佐证「不要靠连续缩放文字做动画」。
 - **验证**：`cargo check --locked --lib --tests --bins --examples` 通过（修掉删除函数后的 unused import）；release 双 bin 构建通过（首次因进程占用失败，第二次成功）；全量 lib **1413 passed / 0 failed / 131 ignored**（删 1 个 UV 测试、加 1 个防护测试，总数持平）；bin **11 passed / 0 failed**。exe sha256 前16 `11f2bfef84c5cde9`（daozai）、`70489a398818b58e`（bridge）。
 - **状态**：提交 `bf996f8` 在本地 main，**未 push、未打包、未部署**；构建期间检测到 daozai.exe PID 21808（疑似用户启动的新版实机测试），未停止该进程；如需运行最终 exe 请重启进程。
+
+### 7.0zzzd DComp 呈现链排查与 FLIP_SEQUENTIAL 修复（2026-11-25 11:00–11:27，提交 `cb60452`，本地 main 未 push）
+
+- **用户反馈**：文字架构已无缩放，但仍感觉有毛刺，要求查 DComp 呈现链与社区方案。
+- **RT A/B 结论**：临时加过 `DAOZAI_RT_DUMP`（第 90 帧读回 Present 前 RT 存 PNG，提交 `782a281`，随后按用户要求用 `20a945d` 撤销）。RT 原始像素放大后字形锐利、无黑线、无重影；`ui_probe` 屏幕抓图在实时和冻结背景模式下都排除了岛仔，拿不到可比图。⇒ 渲染侧干净，毛刺在 DWM/DComp 呈现或观察/采集链。
+- **社区/官方核查**：微软 [`CreateSwapChainForComposition`](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_2/nf-dxgi1_2-idxgifactory2-createswapchainforcomposition) 要求 flip model 且明确写 `DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL`、`DXGI_SCALING_STRETCH`；[GLASS](https://github.com/RomainROCH/GLASS/blob/master/docs/architecture/composition-pipeline.md)、[Makepad #1190](https://github.com/makepad/makepad/pull/1190) 等透明 overlay 项目都用 `FLIP_SEQUENTIAL` + `PREMULTIPLIED`。**重要纠正**：`IDCompositionVisual` 没有 `SetSize`（windows 0.58 绑定里 `SetSize` 属于 `IDCompositionTurbulenceEffect` 等滤镜接口），所以“显式设置 visual 尺寸”在 Win32 DComp 路径上不成立；DComp visual 的尺寸由内容决定，岛仔交换链已按 `window.inner_size()` 物理像素创建，尺寸链路本身是 1:1。
+- **改动**：仅把主窗口 DComp 合成交换链的 `SwapEffect` 从 `FLIP_DISCARD` 改为 `FLIP_SEQUENTIAL`；子窗口 HWND 交换链、alpha 模式、stretch、尺寸均不变。
+- **验证**：`cargo check --locked --lib --tests --bins --examples` 通过；release 双 bin 构建通过；全量 lib **1413 passed / 0 failed / 131 ignored**。bin 测试在用户取消前已通过过上一版；本轮 bin 测试被用户手动取消，未重跑。exe sha256 前16 `901a9cf46251c3b7`（daozai）、`7ff6dd985a370ad2`（bridge）。
+- **状态**：提交 `cb60452` 在本地 main，**未 push、未打包、未部署**；最终树不含诊断代码（诊断提交已 revert）。需用户重启到新 exe 裸眼确认毛刺是否改善；若无改善，下一步实验只剩 `SetBitmapInterpolationMode(NEAREST_NEIGHBOR)` 或更换 DPI 感知/显示器缩放条件，收益不确定。
