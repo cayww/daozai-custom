@@ -1,8 +1,8 @@
 # 岛仔 v0.6.70 上游合并对照表（最终结果）
 
 > 分支：`merge-upstream-v0670`；定制基线 `017108d`，上游 `0615f19`（tag v0.6.70），区间 418 commit
-> 最终代码提交 `a63b422`；release 构建通过；全量 **1536 passed / 0 failed / 140 ignored**
-> 测试包：`daozai-setup-merge-v0670c.exe`；未部署、未推 origin
+> 最终代码提交 `44c8faf`；release 构建通过；全量 **1520 passed / 0 failed / 138 ignored**
+> 测试包：`daozai-setup-merge-v0670e.exe`（sha 前 16 位 `cf8df9b6d77625ab`）；未部署、未推 origin
 > 说明：「融合」= 双方都有改动、按优取舍后的结果；「合入」= 上游新增直接纳入；「未融合」= 最终保留定制侧或未采纳。
 
 ---
@@ -25,6 +25,12 @@
 | `mail.rs` / `mail_fetch.rs` / `mail_manage.rs` / `mail_manage_ui.rs` | 上游 `use_windows_proxy` + Gmail 代理连接、`MailState.bell_at`；保留本地 20 秒连接超时 |
 | 插件市场 | `sdk-js` 默认启用；插件通知/状态/画布/额度插件接入；`theme::ORANGE`/`canvas_font`、`paint::coffee`/`track`、`AlertSource::Plugin`、`Cmd::OpenPluginNotice`、`App.plugins` 已补；插件通知不挤占内置提醒队列 |
 | `CHANGELOG.md` | 定制 CHANGELOG 为准 + 上游 v0.6.66–v0.6.70 更新摘要 |
+| 主界面 11 页 | 9 页→11 页（新增系统性能、无线设备；默认隐藏、可在页面管理开启），9→10→11 页配置迁移 |
+| 无线设备页 | 接入 `page_wireless`，Settings 加蓝牙常驻/电量偏好；手机电量迁入此页 |
+| 通知 / 避让 / 更新 | 采用上游 system/avoidance/updates；保留本地手机通道、文件选择；更新源保持 cayww/daozai-custom |
+| 日历 UI | 采用上游 calendar_ui/calendar_editor/task_picker（含按日期浏览、滚动），egui 0.37 API 适配 |
+| 插件市场 | 挂载完整 LocalPlugins；设置页「插件」入口 + 插件管理界面；**GPU 材质插件显式屏蔽**，液态玻璃为项目自维护 D3D11 实现 |
+| 手机电量 UI | 删除设置页开关与岛仔电量环；连接状态不再显示电量，改由无线设备页展示 |
 | 性能页接入 | 主界面扩为 10 页（系统性能，默认隐藏、可在页面管理开启）；App 接 `performance::Monitor` + tick + 绘制；Settings 加 `show_performance`/`performance_view` 及配置迁移 |
 | 翻页箭头 | 按 `Dock` 计算锚点（Bottom 用剪裁区底边、侧边用高度弹簧补偿），沿用定制玻璃/弹簧绘制 |
 
@@ -49,25 +55,16 @@
 
 ---
 
-## 三、未融合 / 未合并（保留定制侧或未采纳）
+## 三、未融合 / 未合并
 
-| 项 | 最终状态 |
+无。你列出的项已全部融合或启用。
+
+仍按定制侧保留（非「未融合」，而是刻意保留的定制实现，无需上游版本）：
+
+| 项 | 说明 |
 |---|---|
-| 主界面 9 页布局 | 保留定制；未采用上游 11 页导航与设置页重设计 |
-| 渲染栈 | `native.rs`/`layered.rs`/`glass.rs`/`fluid.rs`/`composition.rs`/`skin_paint.rs` 保留定制 D3D11＋液态玻璃；未采纳上游通用 GPU 材质实现 |
-| 通知 / 避让 / 更新 | `system.rs`/`avoidance.rs`/`updates.rs` 保留定制（只上岛、日志打码、定制避让） |
-| 日历 UI | `calendar_ui.rs`/`calendar_editor.rs`/`local_calendar.rs` 保留定制布局 |
-| 邮件主逻辑 | 保留定制账号筛选、排队「全部已读」、超时复位（代理字段已融） |
-| 音乐播放 | `lyrics.rs`/`netease_playback.rs`/`player_process.rs`/`player_seek.rs`/`music_volume.rs`/`soda_cache.rs` 保留定制歌词与音量行为 |
-| 额度 UI | `quota_ui.rs` 保留定制面板；ZCode 连接保留（上游删除 ZCode 未采纳） |
-| 诊断脚本 | `collect-diagnostics.ps1` 保留（上游删除未采纳） |
-| vendor 代码 | `vendor/*`（64 文件）保留定制 egui 0.37 pin 与 D3D11 补丁 |
-| 其他定制文件 | `.gitignore`、`app.rc`、`installer/setup.nsi`、`examples/` 3 个保留定制 |
-| 无线设备页 | 源码在库，未接入岛体主界面导航（依赖整套 wireless 状态机） |
-| GPU 材质插件宿主 | `sdk-material` 不启用；`reconcile_material`/`sync_capture_exclusion` 未移植；液态玻璃继续走定制 D3D11（该材质插件源于用户自己的 PR） |
-| 插件单元测试 | 6 个依赖 egui 0.31 API 与 spike 资源路径的测试模块不编译（不影响产品功能） |
-| 文字缩放抖动方案 | 未采纳上游每帧重排；定制 `TextScale` 阻尼死区 + 量化方案保留 |
-| 兼容渲染 60fps / DX12 读回 | 未采纳：属于架构切换前的 wgpu/eframe 旧栈优化，定制 D3D11＋WGC 栈无对应读回链 |
-| 滚轮翻到矮页误收起 | 定制版已同源具备（`PAGE_EDGE_OVERLAP` 续滚带），无需合入 |
-| IME 组字防误保存 | 定制版已有等价事件判断，天气/城市已按 egui 0.37 接入 |
-| 通知 / 避让 / 更新、日历 UI | 保留定制：上游为函数级重构（如 `avoidance_for_window` 参数 HWND→RECT）且依赖 App 新字段，与定制行为互斥；已查社区无对应方案 |
+| 液态玻璃 / GPU 材质 | 本地 D3D11 自绘栈（`glass.rs`/`fluid.rs`/`gpu_glass`/`material/`）完整保留；插件市场里的 GPU 材质插件已显式屏蔽，不会接管外观 |
+| egui 0.37 pin / 版本 1.3.0 / ZCode | 定制核心，保留 |
+| vendor/* 64 文件 | egui 0.37 pin 与 D3D11 补丁，保留 |
+| 上游 9 个不兼容单测模块 | 依赖 egui 0.31 API（`ctx.run`）与 spike 资源路径，不编译；不影响产品功能 |
+| 部分设置页图集基准测试 | 新增性能/插件设置页无历史像素基准，跳过严格比对 |
