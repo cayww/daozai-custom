@@ -370,7 +370,7 @@ mod archive {
                 assert_eq!(environment["DisplaySettings"], json!(["dock=left"]));
                 assert_eq!(
                     environment["FeatureSettings"],
-                    json!(["lyrics_enabled=1"])
+                    json!(["lyrics_enabled=1","visible_pages=11111111101","page_order=10,0,1,2,3,4,5,6,7,8,9"])
                 );
                 assert!(environment["MissingLogs"]
                     .as_array()

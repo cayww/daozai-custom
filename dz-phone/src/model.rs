@@ -281,8 +281,8 @@ pub struct Settings {
     pub browser_minimal: bool,
     pub avoid_browsers: bool,
     pub avoid_apps: Vec<(String,String)>,
-    pub visible_pages: [bool; 10],
-    pub page_order: [usize; 10],
+    pub visible_pages: [bool; 11],
+    pub page_order: [usize; 11],
     pub show_clock: bool,
     pub show_battery: bool,
     pub show_weather: bool,
@@ -299,6 +299,12 @@ pub struct Settings {
     pub resident_order: Vec<usize>,
     pub system_hud: bool,
     pub bluetooth_notifications: bool,
+    /// 无线设备页开关与常驻偏好（上游 v0.6.70）。
+    pub show_bluetooth: bool,
+    pub bluetooth_pinned: Vec<String>,
+    pub bluetooth_resident_style: u8,
+    pub bluetooth_resident_custom: bool,
+    pub bluetooth_battery_notifications: bool,
     pub read_notifications:bool,
     pub wechat_notifications:bool,
     pub wecom_notifications:bool,
@@ -449,7 +455,7 @@ impl OpenAnim {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true,true,true,true,true,true,true,true,true,false], page_order: [0,1,2,3,4,5,6,7,8,9], show_clock: true, show_battery: true, show_weather: true, performance_bar: Default::default(), performance_metrics: 7, show_performance: true, performance_view: Default::default(), resident_date: ResidentDate::Off, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true,true,true,true,true,true,true,true,true,false,false], page_order: [0,1,2,3,4,5,6,7,8,9,10], show_clock: true, show_battery: true, show_weather: true, performance_bar: Default::default(), performance_metrics: 7, show_performance: true, performance_view: Default::default(), resident_date: ResidentDate::Off, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, show_bluetooth: true, bluetooth_pinned: Vec::new(), bluetooth_resident_style: 0, bluetooth_resident_custom: false, bluetooth_battery_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code: true, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: true, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, phone_alerts:true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
     }
 }
 
@@ -549,7 +555,7 @@ impl Settings {
                 }
                 "page_order" => {
                     if let Ok(order)=v.split(',').map(str::parse::<usize>).collect::<Result<Vec<_>,_>>() {
-                        if order.len()==10 && (0..10).all(|page|order.contains(&page)) {
+                        if order.len()==11 && (0..11).all(|page|order.contains(&page)) {
                             s.page_order.copy_from_slice(&order);
                         } else if order.len()==8 && (0..8).all(|page|order.contains(&page)) {
                             // 旧配置里没有天气页：接在最后，其余顺序保持不变。
@@ -562,6 +568,11 @@ impl Settings {
                 "clock_12h" => s.clock_12h = v == "1",
                 "clock_seconds" => s.clock_seconds = v == "1",
                 "show_battery" => s.show_battery = v != "0",
+                "show_bluetooth" => s.show_bluetooth = v != "0",
+                "bluetooth_pinned" => s.bluetooth_pinned = serde_json::from_str(&v).unwrap_or_default(),
+                "bluetooth_resident_style" => s.bluetooth_resident_style = v.parse().unwrap_or(s.bluetooth_resident_style),
+                "bluetooth_resident_custom" => s.bluetooth_resident_custom = v != "0",
+                "bluetooth_battery_notifications" => s.bluetooth_battery_notifications = v != "0",
                 "performance_bar" => s.performance_bar = crate::performance::BarStyle::parse(&v),
                 "performance_metrics" => s.performance_metrics = v.parse::<u16>().unwrap_or(s.performance_metrics) & 0x1ff,
                 "show_performance" => s.show_performance = v != "0",
@@ -569,9 +580,9 @@ impl Settings {
                 "resident_date" => s.resident_date = ResidentDate::parse(&v),
                 "show_clock" => s.show_clock = v != "0",
                 "show_weather" => s.show_weather = v != "0",
-                "visible_pages" if (6..=10).contains(&v.len()) && v.bytes().all(|b| b==b'0' || b==b'1') => {
+                "visible_pages" if (6..=11).contains(&v.len()) && v.bytes().all(|b| b==b'0' || b==b'1') => {
                     for (enabled,value) in s.visible_pages.iter_mut().zip(v.bytes()) { *enabled=value==b'1'; }
-                    for (i,enabled) in s.visible_pages[v.len()..].iter_mut().enumerate(){*enabled=v.len()+i!=9 && v.bytes().any(|b|b==b'1');}
+                    for (i,enabled) in s.visible_pages[v.len()..].iter_mut().enumerate(){*enabled=v.len()+i<9 && v.bytes().any(|b|b==b'1');}
                 }
                 "read_notifications" => s.read_notifications=v=="1",
                 "wechat_notifications" => s.wechat_notifications=v=="1",
@@ -669,6 +680,11 @@ impl Settings {
                 ("clock_12h".into(), (self.clock_12h as u8).to_string()),
                 ("clock_seconds".into(), (self.clock_seconds as u8).to_string()),
                 ("show_battery".into(), (self.show_battery as u8).to_string()),
+                ("show_bluetooth".into(), (self.show_bluetooth as u8).to_string()),
+                ("bluetooth_pinned".into(), serde_json::to_string(&self.bluetooth_pinned).unwrap_or_default()),
+                ("bluetooth_resident_style".into(), self.bluetooth_resident_style.to_string()),
+                ("bluetooth_resident_custom".into(), (self.bluetooth_resident_custom as u8).to_string()),
+                ("bluetooth_battery_notifications".into(), (self.bluetooth_battery_notifications as u8).to_string()),
                 ("performance_bar".into(), self.performance_bar.key().into()),
                 ("performance_metrics".into(), self.performance_metrics.to_string()),
                 ("show_performance".into(), (self.show_performance as u8).to_string()),

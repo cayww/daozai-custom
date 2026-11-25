@@ -229,6 +229,15 @@ impl<'a> Card<'a> {
             .collect();
         self.painter.add(egui::Shape::line(pts, egui::Stroke::new(width, color)));
     }
+    /// 居中圆环（无线设备页用）。
+    pub fn ring_centered(&self, x: f32, y: f32, r: f32, width: f32, color: egui::Color32) {
+        let n = 96;
+        let v: Vec<egui::Pos2> = (0..n).map(|i| {
+            let a = std::f32::consts::TAU * i as f32 / n as f32;
+            self.pos(x + r * a.cos(), y + r * a.sin())
+        }).collect();
+        self.painter.add(egui::Shape::closed_line(v, egui::Stroke::new(width * self.s, color)));
+    }
     // ---------- 文字（y 一律是基线，跨字体对齐稳定） ----------
     //
     // 字体缩放策略（2026-11-22 重构，彻底解决液态皮肤弹簧动画文字抖动）：

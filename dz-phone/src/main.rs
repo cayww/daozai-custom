@@ -347,6 +347,8 @@ impl Shell {
             media: self.media.lock().map(|m| m.clone()).unwrap_or_default(),
             volume: self.system_state.volume,
             bt: self.bt.clone(),
+
+            receivers: Vec::new(),
             bt_ready: self.bt_ready,
             screen,
             window_origin:[origin.x,origin.y],

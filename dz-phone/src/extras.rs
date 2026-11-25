@@ -4393,6 +4393,7 @@ pub(crate) fn settings_tab_module(tab: usize) -> Option<usize> {
         11 => Some(QUOTA_PAGE),
         12 => Some(WEATHER_PAGE),
         15 => Some(PERFORMANCE_PAGE),
+        16 => Some(crate::app::BLUETOOTH_PAGE),
         _ => None,
     }
 }
@@ -5245,7 +5246,7 @@ impl App {
                         });
                         settings_label(ui,"功能页面");
                         settings_card(ui,|ui|{
-                            let descriptions=["播放控制与同步歌词","番茄钟与休息计时","喝水与久坐提醒","临时收纳文件位置","任务清单与到期提醒","邮件摘要与验证码","Agent 剩余额度和账号切换","月历、邮件邀请与工作日程","当地天气与七日预报","CPU、GPU、内存等实时指标"];
+                            let descriptions=["播放控制与同步歌词","番茄钟与休息计时","喝水与久坐提醒","临时收纳文件位置","任务清单与到期提醒","邮件摘要与验证码","Agent 剩余额度和账号切换","月历、邮件邀请与工作日程","当地天气与七日预报","CPU、GPU、内存等实时指标","蓝牙设备与接收器"];
                             ui.label(egui::RichText::new("拖动左侧手柄调整顺序；关闭的功能不在后台运行，不同步也不提醒，已有数据保留。").size(11.5).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             #[derive(Clone)]
                             struct PageDrag(usize);
@@ -6009,18 +6010,14 @@ impl App {
 
                         // ---- 手机（连接状态 + 手机功能）----
                         settings_label(ui,"手机");
-                        settings_hint(ui,"下面两项配合：先在「连接状态」里配对手机，再到「手机功能」里开关电量与通知转发。");
+                        settings_hint(ui,"先在「连接状态」里配对手机，再到「手机功能」里开关通知转发；手机电量在「无线设备」页查看。");
                         settings_label(ui,"连接状态");
                         settings_card(ui,|ui|{
                             // 连接状态：直接读手机连接卡片，不经电量开关。
-                            let (linked, device, level) = crate::phone_battery::snapshot();
+                            let (linked, device, _level) = crate::phone_battery::snapshot();
+                            // 手机电量在「无线设备」页展示，此处只显示连接状态与设备名。
                             let status_text = if linked {
-                                match (&device, level) {
-                                    (d, Some(l)) if !d.is_empty() => format!("已连接：{d} · {l}%"),
-                                    (_, Some(l)) => format!("已连接 · 电量 {l}%"),
-                                    (d, _) if !d.is_empty() => format!("已连接：{d}"),
-                                    _ => "已连接".to_string(),
-                                }
+                                if device.is_empty() { "已连接".to_string() } else { format!("已连接：{device}") }
                             } else {
                                 "未连接".to_string()
                             };
@@ -6042,17 +6039,10 @@ impl App {
                                     let _ = std::process::Command::new(prog).arg(arg).spawn();
                                 }
                             }
-                            settings_hint(ui, "用 Windows 内置的「手机连接」配对手机：打开后按提示扫码连接，之后手机短信、来电、电量都会自动上岛。连接成功后上方状态会变绿。");
+                            settings_hint(ui, "用 Windows 内置的「手机连接」配对手机：打开后按提示扫码连接，之后手机短信、来电都会自动上岛，手机电量在「无线设备」页查看。连接成功后上方状态会变绿。");
                         });
                         settings_label(ui,"手机功能");
                         settings_card(ui,|ui|{
-                            // 手机电量：从「手机连接」读取，与本机电量并排显示。
-                            if crate::phone_battery::installed() {
-                                setting_row(ui,"手机电量","手机电量，与本机分开显示",&mut self.settings.phone_battery);
-                            } else {
-                                setting_row_locked(ui,"手机电量","未检测到「手机连接」，安装后才能开启",self.settings.phone_battery);
-                            }
-                            ui.separator();
                             // 短信/来电经「手机连接」转发：手机连接没装、或没给通知读取权限时不可配置。
                             let phone_on=crate::phone_battery::installed();
                             let notify_on=self.settings.read_notifications;
@@ -6340,4 +6330,9 @@ fn meeting_hit(plan: &[(i64, i64, String)], now: i64) -> Option<(i64, String)> {
         hit = Some(((*end).min(now + 7200), format!("{}|{}", uid, start)));
     }
     hit
+}
+
+/// 染色的设备图标（无线设备页用）。
+pub(crate) fn device_icon_tinted(c: &crate::paint::Card, kind: crate::bt::DeviceKind, x: f32, y: f32, size: f32, _tint: egui::Color32) {
+    device_icon(c, kind, x, y, size);
 }

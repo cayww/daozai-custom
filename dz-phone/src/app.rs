@@ -126,11 +126,12 @@ fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
         painter.rect_filled(r,radius+d,Color32::from_black_alpha((255.0*a*strength) as u8));
     }
 }
-pub(crate) const PAGE_NAMES: [&str; 10] = ["音乐", "专注", "健康", "置物架", "待办", "邮箱", "AI 额度", "日程", "天气", "系统性能"];
+pub(crate) const PAGE_NAMES: [&str; 11] = ["音乐", "专注", "健康", "置物架", "待办", "邮箱", "AI 额度", "日程", "天气", "系统性能", "无线设备"];
 /// 上游 v0.6.70 性能页（第 10 页，常驻栏性能槽引用；暂不加入 PAGE_NAMES 岛体主界面）。
 pub(crate) const PERFORMANCE_PAGE: usize = 9;
-pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 10] = ["m","f","h","s","t","e","q","c","w","p"];
-pub(crate) const PAGE_SETTINGS_TABS: [usize; 10] = [1,2,3,5,4,7,11,8,12,15];
+pub(crate) const BLUETOOTH_PAGE: usize = 10;
+pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 11] = ["m","f","h","s","t","e","q","c","w","p","b"];
+pub(crate) const PAGE_SETTINGS_TABS: [usize; 11] = [1,2,3,5,4,7,11,8,12,15,crate::extras::SETTINGS_TAB_WIRELESS];
 
 // ---------- 动效参数 ----------
 /// 等待超过这个时长才做「轻微胀大」反馈；更短的等待保持静止，
@@ -343,6 +344,8 @@ pub struct Env {
     pub volume: Option<(u32, bool)>,
     /// 已连接的蓝牙音频设备（名称 + 可选电量）。
     pub bt: Vec<crate::bt::Device>,
+    /// 蓝牙接收器设备（上游无线设备页）。
+    pub receivers: Vec<crate::bt::Device>,
     /// 蓝牙服务是否已经完成首次扫描。
     pub bt_ready: bool,
     /// 岛所在屏幕（与 `win` 同一坐标系，逻辑点）；用于让通知详情留在屏幕内。
@@ -1029,7 +1032,7 @@ pub struct App {
     /// progress 短暂跌破 0.985 —— 这个窗口比 0.55s 的滑入动画长一点，盖住收敛期，
     /// 避免翻页刚结束又掉回矢量版闪一次边。
     flip_glass_until: f64,
-    dots: [Spring; 10],
+    dots: [Spring; 11],
     wheel_delta: f32,
     wheel_at: f64,
     wheel_page_at: f64,
@@ -1347,6 +1350,14 @@ pub struct App {
     pub(crate) weather: crate::weather::State,
     /// 系统性能采样（上游 v0.6.70 性能页）。
     pub(crate) performance: crate::performance::Monitor,
+    /// 无线设备页状态（上游 v0.6.70）。
+    pub(crate) wireless_devices: Vec<crate::bt::Device>,
+    pub(crate) wireless_offset: usize,
+    pub(crate) wireless_focus: Option<String>,
+    pub(crate) wireless_enter_at: Option<f64>,
+    pub(crate) wireless_fx: std::collections::HashMap<String,crate::bluetooth_ui::WirelessFx>,
+    pub(crate) wireless_alerted: std::collections::HashMap<(String,&'static str),f64>,
+    pub(crate) wireless_seen_at: std::collections::HashMap<String,f64>,
     pub(crate) weather_source: crate::weather_source_ui::State,
     pub(crate) updates: crate::updates::State,
     pub(crate) resident: bar::Motion,
@@ -1620,6 +1631,8 @@ impl App {
             quota: crate::quota_ui::State::load(),
             weather,
             performance: Default::default(),
+            wireless_devices: Vec::new(), wireless_offset: 0, wireless_focus: None, wireless_enter_at: None,
+            wireless_fx: Default::default(), wireless_alerted: Default::default(), wireless_seen_at: Default::default(),
             weather_source,
             updates: crate::updates::State::load(model::config_dir().join("update-check.json")),
             resident: Default::default(), resident_power:(None,false), phone_resident:(None,false), phone_power: Default::default(),
@@ -2457,8 +2470,9 @@ impl App {
     /// 两个来源互不影响，都开就并排画两个环（本机在左）。
     pub(crate) fn battery_rings(&self)->(Option<(Option<u8>,bool)>,Option<(Option<u8>,bool)>) {
         let pc=(self.settings.show_battery&&self.resident_power.0.is_some()).then_some(self.resident_power);
-        let phone=(self.settings.phone_battery&&self.phone_resident.0.is_some()).then_some(self.phone_resident);
-        (pc,phone)
+        // 手机电量已迁入「无线设备」页，岛仔常驻栏只显示本机电量。
+        let _ = self.phone_resident;
+        (pc,None)
     }
     /// 当前要画几个电量环：0 / 1 / 2。
     pub(crate) fn battery_ring_count(&self)->usize {
@@ -4543,11 +4557,9 @@ impl App {
                 let content_width=self.lyric_bar_width()-self.lyric_focus_space();
                 let width=self.w.pos.max(content_width);
                 let left=local_cx-width/2.0;
-                let (pc_ring,phone_ring)=self.battery_rings();
-                let mut cx=left+20.0;
-                for ring in [pc_ring,phone_ring].into_iter().flatten() {
-                    paint::battery(&base.faded(1.0),cx,BAR_H/2.0,ring.0,ring.1,1.0);
-                    cx+=20.0;
+                // 手机电量已迁至「无线设备」页，常驻栏只画本机电量。
+                if let Some((pct,chg))=self.battery_rings().0 {
+                    paint::battery(&base.faded(1.0),left+20.0,BAR_H/2.0,pct,chg,1.0);
                 }
             }
             return;
@@ -4557,15 +4569,13 @@ impl App {
         let m = anim::ease_in_out(smoothstep(0.0, 0.85, p));
         let clock = self.settings.clock_text(&env.clock);
         let show_battery=resident_battery;
-        let (pc_ring,phone_ring)=self.battery_rings();
-        let ring_count=(pc_ring.is_some() as u8+phone_ring.is_some() as u8) as f32;
-        // 两个环并排时各自偏离中心 10px。
-        let ring_offset=if ring_count>1.0 {10.0}else{0.0};
+        let pc_ring=self.battery_rings().0;
+        let ring_offset=0.0;
 
         // 顶栏终点布局：[电池][日期][时钟] 作为一组整体居中
         let date_w = base.text_w(&env.date, size::DATE, W::Regular);
         let clock_w = paint::clock_width(base,&clock,size::CLOCK);
-        let battery_space=if show_battery {24.0+(ring_count-1.0)*20.0}else{0.0};
+        let battery_space=if show_battery {24.0}else{0.0};
         let group = battery_space + date_w + 8.0 + clock_w;
         let gx = local_cx - group / 2.0 + if show_battery {6.0}else{0.0};
         // 日程页左侧还有新增按钮，顶栏从操作区右侧开始，避免较长的日期和时段文字挤到按钮上。
@@ -4585,8 +4595,7 @@ impl App {
         let bpos = (lerp(pb.0, hb.0, m), lerp(pb.1, hb.1, m));
         if show_battery {
             let alpha=lerp(layout.clearance(bar::BATTERY),1.0,m);
-            if let Some((pct,chg))=pc_ring {paint::battery(&base.faded(alpha),bpos.0-ring_offset,bpos.1,pct,chg,bk);}
-            if let Some((pct,chg))=phone_ring {paint::battery(&base.faded(alpha),bpos.0+ring_offset,bpos.1,pct,chg,bk);}
+            if let Some((pct,chg))=pc_ring {paint::battery(&base.faded(alpha),bpos.0,bpos.1,pct,chg,bk);}
         }
 
         // 时钟：两个字号沿同一路径交叉淡化，避免逐帧换字号
@@ -4743,8 +4752,8 @@ impl App {
         }
         self.pet.last_idle = idle;
         self.pet.hovered = env.cursor.is_some_and(|p| (p.x-cx).abs() <= BAR_W/2.0+24.0 && (0.0..70.0).contains(&p.y));
-        let (pc_ring,phone_ring)=self.battery_rings();
-        let low_battery=[pc_ring,phone_ring].into_iter().flatten().any(|(pct,charging)|pct.is_some_and(|v|v<=20)&&!charging);
+        // 宠物担心表情只看本机电量（手机电量已迁入无线设备页）。
+        let low_battery=self.battery_rings().0.is_some_and(|(pct,charging)|pct.is_some_and(|v|v<=20)&&!charging);
         self.pet.worried = low_battery || env.network == Some(false);
         let allowed = self.pet_enabled();
         if !allowed { self.pet.reaction = None; self.pet.waking_until = 0.0; self.pet.expressions.clear(); }
@@ -4900,6 +4909,7 @@ impl App {
             6 => self.page_quota(c),
             8 => self.page_weather(c,env,cmds),
             PERFORMANCE_PAGE => self.page_performance(c),
+            BLUETOOTH_PAGE => self.page_wireless(c,env),
             CALENDAR_PAGE => self.page_calendar(c,env),
             _ => self.page_settings(c),
         }
@@ -5463,34 +5473,6 @@ mod lyric_scroll_tests {
         assert!(!cache.matches("测试",200.0,true,false));
         assert!(!cache.matches("测试",160.0,false,false));
         assert!(!cache.matches("测试",160.0,true,true));
-    }
-}
-
-#[cfg(test)]
-mod battery_source_tests {
-    use super::*;
-
-    #[test]
-    fn pc_and_phone_battery_switches_do_not_affect_each_other(){
-        let ctx=eframe::egui::Context::default();
-        let mut app=App::new(&ctx,Default::default());
-        app.resident_power=(Some(65),false);
-        app.phone_resident=(Some(42),true);
-        app.settings.show_battery=true;
-        app.settings.phone_battery=true;
-        assert_eq!(app.battery_ring_count(),2,"两个来源都有数据时应并排两个环");
-        // 关掉本机开关：手机环不受影响。
-        app.settings.show_battery=false;
-        assert!(app.battery_rings().0.is_none()&&app.battery_rings().1.is_some());
-        // 关掉手机开关：本机环不受影响。
-        app.settings.show_battery=true;
-        app.settings.phone_battery=false;
-        assert!(app.battery_rings().0.is_some()&&app.battery_rings().1.is_none());
-        // 手机没数据时手机环不占位，本机环照常。
-        app.settings.phone_battery=true;
-        app.phone_resident=(None,false);
-        assert_eq!(app.battery_ring_count(),1);
-        assert!(app.battery_visible());
     }
 }
 

@@ -13,6 +13,8 @@ use std::sync::Arc;
 // ---------- 颜色（原版逐像素取色，少量为审美微调） ----------
 pub const RED: Color32 = Color32::from_rgb(242, 48, 70);
 /// 插件状态色（上游 v0.6.70）。
+pub const LINK: Color32 = Color32::from_rgb(10, 132, 255);
+pub const LINK_SOFT: Color32 = Color32::from_rgb(90, 169, 255);
 pub const ORANGE: Color32 = Color32::from_rgb(255, 138, 61);
 pub const RED_TOP: Color32 = Color32::from_rgb(253, 104, 92);
 pub const BLUE: Color32 = Color32::from_rgb(62, 172, 248);

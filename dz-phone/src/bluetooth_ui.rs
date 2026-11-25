@@ -284,7 +284,7 @@ impl App {
         self.enqueue_alert(crate::extras::Alert{
             source:crate::extras::AlertSource::Internal,title:"蓝牙设备".into(),
             body:format!("{} · {event} · {level}%",device.name),page:BLUETOOTH_PAGE,at:self.t,duration:2.6,
-            bluetooth:Some((device.kind,true)),meeting:None,unread:None,
+            bluetooth:Some((device.kind,true)),meeting:None,status:None,unread:None,
         },false);
     }
 
