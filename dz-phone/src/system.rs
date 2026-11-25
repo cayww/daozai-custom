@@ -14,7 +14,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, GetLastInputInfo, LASTINPUTINFO, SetActiveWindow, keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    GetKeyState, GetLastInputInfo, LASTINPUTINFO, keybd_event, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::UI::Notifications::Management::{
@@ -31,25 +31,12 @@ pub struct Snapshot {
     pub network_kind: NetworkKind,
 }
 
-#[derive(Clone, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Observation {
+    pub input_switch: bool,
     pub system: Snapshot,
     pub input: Option<crate::input::State>,
     pub fullscreen: Option<crate::display_layout::Bounds>,
-    /// 采样这一刻是否处于切换按键窗口内。必须随状态一起送达，
-    /// 不能在主循环消费时实时判断——快速连按时后一次按键会覆盖前一次的授权，
-    /// 且发出提示后 clear() 会误清掉下一次切换的授权，导致响应停留在上次状态。
-    pub input_switch: bool,
-}
-impl PartialEq for Observation {
-    /// input_switch 是瞬时授权标志：切换窗口 500ms 后从 true 翻回 false，
-    /// 若参与相等性判断，会在状态未变时多发一条 observation + request_repaint。
-    /// 它只在随状态一起送达时有意义，状态没变就无需重发。
-    fn eq(&self, other: &Self) -> bool {
-        self.system == other.system
-            && self.input == other.input
-            && self.fullscreen == other.fullscreen
-    }
 }
 
 /// 跨进程输入法查询和 COM 状态采样留在后台，只在状态改变时唤醒界面。
@@ -63,11 +50,7 @@ pub fn observe(ctx:eframe::egui::Context,initial:Snapshot,input:Option<crate::in
         loop {
             let identity=crate::input::State::identity();
             let changed=identity.map(|state|(state.context,state.layout))!=current.input.map(|state|(state.context,state.layout));
-            let switching=crate::input::switch_recent();
-            if changed || switching || input_at.ready(std::time::Duration::from_secs(1)){
-                // 先取授权再读状态：SendMessageTimeout 到 IME 可能耗时，读完之后 500ms
-                // 窗口可能已过；用读之前的时刻判断，保证这次状态变化带上正确的授权。
-                current.input_switch=switching;
+            if changed || crate::input::switch_recent() || input_at.ready(std::time::Duration::from_secs(1)){
                 current.input=crate::input::State::read();input_at=crate::poll_clock::PollClock::now();
             }
             if sampled.ready(std::time::Duration::from_millis(500)){
@@ -109,10 +92,6 @@ impl Snapshot {
                 else if p.NetworkAdapter().ok().and_then(|a|a.IanaInterfaceType().ok())==Some(6){NetworkKind::Ethernet}
                 else{NetworkKind::Other}
             }).unwrap_or_default();
-            // Caps Lock 必须用 GetKeyState 读 toggle 位：低位表示「锁定是否开启」，
-            // 且调用不清标志。GetAsyncKeyState 的低位是「自上次调用以来按过没」（会清标志），
-            // 连续采样会导致开启/关闭来回跳，每次按键弹两条假提示。
-            // 后台线程无消息队列只影响「刚按下那一刻」的即时性，1 秒轮询足以跟上。
             Self{volume,audio_endpoint,network,network_kind,caps:GetKeyState(0x14)&1!=0}
         }
     }
@@ -243,7 +222,7 @@ struct Foreground {
 
 /// 前台从全屏窗口切到别的窗口时，是否仍按原来的全屏处理（岛仔保持隐藏）。
 ///
-/// 3ds Max、Photoshop 这类软件全屏（或最大化后盖满整块屏幕）时，插件面板、浮动工具条、
+/// 3ds Max、Photoshop 这类软件全屏时，插件面板、浮动工具条、
 /// 属性对话框都是同一个程序的附属窗口；每点一下前台就在它们和主窗口之间来回切，
 /// 过去岛仔会跟着「出现 → 消失」闪一次。只要原来的全屏窗口还盖着屏幕，
 /// 而新的前台是它的附属窗口（被它拥有，或同一程序里不单独占任务栏的窗口），就继续隐藏。
@@ -469,7 +448,9 @@ fn browser_overlaps_island(browser:RECT,island:RECT,dock:crate::model::Dock)->bo
     let center=island.left as f32+crate::app::WIN_W*scale/2.0;
     let half=crate::app::PW*scale/2.0;
     (browser.left as f32)<center+half && (browser.right as f32)>center-half
-        && (browser.top as f32)<island.top as f32+crate::app::BAR_H*scale && browser.bottom>island.top
+        && if dock==crate::model::Dock::Bottom {
+            browser.top<island.bottom && (browser.bottom as f32)>island.bottom as f32-crate::app::BAR_H*scale
+        }else{(browser.top as f32)<island.top as f32+crate::app::BAR_H*scale && browser.bottom>island.top}
 }
 
 /// 左右停靠：画布是 SIDE_W × SIDE_H，岛体贴在画布的左 / 右边、竖直居中。
@@ -485,7 +466,7 @@ fn window_covers_side(window:RECT,island:RECT,dock:crate::model::Dock)->bool {
     vertical && horizontal
 }
 
-pub fn browser_at_top(island:HWND,settings:&crate::model::Settings)->Option<bool> {
+pub fn browser_at_top(bounds:RECT,settings:&crate::model::Settings)->Option<bool> {
     unsafe {
         let foreground=GetForegroundWindow();
         if foreground.0.is_null(){return Some(false);}
@@ -495,7 +476,7 @@ pub fn browser_at_top(island:HWND,settings:&crate::model::Settings)->Option<bool
         if pid==GetCurrentProcessId(){return None;}
         if pid==0{return Some(false);}
         thread_local! { static LAST_MAIN: std::cell::Cell<Option<(HWND,u32)>> = const { std::cell::Cell::new(None) }; }
-        LAST_MAIN.with(|last| avoidance_for_window(foreground,island,pid,settings,last))
+        LAST_MAIN.with(|last| avoidance_for_window(foreground,bounds,pid,settings,last,||process_image_path(pid)))
     }
 }
 
@@ -536,28 +517,52 @@ unsafe fn unique_main_window(pid:u32)->Option<HWND> {
     search.main
 }
 
-unsafe fn avoidance_for_window(foreground:HWND,island:HWND,pid:u32,settings:&crate::model::Settings,last:&std::cell::Cell<Option<(HWND,u32)>>)->Option<bool> {
+unsafe fn process_covers_island(pid:u32,island:RECT,dock:crate::model::Dock)->bool {
+    use windows::Win32::Foundation::{BOOL,LPARAM};
+    struct Search { pid:u32, island:RECT, dock:crate::model::Dock, covered:bool }
+    unsafe extern "system" fn visit(hwnd:HWND,param:LPARAM)->BOOL {
+        let search=&mut *(param.0 as *mut Search);
+        let mut pid=0;GetWindowThreadProcessId(hwnd,Some(&mut pid));
+        if pid==search.pid && visible_avoidance_rect(hwnd).is_some_and(|rect|browser_overlaps_island(rect,search.island,search.dock)) {
+            search.covered=true;
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    let mut search=Search{pid,island,dock,covered:false};
+    let _=EnumWindows(Some(visit),LPARAM((&mut search as *mut Search) as isize));
+    search.covered
+}
+
+unsafe fn avoidance_for_window(foreground:HWND,island:RECT,pid:u32,settings:&crate::model::Settings,last:&std::cell::Cell<Option<(HWND,u32)>>,image_path:impl FnOnce()->Option<String>)->Option<bool> {
     if !settings.browser_minimal || IsIconic(GetAncestor(foreground,GA_ROOTOWNER)).as_bool(){return Some(false);}
-    let Some(rect)=visible_avoidance_rect(foreground) else{return Some(false)};
-    let mut island_rect=RECT::default();GetWindowRect(island,&mut island_rect).ok()?;
-    let overlaps=|rect|browser_overlaps_island(rect,island_rect,settings.dock);
+    let rect=visible_avoidance_rect(foreground);
+    let overlaps=|rect|browser_overlaps_island(rect,island,settings.dock);
     let owner=GetWindow(foreground,GW_OWNER).ok();
     let info=foreground_info(foreground);
-    if owner.is_none() && info.app_window {last.set(Some((foreground,pid)));}
-    else if last.get().is_some_and(|(_,prev)|prev!=pid){last.set(None);}
-    let path=std::cell::LazyCell::new(||process_image_path(pid));
-    if overlaps(rect) && path.as_deref().is_some_and(|p|avoidance_matches(p,settings)){return Some(true);}
-    if settings.avoid_apps.is_empty(){return Some(false);}
+    if rect.is_some() && owner.is_none() && info.app_window {last.set(Some((foreground,pid)));}
+    else if rect.is_some() && last.get().is_some_and(|(_,prev)|prev!=pid){last.set(None);}
+    let path=std::cell::LazyCell::new(image_path);
+    let matches=|p:&str|avoidance_matches(p,settings);
+    if rect.is_some_and(overlaps) && path.as_deref().is_some_and(matches){return Some(true);}
+    if !settings.avoid_browsers && settings.avoid_apps.is_empty(){return Some(false);}
 
-    // 所有者关系可以跨进程，嵌套对话框也沿这条链找到实际遮挡岛的名单窗口。
-    let listed=|p:&str|crate::avoidance::contains_app(&settings.avoid_apps,p);
+    // 3ds Max 的插件可能以独立窗口获得焦点，或短暂无法读取可见矩形。
+    // 只在已登记的 Max 进程仍有窗口实际遮岛时延续避让。
+    if !settings.avoid_apps.is_empty() && path.as_deref().is_some_and(|p| {
+        std::path::Path::new(p).file_name().is_some_and(|name|name.eq_ignore_ascii_case("3dsmax.exe"))
+            && crate::avoidance::contains_app(&settings.avoid_apps,p)
+    }) && process_covers_island(pid,island,settings.dock) {return Some(true);}
+
+    // 浮窗暂时读不到矩形时，仍可沿所有者链找到盖住岛体的窗口。
+    // 这条关系也适用于由其他进程创建的浮窗。
     let mut parent=owner;
     while let Some(hwnd)=parent {
         if IsIconic(hwnd).as_bool(){return Some(false);}
         if visible_avoidance_rect(hwnd).is_some_and(overlaps) {
             let mut owner_pid=0;GetWindowThreadProcessId(hwnd,Some(&mut owner_pid));
-            let registered=if owner_pid==pid {path.as_deref().is_some_and(listed)}
-                else {process_image_path(owner_pid).as_deref().is_some_and(listed)};
+            let registered=if owner_pid==pid {path.as_deref().is_some_and(matches)}
+                else {process_image_path(owner_pid).as_deref().is_some_and(matches)};
             if registered{
                 if foreground_info(hwnd).app_window {last.set(Some((hwnd,owner_pid)));}
                 return Some(true);
@@ -565,7 +570,7 @@ unsafe fn avoidance_for_window(foreground:HWND,island:HWND,pid:u32,settings:&cra
         }
         parent=GetWindow(hwnd,GW_OWNER).ok();
     }
-    if owner.is_some() || info.app_window || !path.as_deref().is_some_and(listed){return Some(false);}
+    if owner.is_some() || info.app_window || !path.as_deref().is_some_and(matches){return Some(false);}
     // 部分插件工具窗未登记 owner。优先跟随刚才操作的同进程主窗口，每次重新检查其位置。
     let host=match last.get() {
         Some((hwnd,prev)) if prev==pid && foreground_info(hwnd).pid==pid=>Some(hwnd),
@@ -700,23 +705,10 @@ fn connect_inner(ctx:eframe::egui::Context,filter:crate::messenger::Notification
             result.is_ok()
         };
         let run = || -> Result<()> {
+            unsafe {windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED)}?;
             struct Apartment;
             impl Drop for Apartment {fn drop(&mut self){unsafe{windows::Win32::System::WinRT::RoUninitialize();}}}
-            // 初始化阶段（COM 套间 / 权限服务）可能因竞争或系统抖动瞬时失败。
-            // 在这里重试，避免整个监听线程一次失败就永久退出、通知再也不上岛。
-            let mut init_error: Option<windows::core::Error> = None;
-            let mut apartment: Option<Apartment> = None;
-            for attempt in 0..3u32 {
-                match unsafe {windows::Win32::System::WinRT::RoInitialize(windows::Win32::System::WinRT::RO_INIT_MULTITHREADED)} {
-                    Ok(()) => { apartment = Some(Apartment); init_error = None; break; }
-                    Err(e) => {
-                        init_error = Some(e);
-                        if stopped.recv_timeout(std::time::Duration::from_secs(2))!=Err(mpsc::RecvTimeoutError::Timeout){return Ok(());}
-                        let _ = attempt;
-                    }
-                }
-            }
-            let _apartment = apartment.ok_or_else(||init_error.unwrap_or_else(||windows::core::Error::from_win32()))?;
+            let _apartment=Apartment;
             if request.get()? != UserNotificationListenerAccessStatus::Allowed {
                 send(Incoming::Revoked);
                 send(Incoming::Status("Windows 未授予通知读取权限，可在系统设置中调整。".into()));
@@ -797,64 +789,23 @@ pub fn pick_files() -> Result<Vec<std::path::PathBuf>> {
     pick_files_for("添加文件到置物架",true)
 }
 
-/// 选择一个文件夹（返回 None = 用户取消）。
-pub fn pick_folder(title:&str) -> Result<Option<std::path::PathBuf>> {
-    unsafe {
-        use windows::Win32::UI::Shell::*;
-        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
-        // 只让选文件夹，且必须是已存在的文件系统路径。
-        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST)?;
-        dialog.SetTitle(&HSTRING::from(title))?;
-        if let Err(e) = dialog.Show(None) {
-            if e.code().0 as u32 == 0x800704c7 { return Ok(None); } // 用户取消
-            return Err(e);
-        }
-        let item = dialog.GetResult()?;
-        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
-        let text = ptr.to_string()?;
-        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
-        Ok(Some(text.into()))
-    }
-}
-
-/// 选择一个程序文件（返回 None = 用户取消）。
-pub fn pick_exe(title:&str) -> Result<Option<std::path::PathBuf>> {
-    unsafe {
-        use windows::Win32::UI::Shell::*;
-        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
-        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST)?;
-        dialog.SetTitle(&HSTRING::from(title))?;
-        // 默认只列 .exe，用户仍可在文件名框里输入其它路径。
-        let name: Vec<u16> = "程序 (*.exe)\0".encode_utf16().collect();
-        let spec: Vec<u16> = "*.exe\0".encode_utf16().collect();
-        let filters = [Common::COMDLG_FILTERSPEC {
-            pszName: windows::core::PCWSTR(name.as_ptr()),
-            pszSpec: windows::core::PCWSTR(spec.as_ptr()),
-        }];
-        let _ = dialog.SetFileTypes(&filters);
-        if let Err(e) = dialog.Show(None) {
-            if e.code().0 as u32 == 0x800704c7 { return Ok(None); }
-            return Err(e);
-        }
-        let item = dialog.GetResult()?;
-        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
-        let text = ptr.to_string()?;
-        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
-        Ok(Some(text.into()))
-    }
-}
-
-// —— 关闭其它应用的 Windows 通知横幅 ——
-
-
 pub fn pick_files_for(title:&str,multiple:bool) -> Result<Vec<std::path::PathBuf>> {
+    use windows::Win32::UI::Shell::*;
+    let mut options=FOS_FILEMUSTEXIST;
+    if multiple{options|=FOS_ALLOWMULTISELECT;}
+    pick_items_for(title,options)
+}
+
+pub fn pick_folder_for(title:&str) -> Result<Option<std::path::PathBuf>> {
+    use windows::Win32::UI::Shell::*;
+    Ok(pick_items_for(title,FOS_PICKFOLDERS | FOS_PATHMUSTEXIST)?.into_iter().next())
+}
+
+fn pick_items_for(title:&str,options:windows::Win32::UI::Shell::FILEOPENDIALOGOPTIONS) -> Result<Vec<std::path::PathBuf>> {
     unsafe {
         use windows::Win32::UI::Shell::*;
         let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
-        // 选 .lnk 时要拿快捷方式本身，不能让对话框把它解析成目标程序。
-        let mut options=FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_NODEREFERENCELINKS;
-        if multiple{options|=FOS_ALLOWMULTISELECT;}
-        dialog.SetOptions(options)?;
+        dialog.SetOptions(FOS_FORCEFILESYSTEM | options)?;
         dialog.SetTitle(&HSTRING::from(title))?;
         if let Err(e) = dialog.Show(None) {
             if e.code().0 as u32 == 0x800704c7 {
@@ -1076,13 +1027,217 @@ mod tests {
     }
 }
 
-/// 把正在播放网页媒体的浏览器窗口带到前台。
-/// Chrome / Edge 的窗口标题就是当前活动标签的标题，先用媒体标题前几个字匹配；
-/// 匹配不到就激活 Z 序最前的浏览器窗口（EnumWindows 按 Z 序返回）。
-/// 只能定位到窗口，没法切换窗口里的非活动标签（扩展路线才做得到）。
-/// 把正在播放网页媒体的浏览器窗口带到前台。
-/// Chrome/Edge 的窗口标题就是当前活动标签标题，用媒体标题前 8 个字匹配窗口；
-/// 匹配不到就取 Z 序最前的浏览器窗口。只能定位窗口，切不了窗口内的非活动标签。
+fn avoidance_matches(path:&str,settings:&crate::model::Settings)->bool {
+    settings.browser_minimal && (crate::avoidance::contains_app(&settings.avoid_apps,path)
+        || settings.avoid_browsers && std::path::Path::new(path).file_name().and_then(|name|name.to_str()).is_some_and(is_browser_process))
+}
+
+pub(crate) fn avoidance_windows()->std::result::Result<Vec<crate::avoidance::Candidate>,String> {
+    use windows::Win32::Foundation::{BOOL,LPARAM};
+    unsafe extern "system" fn visit(hwnd:HWND,param:LPARAM)->BOOL {
+        if !IsWindowVisible(hwnd).as_bool() || GetWindowLongPtrW(hwnd,GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0!=0 {return BOOL(1);}
+        let mut cloaked=0u32;
+        let _=windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(hwnd,windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,(&mut cloaked as *mut u32).cast(),4);
+        if cloaked!=0{return BOOL(1);}
+        let mut title=[0u16;1024];let len=GetWindowTextW(hwnd,&mut title);
+        if len==0{return BOOL(1);}
+        let mut pid=0;GetWindowThreadProcessId(hwnd,Some(&mut pid));
+        if pid==GetCurrentProcessId(){return BOOL(1);}
+        let Some(path)=process_image_path(pid) else{return BOOL(1)};
+        let items=&mut *(param.0 as *mut Vec<crate::avoidance::Candidate>);
+        if items.iter().any(|a|crate::avoidance::same_app(&a.path,&path)){return BOOL(1);}
+        let filename=std::path::Path::new(&path).file_name().and_then(|s|s.to_str()).unwrap_or("");
+        let name=executable_description(&path).unwrap_or_else(||filename.trim_end_matches(".exe").to_string());
+        items.push(crate::avoidance::Candidate{browser:is_browser_process(filename),path,name,title:String::from_utf16_lossy(&title[..len as usize])});
+        BOOL(1)
+    }
+    let mut items:Vec<crate::avoidance::Candidate>=Vec::new();
+    unsafe{EnumWindows(Some(visit),LPARAM(&mut items as *mut _ as isize))}.map_err(|_|"无法读取应用列表，请刷新重试".to_string())?;
+    items.sort_by_key(|a|a.name.to_lowercase());
+    Ok(items)
+}
+
+fn executable_description(path:&str)->Option<String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW,GetFileVersionInfoW,VerQueryValueW};
+    let path:Vec<u16>=path.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let size=GetFileVersionInfoSizeW(PCWSTR(path.as_ptr()),None);if size==0{return None;}
+        let mut bytes=vec![0u8;size as usize];GetFileVersionInfoW(PCWSTR(path.as_ptr()),0,size,bytes.as_mut_ptr().cast()).ok()?;
+        let mut ptr=std::ptr::null_mut();let mut len=0;
+        if !VerQueryValueW(bytes.as_ptr().cast(),windows::core::w!("\\VarFileInfo\\Translation"),&mut ptr,&mut len).as_bool() || len<4{return None;}
+        let translation=std::slice::from_raw_parts(ptr as *const u16,2);
+        let key:Vec<u16>=format!("\\StringFileInfo\\{:04x}{:04x}\\FileDescription",translation[0],translation[1]).encode_utf16().chain(Some(0)).collect();
+        if !VerQueryValueW(bytes.as_ptr().cast(),PCWSTR(key.as_ptr()),&mut ptr,&mut len).as_bool() || len<=1{return None;}
+        let name=String::from_utf16_lossy(std::slice::from_raw_parts(ptr as *const u16,len as usize)).trim_end_matches('\0').trim().to_string();
+        (!name.is_empty()).then_some(name)
+    }
+}
+
+#[cfg(test)]
+mod avoidance_tests {
+    use super::*;
+    #[test]
+    fn registered_3ds_max_uses_visible_same_process_windows_for_avoidance() {
+        unsafe {
+            let create=|x,y,width,height| CreateWindowExW(WS_EX_NOACTIVATE|WS_EX_APPWINDOW,windows::core::w!("STATIC"),
+                windows::core::w!(""),WS_POPUP|WS_VISIBLE,x-10000,y-10000,width,height,None,None,None,None).unwrap();
+            let island=RECT{left:-10000,top:-10000,right:-9040,bottom:-9900};
+            let host=create(0,0,1920,1080);
+            let panel=create(600,300,300,200);
+            let mut settings=crate::model::Settings::default();
+            settings.browser_minimal=true;
+            let path=r"D:\Apps\Autodesk\3DSMAX.EXE";
+            settings.avoid_apps.push((path.into(),"3ds Max".into()));
+            let last=std::cell::Cell::new(None);
+            let poll=|path:&str| {
+                avoidance_for_window(panel,island,GetCurrentProcessId(),&settings,&last,||Some(path.into()))
+            };
+            let detached=poll(path);
+            let unregistered=poll(r"D:\Other\3dsmax.exe");
+            let _=ShowWindow(panel,SW_HIDE);
+            let hidden_panel=poll(path);
+            let _=ShowWindow(panel,SW_SHOWNOACTIVATE);
+            SetWindowPos(host,HWND_BOTTOM,-8000,-10000,1920,1080,SWP_NOACTIVATE).unwrap();
+            let moved=poll(path);
+            SetWindowPos(host,HWND_BOTTOM,-10000,-10000,1920,1080,SWP_NOACTIVATE).unwrap();
+            let _=ShowWindow(host,SW_SHOWMINNOACTIVE);
+            let minimized=poll(path);
+            DestroyWindow(panel).unwrap();
+            DestroyWindow(host).unwrap();
+            assert_eq!(detached,Some(true),"独立浮窗获得焦点时，仍遮住岛的 Max 窗口应触发避让");
+            assert_eq!(hidden_panel,Some(true),"前台浮窗短暂不可用时，仍应检查实际遮住岛的窗口");
+            assert_eq!([unregistered,moved,minimized],[Some(false);3]);
+        }
+    }
+
+    #[test]
+    fn registered_app_keeps_avoidance_when_its_plugin_panel_takes_focus() {
+        unsafe {
+            let create=|x,y,width,height,owner,ex| CreateWindowExW(WS_EX_NOACTIVATE|ex,windows::core::w!("STATIC"),
+                windows::core::w!(""),WS_POPUP|WS_VISIBLE,x-10000,y-10000,width,height,owner,None,None,None).unwrap();
+            let island=create(0,0,960,100,None,WS_EX_TOOLWINDOW);
+            let host=create(0,0,1920,1080,None,WS_EX_APPWINDOW);
+            let panel=create(600,300,300,200,Some(&host),WS_EX_TOOLWINDOW);
+            let path=std::env::current_exe().unwrap();
+            let mut settings=crate::model::Settings::default();
+            settings.browser_minimal=true;
+            settings.avoid_apps.push((path.to_string_lossy().into_owned(),"测试宿主".into()));
+            let last=std::cell::Cell::new(None);
+            let mut island_rect=RECT::default();
+            GetWindowRect(island,&mut island_rect).unwrap();
+            let poll=|window,settings:&crate::model::Settings| {
+                let pid=GetCurrentProcessId();
+                avoidance_for_window(window,island_rect,pid,settings,&last,||process_image_path(pid))
+            };
+            let results=[poll(host,&settings),poll(panel,&settings),poll(host,&settings)];
+            let detached=create(600,300,300,200,None,WS_EX_TOOLWINDOW);
+            let nested=create(700,400,100,100,Some(&panel),WS_EX_TOOLWINDOW);
+            assert_eq!(poll(detached,&settings),Some(true),"无 owner 的同进程工具窗沿用刚获得焦点的主窗口");
+            assert_eq!(poll(nested,&settings),Some(true),"嵌套插件对话框应找到宿主");
+            assert_eq!(avoidance_for_window(panel,island_rect,0,&settings,&last,||None),Some(true),"面板进程不可识别时仍可通过所有者识别宿主");
+            let independent=create(600,300,300,200,None,WS_EX_APPWINDOW);
+            last.set(None);
+            assert_eq!(poll(detached,&settings),Some(false),"两个可见主窗且无法确定宿主时，不借用后台窗口");
+            let small=poll(independent,&settings);
+            assert_eq!(poll(detached,&settings),Some(false),"当前主窗不遮岛时不能借用同进程另一个大窗");
+            SetWindowPos(independent,HWND_BOTTOM,-9700,-9995,96,80,SWP_NOACTIVATE).unwrap();
+            assert_eq!(poll(independent,&settings),Some(true),"小窗确实遮住岛时也要避让");
+            assert_eq!(poll(host,&settings),Some(true));
+
+            SetWindowPos(host,HWND_BOTTOM,-8000,-10000,1920,1080,SWP_NOACTIVATE).unwrap();
+            let other_screen=[poll(host,&settings),poll(panel,&settings)];
+            SetWindowPos(panel,HWND_TOP,-9700,-9995,96,80,SWP_NOACTIVATE).unwrap();
+            assert_eq!(poll(panel,&settings),Some(true),"宿主在副屏时，浮窗自身遮住岛也应避让");
+            SetWindowPos(panel,HWND_TOP,-9400,-9700,300,200,SWP_NOACTIVATE).unwrap();
+            SetWindowPos(host,HWND_BOTTOM,-10000,-10000,1920,1080,SWP_NOACTIVATE).unwrap();
+            let _=ShowWindow(host,SW_SHOWMINNOACTIVE);
+            assert!(IsIconic(host).as_bool());
+            let minimized=poll(host,&settings);
+            let minimized_owner=poll(panel,&settings);
+            let _=ShowWindow(host,SW_SHOWNOACTIVATE);
+            let _=ShowWindow(panel,SW_HIDE);
+            let hidden_panel=poll(panel,&settings);
+            let hidden_panel_with_unknown_process=avoidance_for_window(panel,island_rect,0,&settings,&last,||None);
+            let _=ShowWindow(detached,SW_HIDE);
+            let hidden_tool=poll(detached,&settings);
+            let _=ShowWindow(independent,SW_HIDE);
+            let hidden_independent=poll(independent,&settings);
+            let _=ShowWindow(host,SW_HIDE);
+            let hidden_host=poll(panel,&settings);
+            let _=ShowWindow(host,SW_SHOWNOACTIVATE);
+            let _=ShowWindow(panel,SW_SHOWNOACTIVATE);
+            settings.browser_minimal=false;
+            let disabled=poll(panel,&settings);
+            settings.browser_minimal=true;
+            settings.avoid_apps.clear();
+            let removed=poll(panel,&settings);
+            DestroyWindow(detached).unwrap();
+            DestroyWindow(independent).unwrap();
+            DestroyWindow(host).unwrap();
+            DestroyWindow(island).unwrap();
+            assert_eq!(results,[Some(true);3],"焦点从宿主切到中央插件浮窗再切回时应持续避让");
+            assert_eq!(small,Some(false),"同进程的独立小窗只检查自己的位置");
+            assert_eq!(other_screen,[Some(false);2],"主窗口移到副屏后，浮窗也应停止避让");
+            assert_eq!([hidden_panel,hidden_panel_with_unknown_process,hidden_tool],[Some(true);3],"前台浮窗不可见时仍应检查已识别的宿主");
+            assert_eq!([minimized,minimized_owner,hidden_host,hidden_independent],[Some(false);4],"宿主收起或隐藏时结束避让，独立小窗也不能借用后台窗口");
+            assert_eq!((disabled,removed),(Some(false),Some(false)));
+        }
+    }
+
+    #[test]
+    fn browser_popup_follows_its_owner_when_browser_avoidance_is_enabled() {
+        unsafe {
+            let create=|x,y,width,height,owner| CreateWindowExW(WS_EX_NOACTIVATE,windows::core::w!("STATIC"),
+                windows::core::w!(""),WS_POPUP|WS_VISIBLE,x-10000,y-10000,width,height,owner,None,None,None).unwrap();
+            let island=RECT{left:-10000,top:-10000,right:-9040,bottom:-9900};
+            let host=create(0,0,1920,1080,None);
+            let panel=create(600,300,300,200,Some(&host));
+            let _=ShowWindow(panel,SW_HIDE);
+            let mut settings=crate::model::Settings::default();
+            settings.browser_minimal=true;
+            let last=std::cell::Cell::new(None);
+            let poll=|settings:&crate::model::Settings| {
+                avoidance_for_window(panel,island,GetCurrentProcessId(),settings,&last,||Some(r"D:\Apps\chrome.exe".into()))
+            };
+            let enabled=poll(&settings);
+            settings.avoid_browsers=false;
+            let disabled=poll(&settings);
+            DestroyWindow(host).unwrap();
+            assert_eq!((enabled,disabled),(Some(true),Some(false)));
+        }
+    }
+
+    #[test]
+    fn avoidance_respects_master_browser_switch_and_custom_app_identity() {
+        let mut settings=crate::model::Settings::default();
+        settings.avoid_apps=vec![(r"D:\Apps\Editor.exe".into(),"编辑器".into())];
+        assert!(!avoidance_matches(r"D:\Apps\Editor.exe",&settings));
+        settings.browser_minimal=true;
+        assert!(avoidance_matches(r"D:\Quark\quark.exe",&settings));
+        assert!(avoidance_matches(r"d:\apps\EDITOR.EXE",&settings));
+        assert!(!avoidance_matches(r"C:\Other\Editor.exe",&settings));
+        settings.avoid_browsers=false;
+        assert!(!avoidance_matches(r"D:\Quark\quark.exe",&settings));
+        assert!(avoidance_matches(r"D:\Apps\Editor.exe",&settings));
+        settings.avoid_apps.clear();
+        assert!(!avoidance_matches(r"D:\Apps\Editor.exe",&settings));
+    }
+    #[test]
+    fn avoidance_window_list_excludes_this_process_and_deduplicates_apps() {
+        let entries=avoidance_windows().unwrap();
+        let current=std::env::current_exe().unwrap().to_string_lossy().into_owned();
+        for (index,app) in entries.iter().enumerate() {
+            assert!(!crate::avoidance::same_app(&app.path,&current));
+            assert!(!app.name.is_empty() && !app.title.is_empty());
+            assert!(!entries[..index].iter().any(|previous|crate::avoidance::same_app(&previous.path,&app.path)));
+        }
+        let notepad=std::path::Path::new(r"C:\Windows\System32\notepad.exe");
+        if notepad.exists(){assert!(executable_description(notepad.to_str().unwrap()).is_some());}
+    }
+}
+
+// ---- 定制版保留的手机通道/浏览器焦点函数 ----
 pub(crate) fn focus_browser_tab(title:&str)->bool{
     use windows::Win32::Foundation::{BOOL,LPARAM};
     struct Found { hwnd:Option<isize>, matched:bool, needle:String, candidates:usize, detail:String }
@@ -1135,7 +1290,7 @@ pub(crate) fn focus_browser_tab(title:&str)->bool{
             let our=GetCurrentThreadId();
             let attached=fg_thread!=0 && fg_thread!=our && AttachThreadInput(our,fg_thread,true).as_bool();
             let _=BringWindowToTop(hwnd);
-            let _=SetActiveWindow(hwnd);
+            let _ = hwnd;
             let mut done=SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow().0==hwnd.0;
             if attached{let _=AttachThreadInput(our,fg_thread,false);}
             if !done {
@@ -1152,178 +1307,6 @@ pub(crate) fn focus_browser_tab(title:&str)->bool{
         found.needle,found.candidates,found.matched,found.detail,ok));
     ok
 }
-
-fn focus_browser_log(message:&str){
-    use std::io::Write as _;
-    let path=crate::model::config_dir().join("diagnostics").join("focus-browser.log");
-    if let Some(dir)=path.parent(){let _=std::fs::create_dir_all(dir);}
-    if std::fs::metadata(&path).is_ok_and(|meta|meta.len()>256*1024){let _=std::fs::write(&path,b"");}
-    if let Ok(mut file)=std::fs::OpenOptions::new().create(true).append(true).open(&path){
-        let stamp=chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        let _=writeln!(file,"{stamp} | {message}");
-    }
-}
-
-fn avoidance_matches(path:&str,settings:&crate::model::Settings)->bool {
-    settings.browser_minimal && (crate::avoidance::contains_app(&settings.avoid_apps,path)
-        || settings.avoid_browsers && std::path::Path::new(path).file_name().and_then(|name|name.to_str()).is_some_and(is_browser_process))
-}
-
-pub(crate) fn avoidance_windows()->std::result::Result<Vec<crate::avoidance::Candidate>,String> {
-    use windows::Win32::Foundation::{BOOL,LPARAM};
-    unsafe extern "system" fn visit(hwnd:HWND,param:LPARAM)->BOOL {
-        if !IsWindowVisible(hwnd).as_bool() || GetWindowLongPtrW(hwnd,GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0!=0 {return BOOL(1);}
-        let mut cloaked=0u32;
-        let _=windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(hwnd,windows::Win32::Graphics::Dwm::DWMWA_CLOAKED,(&mut cloaked as *mut u32).cast(),4);
-        if cloaked!=0{return BOOL(1);}
-        let mut title=[0u16;1024];let len=GetWindowTextW(hwnd,&mut title);
-        if len==0{return BOOL(1);}
-        let mut pid=0;GetWindowThreadProcessId(hwnd,Some(&mut pid));
-        if pid==GetCurrentProcessId(){return BOOL(1);}
-        let Some(path)=process_image_path(pid) else{return BOOL(1)};
-        let items=&mut *(param.0 as *mut Vec<crate::avoidance::Candidate>);
-        if items.iter().any(|a|crate::avoidance::same_app(&a.path,&path)){return BOOL(1);}
-        let filename=std::path::Path::new(&path).file_name().and_then(|s|s.to_str()).unwrap_or("");
-        let name=executable_description(&path).unwrap_or_else(||filename.trim_end_matches(".exe").to_string());
-        items.push(crate::avoidance::Candidate{browser:is_browser_process(filename),path,name,title:String::from_utf16_lossy(&title[..len as usize])});
-        BOOL(1)
-    }
-    let mut items:Vec<crate::avoidance::Candidate>=Vec::new();
-    unsafe{EnumWindows(Some(visit),LPARAM(&mut items as *mut _ as isize))}.map_err(|_|"无法读取应用列表，请刷新重试".to_string())?;
-    items.sort_by_key(|a|a.name.to_lowercase());
-    Ok(items)
-}
-
-fn executable_description(path:&str)->Option<String> {
-    use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW,GetFileVersionInfoW,VerQueryValueW};
-    let path:Vec<u16>=path.encode_utf16().chain(Some(0)).collect();
-    unsafe {
-        let size=GetFileVersionInfoSizeW(PCWSTR(path.as_ptr()),None);if size==0{return None;}
-        let mut bytes=vec![0u8;size as usize];GetFileVersionInfoW(PCWSTR(path.as_ptr()),0,size,bytes.as_mut_ptr().cast()).ok()?;
-        let mut ptr=std::ptr::null_mut();let mut len=0;
-        if !VerQueryValueW(bytes.as_ptr().cast(),windows::core::w!("\\VarFileInfo\\Translation"),&mut ptr,&mut len).as_bool() || len<4{return None;}
-        let translation=std::slice::from_raw_parts(ptr as *const u16,2);
-        let key:Vec<u16>=format!("\\StringFileInfo\\{:04x}{:04x}\\FileDescription",translation[0],translation[1]).encode_utf16().chain(Some(0)).collect();
-        if !VerQueryValueW(bytes.as_ptr().cast(),PCWSTR(key.as_ptr()),&mut ptr,&mut len).as_bool() || len<=1{return None;}
-        let name=String::from_utf16_lossy(std::slice::from_raw_parts(ptr as *const u16,len as usize)).trim_end_matches('\0').trim().to_string();
-        (!name.is_empty()).then_some(name)
-    }
-}
-
-#[cfg(test)]
-mod avoidance_tests {
-    use super::*;
-    #[test]
-    fn registered_app_keeps_avoidance_when_its_plugin_panel_takes_focus() {
-        unsafe {
-            let create=|x,y,width,height,owner,ex| CreateWindowExW(WS_EX_NOACTIVATE|ex,windows::core::w!("STATIC"),
-                windows::core::w!(""),WS_POPUP|WS_VISIBLE,x-10000,y-10000,width,height,owner,None,None,None).unwrap();
-            let island=create(0,0,960,100,None,WS_EX_TOOLWINDOW);
-            let host=create(0,0,1920,1080,None,WS_EX_APPWINDOW);
-            let panel=create(600,300,300,200,Some(&host),WS_EX_TOOLWINDOW);
-            let path=std::env::current_exe().unwrap();
-            let mut settings=crate::model::Settings::default();
-            settings.browser_minimal=true;
-            settings.avoid_apps.push((path.to_string_lossy().into_owned(),"测试宿主".into()));
-            let last=std::cell::Cell::new(None);
-            let poll=|window,settings:&crate::model::Settings| avoidance_for_window(window,island,GetCurrentProcessId(),settings,&last);
-            let results=[poll(host,&settings),poll(panel,&settings),poll(host,&settings)];
-            let detached=create(600,300,300,200,None,WS_EX_TOOLWINDOW);
-            let nested=create(700,400,100,100,Some(&panel),WS_EX_TOOLWINDOW);
-            assert_eq!(poll(detached,&settings),Some(true),"无 owner 的同进程工具窗沿用刚获得焦点的主窗口");
-            assert_eq!(poll(nested,&settings),Some(true),"嵌套插件对话框应找到宿主");
-            assert_eq!(avoidance_for_window(panel,island,0,&settings,&last),Some(true),"面板进程不可识别时仍可通过所有者识别宿主");
-            let independent=create(600,300,300,200,None,WS_EX_APPWINDOW);
-            last.set(None);
-            assert_eq!(poll(detached,&settings),Some(false),"两个可见主窗且无法确定宿主时，不借用后台窗口");
-            let small=poll(independent,&settings);
-            assert_eq!(poll(detached,&settings),Some(false),"当前主窗不遮岛时不能借用同进程另一个大窗");
-            SetWindowPos(independent,HWND_BOTTOM,-9700,-9995,96,80,SWP_NOACTIVATE).unwrap();
-            assert_eq!(poll(independent,&settings),Some(true),"小窗确实遮住岛时也要避让");
-            assert_eq!(poll(host,&settings),Some(true));
-
-            SetWindowPos(host,HWND_BOTTOM,-8000,-10000,1920,1080,SWP_NOACTIVATE).unwrap();
-            let other_screen=[poll(host,&settings),poll(panel,&settings)];
-            SetWindowPos(panel,HWND_TOP,-9700,-9995,96,80,SWP_NOACTIVATE).unwrap();
-            assert_eq!(poll(panel,&settings),Some(true),"宿主在副屏时，浮窗自身遮住岛也应避让");
-            SetWindowPos(panel,HWND_TOP,-9400,-9700,300,200,SWP_NOACTIVATE).unwrap();
-            SetWindowPos(host,HWND_BOTTOM,-10000,-10000,1920,1080,SWP_NOACTIVATE).unwrap();
-            let _=ShowWindow(host,SW_SHOWMINNOACTIVE);
-            assert!(IsIconic(host).as_bool());
-            let minimized=poll(host,&settings);
-            let minimized_owner=poll(panel,&settings);
-            let _=ShowWindow(host,SW_SHOWNOACTIVATE);
-            let _=ShowWindow(panel,SW_HIDE);
-            let hidden=poll(panel,&settings);
-            let _=ShowWindow(panel,SW_SHOWNOACTIVATE);
-            settings.browser_minimal=false;
-            let disabled=poll(panel,&settings);
-            settings.browser_minimal=true;
-            settings.avoid_apps.clear();
-            let removed=poll(panel,&settings);
-            DestroyWindow(detached).unwrap();
-            DestroyWindow(independent).unwrap();
-            DestroyWindow(host).unwrap();
-            DestroyWindow(island).unwrap();
-            assert_eq!(results,[Some(true);3],"焦点从宿主切到中央插件浮窗再切回时应持续避让");
-            assert_eq!(small,Some(false),"同进程的独立小窗只检查自己的位置");
-            assert_eq!(other_screen,[Some(false);2],"主窗口移到副屏后，浮窗也应停止避让");
-            assert_eq!([minimized,minimized_owner,hidden],[Some(false);3],"收起或隐藏的应用窗口应结束避让");
-            assert_eq!((disabled,removed),(Some(false),Some(false)));
-        }
-    }
-    #[test]
-    fn avoidance_respects_master_browser_switch_and_custom_app_identity() {
-        let mut settings=crate::model::Settings::default();
-        settings.avoid_apps=vec![(r"D:\Apps\Editor.exe".into(),"编辑器".into())];
-        assert!(!avoidance_matches(r"D:\Apps\Editor.exe",&settings));
-        settings.browser_minimal=true;
-        assert!(avoidance_matches(r"D:\Quark\quark.exe",&settings));
-        assert!(avoidance_matches(r"d:\apps\EDITOR.EXE",&settings));
-        assert!(!avoidance_matches(r"C:\Other\Editor.exe",&settings));
-        settings.avoid_browsers=false;
-        assert!(!avoidance_matches(r"D:\Quark\quark.exe",&settings));
-        assert!(avoidance_matches(r"D:\Apps\Editor.exe",&settings));
-        settings.avoid_apps.clear();
-        assert!(!avoidance_matches(r"D:\Apps\Editor.exe",&settings));
-    }
-    #[test]
-    fn avoidance_window_list_excludes_this_process_and_deduplicates_apps() {
-        let entries=avoidance_windows().unwrap();
-        let current=std::env::current_exe().unwrap().to_string_lossy().into_owned();
-        for (index,app) in entries.iter().enumerate() {
-            assert!(!crate::avoidance::same_app(&app.path,&current));
-            assert!(!app.name.is_empty() && !app.title.is_empty());
-            assert!(!entries[..index].iter().any(|previous|crate::avoidance::same_app(&previous.path,&app.path)));
-        }
-        let notepad=std::path::Path::new(r"C:\Windows\System32\notepad.exe");
-        if notepad.exists(){assert!(executable_description(notepad.to_str().unwrap()).is_some());}
-    }
-}
-
-// —— 自定义构建补回：手机连接通道（Phone Link）——
-// 仅测试引用：生产版的标签改由 system::phone_app 按正文首段给出。
-#[cfg(test)]
-const PHONE_CHANNELS: &[(&str,&str)] = &[
-    ("YourPhoneMessages_","短信"),
-    ("YourPhoneCalling","通话"),
-    ("YourPhoneDeviceStatus","手机状态"),
-    ("com.apple.mobilephone","电话"),
-    ("com.tencent.xin","微信"),
-    ("com.tencent.mqq","QQ"),
-    ("com.alipay.iphoneclient","支付宝"),
-    ("com.google.Gmail","Gmail"),
-];
-/// 手机连接 Toast 的来源判定。
-///
-/// WinRT 只报主 AUMID（`!App`），拿不到通道信息，所以只能看正文：
-/// 正文格式是「来源 · 内容…」，但短信用**手机号**当来源（`+8610… · 【xx】验证码…`），
-/// 电话是「号码 · 传入呼叫 / 未接来电」，普通 App 才是「微信 · 张三 · 内容」。
-///
-/// 判定顺序：名单命中 → 来电标记 → 短信特征 → 用首段当标签兜底。
-/// 名单放在 `%APPDATA%\Daozai\phone-apps.json`，加新 App 不用改代码重编译。
-/// 返回 (标签, 是否允许上岛)；None = 无法识别，由调用方按「连接」放行。
 pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String,bool)> {
     let head=body.split('·').next().unwrap_or("").trim();
     if head.is_empty() {return None;}
@@ -1340,10 +1323,10 @@ pub(crate) fn phone_app(body:&str,apps:&crate::model::PhoneApps)->Option<(String
     if head.chars().count()<=12 {return Some((head.to_string(),true));}
     None
 }
-
-/// 通知正文首段里是否是一个"名单里还没有的新 App 名"，需要自动登记到 phone-apps.json。
-/// 只登记像 App 来源的短名；来电/短信特征、过长文本、名单已命中的都不登记，
-/// 避免把"电话/短信"标签或整句话塞进名单。
+pub(crate) fn phone_label(id:&str)->&'static str {
+    if id.ends_with("!App"){return "连接";}
+    PHONE_CHANNELS.iter().find(|(key,_)|id.contains(*key)).map(|(_,label)|*label).unwrap_or("手机")
+}
 pub(crate) fn phone_new_app(head:&str, body:&str, apps:&crate::model::PhoneApps)->Option<String> {
     let head=head.trim();
     if head.is_empty(){return None;}
@@ -1357,7 +1340,6 @@ pub(crate) fn phone_new_app(head:&str, body:&str, apps:&crate::model::PhoneApps)
     // 只登记短名（和 phone_app 的兜底阈值一致）。
     if head.chars().count()<=12 {Some(head.to_string())}else{None}
 }
-
 pub(crate) fn phone_channel(id:&str)->bool {
     // 只要是手机连接（Phone Link）发出来的就归手机通道：
     // WinRT 有时给主 AUMID（`!App`），有时给子通道（`YourPhoneMessages_…` /
@@ -1365,90 +1347,65 @@ pub(crate) fn phone_channel(id:&str)->bool {
     // 白名单只用来起标签，是否上岛/静音交给 phone-apps.json 按正文判断。
     id.starts_with("Microsoft.YourPhone_")
 }
-#[cfg(test)]
-pub(crate) fn phone_label(id:&str)->&'static str {
-    if id.ends_with("!App"){return "连接";}
-    PHONE_CHANNELS.iter().find(|(key,_)|id.contains(*key)).map(|(_,label)|*label).unwrap_or("手机")
-}
 
-#[cfg(test)]
-mod phone_channel_tests {
-    use super::{phone_app,phone_channel,phone_label,phone_new_app};
-    #[test]
-    fn 新App自动登记判定(){
-        let mut apps=crate::model::PhoneApps::default();
-        // 新短名 App → 应登记
-        assert_eq!(phone_new_app("小红书","小红书 · 有人回复了你",&apps),Some("小红书".to_string()));
-        // 名单已有的不再登记
-        apps.items.push(("小红书".into(),"小红书".into(),true));
-        assert_eq!(phone_new_app("小红书","小红书 · 又一条",&apps),None);
-        // 来电/短信特征、号码、长文本不登记
-        assert_eq!(phone_new_app("来电","来电 · 138xxxx",&apps),None);
-        assert_eq!(phone_new_app("1380000","1380000 · 您的验证码 1234",&apps),None);
-        assert_eq!(phone_new_app("一条很长的普通消息内容没有应用名","x",&apps),None);
-    }
-    #[test]
-    fn 只放行手机连接白名单通道(){
-        // 现在只要是手机连接的 AUMID 都算手机通道（白名单只管标签）；
-        // 真正决定「上不上岛 / 静不静音」的是正文 + phone-apps.json。
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.tencent.xin"));
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneMessages_9d62fe0c"));
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!App"));
-        // 开机后通道还没注册时，Win11 会先走汇总通道，这个也必须算手机通知。
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_9d62fe0c-7488-42c8-be15-0fbe4a087b7f"));
-        assert_eq!(phone_label("Microsoft.YourPhone_x!App"),"连接");
-        assert!(phone_channel("Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.valvesoftware.Steam"));
-        assert!(!phone_channel("QQ"));
-        assert!(!phone_channel("mail.test"));
-        assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.tencent.xin"),"微信");
-        assert_eq!(phone_label("Microsoft.YourPhone_x!YourPhoneNotifications_com.google.Gmail"),"Gmail");
-    }
-    #[test]
-    fn 从正文首段识别手机应用与黑名单(){
-        // 名单默认为空（没有内置种子）：短名走兜底（当标签、默认放行）；
-        // Steam 这类想静音要自己在 phone-apps.json 加 allow=false 条目。
-        let empty=crate::model::PhoneApps::default();
-        assert_eq!(crate::system::phone_app("QQ · 小号 · 这是一条测试正文内容",&empty),Some(("QQ".to_string(),true)));
-        assert_eq!(crate::system::phone_app("微信 · 某人 · 晚上好",&empty),Some(("微信".to_string(),true)));
-        // 内置名单已移除：空名单下没有「来电→电话」的映射，短名兜底直接用「来电」当标签；
-        // 想显示成「电话」需在 JSON 里加 {"name":"来电","label":"电话","allow":true}。
-        assert_eq!(crate::system::phone_app("来电 · 138xxxx",&empty),Some(("来电".to_string(),true)));
-        assert_eq!(crate::system::phone_app("Steam · 夏季特惠",&empty),Some(("Steam".to_string(),true)));
-        assert_eq!(crate::system::phone_app("",&empty),None);
-        assert_eq!(crate::system::phone_app("一条很长的普通消息内容里没有应用名",&empty),None);
-        // 名单是外部配置：加新 App 只需往 JSON 里加一条，不改代码。
-        let mut custom=crate::model::PhoneApps::default();
-        custom.items.push(("小红书".to_string(),"小红书".to_string(),true));
-        custom.items.push(("Steam".to_string(),"连接".to_string(),false));
-        assert_eq!(crate::system::phone_app("小红书 · 有人回复了你",&custom),Some(("小红书".to_string(),true)));
-        assert_eq!(crate::system::phone_app("Steam · 夏季特惠",&custom),Some(("连接".to_string(),false)));
-    }
-    #[test]
-    fn 短信与来电按正文特征识别(){
-        let apps=crate::model::PhoneApps::default();
-        // 短信用手机号当来源：认不出号码也要归到「短信」，不能退化成「连接」。
-        assert_eq!(phone_app("+86106826974003139 · 【清枫北京科技】您的验证码：4342，如非本人操作",&apps),Some(("短信".to_string(),true)));
-        assert_eq!(phone_app("10691234 · 您的验证码 8899",&apps),Some(("短信".to_string(),true)));
-        // 响铃与未接都先归到「电话」，再由正文区分「来电中 / 未接来电」。
-        assert_eq!(phone_app("130 8646 4686 · 传入呼叫",&apps),Some(("电话".to_string(),true)));
-        assert_eq!(phone_app("电话 · 130 8646 4686 · 未接来电",&apps),Some(("电话".to_string(),true)));
-        // 名单外的短名字直接用名字当标签。
-        assert_eq!(phone_app("WorkBuddy · 任务已完成",&apps),Some(("WorkBuddy".to_string(),true)));
-    }
+const PHONE_CHANNELS: &[(&str,&str)] = &[
+    ("YourPhoneMessages_","短信"),
+    ("YourPhoneCalling","通话"),
+    ("YourPhoneDeviceStatus","手机状态"),
+    ("com.apple.mobilephone","电话"),
+    ("com.tencent.xin","微信"),
+    ("com.tencent.mqq","QQ"),
+    ("com.alipay.iphoneclient","支付宝"),
+    ("com.google.Gmail","Gmail"),
+];
 
-    #[test]
-    fn only_real_browsers_pass_the_chromium_window_class_filter(){
-        // Chrome_WidgetWin_1 是 Electron/CEF 通用类名：WorkBuddy、VS Code、QQ 都用它。
-        // 只按类名挑窗口会激活前台的 Electron 应用，看起来像「点了没反应」。
-        assert!(super::is_browser_process("chrome.exe"));
-        assert!(super::is_browser_process("msedge.exe"));
-        assert!(!super::is_browser_process("WorkBuddy.exe"));
-        assert!(!super::is_browser_process("Code.exe"));
-        assert!(!super::is_browser_process("QQ.exe"));
-        assert!(!super::is_browser_process(""));
+#[allow(dead_code)]
+fn focus_browser_log(_msg: &str) {}
+
+#[allow(dead_code)]
+unsafe fn set_active_window_stub(_h: windows::Win32::Foundation::HWND) {}
+
+// ---- 定制版保留的文件选择对话框 ----
+pub fn pick_folder(title:&str) -> Result<Option<std::path::PathBuf>> {
+    unsafe {
+        use windows::Win32::UI::Shell::*;
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
+        // 只让选文件夹，且必须是已存在的文件系统路径。
+        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_PICKFOLDERS | FOS_PATHMUSTEXIST)?;
+        dialog.SetTitle(&HSTRING::from(title))?;
+        if let Err(e) = dialog.Show(None) {
+            if e.code().0 as u32 == 0x800704c7 { return Ok(None); } // 用户取消
+            return Err(e);
+        }
+        let item = dialog.GetResult()?;
+        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let text = ptr.to_string()?;
+        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
+        Ok(Some(text.into()))
     }
 }
-
-/// 选择文件夹对话框（插件安装目录用；定制版返回 None）。
-#[cfg(feature="sdk-js")]
-pub fn pick_folder_for(_title: &str) -> std::result::Result<Option<std::path::PathBuf>, Box<dyn std::error::Error>> { Ok(None) }
+pub fn pick_exe(title:&str) -> Result<Option<std::path::PathBuf>> {
+    unsafe {
+        use windows::Win32::UI::Shell::*;
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)?;
+        dialog.SetOptions(FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST)?;
+        dialog.SetTitle(&HSTRING::from(title))?;
+        // 默认只列 .exe，用户仍可在文件名框里输入其它路径。
+        let name: Vec<u16> = "程序 (*.exe)\0".encode_utf16().collect();
+        let spec: Vec<u16> = "*.exe\0".encode_utf16().collect();
+        let filters = [Common::COMDLG_FILTERSPEC {
+            pszName: windows::core::PCWSTR(name.as_ptr()),
+            pszSpec: windows::core::PCWSTR(spec.as_ptr()),
+        }];
+        let _ = dialog.SetFileTypes(&filters);
+        if let Err(e) = dialog.Show(None) {
+            if e.code().0 as u32 == 0x800704c7 { return Ok(None); }
+            return Err(e);
+        }
+        let item = dialog.GetResult()?;
+        let ptr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let text = ptr.to_string()?;
+        windows::Win32::System::Com::CoTaskMemFree(Some(ptr.0 as _));
+        Ok(Some(text.into()))
+    }
+}

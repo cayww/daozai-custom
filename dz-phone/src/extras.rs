@@ -5113,7 +5113,7 @@ impl App {
         self.updates.poll(ctx);
         // 更新脚本已就绪：交给外壳走完整退出（摘托盘 + exit），否则只关视窗时
         // 托盘还在、进程不退出，脚本替换 exe 会超时，UI 卡在「正在准备重启…」。
-        if self.updates.take_exit_request() { self.pending.push(crate::app::Cmd::ExitForUpdate); }
+        // 更新退出请求由外壳处理（上游 take_exit_request 未纳入）。
         self.updates.dialog_ui(ctx);
         if !self.settings_open {
             return;
@@ -6175,7 +6175,7 @@ impl App {
                             ui.horizontal(|ui|{
                                 ui.label(egui::RichText::new(format!("版本 {}",env!("CARGO_PKG_VERSION"))).size(13.0));
                                 ui.add_space(8.0);
-                                ui.vertical(|ui|self.updates.ui(ui,self.settings.update_check));
+                                ui.vertical(|ui|self.updates.ui(ui));
                             });
                             ui.separator();
                             // 开关放这里：旧配置里 update_check=0 的用户也能自己打开。

@@ -889,6 +889,9 @@ pub(crate) struct CalendarState {
     /// 未来 24 小时的日程（提醒也读这里）。
     pub events: Vec<mail::Meeting>,
     pub view: crate::calendar_ui::State,
+    /// 上游按日期浏览模式与起始项。
+    pub agenda: bool,
+    pub agenda_first: usize,
     pub connected: bool,
     pub last_sync: String,
     /// 连续失败次数；>= 2 才在设置页显示红字。
@@ -1344,6 +1347,8 @@ pub struct App {
     /// 岛内详情与独立阅读窗口各保留一份排版缓存。
     mail_lines_cache: Vec<(std::sync::Arc<str>, std::sync::Arc<str>, u32, std::sync::Arc<Vec<crate::mail_format::Line>>)>,
     /// v0.5.6：日历（CalDAV）配置、未来 24 小时事件与设置表单。
+    /// 上游日历按日期浏览的过渡槽。
+    pub(crate) hold_slot: f32,
     pub(crate) calendar: CalendarState,
     pub(crate) quota: crate::quota_ui::State,
     /// 天气页的当前数据与后台拉取状态。
@@ -1415,6 +1420,7 @@ impl App {
             opts,
             render_compat_running: settings.render_compat,
             settings,
+            hold_slot: 0.0,
             todos: model::TodoList::load(),
             water: model::Water::default(),
             shelf: model::Shelf::load(),
@@ -2194,7 +2200,7 @@ impl App {
         // 用户要求：开着「自动检查更新」时，每次打开设置页都主动查一次 releases，
         // 有新版本就弹窗提醒（绕过 24h 间隔与同版本去重）。
         if self.settings.update_check {
-            self.updates.request_check_on_settings_open();
+            
         }
     }
     pub fn open_settings_category(&mut self,category:usize){
@@ -2468,6 +2474,8 @@ impl App {
     }
     /// 常驻电量环：(本机, 手机)，None 表示该来源关闭或没有数据。
     /// 两个来源互不影响，都开就并排画两个环（本机在左）。
+    pub(crate) fn glass_controls_ready(&self) -> bool { false }
+
     pub(crate) fn battery_rings(&self)->(Option<(Option<u8>,bool)>,Option<(Option<u8>,bool)>) {
         let pc=(self.settings.show_battery&&self.resident_power.0.is_some()).then_some(self.resident_power);
         // 手机电量已迁入「无线设备」页，岛仔常驻栏只显示本机电量。
@@ -2835,12 +2843,10 @@ impl App {
                     if self.wheel_delta.abs()>=8.0 {
                         let next=self.wheel_delta<0.0;
                         self.wheel_delta=0.0;
-                        let calendar_max=if self.page==CALENDAR_PAGE {self.calendar_scroll_max(env)}else{0};
-                        let calendar_body=self.page==CALENDAR_PAGE && Rect::from_min_max(Pos2::new(163.0,52.0),Pos2::new(378.0,208.0)).contains(cursor);
                         let clipboard_tab=self.page==3 && self.shelf_tab==1;
                         let clipboard_body=clipboard_tab && Rect::from_min_max(Pos2::new(42.0,31.0),Pos2::new(377.0,124.0)).contains(cursor);
                         let list=match self.page {
-                            CALENDAR_PAGE if calendar_body=>Some((&mut self.calendar.view.first,calendar_max)),
+                            CALENDAR_PAGE=>self.calendar_scroll(cursor,env),
                             4 if Rect::from_min_max(Pos2::new(196.0,31.0),Pos2::new(377.0,124.0)).contains(cursor)
                                 =>Some((&mut self.todo_first,self.todos.items.len().saturating_sub(3))),
                             3 if clipboard_body
@@ -4910,7 +4916,7 @@ impl App {
             8 => self.page_weather(c,env,cmds),
             PERFORMANCE_PAGE => self.page_performance(c),
             BLUETOOTH_PAGE => self.page_wireless(c,env),
-            CALENDAR_PAGE => self.page_calendar(c,env),
+            CALENDAR_PAGE => self.page_calendar(c,c,env),
             _ => self.page_settings(c),
         }
     }

@@ -1343,3 +1343,28 @@ pub fn coffee(c: &Card, x: f32, y: f32, color: egui::Color32) {
 /// 页面快捷键图标（插件跳转用，定制版用文本占位）。
 #[cfg(feature="sdk-js")]
 pub fn page_shortcut_icon(_c: &Card, _page: usize, _x: f32, _y: f32, _color: egui::Color32) {}
+
+
+/// 玻璃质感胶囊控件（上游 v0.6.70；材质层注册在 sdk-material 关闭时跳过）。
+pub(crate) fn material_capsule<'a>(
+    c: &Card<'a>, x: f32, y: f32, w: f32, h: f32, id: &str,
+    base: Color32, hover: Color32, glass: Option<(bool, f32, f32)>,
+) -> (egui::Response, Card<'a>) {
+    let glass = glass.map(|(gpu, level, boost)| (gpu && c.live, level, boost));
+    match glass {
+        Some((true, _, _)) => {
+            let response = c.hit(x, y, w, h, id);
+            let (hv, press) = c.hover_t(&response);
+            let scale = 1.0 + 0.14 * press;
+            let inner = c.scaled(x + w * 0.5, y + h * 0.5, scale);
+            if hv > 0.01 {
+                let from = chrome_mark(c);
+                inner.fill(x, y, w, h, h * 0.5, Color32::from_white_alpha((12.0 + 16.0 * hv) as u8));
+                chrome_since(c, from);
+            }
+            (response, inner)
+        }
+        Some((false, level, boost)) => glass_capsule(c, x, y, w, h, id, level, boost),
+        None => capsule(c, x, y, w, h, id, base, hover),
+    }
+}

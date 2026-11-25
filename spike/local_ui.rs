@@ -879,9 +879,9 @@ impl LocalPlugins {
         self.records
             .iter()
             .filter(|(_, r)| {
-                r.package.as_ref().is_some_and(|p| {
-                    cfg!(all(windows, feature = "sdk-material")) || !p.manifest.is_material()
-                })
+                // 液态玻璃是本项目自维护的 D3D11 实现；插件市场的 GPU 材质插件一律屏蔽，
+                // 不让它接管岛体外观（即使将来启用了 sdk-material feature）。
+                r.package.as_ref().is_some_and(|p| !p.manifest.is_material())
             })
             .map(|(id, _)| id.clone())
             .collect()

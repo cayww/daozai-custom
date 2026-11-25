@@ -6,6 +6,7 @@ use crate::mail::Meeting;
 pub(crate) struct Entry { pub event: Meeting, pub reminder: Option<u32> }
 
 pub(crate) struct Draft {
+    pub picker: Option<crate::calendar_editor::Picker>,
     pub uid: Option<String>, pub title: String, pub start_date: String, pub start_time: String,
     pub end_date: String, pub end_time: String, pub all_day: bool, pub reminder: Option<u32>,
     pub error: String, pub focused: bool, pub confirm_delete: bool,
@@ -18,14 +19,14 @@ impl Draft {
         let end=start+Duration::hours(1);
         Self{uid:None,title:String::new(),start_date:start.format("%Y-%m-%d").to_string(),start_time:start.format("%H:%M").to_string(),
             end_date:end.format("%Y-%m-%d").to_string(),end_time:end.format("%H:%M").to_string(),all_day:false,reminder:Some(15),
-            error:String::new(),focused:false,confirm_delete:false}
+            error:String::new(),focused:false,confirm_delete:false,picker:None}
     }
     pub fn edit(entry:&Entry)->Self {
         let start=chrono::DateTime::from_timestamp(entry.event.start,0).unwrap().with_timezone(&Local);
         let end=chrono::DateTime::from_timestamp(entry.event.end.unwrap_or(entry.event.start+3600)-if entry.event.all_day{1}else{0},0).unwrap().with_timezone(&Local);
         Self{uid:Some(entry.event.uid.clone()),title:entry.event.title.clone(),start_date:start.format("%Y-%m-%d").to_string(),start_time:start.format("%H:%M").to_string(),
             end_date:end.format("%Y-%m-%d").to_string(),end_time:end.format("%H:%M").to_string(),all_day:entry.event.all_day,reminder:entry.reminder,
-            error:String::new(),focused:false,confirm_delete:false}
+            error:String::new(),focused:false,confirm_delete:false,picker:None}
     }
     pub fn entry(&self)->Result<Entry,String> {
         if self.title.trim().is_empty(){return Err("请填写日程名称".into());}
