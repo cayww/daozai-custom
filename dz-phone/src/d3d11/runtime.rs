@@ -283,10 +283,6 @@ pub struct D3d11Runtime {
     /// 主窗口 viewport 信息（窗口命令处理用）
     viewport_info: egui::ViewportInfo,
     actions: Vec<egui_winit::ActionRequested>,
-    /// 诊断开关：DAOZAI_RT_DUMP=1 时在第 90 帧导出 Present 前的 RT 原始像素到临时目录。
-    rt_dump_enabled: bool,
-    rt_dump_done: bool,
-    rt_dump_frames: u32,
 }
 
 impl D3d11Runtime {
@@ -352,8 +348,6 @@ impl D3d11Runtime {
             frames: 0, last_report: std::time::Instant::now(), fps: 0.0,
             repaint_delay: std::time::Duration::ZERO,
             viewport_info: egui::ViewportInfo::default(), actions: Vec::new(),
-            rt_dump_enabled: std::env::var_os("DAOZAI_RT_DUMP").is_some(),
-            rt_dump_done: false, rt_dump_frames: 0,
         })
     }
 
@@ -756,31 +750,6 @@ impl D3d11Runtime {
             }
             self.draw_glass(size.width, size.height, &u);
             let _ = self.egui_renderer.borrow_mut().render(&self.ctx, &rt, &self.egui_ctx, platform.0);
-            // 【诊断】导出 Present 前的 RT 原始像素，用来与屏幕截图对比毛刺来源。
-            if self.rt_dump_enabled && !self.rt_dump_done {
-                self.rt_dump_frames += 1;
-                if self.rt_dump_frames >= 90 {
-                    self.rt_dump_done = true;
-                    if let Some(image) = read_back_rt_rgba(&self.device, &self.ctx, &rt) {
-                        let mut bytes = Vec::with_capacity(image.pixels().len() * 4);
-                        for p in image.pixels() {
-                            bytes.extend_from_slice(&[p.r(), p.g(), p.b(), p.a()]);
-                        }
-                        let path = std::env::temp_dir().join("daozai-rt-dump.png");
-                        match ::image::RgbaImage::from_raw(
-                            image.resolution()[0] as u32, image.resolution()[1] as u32, bytes,
-                        ) {
-                            Some(img) => match img.save(&path) {
-                                Ok(()) => dlog(&format!("[rt-dump] saved {}", path.display())),
-                                Err(e) => dlog(&format!("[rt-dump] save failed: {e}")),
-                            },
-                            None => dlog("[rt-dump] bad buffer"),
-                        }
-                    } else {
-                        dlog("[rt-dump] readback failed");
-                    }
-                }
-            }
             // Present 之前消费截图/剪贴板动作：FLIP_DISCARD 后缓冲内容失效。
             drain_actions(self.egui_winit.as_mut().unwrap(), &mut self.actions,
                 &self.device, &self.ctx, Some(&rt), egui::ViewportId::ROOT);
