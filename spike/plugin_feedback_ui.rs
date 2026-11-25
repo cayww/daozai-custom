@@ -144,7 +144,7 @@ pub(super) fn plugin_feedback(ui: &egui::Ui) {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;

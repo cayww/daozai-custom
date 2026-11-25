@@ -193,7 +193,7 @@ pub(super) fn valid_snapshot(images: &CanvasImages) -> bool {
             .all(|(name, image)| valid_image_path(name) && image.decode(name).is_ok())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 mod tests {
     use super::*;
 

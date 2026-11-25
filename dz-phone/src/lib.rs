@@ -5,6 +5,13 @@
 //! - `model` / `lyrics` / `smtc` / `icons`：数据、歌词、系统媒体、文件图标
 //! - `native` / `tray`：仅 Windows 的窗口区域、命中穿透与托盘
 
+#[cfg(feature="sdk-js")]
+#[path="local_plugins_root.rs"]
+pub(crate) mod local_plugins_root;
+#[cfg(feature="sdk-js")]
+pub use local_plugins_root::local as local_plugins;
+#[cfg(feature="sdk-js")]
+pub use local_plugins_root::local as sdk_spike;
 pub mod display_layout;
 pub mod diagnostics_tool;
 pub mod rtl_text;

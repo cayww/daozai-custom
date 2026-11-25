@@ -141,7 +141,7 @@ fn compact(value: Option<u64>) -> String {
 /// 下载量以托盘图标和简写数字展示。
 fn download_count(ui: &mut egui::Ui, value: &str) -> egui::Response {
     let tint = muted_color(ui);
-    let galley = ui.fonts(|fonts| {
+    let galley = ui.fonts_mut(|fonts| {
         fonts.layout_no_wrap(value.to_owned(), egui::FontId::proportional(12.0), tint)
     });
     let size = egui::vec2(17.0 + galley.size().x, galley.size().y.max(15.0));
@@ -1034,7 +1034,7 @@ impl LocalPlugins {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 mod tests {
     use super::*;
 

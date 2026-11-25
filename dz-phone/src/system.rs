@@ -1448,3 +1448,7 @@ mod phone_channel_tests {
         assert!(!super::is_browser_process(""));
     }
 }
+
+/// 选择文件夹对话框（插件安装目录用；定制版返回 None）。
+#[cfg(feature="sdk-js")]
+pub fn pick_folder_for(_title: &str) -> std::result::Result<Option<std::path::PathBuf>, Box<dyn std::error::Error>> { Ok(None) }

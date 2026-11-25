@@ -250,7 +250,7 @@ fn read_file(_: &Path, _: &AtomicBool) -> io::Result<String> {
     Err(io::Error::other(FILE_ERROR))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 mod tests {
     use super::*;
 

@@ -470,3 +470,10 @@ mod tests {
         assert_eq!(mesh.vertices[0].color, Color32::WHITE);
     }
 }
+
+/// 上游插件样式表引用的经典调色板别名。
+#[cfg(feature="sdk-js")]
+pub const CLASSIC: Palette = Palette {
+    paper: [30,30,33], ink: [242,243,247], accent: None, dark_alpha: 1.0,
+    lift: 1.0, darken: 1.0, chip: 1.0, glass_chrome: false,
+};

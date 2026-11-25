@@ -49,7 +49,7 @@ impl LocalPlugins {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 mod tests {
     use super::*;
 

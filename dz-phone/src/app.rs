@@ -129,6 +129,7 @@ fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
 pub(crate) const PAGE_NAMES: [&str; 10] = ["音乐", "专注", "健康", "置物架", "待办", "邮箱", "AI 额度", "日程", "天气", "系统性能"];
 /// 上游 v0.6.70 性能页（第 10 页，常驻栏性能槽引用；暂不加入 PAGE_NAMES 岛体主界面）。
 pub(crate) const PERFORMANCE_PAGE: usize = 9;
+pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 10] = ["m","f","h","s","t","e","q","c","w","p"];
 pub(crate) const PAGE_SETTINGS_TABS: [usize; 10] = [1,2,3,5,4,7,11,8,12,15];
 
 // ---------- 动效参数 ----------
@@ -979,15 +980,6 @@ const CENTER_SWEEP: f64 = 0.55;
 /// 已居中的提示色（绿）：岛体描边、外发光和扫光统一用它，颜色本身就是「对准了」。
 const CENTER_TINT: (f32, f32, f32) = (88.0, 222.0, 140.0);
 
-/// 本地插件包宿主的最小占位（上游 sdk_spike 示例未纳入；插件市场核心功能不依赖）。
-#[cfg(any(feature="sdk-js",feature="sdk-wasm"))]
-#[derive(Default)]
-pub(crate) struct PluginHost;
-#[cfg(any(feature="sdk-js",feature="sdk-wasm"))]
-impl PluginHost {
-    pub(crate) fn pinned_order_settings(&mut self, _ui: &mut egui::Ui) {}
-}
-
 pub struct App {
     pub opts: Options,
     pub settings: model::Settings,
@@ -1340,11 +1332,12 @@ pub struct App {
     /// v0.5.5：邮件账号、最近邮件与设置表单。
     pub(crate) mail: MailState,
     /// 上游插件通知 UI/宿主（sdk-js；材质插件不启用）。
+    /// 插件设置页当前选中的插件 ID。
+    pub(crate) settings_plugin: Option<String>,
     pub(crate) plugin_notice_ui: crate::plugin_notice_ui::NoticeUi,
     pub(crate) plugin_notice_host: crate::plugin_notice_settings::NoticeHost,
     /// 本地插件包宿主（sdk-js/sdk-wasm）。
-    #[cfg(any(feature="sdk-js",feature="sdk-wasm"))]
-    pub(crate) plugins: PluginHost,
+    pub(crate) plugins: crate::local_plugins::LocalPlugins,
     /// 岛内详情与独立阅读窗口各保留一份排版缓存。
     mail_lines_cache: Vec<(std::sync::Arc<str>, std::sync::Arc<str>, u32, std::sync::Arc<Vec<crate::mail_format::Line>>)>,
     /// v0.5.6：日历（CalDAV）配置、未来 24 小时事件与设置表单。
@@ -1618,10 +1611,10 @@ impl App {
                 if !saved_mail_filter.is_empty() { manage.account_filter = Some(saved_mail_filter); }
                 MailState { accounts: mail::load_accounts(), manage, ..Default::default() }
             },
+            settings_plugin: None,
             plugin_notice_ui: Default::default(),
             plugin_notice_host: Default::default(),
-            #[cfg(any(feature="sdk-js",feature="sdk-wasm"))]
-            plugins: PluginHost::default(),
+            plugins: crate::local_plugins::LocalPlugins::open(model::config_dir().join("local-plugins")),
             mail_lines_cache: Vec::new(),
            calendar: CalendarState::load(),
             quota: crate::quota_ui::State::load(),
@@ -2141,6 +2134,20 @@ impl App {
     /// 距离上次交互的秒数（小精灵出现的依据）。
     pub fn idle_for(&self) -> f64 {
         self.system_idle.unwrap_or(self.t - self.last_input)
+    }
+
+    /// 打开插件的设置页（上游 v0.6.70 插件市场）。
+    #[cfg(feature="sdk-js")]
+    pub(crate) fn open_plugin_settings(&mut self, id: &str) {
+        if self.plugins.standalone_settings_pages().any(|(plugin, _)| plugin == id) {
+            self.settings_plugin = Some(id.to_owned());
+            self.settings_tab = crate::extras::SETTINGS_TAB_PLUGIN_DETAIL;
+        } else {
+            self.settings_plugin = None;
+            self.settings_tab = self.plugins.settings_destination(id)
+                .unwrap_or(crate::extras::SETTINGS_TAB_PLUGINS);
+        }
+        self.open_settings();
     }
 
     pub fn show_page(&mut self,page:usize) {

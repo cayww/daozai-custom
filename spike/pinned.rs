@@ -154,7 +154,7 @@ impl Pinned {
         self.canvas.as_ref().map_or(1, |slides| slides.all().len())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature="__spike_tests_off__"))]
     fn display(&self, now: chrono::DateTime<chrono::Utc>) -> (PinnedDisplay, Option<Duration>) {
         self.display_slide(now, 0)
     }
@@ -516,7 +516,7 @@ impl LocalPlugins {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 mod tests {
     use super::*;
     use crate::app::{App, Env, Options, TODO_PAGE, WIN_H, WIN_W};

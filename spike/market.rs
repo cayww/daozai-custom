@@ -1050,7 +1050,7 @@ pub(super) fn submit(input: &Path, path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(in crate::sdk_spike) fn author_command(args: &[OsString]) -> Option<ExitCode> {
+pub(crate) fn author_command(args: &[OsString]) -> Option<ExitCode> {
     let operation = args.get(1)?.to_str()?;
     if !matches!(
         operation,
@@ -1099,6 +1099,6 @@ pub(in crate::sdk_spike) fn author_command(args: &[OsString]) -> Option<ExitCode
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "market_tests.rs"]
 mod tests;

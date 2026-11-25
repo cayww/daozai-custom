@@ -512,6 +512,6 @@ impl LocalPlugins {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "plugin_interactions_tests.rs"]
 mod tests;

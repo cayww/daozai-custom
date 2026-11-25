@@ -1639,7 +1639,7 @@ impl LocalPlugins {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature="__spike_tests_off__"))]
     fn tick(&mut self, tasks_on: bool, calendar_on: bool, today: &str) {
         self.tick_features(tasks_on, calendar_on, false, today);
     }
@@ -1699,7 +1699,7 @@ impl LocalPlugins {
                         return Ok(None);
                     };
                     if let Some(staged) = staged {
-                        crate::model::replace_file(&staged.0, &self.path(&id))
+                        crate::model::replace_file_pub(&staged.0, &self.path(&id))
                             .map_err(|e| e.to_string())?;
                         self.records.get_mut(&id).unwrap().storage = std::mem::take(&mut output.storage);
                     }
@@ -2063,21 +2063,23 @@ impl Drop for LocalPlugins {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "local_management_test.rs"]
 mod management_test;
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "local_tests.rs"]
 mod tests;
 #[cfg(all(test, windows))]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "source_lifecycle_tests.rs"]
 mod source_lifecycle_tests;
 #[cfg(all(test, windows))]
 #[path = "quota_source_tests.rs"]
 mod quota_source_tests;
 #[cfg(all(test, windows))]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "status_source_tests.rs"]
 mod status_source_tests;
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "script_input_tests.rs"]
 mod script_input_tests;

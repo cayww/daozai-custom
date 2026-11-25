@@ -322,3 +322,7 @@ pub(crate) fn canvas_font(size: f32, _weight: W, _name: Option<&str>, _installed
     // 定制版用系统字体，忽略插件包内字体。
     egui::FontId::proportional(size)
 }
+
+/// 插件画布字体同步（定制版用系统字体，无需同步）。
+#[cfg(feature="sdk-js")]
+pub(crate) fn sync_canvas_fonts(_ctx: &egui::Context, _fonts: std::collections::BTreeMap<String, std::sync::Arc<egui::FontData>>) {}

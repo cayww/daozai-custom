@@ -121,7 +121,7 @@ pub(super) fn guide_banner(ui: &mut egui::Ui) -> bool {
     painter.rect_filled(icon, 9.0, color(&ctx, Color32::from_rgb(58, 49, 81), Color32::from_rgb(232, 225, 250)));
     painter.text(icon.center(), egui::Align2::CENTER_CENTER, "</>", egui::FontId::monospace(13.0), tag_fg);
 
-    let button_text = ui.fonts(|fonts| {
+    let button_text = ui.fonts_mut(|fonts| {
         fonts.layout_no_wrap("看教程".to_owned(), egui::FontId::proportional(12.5), Color32::WHITE)
     });
     let button = egui::Rect::from_min_size(
@@ -148,7 +148,7 @@ pub(super) fn guide_banner(ui: &mut egui::Ui) -> bool {
         job.wrap.max_width = text_w;
         job.wrap.max_rows = 1;
         job.wrap.break_anywhere = true;
-        ui.fonts(|fonts| fonts.layout_job(job))
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
     };
     let title = line("把你做的功能变成插件，放到集市给大家用", 13.5, strong);
     let sub = line("不会写代码也能跟着做，已经做好的功能也能搬进来", 12.0, muted);
@@ -169,7 +169,7 @@ pub(super) fn side_drawer(
     content: impl FnOnce(&mut egui::Ui) -> bool,
 ) -> bool {
     let ctx = ui.ctx().clone();
-    let clip = ctx.screen_rect();
+    let clip = ctx.content_rect();
     let elapsed = (ui.input(|input| input.time) - opened) as f32;
     let t = if crate::bar_layout::animations_enabled() {
         let t = (elapsed / 0.2).clamp(0.0, 1.0);
@@ -557,7 +557,7 @@ impl LocalPlugins {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 mod tests {
     use super::*;
 

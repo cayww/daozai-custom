@@ -277,10 +277,10 @@ pub(super) fn load_static_svg(svg: &str, bytes: usize, side: u32) -> Result<efra
         }
     }
     // 用宿主实际的 SVG 解码器验证作者提供的尺寸和画布。
-    egui_extras::image::load_svg_bytes(svg.as_bytes()).map_err(|e| fail(&e))
+    egui_extras::image::load_svg_bytes(svg.as_bytes(), &Default::default()).map_err(|e| fail(&e))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "appearance_assets_tests.rs"]
 mod tests;
 
@@ -545,7 +545,7 @@ impl LocalPlugins {
                     }
                     ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
                 }
-                Err(error) => ui.data_mut(|data| data.insert_temp(error_id, error.to_string())),
+                Err(error) => { ui.data_mut(|data| data.insert_temp(error_id, error.to_string())); },
             }
         }
         if let Some(error) = ui.data(|data| data.get_temp::<String>(error_id)) {

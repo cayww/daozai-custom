@@ -78,12 +78,12 @@ pub(crate) fn atomic_write(path:&Path,body:&[u8])->std::io::Result<()> {
     };
     let result=file.write_all(body).and_then(|_|file.sync_all());
     drop(file);
-    let result=result.and_then(|_|replace_file(&tmp,path));
+    let result=result.and_then(|_|replace_file_pub(&tmp,path));
     if result.is_err(){let _=fs::remove_file(&tmp);}
     result
 }
 
-fn replace_file(tmp:&Path,path:&Path)->std::io::Result<()> {
+pub(crate) fn replace_file_pub(tmp:&Path,path:&Path)->std::io::Result<()> {
     let result=fs::rename(tmp,path);
     #[cfg(windows)]
     if result.as_ref().is_err_and(|e|e.kind()==std::io::ErrorKind::CrossesDevices) {

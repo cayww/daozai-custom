@@ -1330,3 +1330,7 @@ pub fn coffee(c: &Card, x: f32, y: f32, color: egui::Color32) {
     c.seg((x - 2.0, y - 5.8), (x - 2.0, y - 3.8), 1.0, color);
     c.seg((x + 0.6, y - 6.4), (x + 0.6, y - 3.8), 1.0, color);
 }
+
+/// 页面快捷键图标（插件跳转用，定制版用文本占位）。
+#[cfg(feature="sdk-js")]
+pub fn page_shortcut_icon(_c: &Card, _page: usize, _x: f32, _y: f32, _color: egui::Color32) {}

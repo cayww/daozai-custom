@@ -102,10 +102,10 @@ fn sdk_spike_canvas_font_pack_registers_falls_back_and_survives_restart() -> Res
     assert_eq!(ab_glyph::FontRef::try_from_slice(&source).unwrap().glyph_id('→').0, 0);
     let _ = ctx.run(Default::default(), |ctx| host.sync_canvas_fonts(ctx));
     let _ = ctx.run(Default::default(), |ctx| {
-        let installed = ctx.fonts(|fonts| fonts.families());
+        let installed = ctx.fonts_mut(|fonts| fonts.families());
         let font = theme::canvas_font(20.0, W::Regular, Some(name), &installed);
         assert_eq!(font.family, family);
-        ctx.fonts(|fonts| {
+        ctx.fonts_mut(|fonts| {
             assert!(fonts.has_glyph(&font, '岛'));
             assert!(fonts.has_glyph(&font, '→'));
             assert_eq!(fonts.glyph_width(&font, '→'), fonts.glyph_width(&fallback, '→'));
@@ -119,7 +119,7 @@ fn sdk_spike_canvas_font_pack_registers_falls_back_and_survives_restart() -> Res
     host.enable(id, false)?;
     let _ = ctx.run(Default::default(), |ctx| host.sync_canvas_fonts(ctx));
     let _ = ctx.run(Default::default(), |ctx| {
-        let installed = ctx.fonts(|fonts| fonts.families());
+        let installed = ctx.fonts_mut(|fonts| fonts.families());
         assert!(!installed.contains(&family));
         assert_eq!(theme::canvas_font(20.0, W::Regular, Some(name), &installed), fallback);
     });
@@ -127,7 +127,7 @@ fn sdk_spike_canvas_font_pack_registers_falls_back_and_survives_restart() -> Res
     let _ = ctx.run(Default::default(), |ctx| host.sync_canvas_fonts(ctx));
     host.uninstall(id, false)?;
     let _ = ctx.run(Default::default(), |ctx| host.sync_canvas_fonts(ctx));
-    let _ = ctx.run(Default::default(), |ctx| assert!(!ctx.fonts(|fonts| fonts.families()).contains(&family)));
+    let _ = ctx.run(Default::default(), |ctx| assert!(!ctx.fonts_mut(|fonts| fonts.families()).contains(&family)));
     Ok(())
 }
 

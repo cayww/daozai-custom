@@ -74,7 +74,7 @@ pub(super) struct Blob(pub(super) Arc<egui::FontData>);
 
 impl Blob {
     pub(super) fn bytes(&self) -> &[u8] {
-        self.0.font.as_ref()
+        self.0.font.as_ref().as_ref()
     }
 
     fn is_font(&self) -> bool {

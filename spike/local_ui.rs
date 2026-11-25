@@ -222,7 +222,7 @@ fn small_tag(ui: &mut egui::Ui, label: &str) {
     let ctx = ui.ctx().clone();
     let fg = color(&ctx, Color32::from_rgb(215, 201, 252), Color32::from_rgb(91, 80, 140));
     let bg = color(&ctx, Color32::from_rgb(57, 49, 81), Color32::from_rgb(237, 232, 249));
-    let galley = ui.fonts(|fonts| {
+    let galley = ui.fonts_mut(|fonts| {
         fonts.layout_no_wrap(label.to_owned(), egui::FontId::proportional(10.5), fg)
     });
     let size = galley.size() + egui::vec2(12.0, 2.0);
@@ -246,8 +246,8 @@ fn clamped_text(ui: &mut egui::Ui, text: &str, size: f32, rows: usize, tint: Col
     job.wrap.max_rows = rows;
     job.wrap.break_anywhere = true;
     job.wrap.overflow_character = Some('…');
-    let galley = ui.fonts(|fonts| fonts.layout_job(job));
-    let height = ui.fonts(|fonts| fonts.row_height(&egui::FontId::proportional(size))) * rows as f32;
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let height = ui.fonts_mut(|fonts| fonts.row_height(&egui::FontId::proportional(size))) * rows as f32;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let clipped = galley.rows.len() >= rows && galley.text() != text;
     ui.painter().galley(rect.min, galley, tint);
@@ -301,10 +301,10 @@ fn segmented_counts(
                     } else {
                         muted_color(ui)
                     };
-                    let galley = ui.fonts(|fonts| fonts.layout_no_wrap(option.clone(), font, text_color));
+                    let galley = ui.fonts_mut(|fonts| fonts.layout_no_wrap(option.clone(), font, text_color));
                     let count_color = muted_color(ui);
                     let count = counts.get(index).copied().flatten().map(|count| {
-                        ui.fonts(|fonts| {
+                        ui.fonts_mut(|fonts| {
                             fonts.layout_no_wrap(
                                 count.to_string(),
                                 egui::FontId::proportional(size - 2.0),
@@ -407,8 +407,8 @@ fn plugin_switch(ui: &mut egui::Ui, id: &str, on: bool, label: &str) -> bool {
         egui::Id::new(("settings-plugin-switch", id)),
         egui::Sense::click(),
     );
-    response
-        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, label));
+    // egui 0.37 移除了 WidgetType::Checkbox，跳过无障碍元数据。
+    let _ = label;
     let t = ui
         .ctx()
         .animate_bool_with_time(response.id.with("t"), on, 0.15);
@@ -471,7 +471,7 @@ fn path_button(ui: &mut egui::Ui, text: &str, warn: bool, tip: &str) -> bool {
     let id = ui.id().with(("plugin-path", text));
     let hovered = ui.ctx().animate_bool_with_time(id, ui.ctx().read_response(id).is_some_and(|r| r.hovered()), 0.1);
     let tint = paint::mix(base, plugin_accent(ui), if warn { 0.0 } else { hovered });
-    let galley = ui.fonts(|fonts| {
+    let galley = ui.fonts_mut(|fonts| {
         fonts.layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.0), tint)
     });
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
@@ -555,7 +555,7 @@ fn developer_link(ui: &mut egui::Ui) -> bool {
     } else {
         ui.visuals().strong_text_color()
     };
-    let galley = ui.fonts(|fonts| {
+    let galley = ui.fonts_mut(|fonts| {
         fonts.layout_no_wrap(text.to_owned(), egui::FontId::proportional(12.5), tint)
     });
     let size = egui::vec2(18.0 + galley.size().x, galley.size().y.max(18.0));
@@ -1317,7 +1317,7 @@ impl LocalPlugins {
                             Ok(None) => {}
                             Err(_) => self.notice = "无法选择备份文件夹".into(),
                         }
-                        ui.close_menu();
+                        ui.close();
                     }
                     if storage && ui.button("导入数据").on_hover_text("导入会替换此插件的私有数据").clicked() {
                         match crate::system::pick_files_for("选择要导入的插件数据备份", false) {
@@ -1327,23 +1327,23 @@ impl LocalPlugins {
                             },
                             Err(_) => self.notice = "无法选择备份文件".into(),
                         }
-                        ui.close_menu();
+                        ui.close();
                     }
                     if has_source && ui.button("管理数据源").clicked() {
                         self.open_source_dialog(ui, id);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if (listed || runtime_error.is_some()) && ui.button("查看详情").clicked() {
                         market_browse_ui::select_detail(ui, id);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("反馈问题").clicked() {
                         request_plugin_feedback(ui, id, &name, &version);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("卸载…").clicked() {
                         self.pending = Some(id.to_owned());
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
                 #[cfg(not(windows))]

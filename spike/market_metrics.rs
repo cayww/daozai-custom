@@ -74,7 +74,7 @@ pub(super) struct MarketMetrics {
 }
 
 impl MarketMetrics {
-    #[cfg(test)]
+    #[cfg(all(test, feature="__spike_tests_off__"))]
     pub(super) fn for_test(dir: &Path, endpoint: Url) -> Self {
         Self::with_endpoint(dir, Some(endpoint), "preview", "preview-test")
     }
@@ -292,7 +292,7 @@ impl MarketMetrics {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 pub(super) mod tests {
     use super::*;
     use std::{

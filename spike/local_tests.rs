@@ -190,7 +190,7 @@ fn page_shortcuts_are_data_only_and_follow_the_installed_switch() -> Result<()> 
 #[cfg(windows)]
 mod test_market {
     use super::*;
-    use crate::sdk_spike::local::market_state::MarketStatus;
+    use crate::crate::sdk_spike::market_state::MarketStatus;
 
     const ID: &str = "example.payday";
 

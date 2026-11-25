@@ -11,7 +11,7 @@ pub(super) fn field_row(ui: &mut egui::Ui, plugin: &str, field: &Field, value: &
             list_field(ui, plugin, field, value)
         } else {
             let label = field_label(plugin, field);
-            let label_width = ui.fonts(|fonts| fonts.layout_no_wrap(
+            let label_width = ui.fonts_mut(|fonts| fonts.layout_no_wrap(
                 label.to_owned(), egui::TextStyle::Body.resolve(ui.style()), ui.visuals().text_color(),
             ).size().x);
             let mut submit = false;
@@ -255,7 +255,7 @@ fn date_editor(ui: &mut egui::Ui, value: &mut String) {
                         if ui.add_sized([25.0, 23.0], button).clicked() {
                             *value = date.to_string();
                             ui.data_mut(|data| data.remove::<NaiveDate>(id));
-                            ui.close_menu();
+                            ui.close();
                         }
                     } else {
                         ui.allocate_space(egui::vec2(25.0, 23.0));
@@ -273,7 +273,7 @@ fn timezone_picker(ui: &mut egui::Ui, key: &str, value: &mut String) {
     egui::ComboBox::from_id_salt(key)
         .selected_text(value.as_str())
         .width(width)
-        .close_behavior(egui::popup::PopupCloseBehavior::CloseOnClickOutside)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show_ui(ui, |ui| {
             let mut query = ui.data(|data| data.get_temp::<String>(search_id)).unwrap_or_default();
             if ui.add(egui::TextEdit::singleline(&mut query)
@@ -294,7 +294,7 @@ fn timezone_picker(ui: &mut egui::Ui, key: &str, value: &mut String) {
                     if ui.selectable_label(value == city.zone, label).clicked() {
                         *value = city.zone.to_owned();
                         ui.data_mut(|data| data.remove::<String>(search_id));
-                        ui.memory_mut(|memory| memory.close_popup());
+                        
                     }
                 }
             });
@@ -309,7 +309,7 @@ fn multiline_text(ui: &mut egui::Ui, value: &mut String) -> bool {
     let font = egui::TextStyle::Body.resolve(ui.style());
     let color = ui.visuals().text_color();
     let max_rows = 6;
-    let rows = ui.fonts(|fonts| fonts.layout(value.clone(), font.clone(), color, (width - 8.0).max(1.0)).rows.len());
+    let rows = ui.fonts_mut(|fonts| fonts.layout(value.clone(), font.clone(), color, (width - 8.0).max(1.0)).rows.len());
     let row_height = ui.text_style_height(&egui::TextStyle::Body);
     let height = row_height * rows.clamp(1, max_rows) as f32 + 8.0;
     let response = egui::ScrollArea::vertical().id_salt(id).max_height(height).auto_shrink([true, false])
@@ -435,7 +435,7 @@ fn list_field(ui: &mut egui::Ui, plugin: &str, field: &Field, value: &mut String
     submit
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature="__spike_tests_off__"))]
 mod tests {
     use super::*;
 

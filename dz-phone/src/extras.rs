@@ -4544,7 +4544,7 @@ fn number_stepper<N: egui::emath::Numeric>(
     changed
 }
 /// 时刻加减器（一天中的分钟数，15 分钟一档，跨午夜循环），中间可直接输入 12:30。
-fn time_stepper(ui: &mut egui::Ui, value: &mut u32, id: &str) -> bool {
+pub(crate) fn time_stepper(ui: &mut egui::Ui, value: &mut u32, id: &str) -> bool {
     let ctx = &ui.ctx().clone();
     let mut changed = false;
     ui.push_id(id, |ui| {
@@ -4613,13 +4613,19 @@ fn setting_choices(ui: &mut egui::Ui, title: &str, value: &mut u32, values: [u32
     });
 }
 /// 设置页分页序号。旧序号保持不变（岛上入口、测试都按序号跳转），新增外观与位置两页。
+pub(crate) const SETTINGS_TAB_PAGES: usize = 1;
+pub(crate) const SETTINGS_TAB_WIRELESS: usize = 16;
 pub(crate) const SETTINGS_TAB_APPEARANCE: usize = 13;
 pub(crate) const SETTINGS_TAB_POSITION: usize = 14;
 /// 本地定制页：手机连接/浏览器下载/MAA/液态玻璃配置集中于此。
 pub(crate) const SETTINGS_TAB_CUSTOM: usize = 15;
+#[cfg(feature="sdk-js")]
+pub(crate) const SETTINGS_TAB_PLUGINS: usize = 17;
+#[cfg(feature="sdk-js")]
+pub(crate) const SETTINGS_TAB_PLUGIN_DETAIL: usize = 18;
 /// 侧栏：一项就是一页，不再有页内子标签。专注与健康（2、3）、待办与置物（4、5）各合成一页；关于固定左下角。
 /// 第四列是这一项之前的分组标题。
-const SETTINGS_GROUPS: [(&str, usize, usize, &str); 14] = [
+const SETTINGS_GROUPS: [(&str, usize, usize, &str); 15] = [
     ("通用", 0, 0, "岛仔"),
     ("外观", SETTINGS_TAB_APPEARANCE, SETTINGS_TAB_APPEARANCE, ""),
     ("位置", SETTINGS_TAB_POSITION, SETTINGS_TAB_POSITION, ""),
@@ -4632,6 +4638,8 @@ const SETTINGS_GROUPS: [(&str, usize, usize, &str); 14] = [
     ("日程", 8, 8, ""),
     ("AI 额度", 11, 11, ""),
     ("天气", 12, 12, ""),
+    #[cfg(feature="sdk-js")]
+    ("插件", SETTINGS_TAB_PLUGINS, SETTINGS_TAB_PLUGINS, ""),
     (
         "自定义与集成",
         SETTINGS_TAB_CUSTOM,
@@ -4849,7 +4857,7 @@ fn settings_advanced(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui
         add(ui);
     }
 }
-fn settings_apply_style(ui: &mut egui::Ui) {
+pub(crate) fn settings_apply_style(ui: &mut egui::Ui) {
     let ctx = &ui.ctx().clone();
     // 分割线：浅色模式用很淡的灰，深色模式略亮于卡片，不再是系统默认的粗灰线。
     ui.visuals_mut().widgets.noninteractive.bg_stroke = egui::Stroke::new(
@@ -4917,7 +4925,7 @@ fn settings_apply_style(ui: &mut egui::Ui) {
         Color32::from_rgb(209, 226, 248),
     );
 }
-fn settings_modal_frame(ctx: &egui::Context) -> egui::Frame {
+pub(crate) fn settings_modal_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::new()
         .fill(settings_color(
             ctx,
@@ -4941,7 +4949,7 @@ fn settings_modal_frame(ctx: &egui::Context) -> egui::Frame {
             color: Color32::from_black_alpha(90),
         })
 }
-fn settings_modal_title(ui: &mut egui::Ui, title: &str) -> bool {
+pub(crate) fn settings_modal_title(ui: &mut egui::Ui, title: &str) -> bool {
     let ctx = &ui.ctx().clone();
     let mut close = false;
     ui.horizontal(|ui| {
@@ -5180,6 +5188,8 @@ impl App {
                         SETTINGS_TAB_POSITION=>egui::include_image!("../assets/settings-icons/system/position.svg"),
                         // 自定义与集成：里面是浏览器 / 手机 / MAA / 网易云等外部集成，用浏览器图标比「关于」贴切。
                         SETTINGS_TAB_CUSTOM=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        #[cfg(feature="sdk-js")]
+                        SETTINGS_TAB_PLUGINS=>egui::include_image!("../assets/settings-icons/system/shelf.svg"),
                         _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
                     };
                     let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(23.0,23.0));
@@ -5199,6 +5209,13 @@ impl App {
                     // 右侧给滚动条留出空隙，卡片和开关不会被它压住。
                     ui.set_width((ui.available_width()-12.0).max(240.0));
                     match tab {
+                    #[cfg(feature="sdk-js")]
+                    SETTINGS_TAB_PLUGINS=>{
+                        let tasks_on=self.module_on(crate::app::TODO_PAGE);
+                        let calendar_on=self.module_on(crate::app::CALENDAR_PAGE);
+                        let quota_on=self.quota_active();
+                        let _=self.plugins.manage(ui,tasks_on,calendar_on,quota_on);
+                    }
                     12=>{
                         let on=self.settings_feature_header(ui,crate::app::WEATHER_PAGE,"当地天气与七日预报",|_,_|{});
                         ui.add_space(4.0);
