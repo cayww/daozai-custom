@@ -1,8 +1,8 @@
 # 岛仔 v0.6.70 上游合并对照表（最终结果）
 
 > 分支：`merge-upstream-v0670`；定制基线 `017108d`，上游 `0615f19`（tag v0.6.70），区间 418 commit
-> 最终代码提交 `2c3fe59`；release 构建通过；全量 **1535 passed / 0 failed / 140 ignored**
-> 测试包：`daozai-setup-merge-v0670b.exe`（sha256 前 16 位 `99ac5ad58b69b246`）；未部署、未推 origin
+> 最终代码提交 `a63b422`；release 构建通过；全量 **1536 passed / 0 failed / 140 ignored**
+> 测试包：`daozai-setup-merge-v0670c.exe`；未部署、未推 origin
 > 说明：「融合」= 双方都有改动、按优取舍后的结果；「合入」= 上游新增直接纳入；「未融合」= 最终保留定制侧或未采纳。
 
 ---
@@ -25,6 +25,8 @@
 | `mail.rs` / `mail_fetch.rs` / `mail_manage.rs` / `mail_manage_ui.rs` | 上游 `use_windows_proxy` + Gmail 代理连接、`MailState.bell_at`；保留本地 20 秒连接超时 |
 | 插件市场 | `sdk-js` 默认启用；插件通知/状态/画布/额度插件接入；`theme::ORANGE`/`canvas_font`、`paint::coffee`/`track`、`AlertSource::Plugin`、`Cmd::OpenPluginNotice`、`App.plugins` 已补；插件通知不挤占内置提醒队列 |
 | `CHANGELOG.md` | 定制 CHANGELOG 为准 + 上游 v0.6.66–v0.6.70 更新摘要 |
+| 性能页接入 | 主界面扩为 10 页（系统性能，默认隐藏、可在页面管理开启）；App 接 `performance::Monitor` + tick + 绘制；Settings 加 `show_performance`/`performance_view` 及配置迁移 |
+| 翻页箭头 | 按 `Dock` 计算锚点（Bottom 用剪裁区底边、侧边用高度弹簧补偿），沿用定制玻璃/弹簧绘制 |
 
 ---
 
@@ -61,11 +63,11 @@
 | 诊断脚本 | `collect-diagnostics.ps1` 保留（上游删除未采纳） |
 | vendor 代码 | `vendor/*`（64 文件）保留定制 egui 0.37 pin 与 D3D11 补丁 |
 | 其他定制文件 | `.gitignore`、`app.rc`、`installer/setup.nsi`、`examples/` 3 个保留定制 |
-| 性能 / 无线设备页 | 源码在库，未接入岛体主界面导航 |
+| 无线设备页 | 源码在库，未接入岛体主界面导航（依赖整套 wireless 状态机） |
 | GPU 材质插件宿主 | `sdk-material` 不启用；`reconcile_material`/`sync_capture_exclusion` 未移植；液态玻璃继续走定制 D3D11（该材质插件源于用户自己的 PR） |
 | 插件单元测试 | 6 个依赖 egui 0.31 API 与 spike 资源路径的测试模块不编译（不影响产品功能） |
 | 文字缩放抖动方案 | 未采纳上游每帧重排；定制 `TextScale` 阻尼死区 + 量化方案保留 |
 | 兼容渲染 60fps / DX12 读回 | 未采纳：属于架构切换前的 wgpu/eframe 旧栈优化，定制 D3D11＋WGC 栈无对应读回链 |
-| 翻页箭头按 Dock 锚点 | 未采纳，保留定制箭头逻辑 |
 | 滚轮翻到矮页误收起 | 定制版已同源具备（`PAGE_EDGE_OVERLAP` 续滚带），无需合入 |
 | IME 组字防误保存 | 定制版已有等价事件判断，天气/城市已按 egui 0.37 接入 |
+| 通知 / 避让 / 更新、日历 UI | 保留定制：上游为函数级重构（如 `avoidance_for_window` 参数 HWND→RECT）且依赖 App 新字段，与定制行为互斥；已查社区无对应方案 |
