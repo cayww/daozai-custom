@@ -2241,6 +2241,15 @@ impl App {
         if !visible && self.settings.visible_pages.iter().filter(|enabled|**enabled).count()==1
             && self.settings.visible_pages[page] { return; }
         self.settings.visible_pages[page]=visible;
+        #[cfg(feature="sdk-js")]
+        if !visible {
+            match page {
+                TODO_PAGE=>self.plugins.pause_owner("tasks"),
+                CALENDAR_PAGE=>self.plugins.pause_owner("calendar"),
+                QUOTA_PAGE=>self.plugins.pause_owner("quota"),
+                _=>{}
+            }
+        }
         // 关掉专注模块时一并停止正在进行的计时，避免页面不可见却到点弹提醒。
         if !visible && page==FOCUS_PAGE {self.pomo.running=false;}
         if !self.settings.visible_pages[self.page] {
@@ -2647,6 +2656,8 @@ impl App {
         let mut cmds = Vec::new();
 
         self.tick(env, dt, elapsed);
+        #[cfg(feature="sdk-js")]
+        if self.plugins.watch_files_enabled() { ui.ctx().request_repaint_after(std::time::Duration::from_millis(200)); }
         self.sync_device(env);
         self.tick_alerts();
         // hud_notice 是实际绘制用的快照。按 title+at 比较同步：
@@ -5006,6 +5017,8 @@ impl App {
             self.water_ml = self.water.drunk_ml as f32;
             self.water_ring.snap(self.water.percent() / 100.0);
         }
+        #[cfg(feature="sdk-js")]
+        let mut focus_finished=None;
         if self.pomo.running && !self.module_on(FOCUS_PAGE) {self.pomo.running=false;}
         // 只统计真正在跑的专注阶段：暂停不计，攒满一分钟落盘一次。
         if self.pomo.running && self.pomo.phase==Phase::Focus {
@@ -5024,6 +5037,8 @@ impl App {
             if self.pomo.remaining <= 0.0 {
                 let next = match self.pomo.phase {
                     Phase::Focus => {
+                        #[cfg(feature="sdk-js")]
+                        {focus_finished=Some(self.settings.focus_minutes);}
                         self.pet.react(PetState::Happy);
                         Phase::Rest
                     }
@@ -5118,6 +5133,20 @@ impl App {
         if let Some(at) = self.confirm_clear {
             if self.t - at > 3.0 {
                 self.confirm_clear = None;
+            }
+        }
+        // JS 脚本插件：每帧驱动定时器/事件，把脚本通知送上岛。
+        #[cfg(feature="sdk-js")]
+        {
+            let todo_on=self.module_on(TODO_PAGE);
+            let quota_on=self.quota_active();
+            self.plugins.tick_features(todo_on,calendar_on,quota_on,&env.today);
+            if let Some(minutes)=focus_finished {
+                self.plugins.focus_finished(chrono::Utc::now().timestamp(),minutes,todo_on,calendar_on,quota_on);
+            }
+            #[cfg(windows)]
+            for notice in self.plugins.take_script_notices(self.settings.notifications,chrono::Utc::now().timestamp_millis()) {
+                self.receive_plugin_notice(notice);
             }
         }
     }

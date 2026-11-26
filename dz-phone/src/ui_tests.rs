@@ -9193,7 +9193,9 @@ fn background_services_follow_the_module_switch(){
 
 #[test]
 fn every_module_settings_tab_maps_to_its_page(){
-    let titles=["常规","音乐与歌词","专注","健康提醒","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","天气","","","系统性能","无线设备"];
+    // tab 编号与 SETTINGS_GROUPS 对齐：19=系统性能（原 15 已被「自定义与集成」占用）。
+    // tab 编号已与上游对齐：15=系统性能、16=无线设备、19=自定义与集成（不映射功能页）。
+    let titles=["常规","音乐与歌词","专注","健康提醒","待办","置物","通知","邮箱","日程","关于","页面管理","AI 额度","天气","外观","位置","系统性能","无线设备","插件","插件详情","自定义与集成"];
     let mut pages:Vec<_>=(0..titles.len()).filter_map(crate::extras::settings_tab_module).collect();
     for tab in 0..titles.len() {
         if let Some(page)=crate::extras::settings_tab_module(tab) {assert!(crate::app::PAGE_NAMES[page].chars().next()==titles[tab].chars().next(),"{} ↔ {}",titles[tab],crate::app::PAGE_NAMES[page]);}

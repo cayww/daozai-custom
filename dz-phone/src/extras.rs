@@ -4632,10 +4632,11 @@ pub(crate) const SETTINGS_TAB_PAGES: usize = 10;
 pub(crate) const SETTINGS_TAB_WIRELESS: usize = 16;
 pub(crate) const SETTINGS_TAB_APPEARANCE: usize = 13;
 pub(crate) const SETTINGS_TAB_POSITION: usize = 14;
+/// 系统性能（与上游 v0.6.70 编号一致）。
+pub(crate) const SETTINGS_TAB_PERFORMANCE: usize = 15;
 /// 本地定制页：手机连接/浏览器下载/MAA/液态玻璃配置集中于此。
-pub(crate) const SETTINGS_TAB_CUSTOM: usize = 15;
-/// 系统性能（不与旧的 15=自定义与集成 冲突）。
-pub(crate) const SETTINGS_TAB_PERFORMANCE: usize = 19;
+/// 放在最后（关于之后），不占用上游 15=系统性能 的编号。
+pub(crate) const SETTINGS_TAB_CUSTOM: usize = 19;
 #[cfg(feature="sdk-js")]
 pub(crate) const SETTINGS_TAB_PLUGINS: usize = 17;
 #[cfg(feature="sdk-js")]
@@ -4659,13 +4660,13 @@ const SETTINGS_GROUPS: [(&str, usize, usize, &str); 17] = [
     ("无线设备", SETTINGS_TAB_WIRELESS, SETTINGS_TAB_WIRELESS, ""),
     #[cfg(feature="sdk-js")]
     ("插件", SETTINGS_TAB_PLUGINS, SETTINGS_TAB_PLUGINS, "定制"),
+    ("关于", 9, 9, ""),
     (
         "自定义与集成",
         SETTINGS_TAB_CUSTOM,
         SETTINGS_TAB_CUSTOM,
         "",
     ),
-    ("关于", 9, 9, ""),
 ];
 /// 分页标题；合并页（3→2、5→4）显示合并后的名字。
 fn settings_tab_title(tab: usize) -> &'static str {
@@ -5174,8 +5175,8 @@ impl App {
             let sidebar_fill=settings_color(ctx,Color32::from_rgb(29,29,32),Color32::from_rgb(237,239,243));
             egui::Panel::left("settings-sidebar").resizable(false).exact_size(180.0).frame(egui::Frame::new().fill(sidebar_fill).stroke(egui::Stroke::NONE).inner_margin(egui::Margin::symmetric(10,12))).show(ctx,|ui|{
                 ui.add_space(2.0);
-                // 13 项加两个分组标题：窗口拉到最矮时按可用高度压缩行高，「关于」始终留在底部可见。
-                // 每项占 行高 + 控件间距(3) + 行后空隙；两个分组标题和「关于」上方预留约 80。
+                // 各项加分组标题：窗口拉到最矮时按可用高度压缩行高，「关于 / 自定义与集成」贴底可见。
+                // 每项占 行高 + 控件间距(3) + 行后空隙；分组标题和底部两项上方预留约 80。
                 let per=(ui.available_height()-80.0)/SETTINGS_GROUPS.len() as f32;
                 let row_h=(per-6.0).clamp(20.0,32.0);
                 let row_gap=(per-3.0-row_h).clamp(0.0,3.0);
@@ -5185,7 +5186,7 @@ impl App {
                         ui.label(egui::RichText::new(section).size(11.0).color(settings_color(ui.ctx(),Color32::from_gray(150),Color32::from_gray(105))));
                         ui.add_space(3.0);
                     }
-                    if start==9 {ui.add_space((ui.available_height()-row_h-4.0).max(4.0));}
+                    if start==SETTINGS_TAB_CUSTOM {ui.add_space((ui.available_height()-row_h*2.0-8.0).max(4.0));}
                     let selected=(start..=end).contains(&self.settings_tab);
                     let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width(),row_h),egui::Sense::click());
                     if response.clicked() && !selected{self.settings_tab=start;}
@@ -5286,7 +5287,11 @@ impl App {
                     11=>{
                         let on=self.settings_feature_header(ui,crate::app::QUOTA_PAGE,"每 3 分钟自动更新剩余额度",|_,_|{});
                         ui.add_space(4.0);
-                        ui.add_enabled_ui(on,|ui|self.quota_settings(ui));
+                        ui.add_enabled_ui(on,|ui|{
+                            self.quota_settings(ui);
+                            #[cfg(feature="sdk-js")]
+                            self.plugins.settings(ui,"quota",on);
+                        });
                     }
                     10=>{
                         ui.label(egui::RichText::new("选择需要的页面和状态组件。").size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
@@ -5596,7 +5601,8 @@ impl App {
                     }
                     4=>{
                         let on=self.settings_feature_header(ui,crate::app::TODO_PAGE,"任务清单与到期提醒",|_,_|{});
-                        let _=on;
+                        #[cfg(feature="sdk-js")]
+                        self.plugins.settings(ui,"tasks",on);
                         ui.add_space(12.0);
                         let on=self.settings_feature_header(ui,crate::app::SHELF_PAGE,"临时收纳文件与剪贴板",|_,_|{});
                         ui.add_enabled_ui(on,|ui|{
@@ -5876,6 +5882,8 @@ impl App {
                             setting_choices(ui,"会议提前",&mut self.settings.mail_ics,[5,15,30],"分钟");
                             settings_hint(ui,"与邮件中的会议邀请共用提醒，同一场会议只提醒一次。");
                         });
+                        #[cfg(feature="sdk-js")]
+                        self.plugins.settings(ui,"calendar",on);
                         settings_label(ui,"日历账号");
                         let mut import=false;
                         settings_card(ui,|ui|{
