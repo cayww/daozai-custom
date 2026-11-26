@@ -185,7 +185,37 @@ pub(crate) fn scissor_pixels_with(
 /// DAOZAI_DUMP_FILE="D:/tmp/shapes.txt"     输出文件（默认 daozai-shapes.txt）
 /// DAOZAI_DUMP_FRAME=1                      只转储第 1 帧（默认 1）
 /// ```
-pub(crate) fn maybe_dump_shapes(shapes: &[egui::epaint::ClippedShape]) {
+pub(crate) fn maybe_dump_shapes(shapes: &[egui::epaint::ClippedShape], frame: u64) {
+    // DAOZAI_DUMP_HEART=1：自动定位心形（3 点闭合 Path），把其周围 ±12 点内的
+    // 全部图元按绘制顺序列出。不需要任何坐标，避免框不准。
+    if std::env::var("DAOZAI_DUMP_HEART").is_ok_and(|v| v.trim() == "1") {
+        let path = std::env::var("DAOZAI_DUMP_FILE")
+            .unwrap_or_else(|_| "daozai-hearts.txt".to_owned());
+        let mut out = String::new();
+        let mut found = 0usize;
+        dump_hearts(shapes, frame, &mut out, &mut found);
+        if found == 0 {
+            return;
+        }
+        let _ = std::fs::write(&path, out);
+        return;
+    }
+
+    // DAOZAI_DUMP_ALL=1：不依赖坐标，列出所有“细长”图元（高或宽 <= 2 点），
+    // 用来自动找出某条 1px 线是由哪个图元画出来的。
+    if std::env::var("DAOZAI_DUMP_ALL").is_ok_and(|v| v.trim() == "1") {
+        let path = std::env::var("DAOZAI_DUMP_FILE")
+            .unwrap_or_else(|_| "daozai-shapes.txt".to_owned());
+        let mut out = format!("== frame {frame} thin shapes ==\n");
+        let mut index = 0usize;
+        dump_thin_into(shapes, &mut out, &mut index);
+        if index == 0 {
+            return;
+        }
+        out.push_str(&format!("== total {index} ==\n"));
+        let _ = std::fs::write(&path, out);
+        return;
+    }
     let Ok(region) = std::env::var("DAOZAI_DUMP_SHAPES") else {
         return;
     };
@@ -203,15 +233,161 @@ pub(crate) fn maybe_dump_shapes(shapes: &[egui::epaint::ClippedShape]) {
     let path = std::env::var("DAOZAI_DUMP_FILE")
         .unwrap_or_else(|_| "daozai-shapes.txt".to_owned());
 
-    let mut out = String::new();
-    out.push_str(&format!(
-        "== 区域 {:?} 内的图元（按绘制顺序）==\n",
-        want
-    ));
+    let mut out = format!("== frame {frame} region {want:?} ==\n");
     let mut index = 0usize;
     dump_shapes_into(shapes, want, &mut out, &mut index);
-    out.push_str(&format!("== 共 {} 条 ==\n", index));
+    // 区域内没图元就不写，避免每帧刷盘。
+    if index == 0 {
+        return;
+    }
+    out.push_str(&format!("== total {index} ==\n"));
     let _ = std::fs::write(&path, out);
+}
+
+/// 找出所有心形（3 点闭合 Path），把每颗心周围 ±12 点内的图元全部列出。
+fn dump_hearts(
+    shapes: &[egui::epaint::ClippedShape],
+    frame: u64,
+    out: &mut String,
+    found: &mut usize,
+) {
+    use egui::Shape;
+
+    // 先摊平成 (shape, clip) 序列。
+    let mut flat: Vec<(&Shape, egui::Rect)> = Vec::new();
+    fn flatten<'a>(shapes: &'a [egui::Shape], clip: egui::Rect, out: &mut Vec<(&'a Shape, egui::Rect)>) {
+        for s in shapes {
+            match s {
+                egui::Shape::Vec(inner) => flatten(inner, clip, out),
+                other => out.push((other, clip)),
+            }
+        }
+    }
+    for clipped in shapes {
+        match &clipped.shape {
+            Shape::Vec(inner) => flatten(inner, clipped.clip_rect, &mut flat),
+            other => flat.push((other, clipped.clip_rect)),
+        }
+    }
+
+    out.push_str(&format!("== frame {frame} ==\n"));
+    for (i, (shape, _)) in flat.iter().enumerate() {
+        let Shape::Path(path) = shape else { continue };
+        if path.points.len() != 3 || !path.closed {
+            continue;
+        }
+        *found += 1;
+        let hb = shape.visual_bounding_rect();
+        // 心形三角：宽约 13.5 点、高约 7 点，用宽松阈值过滤掉别的三角形。
+        if hb.width() < 8.0 || hb.width() > 24.0 {
+            continue;
+        }
+        let zone = hb.expand(12.0);
+        out.push_str(&format!(
+            "\n---- heart #{} path-bounds=({:.2},{:.2})-({:.2},{:.2}) zone={zone:?} ----\n",
+            *found, hb.min.x, hb.min.y, hb.max.x, hb.max.y
+        ));
+        for (j, (s2, clip)) in flat.iter().enumerate() {
+            let b = s2.visual_bounding_rect();
+            if !zone.intersects(b) {
+                continue;
+            }
+            let body = match s2 {
+                Shape::Rect(r) => format!(
+                    "Rect fill={:?} stroke={:?}({:.2}) radius={:?}",
+                    r.fill, r.stroke.color, r.stroke.width, r.corner_radius
+                ),
+                Shape::Path(p) => format!(
+                    "Path pts={} closed={:?} fill={:?} stroke={:?}({:.2})",
+                    p.points.len(), p.closed, p.fill, p.stroke.color, p.stroke.width
+                ),
+                Shape::Circle(c) => format!(
+                    "Circle center=({:.2},{:.2}) r={:.2} fill={:?} stroke={:?}({:.2})",
+                    c.center.x, c.center.y, c.radius, c.fill, c.stroke.color, c.stroke.width
+                ),
+                Shape::LineSegment { stroke, .. } => {
+                    format!("LineSeg stroke={:?}({:.2})", stroke.color, stroke.width)
+                }
+                Shape::Text(t) => format!("Text \"{}\"", t.galley.text()),
+                other => format!("other={:?}", std::mem::discriminant(*other)),
+            };
+            let mark = if j < i { "  [heart之前]" } else if j == i { "  <== 三角本体" } else { "" };
+            out.push_str(&format!(
+                "  draw#{j:03} bounds=({:.2},{:.2})-({:.2},{:.2}) clip=({:.1},{:.1})-({:.1},{:.1}) {body}{mark}\n",
+                b.min.x, b.min.y, b.max.x, b.max.y,
+                clip.min.x, clip.min.y, clip.max.x, clip.max.y,
+            ));
+        }
+    }
+}
+
+/// 只列出“细长”图元：高度 <= 2 点或宽度 <= 2 点的 Rect / Path / LineSeg / Circle。
+/// 1px 接缝必然来自这些小东西，列出来就能一眼看到。
+fn dump_thin_into(
+    shapes: &[egui::epaint::ClippedShape],
+    out: &mut String,
+    index: &mut usize,
+) {
+    use egui::Shape;
+    for clipped in shapes {
+        if let Shape::Vec(inner) = &clipped.shape {
+            dump_thin_shapes(inner, clipped.clip_rect, out, index);
+        } else {
+            dump_thin_shape(&clipped.shape, clipped.clip_rect, out, index);
+        }
+    }
+}
+
+fn dump_thin_shapes(
+    shapes: &[egui::Shape],
+    clip: egui::Rect,
+    out: &mut String,
+    index: &mut usize,
+) {
+    for s in shapes {
+        if let egui::Shape::Vec(inner) = s {
+            dump_thin_shapes(inner, clip, out, index);
+        } else {
+            dump_thin_shape(s, clip, out, index);
+        }
+    }
+}
+
+fn dump_thin_shape(
+    shape: &egui::Shape,
+    clip: egui::Rect,
+    out: &mut String,
+    index: &mut usize,
+) {
+    use egui::Shape;
+    let b = shape.visual_bounding_rect();
+    let h = b.height();
+    let w = b.width();
+    let is_thin = (h <= 2.0 && w > 2.0) || (w <= 2.0 && h > 2.0);
+    if !is_thin {
+        return;
+    }
+    *index += 1;
+    let body = match shape {
+        Shape::Rect(r) => format!(
+            "Rect fill={:?} stroke={:?}({:.2})",
+            r.fill, r.stroke.color, r.stroke.width
+        ),
+        Shape::Path(p) => format!(
+            "Path pts={} closed={:?} fill={:?} stroke={:?}({:.2})",
+            p.points.len(), p.closed, p.fill, p.stroke.color, p.stroke.width
+        ),
+        Shape::LineSegment { stroke, .. } => {
+            format!("LineSeg stroke={:?}({:.2})", stroke.color, stroke.width)
+        }
+        Shape::Circle(c) => format!("Circle r={:.2} fill={:?}", c.radius, c.fill),
+        other => format!("other:{:?}", std::mem::discriminant(other)),
+    };
+    out.push_str(&format!(
+        "#{index:03} bounds=({:.1},{:.1})-({:.1},{:.1}) clip=({:.1},{:.1})-({:.1},{:.1}) {body}\n",
+        b.min.x, b.min.y, b.max.x, b.max.y,
+        clip.min.x, clip.min.y, clip.max.x, clip.max.y,
+    ));
 }
 
 fn dump_shapes_into(
@@ -466,12 +642,13 @@ impl Renderer {
             return Ok(());
         }
 
-        // 诊断：DAOZAI_DUMP_SHAPES 开启时把目标区域的图元写文件（只写一次）。
-        {
-            static ONCE: std::sync::Once = std::sync::Once::new();
-            if std::env::var("DAOZAI_DUMP_SHAPES").is_ok() {
-                ONCE.call_once(|| maybe_dump_shapes(&egui_output.shapes));
-            }
+        // 诊断：DAOZAI_DUMP_SHAPES 开启时每帧覆盖写（带帧号）。
+        // 必须每帧——首帧时还没打开集市页。
+        if std::env::var("DAOZAI_DUMP_SHAPES").is_ok() {
+            static FRAME: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let n = FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            maybe_dump_shapes(&egui_output.shapes, n);
         }
 
         let frame_size = Self::get_render_target_size(render_target)?;

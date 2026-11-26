@@ -9,6 +9,11 @@
 #define MyAppName "岛仔 DaozaiCustom"
 #define MyAppVersion "0.6.66"
 #define MyAppBuild "custom-isolated"
+; 从哪个 cargo profile 的产物目录取 exe（release / dev-release）。
+; 命令行覆盖：ISCC.exe /DTargetProfile=dev-release daozai.iss
+#ifndef TargetProfile
+#define TargetProfile "release"
+#endif
 
 [Setup]
 AppId={{C7E3A19D-5F42-4B8E-A1D6-9E2C4F7B83A5}}
@@ -41,10 +46,10 @@ Name: "autostart"; Description: "开机自动启动岛仔"; GroupDescription: "�
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "其他："; Flags: unchecked
 
 [Files]
-Source: "..\dz-phone\target\release\daozai.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dz-phone\target\{#TargetProfile}\daozai.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dz-phone\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; 浏览器扩展桥宿主：独立精简版二进制（不链接 GUI 栈，约 460KB），复制为 daozai_bridge.exe。
-Source: "..\dz-phone\target\release\daozai-bridge.exe"; DestDir: "{app}\bridge"; DestName: "daozai_bridge.exe"; Flags: ignoreversion
+Source: "..\dz-phone\target\{#TargetProfile}\daozai-bridge.exe"; DestDir: "{app}\bridge"; DestName: "daozai_bridge.exe"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\manifest.json"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\sw.js"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion
 Source: "INSTALL-NOTES.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme

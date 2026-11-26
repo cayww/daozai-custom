@@ -1,4 +1,4 @@
-﻿﻿﻿<#
+﻿<#
 .SYNOPSIS
     用 Inno Setup 7 编译岛仔定制版安装包（installer\daozai.iss）。
 
@@ -13,21 +13,29 @@
 .PARAMETER SkipBuild
     预留开关：本脚本只负责 Inno Setup 编译，构建始终需单独执行（保留参数以免调用方传参报错）。
 
+.PARAMETER CargoProfile
+    取哪个 cargo profile 的产物目录：release（默认）或 dev-release。
+    dev-release 关闭 LTO、构建快一倍，适合反复自测；正式发版仍用 release。
+
 .EXAMPLE
     .\build-innosetup.ps1
+    .\build-innosetup.ps1 -CargoProfile dev-release
     .\build-innosetup.ps1 -InnoCompiler 'D:\software\Inno Setup 7\ISCC.exe'
 #>
 param(
     [string]$InnoCompiler,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [ValidateSet('release','dev-release')]
+    [string]$CargoProfile = 'release'
 )
 $ErrorActionPreference = 'Stop'
 
 $installerDir = $PSScriptRoot
 $projectRoot = Split-Path $installerDir -Parent
 $iss = Join-Path $installerDir 'daozai.iss'
-$exe = Join-Path $projectRoot 'dz-phone\target\release\daozai.exe'
-$bridge = Join-Path $projectRoot 'dz-phone\target\release\daozai-bridge.exe'
+$targetDir = Join-Path $projectRoot ('dz-phone\target\' + $CargoProfile)
+$exe = Join-Path $targetDir 'daozai.exe'
+$bridge = Join-Path $targetDir 'daozai-bridge.exe'
 
 # ---------- 探测 ISCC ----------
 function Find-ISCC {
@@ -64,14 +72,27 @@ if (-not $iscc) {
 
 # ---------- 前置检查 ----------
 foreach ($f in @($iss, $exe, $bridge)) {
-    if (-not (Test-Path -LiteralPath $f)) { throw "缺少文件：$f（先跑 cargo build --release 双 bin）" }
+    if (-not (Test-Path -LiteralPath $f)) {
+        throw "缺少文件：$f（先跑 cargo build --profile $CargoProfile --bin daozai --bin daozai-bridge）"
+    }
 }
 Push-Location $installerDir
 try {
     Write-Host "ISCC: $iscc"
     Write-Host "工程: $iss"
-    & $iscc $iss
-    if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败（exit $LASTEXITCODE）" }
+    Write-Host "产物: $targetDir"
+    # ISCC 会把 “PrivilegesRequired admin + HKCU” 之类的既有警告写到 stderr，
+    # 在 $ErrorActionPreference='Stop' 下会被当成终止错误（PowerShell 5.1 的 native
+    # stderr 会被包成 ErrorRecord）。这一段临时放宽为 Continue，只按退出码判断成败。
+    $previousEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $iscc "/DTargetProfile=$CargoProfile" $iss
+        $compileExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousEap
+    }
+    if ($compileExit -ne 0) { throw "Inno Setup 编译失败（exit $compileExit）" }
 
     # 从 .iss 里读 OutputBaseFilename / OutputDir 以定位产物
     $raw = Get-Content $iss -Raw
