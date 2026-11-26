@@ -328,3 +328,30 @@ float4 material(MaterialIn i) {
 - **验证与打包**：全量 **1528 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
 - **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,072,436 bytes，sha256 前 16 `c25fad96f64b4cbe`（exe `53bbb71120424743`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-crash-fix`。
 - **待用户确认**：点便签等插件页齿轮不再退出，并能打开对应插件设置页。
+
+---
+
+## 16. 设置页切换后残留插件正文（2026-11-26 18:39+）
+- **用户现象**：设置侧栏从「现货金价 / 便签本」切到「消息提醒」等内置页后，标题变了，正文仍是上一个插件页。
+- **根因**：本地内容区有两套插件判定：标题处按 `settings_tab == PLUGIN_DETAIL` 算 `plugin`，正文处却仍只看残留的 `settings_plugin`。上游只有前者。侧栏内置页点击也没像上游那样清空 `settings_plugin`。
+- **修复**：正文滚动区与 `standalone_settings()` 调用统一使用「当前 tab + 当前插件」判定；侧栏内置页点击清空 `settings_plugin`；`open_page_settings()` 对内置页也清空插件状态（防御性）。
+- **回归测试**：`builtin_settings_navigation_clears_stale_plugin_page`。
+
+---
+
+## 17. 剩余上游能力补齐与统一打包（2026-11-26 19:09+）
+- **提交**：`6308d85`，一次性补齐按 D3D11 前提复核后仍成立的缺口。
+- **本轮内容**：
+  - 设置页切换残留插件正文（标题变、正文不变）修复并加回归测试。
+  - 设置侧栏插件页使用插件自定义导航图标并支持滚动到选中项。
+  - `spike/script_settings_ui.rs` 时区选中后关闭弹窗（egui 0.37 用 `Popup::close_all`）。
+  - 侧边停靠补齐 `Date / Wireless / Performance / Pinned`，`Dock::Bottom` 可拖动切换。
+  - 通知避让补齐 `resident_squeeze` / `bar_parts` / `resident_limit`；`unread_stack_len` 与 `unread_count` 计入插件折叠通知；接上 `draw_plugin_notice_banner/capsule/stack/detail`。
+  - 逐帧诊断：慢帧日志细分前置/岛体/设置，新增 `DAOZAI_FRAME_TRACE` 逐帧间隔与上帧分段（适配 D3D11，无 native 读回段）。
+  - 重新启用与渲染栈无关的插件纯逻辑测试：capabilities、source_https、source_read、plugin_storage_backup。
+  - 测试方法 `手机通知走receive路径也会自动登记App` 改名 `phone_notification_receive_path_also_registers_app`。
+  - 修复 `quota_sig_tests` 的 `Config{..Default::default()}` 在 bin 侧因 `pub(crate)` 字段报错，改为 `Config::default()` + 赋值。
+- **验证**：最终全量 **1545 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
+- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,091,660 bytes，sha256 前 16 `b1bdf0106bd1a2f7`（exe `5869af3d8863137b`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-upstream-remaining`。
+- **未合且有意保留**：DX12 分层读回节流/`cover()`/位移补偿、wgpu/GL 回退、WGSL/sdk-material 链均由 D3D11 自绘栈替代；官方集市测试索引仅测试夹具，生产路径一致。
+- **待用户实机确认**：设置页切换正文、侧边日期/无线/性能/pinned、Bottom 拖动、插件通知显示与点击。

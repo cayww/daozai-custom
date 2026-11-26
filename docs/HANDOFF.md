@@ -2089,3 +2089,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **根因**：正文区仍只看残留的 `settings_plugin`，而标题按当前 tab 算；侧栏内置页点击没清空插件状态。
 - **修复**：正文统一按「当前 tab + 当前插件」判定并清空残留状态；新增回归测试 `builtin_settings_navigation_clears_stale_plugin_page`。
 - **状态**：需重新打包后确认在「便签本 / 现货金价」与内置页之间切换时正文随标题同步。
+
+### 7.0zzzj 一次性补齐剩余上游能力（2026-11-26 19:09+）
+- **提交**：`6308d85`。补齐设置页残留正文、插件导航图标、时区弹窗关闭、侧边 Date/Wireless/Performance/Pinned 与 Bottom 拖动、通知避让与插件通知绘制、`DAOZAI_FRAME_TRACE` 分段诊断、纯逻辑插件测试重新启用；把中文测试方法名改为英文；修复 `quota_sig_tests` 的 `Default::default()` 报错。
+- **验证**：最终全量 lib **1545 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
+- **当前包**：sha256 前 16 `b1bdf0106bd1a2f7`（exe `5869af3d8863137b`）。DX12 分层读回/wgpu 回退/WGSL 材质链按 D3D11 自绘栈有意保留不合。
+- **待用户确认**：设置页切换正文、侧边停靠项、Bottom 拖动、插件通知显示与点击。
