@@ -52,6 +52,8 @@ pub struct Renderer {
     clear_blend_state: ID3D11BlendState,
 
     texture_pool: TexturePool,
+    /// 按 egui 的 TextureOptions 缓存的采样器（字体图集要 ClampToEdge，图标可能要 Repeat）。
+    sampler_cache: crate::d3d11::texture::SamplerCache,
 }
 
 /// Part of [`egui::FullOutput`] that is consumed by [`Renderer::render`].
@@ -194,9 +196,10 @@ pub(crate) fn maybe_dump_shapes(shapes: &[egui::epaint::ClippedShape], frame: u6
         let mut out = String::new();
         let mut found = 0usize;
         dump_hearts(shapes, frame, &mut out, &mut found);
-        if found == 0 {
-            return;
-        }
+        // 总是写文件：即使没找到心形也写，便于区分“环境变量没生效”和“页面没心形”。
+        out.push_str(&format!(
+            "\n== frame {frame} 共发现 {found} 个三点闭合 Path（心形三角）==\n"
+        ));
         let _ = std::fs::write(&path, out);
         return;
     }
@@ -547,6 +550,7 @@ impl Renderer {
             blend_state: blend_state.unwrap(),
             clear_blend_state: clear_blend_state.unwrap(),
             texture_pool: TexturePool::new(device),
+            sampler_cache: Default::default(),
         })
     }
 
@@ -796,6 +800,7 @@ impl Renderer {
                 &self.device,
                 device_context,
                 &self.texture_pool,
+                &mut self.sampler_cache,
                 mesh,
             )?;
         }
@@ -831,6 +836,8 @@ impl Renderer {
                 MinDepth: 0.,
                 MaxDepth: 1.,
             }]));
+            // 采样器改为按每个 mesh 的 TextureOptions 选择（见 draw_mesh），
+            // 这里只给一个默认值，避免某些路径下没有绑定采样器。
             ctx.PSSetSamplers(0, Some(&[Some(self.sampler_state.clone())]));
             ctx.OMSetRenderTargets(Some(&[Some(render_target.clone())]), None);
             ctx.OMSetBlendState(&self.blend_state, Some(&[0.; 4]), u32::MAX);
@@ -841,6 +848,7 @@ impl Renderer {
         device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
         texture_pool: &TexturePool,
+        sampler_cache: &mut crate::d3d11::texture::SamplerCache,
         mesh: MeshData,
     ) -> Result<()> {
         let vb = Self::create_index_buffer(device, &mesh.idx)?;
@@ -860,6 +868,13 @@ impl Renderer {
                 right: mesh.clip_rect.right() as _,
                 bottom: mesh.clip_rect.bottom() as _,
             }]));
+        }
+        // 按该纹理的 TextureOptions 选采样器：字体图集必须 ClampToEdge + 线性，
+        // 否则双线性过滤会采到图集里相邻字形/图元的像素，边缘出现细线。
+        if let Some(sampler) =
+            sampler_cache.get(device, texture_pool.options(mesh.tex))
+        {
+            unsafe { device_context.PSSetSamplers(0, Some(&[Some(sampler)])) };
         }
         if let Some(srv) = texture_pool.get_srv(mesh.tex) {
             unsafe {

@@ -10,7 +10,7 @@
 
 use std::{collections::HashMap, mem, slice};
 
-use egui::{Color32, ImageData, TextureId, TexturesDelta};
+use egui::{Color32, ImageData, TextureFilter, TextureId, TextureOptions, TextureWrapMode, TexturesDelta};
 
 use windows::{
     Win32::Graphics::{Direct3D11::*, Dxgi::Common::*},
@@ -22,13 +22,17 @@ struct ManagedTexture {
     srv: ID3D11ShaderResourceView,
     pixels: Vec<Color32>,
     width: usize,
+    options: TextureOptions,
 }
 
 enum Texture {
     /// A texture managed by egui (created from ImageData)
     Managed(ManagedTexture),
     /// A user-provided texture (registered from an existing shader resource view)
-    User { srv: ID3D11ShaderResourceView },
+    User {
+        srv: ID3D11ShaderResourceView,
+        options: TextureOptions,
+    },
 }
 impl Texture {
     pub fn is_managed(&self) -> bool {
@@ -37,6 +41,13 @@ impl Texture {
 
     pub fn is_user(&self) -> bool {
         matches!(self, Texture::User { .. })
+    }
+
+    fn options(&self) -> Option<TextureOptions> {
+        match self {
+            Texture::Managed(m) => Some(m.options),
+            Texture::User { options, .. } => Some(*options),
+        }
     }
 }
 
@@ -58,8 +69,16 @@ impl TexturePool {
     pub fn get_srv(&self, tid: TextureId) -> Option<ID3D11ShaderResourceView> {
         self.pool.get(&tid).map(|t| match t {
             Texture::Managed(managed) => managed.srv.clone(),
-            Texture::User { srv } => srv.clone(),
+            Texture::User { srv, .. } => srv.clone(),
         })
+    }
+
+    /// 该纹理请求的采样选项；未注册时用 egui 的默认（线性 + ClampToEdge）。
+    pub fn options(&self, tid: TextureId) -> TextureOptions {
+        self.pool
+            .get(&tid)
+            .and_then(Texture::options)
+            .unwrap_or(TextureOptions::LINEAR)
     }
 
     /// Register a user-provided shader resource view and get a TextureId for it.
@@ -72,7 +91,13 @@ impl TexturePool {
     ) -> TextureId {
         let id = TextureId::User(self.next_user_texture_id);
         self.next_user_texture_id += 1;
-        self.pool.insert(id, Texture::User { srv });
+        self.pool.insert(
+            id,
+            Texture::User {
+                srv,
+                options: TextureOptions::LINEAR,
+            },
+        );
         id
     }
 
@@ -101,7 +126,11 @@ impl TexturePool {
                 {
                     self.pool.insert(
                         *tid,
-                        Self::create_managed_texture(&self.device, delta.image.clone())?,
+                        Self::create_managed_texture(
+                            &self.device,
+                            delta.image.clone(),
+                            delta.options,
+                        )?,
                     );
                     // the old texture is returned and dropped here, freeing
                     // all its gpu resource.
@@ -184,6 +213,7 @@ impl TexturePool {
     fn create_managed_texture(
         device: &ID3D11Device,
         data: ImageData,
+        options: TextureOptions,
     ) -> Result<Texture> {
         let width = data.width();
 
@@ -232,6 +262,129 @@ impl TexturePool {
             srv,
             width,
             pixels,
+            options,
         }))
+    }
+}
+
+/// 采样器缓存：egui 每个纹理会带 `TextureOptions`（过滤方式 + wrap 模式），
+/// 必须按它选采样器，否则字体图集/图标会被全局采样器的边界行为污染。
+#[derive(Default)]
+pub struct SamplerCache {
+    map: std::collections::HashMap<SamplerKey, ID3D11SamplerState>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct SamplerKey {
+    min_linear: bool,
+    mag_linear: bool,
+    wrap: i32,
+}
+
+impl SamplerKey {
+    fn new(options: TextureOptions) -> Self {
+        let wrap = match options.wrap_mode {
+            TextureWrapMode::ClampToEdge => D3D11_TEXTURE_ADDRESS_CLAMP.0,
+            TextureWrapMode::Repeat => D3D11_TEXTURE_ADDRESS_WRAP.0,
+            TextureWrapMode::MirroredRepeat => D3D11_TEXTURE_ADDRESS_MIRROR.0,
+        };
+        Self {
+            min_linear: matches!(options.minification, TextureFilter::Linear),
+            mag_linear: matches!(options.magnification, TextureFilter::Linear),
+            wrap,
+        }
+    }
+}
+
+impl SamplerCache {
+    pub fn get(
+        &mut self,
+        device: &ID3D11Device,
+        options: TextureOptions,
+    ) -> Option<ID3D11SamplerState> {
+        let key = SamplerKey::new(options);
+        if let Some(s) = self.map.get(&key) {
+            return Some(s.clone());
+        }
+        let filter = match (key.min_linear, key.mag_linear) {
+            (true, true) => D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+            (false, false) => D3D11_FILTER_MIN_MAG_MIP_POINT,
+            (true, false) => D3D11_FILTER_MIN_LINEAR_MAG_MIP_POINT,
+            (false, true) => D3D11_FILTER_MIN_POINT_MAG_MIP_LINEAR,
+        };
+        let desc = D3D11_SAMPLER_DESC {
+            Filter: filter,
+            AddressU: D3D11_TEXTURE_ADDRESS_MODE(key.wrap),
+            AddressV: D3D11_TEXTURE_ADDRESS_MODE(key.wrap),
+            AddressW: D3D11_TEXTURE_ADDRESS_MODE(key.wrap),
+            ComparisonFunc: D3D11_COMPARISON_ALWAYS,
+            // ClampToEdge 语义下边界色不会被采到；保险起见给白色，和字体图集空白一致。
+            BorderColor: [1., 1., 1., 1.],
+            ..D3D11_SAMPLER_DESC::default()
+        };
+        let mut state = None;
+        unsafe { device.CreateSamplerState(&desc, Some(&mut state)).ok()? };
+        let state = state?;
+        self.map.insert(key, state.clone());
+        Some(state)
+    }
+}
+
+#[cfg(test)]
+mod sampler_tests {
+    use super::{SamplerKey, TextureOptions};
+    use egui::{TextureFilter, TextureWrapMode};
+    use windows::Win32::Graphics::Direct3D11::*;
+
+    /// egui 默认的 LINEAR 必须是 ClampToEdge + 双线性——这是修细线的关键。
+    #[test]
+    fn linear_options_map_to_clamp_and_bilinear() {
+        let k = SamplerKey::new(TextureOptions::LINEAR);
+        assert!(k.min_linear && k.mag_linear);
+        assert_eq!(k.wrap, D3D11_TEXTURE_ADDRESS_CLAMP.0);
+    }
+
+    #[test]
+    fn nearest_options_map_to_point_filter() {
+        let k = SamplerKey::new(TextureOptions::NEAREST);
+        assert!(!k.min_linear && !k.mag_linear);
+    }
+
+    #[test]
+    fn wrap_modes_map_distinctly() {
+        let clamp = SamplerKey::new(TextureOptions {
+            wrap_mode: TextureWrapMode::ClampToEdge,
+            ..TextureOptions::LINEAR
+        });
+        let repeat = SamplerKey::new(TextureOptions {
+            wrap_mode: TextureWrapMode::Repeat,
+            ..TextureOptions::LINEAR
+        });
+        let mirror = SamplerKey::new(TextureOptions {
+            wrap_mode: TextureWrapMode::MirroredRepeat,
+            ..TextureOptions::LINEAR
+        });
+        assert_ne!(clamp.wrap, repeat.wrap);
+        assert_ne!(repeat.wrap, mirror.wrap);
+        assert_eq!(repeat.wrap, D3D11_TEXTURE_ADDRESS_WRAP.0);
+        assert_eq!(mirror.wrap, D3D11_TEXTURE_ADDRESS_MIRROR.0);
+    }
+
+    /// 只改一个维度也必须产生不同的 key，否则会错误复用采样器。
+    #[test]
+    fn mixed_filters_are_distinct_keys() {
+        let mm = SamplerKey::new(TextureOptions {
+            magnification: TextureFilter::Linear,
+            minification: TextureFilter::Linear,
+            wrap_mode: TextureWrapMode::ClampToEdge,
+            mipmap_mode: None,
+        });
+        let pm = SamplerKey::new(TextureOptions {
+            magnification: TextureFilter::Linear,
+            minification: TextureFilter::Nearest,
+            wrap_mode: TextureWrapMode::ClampToEdge,
+            mipmap_mode: None,
+        });
+        assert_ne!(mm, pm);
     }
 }
