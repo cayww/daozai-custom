@@ -5177,6 +5177,18 @@ impl App {
             }
             if ctx.input(|i|i.viewport().close_requested()){self.settings_open=false;self.quota_close_connection();}
             let before=format!("{:?}",self.settings);
+            // 上游 v0.6.70：有独立设置页的插件（如便签本）直接出现在侧栏「功能」分组里。
+            #[cfg(feature="sdk-js")]
+            let plugin_pages: Vec<(String,String)>=self.plugins.standalone_settings_pages()
+                .map(|(id,name)|(id.to_owned(),name.to_owned())).collect();
+            #[cfg(not(feature="sdk-js"))]
+            let plugin_pages: Vec<(String,String)>=Vec::new();
+            #[cfg(feature="sdk-js")]
+            if self.settings_tab==SETTINGS_TAB_PLUGIN_DETAIL
+                && !plugin_pages.iter().any(|(id,_)|self.settings_plugin.as_ref()==Some(id)) {
+                self.settings_tab=SETTINGS_TAB_PLUGINS;
+                self.settings_plugin=None;
+            }
             let sidebar_fill=settings_color(ctx,Color32::from_rgb(29,29,32),Color32::from_rgb(237,239,243));
             egui::Panel::left("settings-sidebar").resizable(false).exact_size(180.0).frame(egui::Frame::new().fill(sidebar_fill).stroke(egui::Stroke::NONE).inner_margin(egui::Margin::symmetric(10,12))).show(ctx,|ui|{
                 ui.add_space(2.0);
@@ -5190,6 +5202,23 @@ impl App {
                         ui.add_space(if start==0{2.0}else{8.0});
                         ui.label(egui::RichText::new(section).size(11.0).color(settings_color(ui.ctx(),Color32::from_gray(150),Color32::from_gray(105))));
                         ui.add_space(3.0);
+                    }
+                    // 插件独立设置页插在「功能」分组最前面，和内置功能页同一视觉层级。
+                    if section=="功能" {
+                        for (id,name) in &plugin_pages {
+                            let selected=self.settings_tab==SETTINGS_TAB_PLUGIN_DETAIL
+                                && self.settings_plugin.as_ref()==Some(id);
+                            let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width(),row_h),egui::Sense::click());
+                            if response.clicked() && !selected {self.open_plugin_settings(id);}
+                            if selected || response.hovered() {
+                                ui.painter().rect_filled(rect,7.0,if selected{settings_color(ui.ctx(),Color32::from_rgb(43,43,46),Color32::from_rgb(214,221,232))}else{settings_color(ui.ctx(),Color32::from_rgb(30,30,33),Color32::from_rgb(225,230,238))});
+                            }
+                            let icon=egui::include_image!("../assets/settings-icons/system/pages.svg");
+                            let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(23.0,23.0));
+                            egui::Image::new(icon).paint_at(ui,icon_bg);
+                            ui.painter().text(egui::pos2(rect.left()+40.0,rect.center().y),egui::Align2::LEFT_CENTER,name,egui::FontId::proportional(13.0),if selected{settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41))}else{settings_color(ui.ctx(),Color32::from_gray(225),Color32::from_gray(55))});
+                            ui.add_space(row_gap);
+                        }
                     }
                     if start==SETTINGS_TAB_CUSTOM {ui.add_space((ui.available_height()-row_h*2.0-8.0).max(4.0));}
                     let selected=(start..=end).contains(&self.settings_tab);
@@ -5232,12 +5261,39 @@ impl App {
             let panel_fill=settings_color(ctx,Color32::from_rgb(25,25,27),Color32::from_rgb(246,247,249));
             egui::CentralPanel::default().frame(egui::Frame::new().fill(panel_fill).inner_margin(egui::Margin::symmetric(22,16) )).show(ctx,|ui|{
                 settings_apply_style(ui);
-                // 插件页：标题行右侧放「集市 / 已安装」切换条。
+                #[cfg(feature="sdk-js")]
+                let plugin=plugin_pages.iter().find(|(id,_)| {
+                    self.settings_tab==SETTINGS_TAB_PLUGIN_DETAIL && self.settings_plugin.as_ref()==Some(id)
+                });
+                let title=settings_tab_title(self.settings_tab);
+                #[cfg(feature="sdk-js")]
+                let title=plugin.map_or(title,|(_,name)|name.as_str());
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(settings_tab_title(self.settings_tab)).size(18.0).strong().color(settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41))));
+                    let label=egui::RichText::new(title).size(18.0).strong().color(settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41)));
                     #[cfg(feature="sdk-js")]
-                    if self.settings_tab==SETTINGS_TAB_PLUGINS {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|self.plugins.header_tabs(ui));
+                    if let Some((id,_))=plugin {
+                        let can_open=self.plugins.status_pages().any(|(page,_)|page==id);
+                        let title_width=(ui.available_width()-if can_open{106.0}else{0.0}).max(90.0);
+                        ui.allocate_ui_with_layout(egui::vec2(title_width,24.0),egui::Layout::left_to_right(egui::Align::Center),|ui|{
+                            ui.scope(|ui|{
+                                ui.set_max_width((title_width-58.0).max(20.0));
+                                ui.add(egui::Label::new(label).truncate()).on_hover_text(title);
+                            });
+                            crate::local_plugins::plugin_tag(ui);
+                        });
+                        if can_open {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{
+                                if ui.button("打开功能页").clicked() {
+                                    self.settings_open=false;
+                                    self.show_status_page(id);
+                                }
+                            });
+                        }
+                    } else {
+                        ui.label(label);
+                        if self.settings_tab==SETTINGS_TAB_PLUGINS {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|self.plugins.header_tabs(ui));
+                        }
                     }
                 });
                 ui.add_space(6.0);

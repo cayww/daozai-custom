@@ -9627,3 +9627,36 @@ fn wireless_devices_include_plugin_receivers_regardless_of_connection_alerts() {
     assert!(h.app.wireless_devices.iter().any(|d|d.id=="usb:test"),
         "插件提供的 2.4G 接收器必须出现在 wireless_devices 中");
 }
+
+/// 上游 v0.6.70 回归：无线设备页标题是"无线设备"，不是兜底的"岛仔设置"。
+/// 详情页由 wireless_detail 自己画"‹ 无线 设备"，通用页眉必须让位，否则两套字重叠。
+#[test]
+fn wireless_page_uses_upstream_title() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.visible_pages[crate::app::BLUETOOTH_PAGE]=true;
+    h.app.show_page(crate::app::BLUETOOTH_PAGE);
+    h.hover(Pos2::new(200.0,100.0),1.2);
+    let labels:Vec<String>=h.shapes.iter().filter_map(|cl|if let egui::Shape::Text(t)=&cl.shape{Some(t.galley.text().to_string())}else{None}).collect();
+    let has=|text:&str| labels.iter().any(|s|s==text);
+    assert!(has("无线")&&has("设备"),"无线设备页应显示《无线设备》标题");
+    assert!(!has("岛仔"),"不应再落到《岛仔设置》兜底标题");
+    // 详情态：通用页眉不画，避免和 wireless_detail 的返回标题叠字。
+    h.app.wireless_focus=Some("usb:test".into());
+    h.app.wireless_devices=vec![crate::bt::Device{id:"usb:test".into(),kind:crate::bt::DeviceKind::Receiver24G,..Default::default()},
+                               crate::bt::Device{id:"bt:other".into(),kind:crate::bt::DeviceKind::Headphones,..Default::default()}];
+    h.frame(vec![]);
+    assert!(!h.shapes.iter().any(|cl|matches!(&cl.shape,egui::Shape::Text(t)if t.galley.text()=="岛仔")),
+        "详情页不该同时出现通用页眉");
+}
+
+/// 上游 v0.6.70：无线页正文按 194 高布局；本地漏掉时只有 PH=140，
+/// 底部快捷切换行会直接压在"已连接/设备名"文字上。
+#[test]
+fn wireless_page_content_height_matches_upstream() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.page=crate::app::BLUETOOTH_PAGE;
+    // 没装快捷切换插件时 expanded_height 就等于正文高度。
+    assert_eq!(h.app.expanded_height(),194.0);
+}

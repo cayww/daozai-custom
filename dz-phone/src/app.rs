@@ -94,7 +94,11 @@ pub const FLARE_H: f32 = 16.0; // 外翻收敛高度
 pub const RAD: f32 = 33.0; // 底部圆角
 pub const WIN_W: f32 = 640.0; // 窗口（透明画布）
 pub const CANVAS_W: f32 = WIN_W + 320.0; // 保留右侧通知及阴影的完整空间，原岛仍按 WIN_W 定位。
-pub const WIN_H: f32 = 270.0;
+/// 插件「快捷切换图标」整行预留高度。与页码点共用底栏，展开面板高度会把它算进去。
+pub(crate) const PAGE_SHORTCUT_ROW_H: f32 = 24.0;
+/// 窗口画布高度必须容得下最高的页面（性能页 360 + 底栏 24），否则插件状态页/性能页会被裁切。
+/// 上游 v0.6.70 同款取值；本地旧值 270 会让 canvas 类插件显示不完整。
+pub const WIN_H: f32 = 378.0 + PAGE_SHORTCUT_ROW_H;
 /// 胶囊皮肤与屏幕顶边的间隙。
 pub const PILL_GAP: f32 = 6.0;
 
@@ -134,8 +138,6 @@ pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 11] = [
     "music", "focus", "health", "shelf", "tasks", "mail", "quota", "calendar", "weather",
     "performance", "wireless",
 ];
-/// 插件「快捷切换图标」整行预留高度。与页码点共用底栏，展开面板高度会把它算进去。
-pub(crate) const PAGE_SHORTCUT_ROW_H: f32 = 24.0;
 pub(crate) const PAGE_SETTINGS_TABS: [usize; 11] = [1,2,3,5,4,7,11,8,12,crate::extras::SETTINGS_TAB_PERFORMANCE,crate::extras::SETTINGS_TAB_WIRELESS];
 
 // ---------- 动效参数 ----------
@@ -2739,28 +2741,36 @@ impl App {
     }
 
     pub(crate) fn expanded_height(&self)->f32 {
-        let base = {
-            #[cfg(feature="sdk-js")]
+        #[cfg(windows)]
+        if self.plugin_notice_detail_open() { return crate::plugin_notice_ui::DETAIL_HEIGHT; }
+        self.page_content_height() + if self.page_shortcuts_enabled() { PAGE_SHORTCUT_ROW_H } else { 0.0 }
+    }
+
+    /// 页面正文高度（不含底栏快捷切换行）。截图里"控件压住底部图标"的根因就是
+    /// 本地曾直接用 PH=140 而漏掉上游的 BLUETOOTH_PAGE=194 / 性能页 360 等特例。
+    fn page_content_height(&self)->f32 {
+        #[cfg(feature="sdk-js")]
+        {
             if let Some(index)=self.page.checked_sub(PAGE_NAMES.len()) {
-                let height=self.status_pages.get(index).map_or(
-                    crate::plugin_status_ui::STATUS_PAGE_H,|(id,_)|self.plugins.status_height(id),
+                let page=self.status_pages.get(index);
+                let height=page.map_or(
+                    crate::plugin_status_ui::STATUS_PAGE_H, |(id,_)|self.plugins.status_height(id),
                 );
                 #[cfg(windows)]
-                let height=height+if self.status_pages.get(index)
-                    .is_some_and(|(id,_)|self.plugins.source_attribution(id).is_some())
-                { crate::plugin_status_ui::ATTRIBUTION_HEIGHT } else { 0.0 };
-                height
-            } else {
-                if self.page==CALENDAR_PAGE {CALENDAR_H}else if self.page==WEATHER_PAGE {WEATHER_H}
-                else if self.page==6{176.0}else if self.page==5&&self.mail.open_uid.is_some(){236.0}else{PH}
+                if page.is_some_and(|(id,_)|self.plugins.source_attribution(id).is_some()) {
+                    return height+crate::plugin_status_ui::ATTRIBUTION_HEIGHT;
+                }
+                return height;
             }
-            #[cfg(not(feature="sdk-js"))]
-            {
-                if self.page==CALENDAR_PAGE {CALENDAR_H}else if self.page==WEATHER_PAGE {WEATHER_H}
-                else if self.page==6{176.0}else if self.page==5&&self.mail.open_uid.is_some(){236.0}else{PH}
-            }
-        };
-        base + if self.page_shortcuts_enabled() { PAGE_SHORTCUT_ROW_H } else { 0.0 }
+            if self.page==TODO_PAGE && self.plugins.has_card(){return PH+46.0;}
+        }
+        if self.page==PERFORMANCE_PAGE {crate::performance_ui::PAGE_H}
+        else if self.page==BLUETOOTH_PAGE {194.0}
+        else if self.page==CALENDAR_PAGE {CALENDAR_H}
+        else if self.page==WEATHER_PAGE {WEATHER_H}
+        else if self.page==6{176.0}
+        else if self.page==5&&self.mail.open_uid.is_some(){236.0}
+        else {PH}
     }
 
     // ---------------------------------------------------------------
@@ -5135,7 +5145,11 @@ impl App {
             5 => ("邮箱", "", theme::CYAN),
             6 => ("AI", "额度", theme::SOFT_GREEN),
             8 if self.weather.solar_open => ("日出", "日落", theme::YELLOW),
+            PERFORMANCE_PAGE => ("系统", "性能", crate::performance_ui::CPU_COLOR),
             8 => ("当地", "天气", theme::CYAN),
+            // 无线设备详情页自带「‹ 无线 设备」标题，这里必须让位，否则两套字叠在一起。
+            BLUETOOTH_PAGE if self.wireless_focus.is_some() && self.wireless_devices.len() > 1 => return,
+            BLUETOOTH_PAGE => ("无线", "设备", theme::CYAN),
             _ => ("岛仔", "设置", theme::WHITE),
         };
         let wa = c.text(15.0, base, a, size::TITLE, W::Bold, theme::WHITE, H::Left);

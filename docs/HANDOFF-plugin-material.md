@@ -292,3 +292,19 @@ float4 material(MaterialIn i) {
 - 内含 exe sha256 前 16 `8dd76ea0fdab0eba`。
 - 上一版（仅材质包）备份在 `merge-work/daozai-setup-custom-isolated.exe.prev-24g-fix`。
 - 待用户实机确认：2.4G 接收器显示已连接；其余四项材质/外观/快捷切换仍待确认。
+
+---
+
+## 13. UI 对照上游修复（2026-11-26 17:12+）
+- **用户截图反馈**：无线设备页左上角标题叠字（"岛仔设置" 与详情标题重叠），设备文字/控件被底部快捷切换图标压住；新装的 `daozai.notes` 便签插件在设置里没有入口、岛上显示不完整。
+- **根因 1（标题）**：本地 `page_title()` 缺上游分支：
+  - `PERFORMANCE_PAGE => ("系统","性能", CPU_COLOR)`
+  - `BLUETOOTH_PAGE if wireless_focus && len>1 => return`（详情页标题由 `wireless_detail` 自己画）
+  - `BLUETOOTH_PAGE => ("无线","设备", CYAN)`
+  
+  缺这些时无线页落到兜底"岛仔设置"，详情页又有两套标题，故叠字。
+- **根因 2（控件被压）**：本地 `expanded_height()` 内联了一部分高度逻辑，缺上游 `page_content_height()` 的 `BLUETOOTH_PAGE=194`、`PERFORMANCE_PAGE=360`、插件通知详情/TODO 卡片分支；无线页只有 PH=140，内容按 194 排，底栏自然压字。现已按上游恢复 `page_content_height()`，`expanded_height()` 只在其上加 `PAGE_SHORTCUT_ROW_H`。
+- **根因 3（便签显示不完整）**：本地 `WIN_H` 仍是旧值 270，而上游是 `378 + PAGE_SHORTCUT_ROW_H = 402`。便签本 `status.canvas.height=230`，状态页需要 288，再加底栏 24 = 312，270 的画布直接裁切。现已对齐 402。
+- **根因 4（设置里没有便签页）**：本地设置侧栏没有上游的 `standalone_settings_pages()` 插件页面列表，也没有插件详情页标题上的"打开功能页"按钮。现已按上游补上：插件独立设置页出现在侧栏「功能」分组，详情页标题显示插件名+插件标，并可一键打开功能页。
+- **验证**：新增 `wireless_page_uses_upstream_title` / `wireless_page_content_height_matches_upstream`；全量 **1527 passed / 0 failed / 138 ignored**。
+- **待用户确认**：重新安装包后看无线页无叠字、便签插件出现在设置侧栏、便签 canvas 完整显示。

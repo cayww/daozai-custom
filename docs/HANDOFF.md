@@ -2070,3 +2070,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修复**：按上游补齐设备列表同步、`wireless_focus`/`wireless_enter_at`/`track_wireless_changes`；蓝牙扫描启动条件改为 `bluetooth_notifications || module_on(BLUETOOTH_PAGE)`。
 - **验证**：新增回归测试；全量 lib **1525 passed / 0 failed / 138 ignored**。
 - **状态**：已重新构建/打包；当前包 sha256 前 16 `c002555fbc41698f2`（exe `8dd76ea0fdab0eba`），待用户实机确认 2.4G 设备显示。
+
+### 7.0zzzg 对照上游修复无线页/插件页 UI（2026-11-26 17:12+）
+
+- **修复**：`page_title()` 补齐系统性能/无线设备/详情返回分支；`expanded_height()` 改用上游 `page_content_height()`（无线页 194、性能页 360）；`WIN_H` 从 270 恢复到 `378 + PAGE_SHORTCUT_ROW_H = 402`，避免便签 canvas 被裁；设置侧栏补上插件独立设置页与"打开功能页"按钮。
+- **验证**：全量 lib **1527 passed / 0 failed / 138 ignored**（新增 2 个无线页回归测试）。
+- **待用户实机确认**：无线页无叠字、便签插件在设置侧栏可见、便签 canvas 完整显示。
