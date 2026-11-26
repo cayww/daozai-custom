@@ -131,7 +131,7 @@ pub(crate) const PAGE_NAMES: [&str; 11] = ["音乐", "专注", "健康", "置物
 pub(crate) const PERFORMANCE_PAGE: usize = 9;
 pub(crate) const BLUETOOTH_PAGE: usize = 10;
 pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 11] = ["m","f","h","s","t","e","q","c","w","p","b"];
-pub(crate) const PAGE_SETTINGS_TABS: [usize; 11] = [1,2,3,5,4,7,11,8,12,15,crate::extras::SETTINGS_TAB_WIRELESS];
+pub(crate) const PAGE_SETTINGS_TABS: [usize; 11] = [1,2,3,5,4,7,11,8,12,crate::extras::SETTINGS_TAB_PERFORMANCE,crate::extras::SETTINGS_TAB_WIRELESS];
 
 // ---------- 动效参数 ----------
 /// 等待超过这个时长才做「轻微胀大」反馈；更短的等待保持静止，
@@ -2664,7 +2664,8 @@ impl App {
         if self.compact_notices(){self.notice_width.step(dt);}else{self.notice_width.snap(0.0);self.notice_details=false;}
         self.update_media(env,&ctx);
         let bell=self.t<self.notification_bell_until&&!self.compact_notices();
-        let phone=if self.settings.phone_battery{self.phone_power.poll()}else{(None,false)};
+        // 手机电量已迁入「无线设备」页，岛仔常驻不再轮询（避免每帧读手机连接卡片）。
+        let phone=(None,false);
         // 本机电量与手机电量彻底分开：电量开关只管本机，手机电量开关只管手机，
         // 两个来源各自判断、各自显示，互不影响。
         self.resident_power=(env.battery,env.charging);

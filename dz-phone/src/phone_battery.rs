@@ -419,7 +419,11 @@ fn parse_level(text: &str) -> Option<u8> {
     let re = Regex::new(r"(\d{1,3})%").ok()?;
     for caps in re.captures_iter(text) {
         let whole = caps.get(0)?;
-        let before = &text[whole.start().saturating_sub(80)..whole.start()];
+        // UTF-8 安全：往前最多 80 字节，但必须落在字符边界，否则会在中文中间切片 panic。
+        let start = whole.start();
+        let mut from = start.saturating_sub(80);
+        while from < start && !text.is_char_boundary(from) { from += 1; }
+        let before = &text[from..start];
         let battery = before.contains(r"\u7535\u6C60") || before.contains("电池")
             || before.contains(r"\u5269\u4F59") || before.contains("剩余")
             || before.contains(r"\u4E3A") || before.contains("电量");

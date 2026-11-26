@@ -4392,7 +4392,7 @@ pub(crate) fn settings_tab_module(tab: usize) -> Option<usize> {
         8 => Some(CALENDAR_PAGE),
         11 => Some(QUOTA_PAGE),
         12 => Some(WEATHER_PAGE),
-        15 => Some(PERFORMANCE_PAGE),
+        SETTINGS_TAB_PERFORMANCE => Some(PERFORMANCE_PAGE),
         16 => Some(crate::app::BLUETOOTH_PAGE),
         _ => None,
     }
@@ -4620,6 +4620,8 @@ pub(crate) const SETTINGS_TAB_APPEARANCE: usize = 13;
 pub(crate) const SETTINGS_TAB_POSITION: usize = 14;
 /// 本地定制页：手机连接/浏览器下载/MAA/液态玻璃配置集中于此。
 pub(crate) const SETTINGS_TAB_CUSTOM: usize = 15;
+/// 系统性能（不与旧的 15=自定义与集成 冲突）。
+pub(crate) const SETTINGS_TAB_PERFORMANCE: usize = 19;
 #[cfg(feature="sdk-js")]
 pub(crate) const SETTINGS_TAB_PLUGINS: usize = 17;
 #[cfg(feature="sdk-js")]
@@ -4639,15 +4641,15 @@ const SETTINGS_GROUPS: [(&str, usize, usize, &str); 17] = [
     ("日程", 8, 8, ""),
     ("AI 额度", 11, 11, ""),
     ("天气", 12, 12, ""),
-    ("系统性能", 15, 15, ""),
+    ("系统性能", SETTINGS_TAB_PERFORMANCE, SETTINGS_TAB_PERFORMANCE, ""),
     ("无线设备", SETTINGS_TAB_WIRELESS, SETTINGS_TAB_WIRELESS, ""),
     #[cfg(feature="sdk-js")]
-    ("插件", SETTINGS_TAB_PLUGINS, SETTINGS_TAB_PLUGINS, ""),
+    ("插件", SETTINGS_TAB_PLUGINS, SETTINGS_TAB_PLUGINS, "定制"),
     (
         "自定义与集成",
         SETTINGS_TAB_CUSTOM,
         SETTINGS_TAB_CUSTOM,
-        "定制",
+        "",
     ),
     ("关于", 9, 9, ""),
 ];
@@ -5192,7 +5194,7 @@ impl App {
                         // 自定义与集成：里面是浏览器 / 手机 / MAA / 网易云等外部集成，用浏览器图标比「关于」贴切。
                         SETTINGS_TAB_CUSTOM=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
                         SETTINGS_TAB_WIRELESS=>egui::include_image!("../assets/device-icons/bluetooth-linear.svg"),
-                        15=>egui::include_image!("../assets/settings-icons/system/performance.svg"),
+                        SETTINGS_TAB_PERFORMANCE=>egui::include_image!("../assets/settings-icons/system/performance.svg"),
                         #[cfg(feature="sdk-js")]
                         SETTINGS_TAB_PLUGINS=>egui::include_image!("../assets/settings-icons/system/shelf.svg"),
                         _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
@@ -5214,7 +5216,7 @@ impl App {
                     // 右侧给滚动条留出空隙，卡片和开关不会被它压住。
                     ui.set_width((ui.available_width()-12.0).max(240.0));
                     match tab {
-                    15=>{
+                    SETTINGS_TAB_PERFORMANCE=>{
                         let on=self.settings_feature_header(ui,crate::app::PERFORMANCE_PAGE,"查看硬件负载和实时吞吐量",|_,_|{});
                         ui.add_enabled_ui(on,|ui|self.performance_settings(ui));
                     }
