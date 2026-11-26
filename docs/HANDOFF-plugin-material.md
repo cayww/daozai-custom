@@ -375,3 +375,19 @@ float4 material(MaterialIn i) {
 - **验证**：全量 **1545 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
 - **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,088,968 bytes，sha256 前 16 `dbb5ed1d1807c30`（exe `d7311475aab296b3`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-page-turn`。
 - **待用户实机确认**：切页标题不再叠字/回弹、连点反向切换衔接、宽常驻岛展开收起无空黑框。
+
+---
+
+## 19. tab/标题入场动画对照修正（2026-11-26 21:02+）
+- **用户反馈**：「健康提醒」四个字与置物架/剪贴板 tab 的入场动画明显和上游不同。
+- **根因（这次真正漏的点）**：上游 `render_page(page, c, header, ...)` 把**标题、tab、右上操作**画在独立的 `header` Card，正文画在 `c`。本地此前仍是三参 `render_page`，把「健康提醒」和「置物架/剪贴板」分栏直接画在正文 Card，切页时被 `page_slide_offset()` 一起平移，所以看起来在滑。
+- **已修**：
+  - `render_page()` 补 `header: &Card` 参数；切页过渡里旧页/新页分别传 `old_header` / `header`，常态传 `c`。
+  - `page_focus` / `page_water` / `page_shelf` / `page_clipboard` / `page_calendar` 全部改用传入的 `header` 画标题、tab 与右上操作；正文仍用 `c`。
+  - 置物架/剪贴板分栏按上游 `v0.6.70` 回退为静态选中灰填充：删除本地独有的 `shelf_tab_press` / `shelf_tab_spring` / `shelf_tab_layout` / `shelf_tab_bar` 与 GPU 滑动透镜。
+  - D3D11 `transitioning` 补 `water_view_t`（环↔柱状图切换），等价覆盖上游 `ed035e7 water_view_transition` 的逐帧推进目的。
+- **系统对照结论**：
+  - 与上游一致、无需改：`anim.rs`、`health_tabs` 胶囊滑动、`water_body`/`sit_body` 原地交叉淡化、focus/rest、settings/plugin/quota tabs、performance-tab-slide。
+  - 本地 DISTINCT 且有意保留：`Ctl` GPU 透镜体系（D3D11 液态玻璃）、`mail_tab` 滑动、`ctl_appear`/`ctl_press` 按压反馈、`page_slide_tx` 只让透镜跟随上游同款切页滑动。
+  - 本地自定义但已删：`shelf_tab_press` + `shelf_tab_spring` 滑动透镜。
+- **验证**：按用户要求**未跑全量测试**；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。

@@ -1078,16 +1078,6 @@ pub struct App {
     pub(crate) confirm_clear: Option<f64>,
     /// 置物架页的两个分栏：0 = 文件，1 = 剪贴板。
     pub(crate) shelf_tab: usize,
-    /// 分栏滑动指示器弹簧（资料包标签栏：单透镜随弹簧滑动+拉伸）。
-    shelf_tab_spring: Spring,
-    /// 分栏切换的"放大-移动-缩回"press 弹簧（资料包 gooseTab Sel press-release）。
-    pub(crate) shelf_tab_press: Spring,
-    /// press-release 是否已经触发（切换后置 true，到位后缩回并复位）。
-    pub(crate) shelf_tab_pressing: bool,
-    /// 两个分栏选中胶囊的几何 [(中心x, 宽)]，由 shelf_tabs 绘制时写入供 ctl_geom 用。
-    pub(crate) shelf_tab_layout: [(f32, f32); 2],
-    /// 分栏容器胶囊几何 (中心x, 宽, 高)，由 shelf_tabs 写入供 ctl_geom 用。
-    pub(crate) shelf_tab_bar: (f32, f32, f32),
     pub clipboard: crate::clipboard::Shared,
     pub(crate) clip_first: usize,
     pub(crate) clip_confirm_clear: Option<f64>,
@@ -1499,11 +1489,6 @@ impl App {
             icons: Default::default(), avoidance: Default::default(),
             confirm_clear: None,
             shelf_tab: 0,
-            shelf_tab_spring: Spring::new(0.0, 300.0, 0.5),
-            shelf_tab_press: Spring::new(0.0, 250.0, 0.6),
-            shelf_tab_pressing: false,
-            shelf_tab_layout: [(0.0, 0.0); 2],
-            shelf_tab_bar: (0.0, 0.0, 0.0),
             clipboard: crate::clipboard::Shared::new(clipboard_on),
             clip_first: 0,
             clip_confirm_clear: None,
@@ -3522,7 +3507,9 @@ impl App {
             || (self.pet_a > 0.001 && self.pet_a < 0.999)
             || !self.resident.settled()
             || self.open && self.page==3 && self.shelf_x.values().any(|s| !s.settled(68.0))
-            || self.open && self.page==2 && (!self.water_ring.settled(1.0) || !self.sit_view_t.settled(1.0) || !self.sit_t.settled(1.0))
+            || self.open && self.page==2 && (!self.water_ring.settled(1.0)
+                || self.water_view_t.target != self.water_view as f32 || !self.water_view_t.settled(1.0)
+                || !self.sit_view_t.settled(1.0) || !self.sit_t.settled(1.0))
             || self.toast.is_some()
             || self.notification_bell().is_some_and(|at|self.t-at<0.95)
             || self.notice.as_ref().is_some_and(|a|a.source!=crate::extras::AlertSource::Internal&&self.t-a.at<0.95)
@@ -4182,36 +4169,8 @@ impl App {
                 if self.page!=5 || self.subpage.is_some() || !self.mail.accounts.is_empty() {return None;}
                 (Rect::from_min_size(Pos2::new(42.0,88.0),Vec2::new(84.0,26.0)),13.0)
             }
-            // 置物架分栏容器胶囊（资料包 containerScale）：切换时容器也放大 1+16dp/w*press。
-            Ctl::ShelfTabBar=>{
-                if self.page!=3 || self.subpage.is_some() {return None;}
-                let (bx,bw,bh)=self.shelf_tab_bar;
-                if bw<2.0 {return None;}
-                let press=self.shelf_tab_press.pos.clamp(0.0,1.2);
-                let sc=1.0+16.0/bw*press;   // 资料包: 1 + 16dp/containerW * pressProgress
-                let r=bh*0.5;
-                (Rect::from_center_size(Pos2::new(bx,20.0),Vec2::new(bw*sc,bh)),r)
-            }
-            // 置物架分栏滑动指示器（资料包标签栏同 MailTab）：单透镜在两段间滑，
-            // 滑动横向拉伸 st、按压果冻 sc。几何由 shelf_tabs 绘制时写入 layout。
-            Ctl::ShelfTab=>{
-                if self.page!=3 || self.subpage.is_some() {
-                    return None;
-                }
-                let (x0,w0)=self.shelf_tab_layout[0];
-                let (x1,w1)=self.shelf_tab_layout[1];
-                if w0<2.0 || w1<2.0 {return None;}
-                let s=self.shelf_tab_spring.pos.clamp(-0.25,1.25);
-                let st=(self.shelf_tab_spring.vel.abs()*0.06).min(0.5);
-                // 资料包：切换瞬间 press 放大到 78/56≈1.393，到位后缩回 1。
-                // press 用独立弹簧(切换时主动触发)，不走按住驱动的 ctl_press。
-                let press=self.shelf_tab_press.pos.clamp(0.0,1.2);
-                let sc=1.0+(78.0/56.0-1.0)*press;
-                let cx=x0+(x1-x0)*s;
-                let w=(w0+(w1-w0)*s)*(1.0+st)*sc;
-                let h=(17.0*(1.0-st*0.35)*sc).min(19.0);
-                (Rect::from_center_size(Pos2::new(cx,20.0),Vec2::new(w,h)),(h*0.5).min(9.5))
-            }
+            // 上游 v0.6.70：置物架/剪贴板分栏是静态选中填充，不做滑动透镜。
+            Ctl::ShelfTabBar | Ctl::ShelfTab => return None,
         })
     }
 
@@ -4256,22 +4215,6 @@ impl App {
                 // 指示器滑到当前筛选段（0=全部，1=未读）。
                 self.mail_tab.target=if self.mail.manage.unread_only {1.0}else{0.0};
                 self.mail_tab.step(dt);
-            }
-            if ctl==Ctl::ShelfTab {
-                // 分栏指示器滑到当前分栏（0=置物架，1=剪贴板）。
-                let target=if self.shelf_tab==1 {1.0}else{0.0};
-                self.shelf_tab_spring.target=target;
-                self.shelf_tab_spring.tune(1000.0*sk,0.7);  // 资料包 TOGGLE_VALUE_K=1000
-                self.shelf_tab_spring.step(dt);
-                // 资料包 press-release：切换触发 press=1(放大)，滑动到位后 press=0(缩回)。
-                if self.shelf_tab_pressing {
-                    if (self.shelf_tab_spring.pos-target).abs()<0.02 && self.shelf_tab_spring.vel.abs()<0.1 {
-                        self.shelf_tab_pressing=false;
-                        self.shelf_tab_press.target=0.0;
-                    }
-                }
-                self.shelf_tab_press.tune(250.0*sk,0.6);     // 资料包 TOGGLE_SCALE_X_K=250 ζ=0.6
-                self.shelf_tab_press.step(dt);
             }
             // 圆钮的拖动放大弹簧：按在进度条上就进入放大镜态（尺寸与 mag 同步 ×1.9）。
             // 圆钮的拖动放大弹簧：target 直接用 pages.rs 写入的 egui 真实拖动状态
@@ -5251,7 +5194,7 @@ impl App {
                 // 矢量片没有折射但白边恒定（glass_chrome），随 old_a 一起淡出；
                 // GPU 透镜没有透明度通道，留着只会变成一颗不跟随淡出的空玻璃。
                 self.old_page_render=true;
-                self.render_page(self.page_from, &oc.shifted(self.page_from_offset, 0.0), env, &mut Vec::new());
+                self.render_page(self.page_from, &oc.shifted(self.page_from_offset, 0.0), &old_header, env, &mut Vec::new());
                 self.old_page_render=false;
             }
             let header = c.faded(Self::page_header_alpha(e));
@@ -5260,10 +5203,10 @@ impl App {
             let nc = c.faded(new_a);
             let nc = if e < 0.12 { nc.ghost() } else { nc };
             let nc = nc.shifted(self.page_slide_offset(e), 0.0);
-            self.render_page(self.page, &nc, env, cmds);
+            self.render_page(self.page, &nc, &header, env, cmds);
         } else {
             self.page_title(self.page, c);
-            self.render_page(self.page, c, env, cmds);
+            self.render_page(self.page, c, c, env, cmds);
         }
         self.nav(c);
         if self.page==0 && !self.video_page() && c.live {self.draw_music_volume(c,cmds);}
@@ -5432,7 +5375,7 @@ impl App {
         }
     }
 
-    fn render_page(&mut self, page: usize, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+    fn render_page(&mut self, page: usize, c: &Card, header: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
         #[cfg(feature="sdk-js")]
         if let Some((id,_))=page.checked_sub(PAGE_NAMES.len()).and_then(|index|self.status_pages.get(index)) {
             let backdrop=crate::plugin_status_ui::StatusBackdrop{
@@ -5455,9 +5398,9 @@ impl App {
         }
         match page {
             0 => if self.video_page(){self.page_video(c, env, cmds)}else{self.page_music(c, env, cmds)},
-            1 => self.page_focus(c, env),
-            2 => self.page_water(c, env),
-            3 => self.page_shelf(c, env, cmds),
+            1 => self.page_focus(c, header, env),
+            2 => self.page_water(c, header, env),
+            3 => self.page_shelf(c, header, env, cmds),
             4 => {
                 self.page_todo(c, env, cmds);
                 #[cfg(feature="sdk-js")]
@@ -5471,7 +5414,7 @@ impl App {
             8 => self.page_weather(c,env,cmds),
             PERFORMANCE_PAGE => self.page_performance(c),
             BLUETOOTH_PAGE => self.page_wireless(c,env),
-            CALENDAR_PAGE => self.page_calendar(c,c,env),
+            CALENDAR_PAGE => self.page_calendar(c,header,env),
             _ => self.page_settings(c),
         }
     }

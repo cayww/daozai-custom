@@ -407,10 +407,10 @@ impl App {
     }
 
     // ================= 专注（番茄钟） =================
-    pub(crate) fn page_focus(&mut self, c: &Card, _env: &Env) {
+    pub(crate) fn page_focus(&mut self, c: &Card, header: &Card, _env: &Env) {
         let glassy=self.glassy();
-        if c.hit(90.0,8.0,42.0,21.0,"focus-settings").on_hover_text("专注设置").clicked(){self.open_settings_category(2);}
-        c.text(111.0,23.0,"设置",10.5,W::Regular,theme::GRAY,H::Center);
+        if header.hit(90.0,8.0,42.0,21.0,"focus-settings").on_hover_text("专注设置").clicked(){self.open_settings_category(2);}
+        header.text(111.0,23.0,"设置",10.5,W::Regular,theme::GRAY,H::Center);
         let (rx, ry, rr) = (79.0, 74.0, 32.0);
         let frac = self.ring_shown.pos.clamp(0.0, 1.0);
         let run = c.ui.ctx().animate_bool_with_time(egui::Id::unique("pomo-run"), self.pomo.running, 0.3);
@@ -522,10 +522,10 @@ impl App {
     /// 健康页：标题「健康」后接「喝水 | 久坐」分段切换。两种模式是同一套版式——
     /// 大数字、右上开关、状态行、进度条、主按钮 + 设置、右侧进度环都在同一位置，
     /// 只换内容和主色（蓝 / 绿）。设置按钮、分隔线和开关本体不随切换闪动。
-    pub(crate) fn page_water(&mut self, c: &Card, env: &Env) {
+    pub(crate) fn page_water(&mut self, c: &Card, header: &Card, env: &Env) {
         let glassy=self.glassy();
         let sv = self.sit_view_t.pos.clamp(0.0, 1.0);
-        self.health_tabs(c, 15.0, sv);
+        self.health_tabs(header, 15.0, sv);
 
         // 共用的开关：位置不变，颜色和旋钮图标随模式过渡。
         let sit = self.sit_mode;
@@ -799,36 +799,21 @@ impl App {
     /// 标题旁的「文件 | 剪贴板」分栏，返回分栏右边缘。
     /// 页面标题处的「置物架 | 剪贴板」分栏，返回分栏右边缘。
     fn shelf_tabs(&mut self, c: &Card, x: f32) -> f32 {
-        let glassy=self.glassy();
         let labels = ["置物架", "剪贴板"];
         let font = 12.0;
         let widths: Vec<f32> = labels.iter().map(|l| c.text_w(l, font, W::Bold) + 14.0).collect();
         let total = widths.iter().sum::<f32>() + 4.0;
-        // 容器几何供 ctl_geom 用（资料包 containerScale：切换时容器也放大）。
-        self.shelf_tab_bar = (x + total / 2.0, total, 21.0);
-        let bar_on_gpu = glassy && self.ctl_on_gpu(Ctl::ShelfTabBar);
-        if bar_on_gpu {
-            // 容器由 GPU 玻璃透镜画（真折射，随 press 放大），egui 侧不画矢量底。
-        } else if glassy {
-            paint::glass_chip(c, x, 9.5, total, 21.0, 10.5, 0.12);
-        } else {
-            c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN);
-        }
+        // 上游 v0.6.70：静态分栏底色，选中项直接换灰填充，不做滑动透镜。
+        if self.glassy() { paint::glass_chip(c, x, 9.5, total, 21.0, 10.5, 0.12); }
+        else { c.fill(x, 9.5, total, 21.0, 10.5, theme::BTN); }
         let mut left = x + 2.0;
-        // 选中透镜由 GPU 画时，egui 侧跳过选中胶囊的矢量填充，避免双层；
-        // 但文字/命中区照常。
-        let tab_on_gpu = glassy && self.ctl_on_gpu(Ctl::ShelfTab);
         for (i, (label, w)) in labels.iter().zip(&widths).enumerate() {
             let selected = self.shelf_tab == i;
-            // 记录选中胶囊几何（面板局部：中心 x + 宽），供 ctl_geom 的滑动透镜用。
-            self.shelf_tab_layout[i] = (left + w / 2.0, *w);
             let r = c.hit(left, 9.5, *w, 21.0, ("shelf-tab", i));
             let r = if i == 1 { r.on_hover_text("切到剪贴板") } else { r };
             let (h, _) = c.hover_t(&r);
             if selected {
-                if !tab_on_gpu {
-                    c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
-                }
+                c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_gray(88));
             } else if h > 0.01 {
                 c.fill(left, 11.5, *w, 17.0, 8.5, Color32::from_white_alpha((18.0 * h) as u8));
             }
@@ -837,31 +822,25 @@ impl App {
                 self.shelf_tab = i;
                 self.confirm_clear = None;
                 self.clip_confirm_clear = None;
-                // 资料包标签栏：切换瞬间触发 press(放大 78/56) → 滑动 → 到位缩回。
-                if glassy {
-                    self.shelf_tab_press.snap(0.0);
-                    self.shelf_tab_press.target = 1.0;
-                    self.shelf_tab_pressing = true;
-                }
             }
             left += w;
         }
         x + total
     }
 
-    pub(crate) fn page_shelf(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+    pub(crate) fn page_shelf(&mut self, c: &Card, header: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
         let glassy=self.glassy();
         let n = self.shelf.items.len();
         let drag = self.drag_a;
         // 拖文件进来时回到「文件」分栏。
         if drag > 0.002 { self.shelf_tab = 0; }
-        self.shelf_tabs(c, 13.0);
+        self.shelf_tabs(header, 13.0);
         if self.shelf_tab == 1 {
-            self.page_clipboard(c, env, cmds);
+            self.page_clipboard(c, header, env, cmds);
             return;
         }
-        c.text(344.0,23.0,"添加",size::SMALL,W::Regular,theme::GRAY,H::Right);
-        if c.hit(311.0,8.0,38.0,22.0,"shelf-add").on_hover_text("从电脑选择文件").clicked(){cmds.push(Cmd::AddFiles);}
+        header.text(344.0,23.0,"添加",size::SMALL,W::Regular,theme::GRAY,H::Right);
+        if header.hit(311.0,8.0,38.0,22.0,"shelf-add").on_hover_text("从电脑选择文件").clicked(){cmds.push(Cmd::AddFiles);}
         if n>5 {c.text(209.5,121.0,&format!("{}–{} / {n} · 滚轮查看",self.shelf_first+1,(self.shelf_first+5).min(n)),10.5,W::Regular,theme::DIM,H::Center);}
 
         if n > 0 {
@@ -1094,7 +1073,7 @@ impl App {
         }
     }
 
-    fn page_clipboard(&mut self, c: &Card, _env: &Env, _cmds: &mut Vec<Cmd>) {
+    fn page_clipboard(&mut self, c: &Card, header: &Card, _env: &Env, _cmds: &mut Vec<Cmd>) {
         let glassy=self.glassy();
         if !self.settings.clipboard_history {
             c.dashed(42.0, 32.0, 335.0, 91.0, 12.0, 1.2, Color32::from_gray(70), 0.0);
@@ -1147,9 +1126,9 @@ impl App {
             let hover = if confirming { Color32::from_rgb(150, 34, 44) } else { theme::BTN_HOVER };
             let x = 351.0 - lw;
             let (r, bc) = if glassy && !confirming {
-                paint::glass_capsule(c, x, 11.5, lw, 17.0, "clip-clear", 0.14, 0.42)
+                paint::glass_capsule(header, x, 11.5, lw, 17.0, "clip-clear", 0.14, 0.42)
             } else {
-                capsule(c, x, 11.5, lw, 17.0, "clip-clear", base, hover)
+                capsule(header, x, 11.5, lw, 17.0, "clip-clear", base, hover)
             };
             bc.text(x + lw / 2.0, 23.5, label, size::SMALL, W::Regular, theme::WHITE, H::Center);
             let r = r.on_hover_text(if confirming { "再点一次清空未固定的记录" } else { "清空未固定的记录" });
