@@ -78,6 +78,25 @@ pub struct RendererOutput {
 /// let (renderer_output, platform_output, viewport_output) =
 ///     egui_directx11::split_output(full_output);
 /// ```
+/// 把 egui 的逻辑裁剪矩形换算成物理像素，四舍五入并夹到渲染目标内。
+///
+/// 上游 `egui-wgpu` 的 `ScissorRect::new` 用 `.round()`；直接 `as i32` 是向零截断，
+/// 在 1.25 / 1.5 这类非整数 DPI 下会让 scissor 边缘整体差 1px，相邻图形之间于是
+/// 露出一条 1px 浅色缝（悬停抬升改变坐标小数部分时又会消失）。
+pub(crate) fn scissor_pixels(
+    clip_rect: egui::Rect,
+    zoom_factor: f32,
+    frame_size: (u32, u32),
+) -> egui::Rect {
+    let w = frame_size.0 as f32;
+    let h = frame_size.1 as f32;
+    let x0 = (clip_rect.min.x * zoom_factor).round().clamp(0.0, w);
+    let y0 = (clip_rect.min.y * zoom_factor).round().clamp(0.0, h);
+    let x1 = (clip_rect.max.x * zoom_factor).round().clamp(x0, w);
+    let y1 = (clip_rect.max.y * zoom_factor).round().clamp(y0, h);
+    egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+}
+
 pub fn split_output(
     full_output: egui::FullOutput,
 ) -> (
@@ -274,6 +293,8 @@ impl Renderer {
         );
         let zoom_factor = egui_ctx.zoom_factor();
 
+        let clip_px = |r: egui::Rect| scissor_pixels(r, zoom_factor, frame_size);
+
         self.setup(device_context, render_target, frame_size);
         let ndc = |p: Pos2| {
             (
@@ -320,9 +341,9 @@ impl Renderer {
                                 .collect(),
                             idx: mesh.indices,
                             tex: mesh.texture_id,
-                            clip_rect: clip_rect
-                                * egui_output.pixels_per_point
-                                * zoom_factor,
+                            clip_rect: clip_px(
+                                clip_rect * egui_output.pixels_per_point,
+                            ),
                         }))
                     },
                     Primitive::Callback(..) => {
@@ -355,9 +376,9 @@ impl Renderer {
                             vtx,
                             idx: vec![0, 1, 2, 0, 2, 3],
                             tex: egui::TextureId::default(),
-                            clip_rect: rect
-                                * egui_output.pixels_per_point
-                                * zoom_factor,
+                            clip_rect: clip_px(
+                                rect * egui_output.pixels_per_point,
+                            ),
                         }))
                     },
                 },
@@ -639,5 +660,44 @@ impl Renderer {
         let mut desc = zeroed();
         unsafe { tex.GetDesc(&mut desc) };
         Ok((desc.Width, desc.Height))
+    }
+}
+
+#[cfg(test)]
+mod scissor_tests {
+    use super::scissor_pixels;
+    use egui::{pos2, Rect};
+
+    /// 非整数 DPI 下必须四舍五入，不能向零截断——否则 1px 缝。
+    #[test]
+    fn scissor_rounds_to_nearest_physical_pixel_at_fractional_dpi() {
+        let r = Rect::from_min_max(pos2(100.8, 200.9), pos2(300.4, 400.6));
+        let out = scissor_pixels(r, 1.0, (1000, 1000));
+        assert_eq!(out.min, pos2(101.0, 201.0), "0.8/0.9 应进位，而不是截断成 100/200");
+        assert_eq!(out.max, pos2(300.0, 401.0));
+    }
+
+    #[test]
+    fn scissor_clamps_into_render_target() {
+        let r = Rect::from_min_max(pos2(-5.0, -5.0), pos2(2000.0, 2000.0));
+        let out = scissor_pixels(r, 1.0, (800, 600));
+        assert_eq!(out.min, pos2(0.0, 0.0));
+        assert_eq!(out.max, pos2(800.0, 600.0));
+    }
+
+    #[test]
+    fn scissor_applies_zoom_factor() {
+        let r = Rect::from_min_max(pos2(10.0, 20.0), pos2(30.0, 40.0));
+        let out = scissor_pixels(r, 2.0, (1000, 1000));
+        assert_eq!(out.min, pos2(20.0, 40.0));
+        assert_eq!(out.max, pos2(60.0, 80.0));
+    }
+
+    /// 上下界在 clamp 时不能交叉（退化矩形塌成零高/零宽，而不是反向）。
+    #[test]
+    fn scissor_never_inverts_bounds() {
+        let r = Rect::from_min_max(pos2(500.0, 500.0), pos2(400.0, 400.0));
+        let out = scissor_pixels(r, 1.0, (450, 450));
+        assert!(out.min.x <= out.max.x && out.min.y <= out.max.y);
     }
 }
