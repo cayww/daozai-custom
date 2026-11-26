@@ -4628,7 +4628,7 @@ fn setting_choices(ui: &mut egui::Ui, title: &str, value: &mut u32, values: [u32
     });
 }
 /// 设置页分页序号。旧序号保持不变（岛上入口、测试都按序号跳转），新增外观与位置两页。
-pub(crate) const SETTINGS_TAB_PAGES: usize = 1;
+pub(crate) const SETTINGS_TAB_PAGES: usize = 10;
 pub(crate) const SETTINGS_TAB_WIRELESS: usize = 16;
 pub(crate) const SETTINGS_TAB_APPEARANCE: usize = 13;
 pub(crate) const SETTINGS_TAB_POSITION: usize = 14;
@@ -4646,7 +4646,7 @@ const SETTINGS_GROUPS: [(&str, usize, usize, &str); 17] = [
     ("通用", 0, 0, "岛仔"),
     ("外观", SETTINGS_TAB_APPEARANCE, SETTINGS_TAB_APPEARANCE, ""),
     ("位置", SETTINGS_TAB_POSITION, SETTINGS_TAB_POSITION, ""),
-    ("页面管理", 10, 10, ""),
+    ("页面管理", SETTINGS_TAB_PAGES, SETTINGS_TAB_PAGES, ""),
     ("音乐", 1, 1, "功能"),
     ("专注与健康", 2, 3, ""),
     ("待办与置物", 4, 5, ""),
@@ -5254,6 +5254,8 @@ impl App {
                     }
                     SETTINGS_TAB_WIRELESS=>{
                         let on=self.settings_feature_header(ui,crate::app::BLUETOOTH_PAGE,"查看蓝牙电量和 2.4G 接收器状态",|_,_|{});
+                        #[cfg(feature="sdk-js")]
+                        self.plugins.wireless_settings(ui);
                         ui.add_enabled_ui(on,|ui|{
                             settings_label(ui,"岛上常驻");
                             settings_card(ui,|ui|{
@@ -5305,6 +5307,8 @@ impl App {
                         });
                         settings_label(ui,"功能页面");
                         settings_card(ui,|ui|{
+                            #[cfg(feature="sdk-js")]
+                            if self.plugins.page_shortcut_settings(ui,&mut self.settings.show_page_shortcuts) { ui.separator(); }
                             let descriptions=["播放控制与同步歌词","番茄钟与休息计时","喝水与久坐提醒","临时收纳文件位置","任务清单与到期提醒","邮件摘要与验证码","Agent 剩余额度和账号切换","月历、邮件邀请与工作日程","当地天气与七日预报","CPU、GPU、内存等实时指标","蓝牙设备与接收器"];
                             ui.label(egui::RichText::new("拖动左侧手柄调整顺序；关闭的功能不在后台运行，不同步也不提醒，已有数据保留。").size(11.5).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             #[derive(Clone)]
