@@ -130,7 +130,10 @@ pub(crate) const PAGE_NAMES: [&str; 11] = ["音乐", "专注", "健康", "置物
 /// 上游 v0.6.70 性能页（第 10 页，常驻栏性能槽引用；暂不加入 PAGE_NAMES 岛体主界面）。
 pub(crate) const PERFORMANCE_PAGE: usize = 9;
 pub(crate) const BLUETOOTH_PAGE: usize = 10;
-pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 11] = ["m","f","h","s","t","e","q","c","w","p","b"];
+pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 11] = [
+    "music", "focus", "health", "shelf", "tasks", "mail", "quota", "calendar", "weather",
+    "performance", "wireless",
+];
 pub(crate) const PAGE_SETTINGS_TABS: [usize; 11] = [1,2,3,5,4,7,11,8,12,crate::extras::SETTINGS_TAB_PERFORMANCE,crate::extras::SETTINGS_TAB_WIRELESS];
 
 // ---------- 动效参数 ----------

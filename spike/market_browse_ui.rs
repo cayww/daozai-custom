@@ -425,6 +425,8 @@ impl LocalPlugins {
             let mut entries: Vec<_> = catalog
                 .entries
                 .iter()
+                // 液态玻璃已内置于定制版的 D3D11 栈，不作为可安装插件展示。
+                .filter(|entry| entry.id != "cayww.liquid-glass")
                 .filter(|entry| match filter.as_str() {
                     "all" => true,
                     "favorites" => self.is_favorite(&entry.id),
