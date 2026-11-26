@@ -264,6 +264,24 @@ impl LocalPlugins {
         catalog: &Arc<market::Catalog>,
         entry: &market::Entry,
     ) -> Option<std::result::Result<CoverPng, ()>> {
+        // 已安装插件的封面就在本地记录里：优先用它，避免 Gitee 限流 / raw CDN 超时导致空封面。
+        let local_cover = self
+            .records
+            .get(&entry.id)
+            .and_then(|record| record.package.as_ref())
+            .and_then(|package| package.cover.clone());
+        if let Some(cover) = local_cover {
+            let is_material = self
+                .records
+                .get(&entry.id)
+                .and_then(|record| record.package.as_ref())
+                .is_some_and(|package| package.manifest.is_material());
+            self.official_market.images.insert(
+                entry.sha256.clone(),
+                Some(OfficialImage { png: cover.clone(), is_material }),
+            );
+            return Some(Ok(cover));
+        }
         self.official_image(&entry.sha256, catalog, entry, |catalog, entry| {
             let package = catalog.load(entry).ok()?;
             let is_material = package.manifest.is_material();
