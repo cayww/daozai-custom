@@ -494,7 +494,10 @@ impl Shell {
             } else {
                 self.backdrop=None;
             }
-            if self.app.settings.bluetooth_notifications {
+            let wireless_on = self.app.module_on(crate::app::BLUETOOTH_PAGE);
+            // 与上游一致：即使只开了无线设备页、没开"蓝牙提示"，也要启动蓝牙扫描，
+            // 因为无线设备页把蓝牙设备和 2.4G 接收器合在一起显示。
+            if self.app.settings.bluetooth_notifications || wireless_on {
                 if self.bt_rx.is_none() {self.bt_rx=Some(daozai::bt::spawn());}
             } else {
                 self.bt_rx=None;
@@ -507,7 +510,7 @@ impl Shell {
             #[cfg(windows)]
             {
                 // 兼容包插件启用时，用插件提供的 store 启动 USB 接收器监听。
-                let wireless_on=self.app.module_on(10);
+                let wireless_on=self.app.module_on(crate::app::BLUETOOTH_PAGE);
                 if wireless_on {
                     let service=self.receiver_rx.get_or_insert_with(||{
                         let ctx=ctx.clone();

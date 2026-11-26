@@ -2153,30 +2153,53 @@ impl App {
 
     /// v0.5.4：把系统音量与蓝牙设备状态同步进界面；只在连接/断开时提示一次。
     fn sync_device(&mut self, env: &Env) {
+        // 与上游 v0.6.70 对齐：设备列表必须先同步，且不受"连接提示开关"影响。
+        // 2.4G 接收器由 Env.receivers 提供；漏掉这段时设备实际连着，页上却显示未连接。
+        if !(self.open && self.page == BLUETOOTH_PAGE) { self.wireless_enter_at = None; }
+        self.track_wireless_changes(&env.bt);
+        self.wireless_devices = env.bt.clone();
+        if self.module_on(BLUETOOTH_PAGE) {
+            self.wireless_devices.extend(env.receivers.iter().cloned());
+        }
+        if self.wireless_focus.as_ref().is_some_and(|id| !self.wireless_devices.iter().any(|d| &d.id == id)) {
+            self.wireless_focus = None;
+        }
         if self.t >= self.volume_quiet_until {
             if let Some(v) = env.volume {
                 self.volume_ui = Some(v);
             }
         }
-        if !self.settings.bluetooth_notifications {
+        let battery_enabled = self.settings.bluetooth_battery_notifications && self.module_on(BLUETOOTH_PAGE);
+        let connection_enabled = self.settings.bluetooth_notifications;
+        if !battery_enabled || !connection_enabled {
+            let enabled = |a: &crate::extras::Alert| {
+                a.source != crate::extras::AlertSource::Internal || a.title != "蓝牙设备"
+                    || if a.page == BLUETOOTH_PAGE { battery_enabled } else { connection_enabled }
+            };
+            self.alerts.retain(&enabled);
+            if self.notice.as_ref().is_some_and(|a| !enabled(a)) { self.notice = None; }
+        }
+        if !connection_enabled {
             self.bt_shown.clear();
             self.bt_initialized=false;
-            self.alerts.retain(|a|a.source!=crate::extras::AlertSource::Internal || a.title!="蓝牙设备");
-            if self.notice.as_ref().is_some_and(|a|a.source==crate::extras::AlertSource::Internal && a.title=="蓝牙设备") {self.notice=None;}
             return;
         }
         if !env.bt_ready { return; }
         // 只把首次完整扫描作为基线，之后的连接变化都应提示。
         if !self.bt_initialized {
             self.bt_initialized = true;
-            self.bt_shown = env.bt.clone();
+            self.bt_shown = env.bt.iter().filter(|d| d.connected).cloned().collect();
             return;
         }
-        let connected: Vec<_> = env.bt.iter().filter(|d| !self.bt_shown.iter().any(|old| old.id == d.id)).cloned().collect();
-        let disconnected: Vec<_> = self.bt_shown.iter().filter(|d| !env.bt.iter().any(|new| new.id == d.id)).cloned().collect();
+        let connected: Vec<_> = env.bt.iter()
+            .filter(|d| d.connected && !self.bt_shown.iter().any(|old| old.id == d.id))
+            .cloned().collect();
+        let disconnected: Vec<_> = self.bt_shown.iter()
+            .filter(|d| !env.bt.iter().any(|new| new.connected && new.id == d.id))
+            .cloned().collect();
         for device in &connected { self.bluetooth_alert(device, true); }
         for device in &disconnected { self.bluetooth_alert(device, false); }
-        self.bt_shown = env.bt.clone();
+        self.bt_shown = env.bt.iter().filter(|d| d.connected).cloned().collect();
     }
 
     /// 距离上次交互的秒数（小精灵出现的依据）。

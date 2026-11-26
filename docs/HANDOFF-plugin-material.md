@@ -268,3 +268,17 @@ float4 material(MaterialIn i) {
 - 内含 exe：`dz-phone/target/release/daozai.exe`，sha256 前 16 `ef48c7b291e9f43df`（bridge `bd28a9d9a3064a58`）。
 - 旧包已备份到被忽略的 `merge-work/daozai-setup-custom-isolated.exe.prev-material-d3d11`（sha 前 16 `9ed7a3dfd3dc13c1`）。
 - **实机验证未完成**：需要用户安装/运行新包后确认内置玻璃、材质包激活、外观包选择、底栏快捷切换四项的视觉效果。测试已覆盖逻辑与布局断言，但未做 GUI 截图确认。
+
+---
+
+## 11. 回归修复：2.4G 接收器显示未连接（2026-11-26 16:45+）
+- **用户现象**：已连接 2.4G 设备，岛上显示未连接；上游 v0.6.70 正常。
+- **根因**：本地 `App::sync_device()` 是从旧版移植的，漏掉上游这几行：
+  - `self.wireless_devices = env.bt.clone();`
+  - `if self.module_on(BLUETOOTH_PAGE) { self.wireless_devices.extend(env.receivers.iter().cloned()); }`
+  - `wireless_focus` 失效重置、`wireless_enter_at` 重置、`track_wireless_changes(&env.bt)`。
+  
+  这些必须在 `bluetooth_notifications == false` 的提前返回**之前**执行。本地之前只在 `bt_shown` 里维护蓝牙提示，完全没有把 `Env.receivers` 写进 `wireless_devices`，所以接收器永远不出现在设备上。
+- **顺带修**：`Shell` 的蓝牙扫描服务启动条件对齐上游——`bluetooth_notifications || module_on(BLUETOOTH_PAGE)`；原来只看通知开关，关掉通知时无线页也拿不到蓝牙设备。
+- **测试**：新增 `ui_tests::wireless_devices_include_plugin_receivers_regardless_of_connection_alerts`，即使关闭连接提示，插件提供的接收器也必须进入 `wireless_devices`。全量 **1525 passed / 0 failed / 138 ignored**。
+- 注：`bluetooth_ui_tests.rs` 当前没有被任何 `mod` 引入，里面的用例不会跑；本次没有贸然接入，避免一次引入大量未维护用例。

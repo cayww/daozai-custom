@@ -1307,6 +1307,7 @@ struct H {
     animating:bool,
     shapes:Vec<egui::epaint::ClippedShape>,
     bt: Vec<crate::bt::Device>,
+    receivers: Vec<crate::bt::Device>,
     media: crate::smtc::NowPlaying,
     power: (Option<u8>, bool),
     network: Option<bool>,
@@ -1327,7 +1328,7 @@ impl H {
         std::env::set_var("DAOZAI_DATA_DIR", &dir);
         let ctx = egui::Context::default();
         let app = App::new(&ctx, Options { fetch_lyrics: false, pet_idle: 1e9, ..Default::default() });
-        Self { ctx, app, t: 0.0, cursor: None,cmds:vec![],region:Rect::NOTHING,hit:Rect::NOTHING,animating:false,shapes:Vec::new(), bt:Vec::new(),media:Default::default(),power:(None,false),network:None,system_idle:None,screen_locked:false,fullscreen:false,browser_at_top:None,file_drop_zone:None,hovered_files:vec![],dropped_files:vec![],repaint:std::time::Duration::MAX }
+        Self { ctx, app, t: 0.0, cursor: None,cmds:vec![],region:Rect::NOTHING,hit:Rect::NOTHING,animating:false,shapes:Vec::new(), bt:Vec::new(), receivers:Vec::new(),media:Default::default(),power:(None,false),network:None,system_idle:None,screen_locked:false,fullscreen:false,browser_at_top:None,file_drop_zone:None,hovered_files:vec![],dropped_files:vec![],repaint:std::time::Duration::MAX }
     }
     fn frame(&mut self, events: Vec<egui::Event>) {
         self.t += 1.0 / 60.0;
@@ -1349,6 +1350,7 @@ impl H {
             cursor: self.cursor,
             bt: self.bt.clone(),
             bt_ready: true,
+            receivers: self.receivers.clone(),
             media:self.media.clone(),
             battery:self.power.0,
             charging:self.power.1,
@@ -9606,4 +9608,22 @@ fn open_island_schedules_its_own_wakeup(){
         if h.repaint>Duration::from_millis(1) { woke=h.repaint; break; }
     }
     assert!(woke>=Duration::from_secs_f64(0.5)&&woke<=Duration::from_secs_f64(4.2),"停留期应约到停留结束，实际 {woke:?}");
+}
+
+/// 上游 v0.6.70 回归：2.4G 接收器由 Env.receivers 提供，必须并入无线设备页列表。
+/// 即使关掉了"蓝牙连接提示"，设备列表也要同步——之前本地在提前返回前漏掉这段，
+/// 表现为接收器实际连着，岛上却显示未连接。
+#[test]
+fn wireless_devices_include_plugin_receivers_regardless_of_connection_alerts() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.visible_pages[crate::app::BLUETOOTH_PAGE]=true;
+    h.app.settings.bluetooth_notifications=false;
+    h.receivers.push(crate::bt::Device {
+        id:"usb:test".into(), name:"罗技 Bolt 接收器".into(),
+        kind:crate::bt::DeviceKind::Receiver24G, connected:true, ..Default::default()
+    });
+    h.frame(vec![]);
+    assert!(h.app.wireless_devices.iter().any(|d|d.id=="usb:test"),
+        "插件提供的 2.4G 接收器必须出现在 wireless_devices 中");
 }

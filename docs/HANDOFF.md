@@ -2063,3 +2063,10 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **验证**：全量 lib **1524 passed / 0 failed / 138 ignored**（新增 3 个材质编译测试）；release 双 bin 构建通过；Inno Setup 7 打包成功。
 - **安装包**：`installer/daozai-setup-custom-isolated.exe`，sha256 前 16 `bc23dee2c92ca6c9`；exe 前 16 `ef48c7b291e9f43df`。旧包备份在 `merge-work/daozai-setup-custom-isolated.exe.prev-material-d3d11`。
 - **待用户实机确认**：内置玻璃不受影响；HLSL/DXBC 材质包能激活显示；外观包能在设置里选；底栏快捷切换整行能显示/点击。
+
+### 7.0zzzf 修复 2.4G 接收器显示未连接（2026-11-26 16:45+）
+
+- **根因**：本地 `sync_device()` 漏了上游的 `wireless_devices = env.bt.clone()` + `extend(env.receivers)`，且必须在蓝牙提示关闭的提前返回之前执行；`Env.receivers` 从未进入设备列表。
+- **修复**：按上游补齐设备列表同步、`wireless_focus`/`wireless_enter_at`/`track_wireless_changes`；蓝牙扫描启动条件改为 `bluetooth_notifications || module_on(BLUETOOTH_PAGE)`。
+- **验证**：新增回归测试；全量 lib **1525 passed / 0 failed / 138 ignored**。
+- **状态**：需重新构建/打包后让用户实机确认 2.4G 设备显示。
