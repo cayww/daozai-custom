@@ -2051,3 +2051,21 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 
 **打包**：`installer/daozai-setup-custom-isolated.exe`，dev-release 构建（`-CargoProfile dev-release`），包 sha256 前16 `c131dae07f7815c2`、exe `348ea3ad`、bridge `ab3c994c`。用户实机确认接缝消失。
 
+
+### 7.0zzzq 文字毛刺排查续：DComp 插值实验（2026-11-27 03:46，提交 `fbd39bf`）
+
+**背景**：§7.0zzzp 修好 1px 接缝（TextureOptions 采样器）后，用户追问「文字不清晰/毛刺是不是同源」。本轮装上采样器修复包实测**无明显改善** ⇒ 排除同源；两条线索各自独立。
+
+**排查结论（代码层）**：
+- 采样器修复完整保留：`ManagedTexture`/`User` 各自记录 `TextureOptions`，`SamplerCache` 按 (min/mag 过滤, wrap) 缓存，`draw_mesh` 按纹理绑定；mip 模式无影响（字体图集仅 1 级 mip）。
+- 字体图集是 egui 0.37 上游标准实现：`TextureAtlas` 用 `ColorImage::filled(TRANSPARENT)`、`PADDING=1`、按 `max_texture_side` 派生宽度；`round_text_to_pixels(ppp)` 由 tessellator 官方处理，本地无覆盖。
+- 历史实证链：§7.0zzg.19 独立工程 0.31 vs 0.35 字形一致；§7.0zzg.20 GPU RT 读回字形锐利；§7.0zzg.21 已修 hinting/subpixel_binning 与弹簧字号量化；§7.0zzzd 已改 FLIP_SEQUENTIAL。⇒ GPU 输出干净，残余毛刺在 DWM/DComp 呈现链。
+
+**本轮改动**：主窗口 DComp visual 加 `SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR)`。交换链尺寸与窗口物理像素 1:1，理论上插值不参与；但 DWM 在 125%/150% 等非整数缩放下合成透明分层窗口时仍可能重采样，让已锐利的字形发虚。子窗口是普通 Hwnd swapchain，不受影响。
+- **A/B 开关**：`DAOZAI_DCOMP_INTERP=linear` 可切回默认插值；不设或设 `nearest` 走新路径。
+
+**验证**：`cargo check --profile dev-release --lib --bins` 通过（130 个历史 warning）；全量 lib **1549 passed / 0 failed / 138 ignored**（dev-release，串行）。release 双 bin 构建通过。
+
+**产物**：`installer/daozai-setup-custom-isolated.exe`（release + LTO），包 sha256 前16 `37c612bbed8ed051`、exe `d84f0df0d68cf27b`、bridge `beca9acfc72c53a8`。提交 `fbd39bf` 在本地 main，**未 push、未部署**。
+
+**待用户实机确认**：装上后看文字毛刺是否改善；若无效，用 `DAOZAI_DCOMP_INTERP=linear` 对比确认无反向恶化，然后 `git revert fbd39bf` 丢弃这一实验。此路若也不行，按 §7.0zzzd 判断收益已尽，建议不再在渲染链继续试。
