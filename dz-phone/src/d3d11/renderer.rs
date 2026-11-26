@@ -176,6 +176,107 @@ pub(crate) fn scissor_pixels_with(
     egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
 }
 
+/// 诊断：把与指定区域相交的图元（类型/矩形/颜色/线宽）转储到文件。
+///
+/// 用环境变量开启，跑一次即可定位某个位置上的细线是由哪个图元画出来的：
+///
+/// ```text
+/// DAOZAI_DUMP_SHAPES="694,575,716,600"     感兴趣的区域（逻辑点 x0,y0,x1,y1）
+/// DAOZAI_DUMP_FILE="D:/tmp/shapes.txt"     输出文件（默认 daozai-shapes.txt）
+/// DAOZAI_DUMP_FRAME=1                      只转储第 1 帧（默认 1）
+/// ```
+pub(crate) fn maybe_dump_shapes(shapes: &[egui::epaint::ClippedShape]) {
+    let Ok(region) = std::env::var("DAOZAI_DUMP_SHAPES") else {
+        return;
+    };
+    let nums: Vec<f32> = region
+        .split(',')
+        .filter_map(|v| v.trim().parse::<f32>().ok())
+        .collect();
+    if nums.len() != 4 {
+        return;
+    }
+    let want = egui::Rect::from_min_max(
+        egui::pos2(nums[0], nums[1]),
+        egui::pos2(nums[2], nums[3]),
+    );
+    let path = std::env::var("DAOZAI_DUMP_FILE")
+        .unwrap_or_else(|_| "daozai-shapes.txt".to_owned());
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "== 区域 {:?} 内的图元（按绘制顺序）==\n",
+        want
+    ));
+    let mut index = 0usize;
+    dump_shapes_into(shapes, want, &mut out, &mut index);
+    out.push_str(&format!("== 共 {} 条 ==\n", index));
+    let _ = std::fs::write(&path, out);
+}
+
+fn dump_shapes_into(
+    shapes: &[egui::epaint::ClippedShape],
+    want: egui::Rect,
+    out: &mut String,
+    index: &mut usize,
+) {
+    for clipped in shapes {
+        dump_shape(&clipped.shape, clipped.clip_rect, want, out, index);
+    }
+}
+
+fn dump_shape(
+    shape: &egui::Shape,
+    clip: egui::Rect,
+    want: egui::Rect,
+    out: &mut String,
+    index: &mut usize,
+) {
+    use egui::Shape;
+    if let Shape::Vec(inner) = shape {
+        for s in inner {
+            dump_shape(s, clip, want, out, index);
+        }
+        return;
+    }
+    let bounds = shape.visual_bounding_rect();
+    if !bounds.intersects(want) {
+        return;
+    }
+    *index += 1;
+    let head = format!(
+        "#{:03} clip=({:.1},{:.1})-({:.1},{:.1}) bounds=({:.1},{:.1})-({:.1},{:.1})",
+        index,
+        clip.min.x, clip.min.y, clip.max.x, clip.max.y,
+        bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y,
+    );
+    let body = match shape {
+        Shape::Rect(r) => format!(
+            "Rect fill={:?} stroke={:?}({:.2}) radius={:?}",
+            r.fill, r.stroke.color, r.stroke.width, r.corner_radius
+        ),
+        Shape::Circle(c) => format!(
+            "Circle center=({:.2},{:.2}) r={:.2} fill={:?} stroke={:?}({:.2})",
+            c.center.x, c.center.y, c.radius, c.fill, c.stroke.color, c.stroke.width
+        ),
+        Shape::LineSegment { stroke, .. } => {
+            format!("LineSeg stroke={:?}({:.2})", stroke.color, stroke.width)
+        }
+        Shape::Path(p) => format!(
+            "Path points={} closed={:?} fill={:?} stroke={:?}({:.2})",
+            p.points.len(), p.closed, p.fill, p.stroke.color, p.stroke.width
+        ),
+        Shape::Text(t) => format!("Text \"{}\"", t.galley.text()),
+        Shape::Mesh(m) => format!(
+            "Mesh verts={} idx={}",
+            m.vertices.len(),
+            m.indices.len()
+        ),
+        other => format!("{:?}", std::mem::discriminant(other)),
+    };
+    out.push_str(&format!("{head} {body}\n"));
+}
+
 pub fn split_output(
     full_output: egui::FullOutput,
 ) -> (
@@ -363,6 +464,14 @@ impl Renderer {
 
         if egui_output.shapes.is_empty() {
             return Ok(());
+        }
+
+        // 诊断：DAOZAI_DUMP_SHAPES 开启时把目标区域的图元写文件（只写一次）。
+        {
+            static ONCE: std::sync::Once = std::sync::Once::new();
+            if std::env::var("DAOZAI_DUMP_SHAPES").is_ok() {
+                ONCE.call_once(|| maybe_dump_shapes(&egui_output.shapes));
+            }
         }
 
         let frame_size = Self::get_render_target_size(render_target)?;
