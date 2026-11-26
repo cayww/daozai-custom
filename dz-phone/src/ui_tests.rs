@@ -8713,28 +8713,21 @@ fn weather_icon_atlas_preview(){
 }
 
 
-/// 「仅 QQ」与「手机短信与来电」必须互相独立：手机只看自己的开关，其它应用只看监听范围。
+/// 手机连接通知不再有独立的「短信与来电」开关：只受通知读取总开关约束。
 #[test]
-fn phone_alerts_is_independent_of_listen_scope(){
+fn phone_notifications_follow_read_notifications_only(){
     let mut h=H::new();
     h.app.settings.read_notifications=true;
     let phone_id="Microsoft.YourPhone_8wekyb3d8bbwe!App";
-    for &(qq_only,phone_alerts) in &[(false,false),(false,true),(true,false),(true,true)] {
+    for qq_only in [false,true] {
         h.app.settings.qq_only=qq_only;
-        h.app.settings.phone_alerts=phone_alerts;
-        // 手机：只由「手机短信与来电」决定，与监听范围无关。
-        assert_eq!(h.app.accepts_notification(phone_id,true),phone_alerts,
-            "qq_only={qq_only} phone_alerts={phone_alerts}：手机应只受手机开关控制");
-        // QQ：两种范围下都接收。
-        assert!(h.app.accepts_notification("QQ",false));
-        // 其它应用：只由监听范围决定。
+        assert!(h.app.accepts_notification(phone_id,true),
+            "qq_only={qq_only}：手机连接通知应始终按普通通知处理");
         assert_eq!(h.app.accepts_notification("D:/x/Steam.exe",false),!qq_only,
             "qq_only={qq_only}：非 QQ 应用应只受监听范围控制");
     }
-    // 没连上就一律不接收，手机开关开着也没用。
     h.app.settings.read_notifications=false;
-    h.app.settings.phone_alerts=true;
-    assert!(!h.app.accepts_notification(phone_id,true),"未连接时手机通知也不应接收");
+    assert!(!h.app.accepts_notification(phone_id,true),"未开启通知读取时手机通知不接收");
 }
 
 
@@ -9563,7 +9556,6 @@ fn winrt_phone_sms_otp_uses_card_and_auto_copy(){
     let mut h=H::new();h.frame(vec![]);
     h.app.settings.read_notifications=true;
     h.app.settings.notifications=true;
-    h.app.settings.phone_alerts=true;
     h.app.settings.auto_copy_otp=true;
     h.app.receive_notification_from(
         "手机连接".into(),
@@ -9572,7 +9564,7 @@ fn winrt_phone_sms_otp_uses_card_and_auto_copy(){
         None,
     );
     let alert=h.app.alerts.back().expect("手机短信应上岛");
-    assert_eq!(alert.title,"手机 · 短信");
+    assert_eq!(alert.title,"验证码");
     assert!(alert.body.contains("834921"),"验证码正文不能被打码，否则卡片取不到明文：{}",alert.body);
     assert_eq!(crate::otp::extract("",&alert.body,&[]).map(|c|c.text),Some("834921".into()));
     h.frame(vec![]);

@@ -667,13 +667,8 @@ impl App {
                 _ if matches!(&a.source,AlertSource::External(id) if id.starts_with("island-status:")) => {
                     old.source == a.source
                 }
-                // 手机通知按来源聚合：同一 App 的新消息替换旧提示，不排队刷屏。
-                // 手机通道共用同一个来源（手机连接的 AUMID）：新短信 / 来电直接顶掉上一条，
-                // 不然来电会排在一条已经看过的短信后面。
-                _ if a.title.starts_with("手机 · ")
-                    || a.title == "未接来电"
-                    || a.title == "来电中" =>
-                {
+                // 手机验证码卡片按来源聚合：新验证码直接替换旧卡，不排队刷屏。
+                _ if a.title == "验证码" && old.title == "验证码" => {
                     old.source == a.source
                 }
                 // HUD 瞬时状态（输入语言/大写锁定/音量/网络/电源/蓝牙）共用同一个通知槽：
@@ -1276,14 +1271,14 @@ impl App {
         }
     }
 
-    /// 这条通知是否进入处理流程。两个互不相干的维度：
-    /// 手机短信/来电只看 `phone_alerts`，其它应用只看监听范围（全部应用 / 仅 QQ）。
+    /// 这条通知是否进入处理流程。手机连接的通知走普通通知通道，不再有独立的
+    /// 「短信与来电」开关；其它应用只看监听范围（全部应用 / 仅 QQ）。
     pub(crate) fn accepts_notification(&self, id: &str, phone: bool) -> bool {
         if !self.settings.read_notifications || id.is_empty() {
             return false;
         }
         if phone {
-            return self.settings.phone_alerts;
+            return true;
         }
         !self.settings.qq_only || id == "QQ"
     }
@@ -1310,18 +1305,25 @@ impl App {
         body: String,
         unread: Option<crate::app::Unread>,
     ) {
-        // WinRT 监听器把手机连接通知直接送进这里。若按普通通知处理，正文会被
-        // 打码（mask），验证码卡片取不到明文、自动复制也不会触发——用户看到的是
-        // 「连接」普通通知。手机通道（且没有 messenger 未读目标）必须改走
-        // notify_phone，复用它的短信标签、验证码停留时长与自动复制逻辑。
-        if unread.is_none() && crate::system::phone_channel(&id) {
-            self.notify_phone(app, id, body);
-            return;
+        // 手机连接的通知本身走普通通知通道，不再单独转发所有短信和来电；
+        // 只有识别到验证码时，才交给 notify_phone 走独立的验证码卡片。
+        let phone = crate::system::phone_channel(&id);
+        if phone {
+            self.maybe_register_phone_app(&id, &body);
+            if !crate::system::phone_app(&body, &self.phone_apps)
+                .map(|(_, allow)| allow)
+                .unwrap_or(true)
+            {
+                return;
+            }
+            if unread.is_none() && crate::otp::extract("", &body, &[]).is_some() {
+                self.notify_phone(app, id, body);
+                return;
+            }
         }
-        self.maybe_register_phone_app(&id, &body);
         if !self.settings.read_notifications
             || id.is_empty()
-            || !crate::messenger::NotificationFilter::for_settings(&self.settings).allows(&id)
+            || (!phone && !crate::messenger::NotificationFilter::for_settings(&self.settings).allows(&id))
         {
             return;
         }
@@ -1446,13 +1448,18 @@ impl App {
             if self.settings.qq_only { "是" } else { "否" },
             body.chars().take(60).collect::<String>()
         );
-        // 手机只看手机开关，其它应用只看监听范围——两者互不影响。
+        // 这里只保留验证码：普通短信与来电让手机连接自己的通知上岛，不再单独转发。
+        let code = crate::otp::extract("", &body, &[]);
+        if !phone || code.is_none() {
+            log_notice(&format!("DROP 手机非验证码通知  {trace}"));
+            return;
+        }
         if !self.accepts_notification(&id, phone) {
-            log_notice(&format!("DROP 未连接/范围外/手机关  {trace}"));
+            log_notice(&format!("DROP 通知读取关闭  {trace}"));
             return;
         }
         // 真实手机连接通知只报主 AUMID，改由正文识别来源；
-        // 明确命中黑名单的静默，识别不出的按「连接」放行，避免漏掉来电等重要通知。
+        // 明确命中黑名单的静默，识别不出的按「连接」放行。
         let phone_info: Option<(String, bool)> = if phone {
             self.maybe_register_phone_app(&id, &body);
             Some(
@@ -1477,8 +1484,6 @@ impl App {
             self.pending.push(Cmd::Copy(body.clone()));
             log_notice(&format!("规则命中 copy    {trace}"));
         }
-        // 来电方（正文首段就是号码或联系人），来电中/未接来电都用它当副标题。
-        let caller = body.split('·').next().unwrap_or("").trim().to_string();
         // 岛仔自己发出的系统提醒会被通知中心回传；已在历史里的同一内容不再入队，避免重复显示。
         if self
             .history
@@ -1496,7 +1501,7 @@ impl App {
             self.mark_messenger(crate::app::Messenger::Qq, 0, 0);
         }
         // 验证码只有几分钟有效，铃铛多留一会儿，避免鼠标来不及移上去。
-        let has_code = !body.is_empty() && crate::otp::extract("", &body, &[]).is_some();
+        let has_code = code.is_some();
         let otp_bell = phone && has_code;
         // 停留时长：普通通知用 notice_seconds；验证码用 otp_seconds，但不短于普通通知，
         // 且有 10 秒下限——验证码要留时间回看和点「复制」。
@@ -1523,12 +1528,8 @@ impl App {
             self.notification_bell_at = self.t;
             self.notification_bell_until = self.t + keep_bell;
         }
-        // 「手机 · 」前缀用来和岛仔自带 IMAP 邮件的「新邮件」提醒区分开。
-        let title = if let Some((label, _)) = &phone_info {
-            format!("手机 · {label}")
-        } else {
-            app.chars().filter(|c| !c.is_control()).take(80).collect()
-        };
+        // 手机验证码单独成卡，不和手机连接的普通通知混在一起。
+        let title = "验证码".to_string();
         // 10 秒窗口内同一 App 的多条消息合并计数，配合 enqueue_alert 的替换去重防刷屏。
         let count = if phone {
             let entry = self
@@ -1590,42 +1591,7 @@ impl App {
                 self.pending.push(Cmd::CopyOtp(code.text));
             }
         }
-        // 来电中 / 未接来电：标签都是「电话」，靠正文区分——
-        // 响铃是「号码 · 传入呼叫」，挂断是「电话 · 号码 · 未接来电」。
-        let ringing = phone_info.is_some() && body.contains("传入呼叫");
-        let missed = phone_info
-            .as_ref()
-            .is_some_and(|(label, _)| label == "电话")
-            && body.contains("未接来电");
-        if missed {
-            // 来电中的提示被「未接来电」取代，别让两条并存。
-            if self.notice.as_ref().is_some_and(|a| a.title == "来电中") {
-                self.notice = None;
-            }
-            self.missed_calls = self.missed_calls.saturating_add(1);
-            self.notification_bell_until = f64::MAX;
-        }
-        let (title, body, duration) = if ringing {
-            ("来电中".to_string(), format!("{caller} 正在呼叫"), 60.0)
-        } else if missed {
-            (
-                "未接来电".to_string(),
-                format!("{} 通未接来电 · 点击关闭清除", self.missed_calls),
-                30.0,
-            )
-        } else {
-            (
-                title,
-                body,
-                if cfg!(test) {
-                    4.5
-                } else if has_code {
-                    otp_stay
-                } else {
-                    stay
-                },
-            )
-        };
+        let duration = if cfg!(test) { 4.5 } else if has_code { otp_stay } else { stay };
         // 通知正文可能含短信验证码：落盘诊断日志前先打码，避免 generate diagnostics 时外泄。
         let logged_body = if let Some(code) = crate::otp::extract("", &body, &[]) {
             crate::mail_privacy::mask(&body, &code.text)
@@ -1665,16 +1631,14 @@ impl App {
             #[cfg(windows)]
             AlertSource::Plugin { .. } => true,
             AlertSource::External(id) => {
-                // 手机通道与状态总线不走应用名单：手机看 phone_alerts，状态总线常放行。
+                // 手机通道与状态总线不走应用名单：手机看通知总开关，状态总线常放行。
                 let phone = crate::system::phone_channel(id);
                 let status_bus = id == "island-status" || id.starts_with("island-status:");
                 if status_bus {
                     return self.settings.notifications;
                 }
                 if phone {
-                    return self.settings.notifications
-                        && self.settings.read_notifications
-                        && self.settings.phone_alerts;
+                    return self.settings.notifications && self.settings.read_notifications;
                 }
                 self.settings.read_notifications
                     && crate::messenger::NotificationFilter::for_settings(&self.settings).allows(id)
@@ -2305,9 +2269,6 @@ impl App {
             if notice_button(&nc, 226.0, 12.0, 60.0, "关闭", "external-dismiss") {
                 self.notice = None;
                 self.notification_bell_until = 0.0;
-                if a.title == "未接来电" {
-                    self.missed_calls = 0;
-                }
             }
             return;
         }
@@ -6233,30 +6194,11 @@ impl App {
                                     let _ = std::process::Command::new(prog).arg(arg).spawn();
                                 }
                             }
-                            settings_hint(ui, "用 Windows 内置的「手机连接」配对手机：打开后按提示扫码连接，之后手机短信、来电都会自动上岛，手机电量在「无线设备」页查看。连接成功后上方状态会变绿。");
+                            settings_hint(ui, "用 Windows 内置的「手机连接」配对手机：打开后按提示扫码连接。手机连接的通知本身会按普通通知上岛；含验证码的短信会单独显示为验证码卡片。手机电量在「无线设备」页查看。");
                         });
                         settings_label(ui,"手机功能");
                         settings_card(ui,|ui|{
-                            // 短信/来电经「手机连接」转发：手机连接没装、或没给通知读取权限时不可配置。
-                            let phone_on=crate::phone_battery::installed();
-                            let notify_on=self.settings.read_notifications;
-                            let sms_ready=phone_on && notify_on;
-                            let sms_before=self.settings.phone_alerts;
-                            if sms_ready {
-                                setting_row(ui,"短信与来电","短信与来电上岛；关闭后手机通知全部忽略",&mut self.settings.phone_alerts);
-                                if sms_before!=self.settings.phone_alerts{self.settings.save();}
-                            } else {
-                                // 只置灰不改值：等条件恢复后开关自动回到原状态。
-                                setting_row_locked(ui,"短信与来电",
-                                    if !phone_on {"未检测到「手机连接」，安装后才能开启"} else {"需要先开启通知读取（在「通知、邮箱与日程」里连接）"},
-                                    self.settings.phone_alerts);
-                            }
-                            ui.separator();
-                            ui.label(egui::RichText::new("手机短信通过「手机连接」转发。").size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
-                            // 短信总开关关掉后，验证码自动复制没有意义，一并置灰。
-                            ui.add_enabled_ui(self.settings.phone_alerts,|ui|{
-                                setting_row(ui,"验证码自动复制","手机短信验证码上岛时直接写入剪贴板",&mut self.settings.auto_copy_otp);
-                            });
+                            ui.label(egui::RichText::new("手机连接的通知按普通通知上岛；含验证码的短信会自动转成验证码卡片。").size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             ui.separator();
                             ui.label(egui::RichText::new("手机 App 名单：检测到新 App 通知时自动加入并默认开启，这里只需取消勾选即可静音。也可直接改 %APPDATA%\\Daozai\\phone-apps.json。").size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             let before_phone_apps=self.phone_apps.items.clone();

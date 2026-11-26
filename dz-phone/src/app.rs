@@ -1289,8 +1289,6 @@ pub struct App {
     pub(crate) focus_streak_days:u32,
     /// 状态总线当前存活的状态，用于常驻区并排显示。
     pub(crate) status_live:Vec<crate::island_status::Status>,
-    /// 未接来电累计（点「未接来电」提示的关闭按钮清零）。
-    pub(crate) missed_calls:u32,
     /// 通用状态总线读取器。
     pub(crate) island_status:crate::island_status::Reader,
     pub(crate) subpage:Option<usize>,
@@ -1615,7 +1613,6 @@ impl App {
             focus_today_min:focus_today,
             focus_streak_days:focus_streak,
             status_live:Vec::new(),
-            missed_calls:0,
             island_status:Default::default(),
            listener_status: "尚未连接".into(),
             notification_bell_until: 0.0, notification_bell_at: -10.0, notice: None, hud_notice: None, hud_alpha: 0.0, notice_width:Spring::new(0.0,CLOSE.0,CLOSE.1), notice_details:false, pending_messengers:Vec::new(), messenger_scroll:0.0, alerts: Default::default(), history: Default::default(), pending: vec![],

@@ -417,3 +417,15 @@ float4 material(MaterialIn i) {
   - `shared_header()` 的 `compact_alpha` 块里调用 `self.draw_wireless_bar(&c, local_cx, &layout)`。
   - 顺手接回同段缺失的 `layout.add_performance()` 与 `performance_bar()` 绘制（上游同位置，之前也是未调用）。
 - **验证**：按用户要求未跑全量测试；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
+
+---
+
+## 22. 手机连接功能精简（2026-11-26 21:35+）
+- **需求**：手机连接本身依托 Windows 通知，普通通知会照常上岛；删掉重复转发所有短信与来电显示，只保留“验证码识别成单独验证码卡片”。设置页里的相关开关也删掉。
+- **行为改动**：
+  - WinRT 手机通知不再一律改走 `notify_phone()`；普通手机通知走普通通知路径，验证码短信才走 `notify_phone()` 的独立卡片。
+  - `notify_phone()` 非验证码直接丢弃；验证码卡片标题改为「验证码」，保留大号数字复制按钮；`auto_copy_otp` 仍按邮件共用设置决定是否自动写剪贴板。
+  - 移除「来电中 / 未接来电」卡片、计数与关闭清零逻辑；`missed_calls` 字段删除。
+  - `phone_alerts` 设置项彻底删除（配置键忽略），手机通知只受通知读取总开关与手机 App 名单约束；`accepts_notification()` 与 `tick_alerts()` 同步。
+  - 设置页「手机功能」删除「短信与来电」「验证码自动复制」两行及相关提示，只保留 App 名单；连接状态文案改为“普通通知上岛、验证码单独成卡”。
+- **验证**：未跑全量测试；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
