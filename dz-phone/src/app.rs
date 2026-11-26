@@ -2246,16 +2246,28 @@ impl App {
         self.open_settings();
     }
 
+    /// 页码 → 设置分组。插件状态页不在 PAGE_SETTINGS_TABS 里，必须安全回退，
+    /// 否则在便签等插件页点齿轮会因数组越界直接崩溃。
+    fn page_settings_tab(&self, page: usize) -> usize {
+        PAGE_SETTINGS_TABS.get(page).copied().unwrap_or(crate::extras::SETTINGS_TAB_PAGES)
+    }
+
+    /// 打开某个页面的设置：插件状态页走插件自己的设置页，其余走对应内置分组。
+    pub(crate) fn open_page_settings(&mut self, page: usize) {
+        #[cfg(feature="sdk-js")]
+        if let Some(id) = page.checked_sub(PAGE_NAMES.len())
+            .and_then(|index| self.status_pages.get(index)).map(|(id, _)| id.clone())
+        {
+            self.open_plugin_settings(&id);
+            return;
+        }
+        self.settings_tab = self.page_settings_tab(page);
+        self.open_settings();
+    }
+
     pub fn show_page(&mut self,page:usize) {
         if !self.module_on(page) {
-            #[cfg(feature="sdk-js")]
-            if let Some(id)=page.checked_sub(PAGE_NAMES.len())
-                .and_then(|index|self.status_pages.get(index)).map(|(id,_)|id.clone()) {
-                self.open_plugin_settings(&id);
-                return;
-            }
-            self.settings_tab=PAGE_SETTINGS_TABS.get(page).copied().unwrap_or(crate::extras::SETTINGS_TAB_PLUGINS);
-            self.open_settings();
+            self.open_page_settings(page);
             return;
         }
         self.notice=None;
@@ -5080,7 +5092,7 @@ impl App {
             c.circle(394.0,18.0,13.0,Color32::from_white_alpha((hover*24.0) as u8));
         }
         paint::gear(&c.scaled(394.0,18.0,0.8*gear_s),394.0,18.0,theme::WHITE);
-        if settings.clicked(){self.settings_tab=PAGE_SETTINGS_TABS[self.page];self.open_settings();}
+        if settings.clicked(){self.open_page_settings(self.page);}
         if self.subpage==Some(self.page) {
             c.text(15.0,25.0,"‹",19.0,W::Bold,theme::WHITE,H::Left);
             // 健康提醒设置沿用主页的标题 + 喝水/久坐切换，切到哪边就设置哪边。

@@ -2077,3 +2077,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **验证**：全量 lib **1527 passed / 0 failed / 138 ignored**（新增 2 个无线页回归测试）。
 - **待用户实机确认**：无线页无叠字、便签插件在设置侧栏可见、便签 canvas 完整显示。
 - **当前包**：`installer/daozai-setup-custom-isolated.exe`，sha256 前 16 `68c0f32f5e3c3133`（exe `f0fffe5bb029cd7d9`），提交 `98b8dbc`。
+
+### 7.0zzzh 修复插件页齿轮越界崩溃（2026-11-26 18:19+）
+- **日志**：`diagnostics/last-error.log` 指向 `src/app.rs:5083:49`，即齿轮点击处的 `PAGE_SETTINGS_TABS[self.page]`。
+- **根因**：插件状态页页码 ≥ 11，数组只有 11 项；点齿轮必 panic。上游用 `page_settings_tab()` 安全映射 + `open_page_settings()` 分流插件设置页。
+- **修复**：按上游补回这两个方法，`show_page()` 与齿轮点击统一走安全入口；新增越界回归测试。
+- **状态**：需全量测试 + 重新打包后让用户点便签页齿轮确认。

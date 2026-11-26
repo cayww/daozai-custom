@@ -317,3 +317,12 @@ float4 material(MaterialIn i) {
 - 内含 exe sha256 前 16 `f0fffe5bb029cd7d9`。
 - 上一版备份：`merge-work/daozai-setup-custom-isolated.exe.prev-ui-fix`。
 - 这版同时包含：D3D11 材质包、2.4G 接收器修复、无线页/插件页 UI 对照上游修复。
+
+---
+
+## 15. 崩溃修复：插件页点齿轮越界（2026-11-26 18:19+）
+- **日志证据**：`%APPDATA%\DaozaiCustom\diagnostics\last-error.log`：`代码位置：src\app.rs:5083:49`；`auto-restart.log`：运行 1281 秒后异常自动重启。栈被裁剪成 `<unknown>`，但行号足够定位。
+- **根因**：`shared_header()` 的齿轮点击直接写 `self.settings_tab = PAGE_SETTINGS_TABS[self.page]`。便签等插件状态页页码从 `PAGE_NAMES.len()`（11）开始，数组只有 11 项，点齿轮必定越界 panic。
+- **修复**：按上游加回 `page_settings_tab()`（`.get(page).copied().unwrap_or(SETTINGS_TAB_PAGES)`）和 `open_page_settings()`：插件状态页转给 `open_plugin_settings(id)`，否则走安全的分组映射。`show_page()` 也统一调用它；齿轮点击改为 `open_page_settings(self.page)`。
+- **回归测试**：`plugin_page_settings_gear_does_not_index_out_of_bounds`，直接以 `page = PAGE_NAMES.len()` 调用，验证不再越界且打开设置窗口。
+- **状态**：全量测试结果见下次记录；需重新构建/打包后让用户点插件页齿轮确认不再退出。

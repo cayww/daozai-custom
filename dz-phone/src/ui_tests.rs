@@ -9660,3 +9660,15 @@ fn wireless_page_content_height_matches_upstream() {
     // 没装快捷切换插件时 expanded_height 就等于正文高度。
     assert_eq!(h.app.expanded_height(),194.0);
 }
+
+/// 上游 v0.6.70 回归：插件状态页点齿轮时，页码超出 PAGE_SETTINGS_TABS 长度。
+/// 旧代码直接 `PAGE_SETTINGS_TABS[self.page]` 会越界崩溃（last-error.log app.rs:5083）。
+#[test]
+fn plugin_page_settings_gear_does_not_index_out_of_bounds() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.page=crate::app::PAGE_NAMES.len();
+    h.app.open_page_settings(h.app.page);
+    assert_eq!(h.app.settings_tab,crate::extras::SETTINGS_TAB_PAGES);
+    assert!(h.app.settings_open,"应打开设置窗口而不是崩溃");
+}
