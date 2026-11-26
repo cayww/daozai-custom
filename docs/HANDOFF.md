@@ -2069,4 +2069,4 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **根因**：本地 `sync_device()` 漏了上游的 `wireless_devices = env.bt.clone()` + `extend(env.receivers)`，且必须在蓝牙提示关闭的提前返回之前执行；`Env.receivers` 从未进入设备列表。
 - **修复**：按上游补齐设备列表同步、`wireless_focus`/`wireless_enter_at`/`track_wireless_changes`；蓝牙扫描启动条件改为 `bluetooth_notifications || module_on(BLUETOOTH_PAGE)`。
 - **验证**：新增回归测试；全量 lib **1525 passed / 0 failed / 138 ignored**。
-- **状态**：需重新构建/打包后让用户实机确认 2.4G 设备显示。
+- **状态**：已重新构建/打包；当前包 sha256 前 16 `c002555fbc41698f2`（exe `8dd76ea0fdab0eba`），待用户实机确认 2.4G 设备显示。

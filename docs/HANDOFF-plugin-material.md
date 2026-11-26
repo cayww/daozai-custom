@@ -282,3 +282,13 @@ float4 material(MaterialIn i) {
 - **顺带修**：`Shell` 的蓝牙扫描服务启动条件对齐上游——`bluetooth_notifications || module_on(BLUETOOTH_PAGE)`；原来只看通知开关，关掉通知时无线页也拿不到蓝牙设备。
 - **测试**：新增 `ui_tests::wireless_devices_include_plugin_receivers_regardless_of_connection_alerts`，即使关闭连接提示，插件提供的接收器也必须进入 `wireless_devices`。全量 **1525 passed / 0 failed / 138 ignored**。
 - 注：`bluetooth_ui_tests.rs` 当前没有被任何 `mod` 引入，里面的用例不会跑；本次没有贸然接入，避免一次引入大量未维护用例。
+
+---
+
+## 12. 修复版重新打包（2026-11-26 17:06）
+- 提交：`bff72de`（接收器列表同步修复）+ 后续把 `BLUETOOTH_PAGE` 改为 `pub` 供宿主 bin 引用。
+- 全量测试 **1525 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 重新打包成功。
+- 当前包：`installer/daozai-setup-custom-isolated.exe`，12,077,111 bytes，sha256 前 16 `c002555fbc41698f2`（完整 `c002555fbc41698f2a7b38158989d63fd56b6ced9d4429b85666351a50cf5d48`）。
+- 内含 exe sha256 前 16 `8dd76ea0fdab0eba`。
+- 上一版（仅材质包）备份在 `merge-work/daozai-setup-custom-isolated.exe.prev-24g-fix`。
+- 待用户实机确认：2.4G 接收器显示已连接；其余四项材质/外观/快捷切换仍待确认。

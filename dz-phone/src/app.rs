@@ -129,7 +129,7 @@ fn pill_shadow(painter:&egui::Painter,rect:Rect,radius:f32,strength:f32){
 pub(crate) const PAGE_NAMES: [&str; 11] = ["音乐", "专注", "健康", "置物架", "待办", "邮箱", "AI 额度", "日程", "天气", "系统性能", "无线设备"];
 /// 上游 v0.6.70 性能页（第 10 页，常驻栏性能槽引用；暂不加入 PAGE_NAMES 岛体主界面）。
 pub(crate) const PERFORMANCE_PAGE: usize = 9;
-pub(crate) const BLUETOOTH_PAGE: usize = 10;
+pub const BLUETOOTH_PAGE: usize = 10;
 pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 11] = [
     "music", "focus", "health", "shelf", "tasks", "mail", "quota", "calendar", "weather",
     "performance", "wireless",
