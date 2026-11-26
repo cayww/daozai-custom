@@ -15,10 +15,7 @@ use windows::Win32::{
     Graphics::{
         Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST},
         Direct3D11::*,
-        DirectComposition::{
-            DCompositionCreateDevice2, DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
-            IDCompositionDevice, IDCompositionTarget, IDCompositionVisual,
-        },
+        DirectComposition::{DCompositionCreateDevice2, IDCompositionDevice, IDCompositionTarget, IDCompositionVisual},
         Dxgi::{Common::*, *},
     },
 };
@@ -455,18 +452,6 @@ impl D3d11Runtime {
         let target: IDCompositionTarget = unsafe { dcomp.CreateTargetForHwnd(window, true)? };
         unsafe {
             visual.SetContent(&swap)?;
-            // 交换链尺寸与窗口物理像素 1:1，DComp 默认插值本不该参与缩放。
-            // 但 DWM 在 125%/150% 等非整数缩放下合成透明分层窗口时仍可能重采样，
-            // 让已锐利的字形边缘发虚。NEAREST_NEIGHBOR 可避免这种二次采样。
-            // 用 DAOZAI_DCOMP_INTERP=linear 可切回默认值做 A/B 对比。
-            let interp = std::env::var("DAOZAI_DCOMP_INTERP").unwrap_or_default();
-            if interp.eq_ignore_ascii_case("nearest") || interp.is_empty() {
-                if let Err(e) = visual.SetBitmapInterpolationMode(
-                    DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
-                ) {
-                    log::warn!("[d3d11] SetBitmapInterpolationMode(NEAREST) failed: {:?}", e);
-                }
-            }
             target.SetRoot(&visual)?;
             dcomp.Commit()?;
         }
