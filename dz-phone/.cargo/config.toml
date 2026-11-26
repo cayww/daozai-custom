@@ -1,4 +1,6 @@
+# 本机工具链：rust-lld 作为 MSVC 链接器（比 link.exe 快）。换机器需改下面的路径。
+# 若 rust-lld 不存在，删掉这两条 linker flag 即回退到 MSVC 默认 link.exe。
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "linker-flavor=lld-link", '-C', 'linker=C:\Users\cay\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe']
 [build]
 rustc-wrapper = "sccache"
