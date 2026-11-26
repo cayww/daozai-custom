@@ -304,6 +304,28 @@ mod bottom_dock_tests {
     }
 
     #[test]
+    fn drag_switches_to_adjacent_monitor_only_after_crossing_shared_edge() {
+        let left=Display{id:"left".into(),label:String::new(),bounds:Bounds{left:-1920,top:0,right:0,bottom:1080},work:Bounds{left:-1920,top:0,right:0,bottom:1080},auto_bottom:0,primary:false,dpi:96};
+        let right=Display{id:"right".into(),label:String::new(),bounds:Bounds{left:0,top:0,right:1920,bottom:1080},work:Bounds{left:0,top:0,right:1920,bottom:1080},auto_bottom:0,primary:true,dpi:96};
+        let displays=[left,right];
+        // 刚过边界 4px（不足 16 逻辑点）不算换屏，仍在左屏。
+        assert_eq!(super::drag_target(&displays,&displays[0],(4,500),1.0).id,"left");
+        // 越过 16 点后才切到右屏。
+        assert_eq!(super::drag_target(&displays,&displays[0],(20,500),1.0).id,"right");
+        // 共享边判定给出停靠方向。
+        assert_eq!(super::shared_edge(displays[1].bounds,displays[0].bounds,(0,500)),Some((0,Dock::Left)));
+    }
+
+    #[test]
+    fn drag_target_ignores_far_monitor_not_adjacent_at_cursor_row() {
+        let a=Display{id:"a".into(),label:String::new(),bounds:Bounds{left:0,top:0,right:1920,bottom:1080},work:Bounds{left:0,top:0,right:1920,bottom:1080},auto_bottom:0,primary:true,dpi:96};
+        let b=Display{id:"b".into(),label:String::new(),bounds:Bounds{left:1920,top:0,right:3840,bottom:1080},work:Bounds{left:1920,top:0,right:3840,bottom:1080},auto_bottom:0,primary:false,dpi:96};
+        let displays=[a,b];
+        // 光标在左屏中间，即使右屏存在也不换屏。
+        assert_eq!(super::drag_target(&displays,&displays[0],(800,500),1.0).id,"a");
+    }
+
+    #[test]
     fn persistent_taskbar_anchors_to_work_area_at_every_island_size() {
         let bounds=Bounds{left:0,top:0,right:2560,bottom:1440};
         let display=screen(bounds,Bounds{bottom:1368,..bounds},0);

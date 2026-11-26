@@ -35,6 +35,8 @@ struct Shell {
     /// 刚点过播放控制或音量时，短时间内按最快频率采样，让按钮状态及时回显。
     media_fast_until: Option<Instant>,
     placed: bool,
+    /// 上次定位使用的屏幕范围；屏幕或停靠变化（含跨屏拖动）时立即重新定位。
+    placed_bounds: Option<daozai::display_layout::Bounds>,
     placement_at: PollClock,
     placement_scale: f32,
     /// 上次定位时的目标屏幕、水平位置与 OLED 像素偏移；变化后立即重新定位，不等下一次轮询。
@@ -211,6 +213,7 @@ impl Shell {
             media_enabled,
             media_fast_until: None,
             placed: false,
+            placed_bounds: None,
             placement_at: PollClock::default(),
             placement_scale: 0.0,
             placement_key: (String::new(), 0, daozai::model::Dock::Top, true, (0, 0)),
@@ -336,6 +339,25 @@ impl Shell {
             charging: self.sys.1,
             network: Some(self.system_state.network),
             cursor,
+            desktop_cursor: {
+                #[cfg(windows)] {cursor_physical()}
+                #[cfg(not(windows))] {None}
+            },
+            cancel_position_drag: {
+                #[cfg(windows)] {self.app.dragging_position() && unsafe {
+                    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState,VK_ESCAPE};
+                    GetAsyncKeyState(VK_ESCAPE.0 as i32) < 0
+                }}
+                #[cfg(not(windows))] {false}
+            },
+            primary_down: {
+                #[cfg(windows)] if self.app.dragging_position() {Some(unsafe {
+                    use windows::Win32::UI::{Input::KeyboardAndMouse::{GetAsyncKeyState,VK_LBUTTON,VK_RBUTTON},WindowsAndMessaging::{GetSystemMetrics,SM_SWAPBUTTON}};
+                    let key=if GetSystemMetrics(SM_SWAPBUTTON)!=0 {VK_RBUTTON}else{VK_LBUTTON};
+                    GetAsyncKeyState(key.0 as i32)<0
+                })}else{None}
+                #[cfg(not(windows))] {None}
+            },
             idle_seconds: {
                 #[cfg(windows)] {Some(daozai::system::idle_seconds())}
                 #[cfg(not(windows))] {None}
@@ -434,18 +456,29 @@ impl Shell {
         #[cfg(windows)]
         let placement_key=(self.app.settings.display_id.clone(),(offset*10000.0).round() as i32,self.app.settings.dock,self.app.settings.avoids_top_bar(),shift);
         #[cfg(windows)]
-        if !self.placed || self.placement_scale!=ctx.pixels_per_point() || self.placement_key!=placement_key || self.placement_at.ready(Duration::from_secs(1)) {
+        {
+        let bounds=daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id)
+            .map(|d|d.dock_bounds(self.app.settings.dock,self.app.settings.avoids_top_bar()));
+        if !self.placed || self.placed_bounds!=bounds || self.placement_scale!=ctx.pixels_per_point() || self.placement_key!=placement_key || self.placement_at.ready(Duration::from_secs(1)) {
             // 只有位置变化时沿用已知屏幕，避免拖动中每帧枚举显示器。
-            let offset_only=self.placed && self.placement_scale==ctx.pixels_per_point() && !self.placement_at.ready(Duration::from_secs(1))
+            let offset_only=self.placed && self.placed_bounds==bounds && self.placement_scale==ctx.pixels_per_point() && !self.placement_at.ready(Duration::from_secs(1))
                 && (&self.placement_key.0,self.placement_key.2,self.placement_key.3,self.placement_key.4)==(&placement_key.0,placement_key.2,placement_key.3,placement_key.4);
             if !offset_only {
                 self.placement_at=PollClock::now();
                 self.app.displays=daozai::display_layout::connected();
             }
-            self.placement_scale=ctx.pixels_per_point();
+            // 跨屏拖动或切换屏幕时按目标屏 DPI 放置，停靠跟随屏幕物理范围。
+            let moving=self.placed && (self.app.dragging_position() || self.placement_key.0!=placement_key.0 || self.placed_bounds!=bounds);
+            let scale=if moving {bounds.map(|_|{
+                daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id)
+                    .map(|d|d.scale(self.app.settings.island_scale()*ctx.zoom_factor())).unwrap_or(self.placement_scale)
+            }).unwrap_or(self.placement_scale)}else{self.placement_scale};
+            self.placement_scale=scale;
             self.placement_key=placement_key;
             let display=daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id);
-            if display.is_some_and(|d|self.native.as_ref().is_some_and(|w|w.place_on_display(self.placement_scale,daozai::display_layout::placement_bounds(d,self.app.settings.avoids_top_bar()),offset,self.app.settings.dock,shift))) {
+            let bounds=display.map(|d|d.dock_bounds(self.app.settings.dock,self.app.settings.avoids_top_bar()));
+            if bounds.is_some_and(|b|self.native.as_ref().is_some_and(|w|w.place_on_display(scale,b,offset,self.app.settings.dock,shift))) {
+                self.placed_bounds=bounds;
                 if !self.placed {diagnostics::startup("目标屏幕物理坐标定位完成，已请求显示");}
                 self.placed=true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -453,6 +486,7 @@ impl Shell {
                 // Do not leave a hidden startup window forever when monitor discovery fails.
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             }
+        }
         }
         #[cfg(not(windows))]
         if !self.placed {
@@ -682,7 +716,7 @@ impl Shell {
             if shift!=self.oled_shift {
                 self.oled_shift=shift;
                 let display=daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id);
-                if display.is_some_and(|d|self.native.as_ref().is_some_and(|w|w.place_on_display(ctx.pixels_per_point(),daozai::display_layout::placement_bounds(d,self.app.settings.avoids_top_bar()),self.app.placement_offset(),self.app.settings.dock,shift))) {
+                if display.is_some_and(|d|self.native.as_ref().is_some_and(|w|w.place_on_display(ctx.pixels_per_point(),d.dock_bounds(self.app.settings.dock,self.app.settings.avoids_top_bar()),self.app.placement_offset(),self.app.settings.dock,shift))) {
                     self.placement_key.4=shift;
                 }
                 ctx.request_repaint();
@@ -1106,12 +1140,17 @@ fn read_power() -> (Option<u8>, bool) {
 }
 
 #[cfg(windows)]
-fn cursor_logical(ppp: f32) -> Option<(f32, f32)> {
+fn cursor_physical() -> Option<(i32, i32)> {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
     let mut p = POINT::default();
     unsafe { GetCursorPos(&mut p) }.ok()?;
-    Some((p.x as f32 / ppp, p.y as f32 / ppp))
+    Some((p.x, p.y))
+}
+
+#[cfg(windows)]
+fn cursor_logical(ppp: f32) -> Option<(f32, f32)> {
+    cursor_physical().map(|(x, y)| (x as f32 / ppp, y as f32 / ppp))
 }
 
 #[cfg(not(windows))]
