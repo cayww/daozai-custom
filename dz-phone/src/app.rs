@@ -154,7 +154,8 @@ const SWELL: (f32, f32) = (1.075, 1.13);
 // CLOSE 仍用于弹簧初始化与非展开态的回位。
 const CLOSE: (f32, f32) = (620.0, 1.0);
 const SWELL_K: (f32, f32) = (420.0, 0.8);
-const PAGE_SLIDE: f32 = 46.0;
+const PAGE_SLIDE: f32 = 32.0;
+const PAGE_TURN_DURATION: f32 = 0.34;
 
 /// 悬停多久才展开（秒）。`0` 表示当帧就展开；极简模式加倍。防误触另由 `LEAVE_DELAY` 兜底。
 fn hover_delay_secs(ms: u32, minimal: bool) -> f64 {
@@ -1030,6 +1031,8 @@ pub struct App {
     // 切页
     pub(crate) page: usize,
     page_from: usize,
+    page_from_offset: f32,
+    page_from_elapsed: f32,
     #[cfg(feature="sdk-js")]
     status_pages: Vec<(String, String)>,
     #[cfg(feature="sdk-js")]
@@ -1043,7 +1046,6 @@ pub struct App {
     page_scroll_area: Option<Rect>,
     page_dir: f32,
     page_t0: f64,
-    slide: Spring,
     /// 邮件页「全部/未读」指示器的滑动弹簧（0=全部，1=未读；Pack-v2 demo 300/0.5）。
     mail_tab: Spring,
     /// 正在渲染翻页过渡里快速淡出的旧页（见 body 的 in_tx 分支）。
@@ -1462,6 +1464,8 @@ impl App {
             grip_hover_since: None,
             page: initial_page,
             page_from: initial_page,
+            page_from_offset: 0.0,
+            page_from_elapsed: PAGE_TURN_DURATION,
             #[cfg(feature="sdk-js")]
             status_pages: Vec::new(),
             #[cfg(feature="sdk-js")]
@@ -1477,7 +1481,6 @@ impl App {
             page_t0: -10.0,
             old_page_render: false,
             flip_glass_until: -10.0,
-            slide: Spring::new(0.0, 260.0, 0.92),
             mail_tab: anim::Spring::new(0.0, 300.0, 0.5),
             dots: std::array::from_fn(|i| Spring::new(if i == initial_page { 16.0 } else { 4.0 }, 380.0, 0.86)),
             #[cfg(feature="sdk-js")]
@@ -2385,6 +2388,8 @@ impl App {
             let fallback=self.navigation_pages().next().unwrap_or(0);
             self.page=fallback;
             self.page_from=self.page;
+            self.page_from_offset=0.0;
+            self.page_from_elapsed=PAGE_TURN_DURATION;
             self.page_t0=self.t-1.0;
             self.subpage=None;
             self.cancel_edit();
@@ -2505,23 +2510,36 @@ impl App {
         if page == self.page || !self.module_on(page) { return; }
         self.music_volume_open=false;
         self.subpage=None;
-        // 连点：上一段过渡还没结束时，以当前页为起点重新开始，位移速度保留。
+        // 连点时，尚在滑入的页面从当前的位置和透明度开始淡出。
+        let elapsed = self.page_e();
+        self.page_from_offset = self.page_slide_offset(elapsed);
+        self.page_from_elapsed = elapsed;
         self.page_from = self.page;
         self.page = page;
         if page==CALENDAR_PAGE {self.request_calendar_month(false);}
         self.page_dir = dir;
         self.page_t0 = self.t;
         // GPU 控件玻璃在翻页期间保持放行（见 ctl_glass_ready），1.2s 盖住
-        // 滑入动画（0.55s）+ 面板高度弹簧收敛。
+        // 滑入动画 + 面板高度弹簧收敛。
         self.flip_glass_until = self.t + 1.2;
-        self.slide.pos = dir * PAGE_SLIDE + if self.page_e() < 0.4 { self.slide.pos * 0.3 } else { 0.0 };
-        self.slide.target = 0.0;
         self.dots_target();
         self.cancel_edit();
     }
 
     fn page_e(&self) -> f32 {
         (self.t - self.page_t0) as f32
+    }
+
+    fn page_slide_offset(&self, elapsed: f32) -> f32 {
+        self.page_dir * PAGE_SLIDE * (1.0 - smoothstep(0.0, PAGE_TURN_DURATION, elapsed))
+    }
+
+    fn page_slide_alpha(elapsed: f32) -> f32 {
+        smoothstep(0.03, 0.28, elapsed)
+    }
+
+    fn page_header_alpha(elapsed: f32) -> f32 {
+        smoothstep(0.10, 0.23, elapsed)
     }
 
     fn dots_target(&mut self) {
@@ -4007,7 +4025,7 @@ impl App {
     /// 日程编辑器**放行**：整页表单的按钮（全天/提醒分段/删除/取消/保存）都注册了
     /// 控件几何，透镜跟图标逐像素对齐；编辑器替换了 panel_body，chrome 控件在
     /// `ctl_geom` 里一并消失。二级页与任务弹窗仍回矢量（那里的控件没注册几何）。
-    /// 翻页过渡**也放行**：新页控件随 `slide.pos` 平移，透镜在 `glass_controls`
+    /// 翻页过渡**也放行**：新页控件随 `page_slide_tx()` 平移，透镜在 `glass_controls`
     /// 里同步平移就能对上；面板高度变化与展开/折叠共用 morph 折射增强。
     /// 之前过渡期回退矢量版，浅材质下白边要靠 `glass_chrome` 保，而且没有折射，
     /// 质感差一档 —— 翻一次页「玻璃变贴纸再变回玻璃」，观感跳。
@@ -4021,11 +4039,11 @@ impl App {
         self.progress()>=0.985 || self.t<self.flip_glass_until
     }
 
-    /// 翻页过渡中新页内容的水平位移。与 body() 里 `nc.shifted(self.slide.pos,..)`
-    /// 的条件严格一致（in_tx：`page_from!=page && page_e()<0.55`），GPU 控件玻璃
+    /// 翻页过渡中新页内容的水平位移。与 body() 里 `nc.shifted(page_slide_offset(e),..)`
+    /// 的条件严格一致（in_tx：`page_from!=page && page_e()<PAGE_TURN_DURATION`），GPU 控件玻璃
     /// 用它平移透镜，跟页内容逐像素对齐；过渡结束后内容与透镜同时归位。
     pub(crate) fn page_slide_tx(&self)->f32{
-        if self.page_from!=self.page && self.page_e()<0.55 {self.slide.pos}else{0.0}
+        if self.page_from!=self.page && self.page_e()<PAGE_TURN_DURATION {self.page_slide_offset(self.page_e())}else{0.0}
     }
 
     /// 进度条底槽的 (x, 宽, y)（面板局部坐标），和 pages.rs `page_media` 同一套公式。
@@ -4391,7 +4409,7 @@ impl App {
     pub(crate) fn glass_controls(&self,origin:Pos2)->Vec<crate::gpu_glass::Ctl>{
         if !self.ctl_glass_ready() {return Vec::new();}
         // 日程编辑器整页替换 panel_body（不走 in_tx 的内容滑移），透镜保持原位；
-        // 只在真正的翻页过渡里跟随 slide.pos。
+        // 只在真正的翻页过渡里跟随 page_slide_tx()。
         let tx=if self.calendar.draft.is_none() {self.page_slide_tx()}else{0.0};
         let mut out=Vec::new();
         for ctl in Ctl::ALL {
@@ -4840,6 +4858,20 @@ impl App {
         let (prev_w,prev_h)=(self.w.pos,self.h.pos);
         self.w.step(dt);
         self.h.step(dt);
+        // 上游 5b3d375：常驻条比展开面板还宽时（如综合监测），宽高各走弹簧会出现
+        // 又宽又高的空黑框。宽度改为跟随高度进度一次过渡，收起时反过来。
+        if !self.side() && self.position_drag.is_none() && bw > PW + 1.0 {
+            let full = self.expanded_height();
+            let start = bh * SWELL.1;
+            let from = if self.open {bw * SWELL.0} else {bw};
+            if self.open || self.h.pos > start + 0.5 {
+                let k = ((self.h.pos - start) / (full - start).max(1.0)).clamp(0.0, 1.0);
+                let ease = 1.0 - (1.0 - k) * (1.0 - k);
+                self.w.pos = lerp(from, PW, ease);
+                self.w.vel = 0.0;
+                self.w.target = if self.open {PW} else {bw};
+            }
+        }
         // 仅在从外侧越过目标时收住，扩展提示条时不强制跳到目标宽度。
         if !self.open {
             if prev_w>=bw && self.w.pos<bw {self.w.snap(bw);}
@@ -4848,7 +4880,6 @@ impl App {
         for d in &mut self.dots {
             d.step(dt);
         }
-        self.slide.step(dt);
     }
 
     // ---------------------------------------------------------------
@@ -5206,26 +5237,29 @@ impl App {
             self.page_settings(c);self.nav(c);return;
         }
         let e = self.page_e();
-        let in_tx = e < 0.55 && self.page_from != self.page;
+        let in_tx = e < PAGE_TURN_DURATION && self.page_from != self.page;
         if in_tx {
-            // 旧页：原地向反方向轻移并快速淡出；新页：弹簧滑入 + 稍晚淡入
-            let old_a = 1.0 - smoothstep(0.0, 0.16, e);
-            let new_a = smoothstep(0.03, 0.28, e);
-            let old_dx = -self.page_dir * 18.0 * anim::ease_out_cubic(e / 0.3);
+            // 上游 v0.6.70：旧页停在切页瞬间的位置淡出，新页朝目标单向滑入。
+            // 标题独立控制透明度、先退后进，避免两页汉字在中间帧叠成重影。
+            let old_a = Self::page_slide_alpha(self.page_from_elapsed) * (1.0 - smoothstep(0.0, 0.16, e));
+            let new_a = Self::page_slide_alpha(e);
             if old_a > 0.0 {
                 let oc = c.faded(old_a).ghost();
-                self.page_title(self.page_from, &oc);
+                let old_header = c.faded(Self::page_header_alpha(self.page_from_elapsed) * (1.0 - smoothstep(0.0, 0.10, e))).ghost();
+                self.page_title(self.page_from, &old_header);
                 // 旧页控件走矢量玻璃（ctl_on_gpu 对 old_page_render 返回 false），
                 // 矢量片没有折射但白边恒定（glass_chrome），随 old_a 一起淡出；
                 // GPU 透镜没有透明度通道，留着只会变成一颗不跟随淡出的空玻璃。
                 self.old_page_render=true;
-                self.render_page(self.page_from, &oc.shifted(old_dx, 0.0), env, &mut Vec::new());
+                self.render_page(self.page_from, &oc.shifted(self.page_from_offset, 0.0), env, &mut Vec::new());
                 self.old_page_render=false;
             }
+            let header = c.faded(Self::page_header_alpha(e));
+            let header = if e < 0.12 { header.ghost() } else { header };
+            self.page_title(self.page, &header);
             let nc = c.faded(new_a);
-            self.page_title(self.page, &nc);
-            let nc = nc.shifted(self.slide.pos, 0.0);
             let nc = if e < 0.12 { nc.ghost() } else { nc };
+            let nc = nc.shifted(self.page_slide_offset(e), 0.0);
             self.render_page(self.page, &nc, env, cmds);
         } else {
             self.page_title(self.page, c);
