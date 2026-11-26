@@ -775,6 +775,7 @@ fn v0649_settings_and_mail_accounts_survive_upgrade(){
         "mail_enabled=0\nmail_code=0\nmail_interval=300\nmail_ics=30\ncalendar_prompt=0\ncalendar_auto_sync=0\n");
     std::fs::write(directory.join("settings.txt"),legacy).unwrap();
     let upgraded=crate::model::Settings::load();
+    assert!(!upgraded.mail_code_only_notifications && !upgraded.mail_code_popup);
     assert!(upgraded.display_id.is_empty() && upgraded.avoid_apps.is_empty());
     assert!(upgraded.avoid_browsers && upgraded.bluetooth_notifications);
     assert!(!upgraded.clock_12h && !upgraded.notification_preview);
@@ -3528,7 +3529,7 @@ fn mail_page_shows_code_and_copies_on_click() {
         new: true,
     });
     assert!(h.app.notification_bell_until > 0.0, "新邮件应点亮铃铛");
-    assert!(h.app.alerts.iter().any(|a|a.title.starts_with("邮件验证码")&&a.page==5),"新邮件应进入通知队列，不能只有收起时才可见的铃铛");
+    assert!(h.app.alerts.iter().any(|a|a.title=="新邮件"&&a.page==5),"新邮件应进入通知队列，不能只有收起时才可见的铃铛");
     h.app.show_page(5);
     h.hover(Pos2::new(WIN_W / 2.0, 12.0), 0.6);
     h.hover(H::local(300.0, 60.0), 0.4);
@@ -3538,6 +3539,167 @@ fn mail_page_shows_code_and_copies_on_click() {
         "点验证码应复制: {:?}",
         h.cmds
     );
+}
+
+#[test]
+fn mail_code_banner_copies_and_restores_the_avoidance_strip() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut h = mail_code_banner_harness();
+    let page = h.app.page;
+    h.browser_at_top = Some(false);
+    h.frame(vec![]);
+
+    // 邮件先到达应用，再由当前帧确认浏览器已经进入避让。
+    let item = mail_code_banner_item(42);
+    h.app.mail_event(crate::mail::Event::Mail { item: item.clone(), new: true });
+    h.browser_at_top = Some(true);
+    for _ in 0..45 { h.frame(vec![]); }
+    assert!(h.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
+        if text.galley.text() == "482731" && text.fallback_color == crate::theme::GREEN
+        && text.galley.job.sections[0].format.font_id.size >= 23.0)));
+    assert!((h.hit.width() - 270.0).abs() < 1.0 && (h.hit.height() - 60.0).abs() < 1.0);
+    assert!(h.app.history.iter().any(|alert| alert.title == "新邮件"));
+    assert!(h.app.history.iter().all(|alert| !alert.body.contains("482731")));
+    assert!(h.app.alerts.iter().all(|alert| !alert.body.contains("482731")));
+
+    h.click_text("复制");
+    assert!(h.cmds.iter().any(|cmd| matches!(cmd, crate::app::Cmd::Copy(value) if value == "482731")));
+    h.frame(vec![]);
+    assert!(!mail_code_banner_visible(&h));
+    h.t += 5.0; // 本地定制：验证码铃铛按 otp_seconds 保持，先让它过期
+    for _ in 0..45 { h.frame(vec![]); }
+    assert!(h.hit.height() < 10.0, "点击复制后应恢复细线的点击范围");
+    assert!(!h.app.open && h.app.page == page, "通知不能展开或切换主岛");
+
+    h.app.mail_event(crate::mail::Event::Mail { item, new: true });
+    h.frame(vec![]);
+    assert!(!mail_code_banner_visible(&h), "同一邮箱的同一封邮件只弹一次大卡");
+    assert!(!h.app.alerts.iter().chain(h.app.notice.iter()).any(|alert|
+        matches!(&alert.source, crate::extras::AlertSource::MailCode(_, _))));
+}
+
+#[test]
+fn mail_code_banner_dismisses_on_fullscreen_lock_departure_or_timeout() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for ending in ["全屏", "锁屏", "退出避让", "超时"] {
+        let mut h = mail_code_banner_harness();
+        h.app.mail_event(crate::mail::Event::Mail { item: mail_code_banner_item(42), new: true });
+        for _ in 0..45 { h.frame(vec![]); }
+        assert!(mail_code_banner_visible(&h));
+        match ending {
+            "全屏" => h.fullscreen = true,
+            "锁屏" => h.screen_locked = true,
+            "退出避让" => h.browser_at_top = Some(false),
+            _ => h.t += 8.0,
+        }
+        h.frame(vec![]);
+        assert!(!mail_code_banner_visible(&h), "{ending}后应立即撤下验证码");
+
+        h.fullscreen = false;
+        h.screen_locked = false;
+        h.browser_at_top = Some(true);
+        h.t += 5.0; // 本地定制：验证码铃铛按 otp_seconds 保持，先让它过期
+        for _ in 0..90 { h.frame(vec![]); }
+        assert!(!mail_code_banner_visible(&h), "{ending}后恢复避让时不补弹");
+        assert!(h.hit.height() < 10.0);
+    }
+}
+
+#[test]
+fn mail_code_banner_respects_opt_in_and_mail_privacy() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    assert!(!crate::model::Settings::default().mail_code_popup);
+    for case in ["未开启", "手动极简", "验证码已隐藏", "普通邮件", "关闭全部提醒"] {
+        let mut h = mail_code_banner_harness();
+        let mut item = mail_code_banner_item(42);
+        match case {
+            "未开启" => h.app.settings.mail_code_popup = false,
+            "手动极简" => {
+                h.browser_at_top = Some(false);
+                h.app.settings.minimal = true;
+            }
+            "验证码已隐藏" => item.received_unix = Some(1),
+            "普通邮件" => {
+                item.code = None;
+                item.from = "账号中心".into();
+                item.subject = "登录动态".into();
+                item.summary = "".into();
+            }
+            _ => h.app.settings.notifications = false,
+        }
+        h.app.mail_event(crate::mail::Event::Mail { item, new: true });
+        for _ in 0..45 { h.frame(vec![]); }
+        assert!(!mail_code_banner_visible(&h), "{case}时不显示明文");
+        assert_eq!(h.app.notice.as_ref().is_some_and(|alert| alert.title == "新邮件"),
+            case != "关闭全部提醒", "{case}");
+        assert!(h.app.history.iter().all(|alert| !alert.body.contains("482731")));
+    }
+}
+
+fn mail_code_banner_harness() -> H {
+    use crate::mail::{Account, Provider};
+    let mut h = H::new();
+    h.app.settings.browser_minimal = true;
+    h.app.settings.mail_code_popup = true;
+    h.browser_at_top = Some(true);
+    h.app.mail.accounts = vec![Account {
+        email: "test@example.com".into(), provider: Provider::Qq,
+        enabled: true, custom: None, use_windows_proxy: false,
+    }];
+    h
+}
+
+fn mail_code_banner_item(uid: u32) -> crate::mail::Item {
+    crate::mail::Item {
+        account: "test@example.com".into(), uid, time: "09:41".into(),
+        received_unix: None, from: "账号中心 482731".into(), subject: "登录验证码 482731".into(),
+        code: Some("482731".into()), summary: "登录验证码 482731".into(),
+        html: "".into(), links: vec![], meeting: None,
+    }
+}
+
+fn mail_code_banner_visible(h: &H) -> bool {
+    h.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text) if text.galley.text() == "482731"))
+}
+
+#[test]
+fn mail_code_only_notifications_filter_new_mail_across_accounts() {
+    use crate::mail::{Account, Event, Item, Provider};
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut h = H::new();
+    let addresses = ["work@example.com", "home@example.com"];
+    h.app.mail.accounts = addresses.iter().map(|&email| Account {
+        email: email.into(), provider: Provider::Qq, enabled: true, custom: None,
+        use_windows_proxy: false,
+    }).collect();
+    assert!(!h.app.settings.mail_code_only_notifications);
+    h.app.settings.mail_code = false;
+    for (index, (only_codes, account, subject, new, should_alert)) in [
+        (false, addresses[0], "订阅周报", true, true),
+        (true, addresses[0], "春招岗位更新", true, false),
+        (true, addresses[1], "电子账单", true, false),
+        (true, addresses[1], "登录验证码 482913", true, true),
+        (true, addresses[0], "登录验证码 654321", false, false),
+    ].into_iter().enumerate() {
+        h.app.settings.mail_code_only_notifications = only_codes;
+        let raw = format!("Subject: {subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n");
+        let parsed = crate::mail::parse_message(raw.as_bytes());
+        let item = Item {
+            account: account.into(), subject: parsed.subject.clone(), code: crate::mail::code_of(&parsed),
+            uid: index as u32 + 1, from: "测试".into(), time: "09:41".into(), received_unix: None,
+            html: String::new().into(), summary: String::new().into(), links: vec![], meeting: None,
+        };
+        let alerts = h.app.alerts.len();
+        let bell_until = h.app.notification_bell_until;
+        h.app.t += 10.0;
+        h.app.mail_event(Event::Mail { item, new });
+        assert_eq!(h.app.mail.recent.len(), index + 1);
+        assert_eq!(h.app.mail.recent[0].subject, subject);
+        assert_eq!(h.app.alerts.len() - alerts, usize::from(should_alert), "{subject}");
+        assert_eq!(h.app.notification_bell_until > bell_until, should_alert, "{subject}");
+    }
+    h.app.settings.save();
+    assert!(crate::model::Settings::load().mail_code_only_notifications);
 }
 
 #[test]

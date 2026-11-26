@@ -10,6 +10,7 @@ use eframe::egui::{self, Color32, Rect};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AlertSource {
     Internal,
+    MailCode(String,u32),
     Messenger(crate::app::Messenger),
     External(String),
     #[cfg(windows)]
@@ -544,29 +545,25 @@ impl App {
         };
         self.enqueue_alert(a, system);
     }
-    /// 邮件验证码上岛：标题带「邮件」标识，正文留明文数字供通知卡片显示；
-    /// 不走手机短信的 auto_copy_otp，也不推 Cmd::Copy，只允许用户手动点复制。
-    pub fn mail_code_alert(&mut self, _code: &str, from: &str, page: usize) {
-        let duration = if cfg!(test) {
-            4.5
-        } else {
-            (self.settings.otp_seconds as f64).max(10.0)
-        };
-        self.enqueue_alert(
-            Alert {
-                source: AlertSource::External("mail-code".into()),
-                title: format!("邮件验证码 · {}", from),
-                body: "邮件验证码".to_string(),
-                page,
-                at: self.t,
-                duration,
-                bluetooth: None,
-                meeting: None,
-                status: None,
-                unread: None,
-            },
-            false,
-        );
+    pub(crate) fn new_mail_alert(&mut self, body: String) {
+        self.alert("新邮件", body, crate::app::MAIL_PAGE, false);
+        self.notification_bell_at = self.t;
+        self.notification_bell_until = self.t + 6.0;
+    }
+    /// 浏览器避让时的大字验证码横幅：直接从邮件数据取码，通知和历史都不留明文。
+    pub(crate) fn mail_code_alert(&mut self, account: String, uid: u32, body: String) {
+        self.enqueue_alert(Alert {
+            source: AlertSource::MailCode(account,uid),
+            title: "新邮件".into(),
+            body,
+            page: crate::app::MAIL_PAGE,
+            at: self.t,
+            duration: 8.0,
+            bluetooth: None,
+            meeting: None,
+            status: None,
+            unread: None,
+        }, false);
     }
     pub(crate) fn meeting_alert(
         &mut self,
@@ -628,10 +625,9 @@ impl App {
     }
     pub(crate) fn enqueue_alert(&mut self, a: Alert, system: bool) {
         // 通知仅保存在本次运行的内存中。
-        if a.source == AlertSource::Internal
-            || matches!(&a.source,AlertSource::External(id) if id=="mail-code")
+        if matches!(a.source, AlertSource::Internal | AlertSource::MailCode(..))
         {
-            self.history.push_front(a.clone());
+            self.history.push_front(Alert { source: AlertSource::Internal, ..a.clone() });
         }
         self.history.truncate(50);
         if self.fullscreen_hidden && a.health().is_some() {
@@ -1627,6 +1623,7 @@ impl App {
         });
         let allowed = |a: &Alert| match &a.source {
             AlertSource::Internal => !self.fullscreen_hidden || a.health().is_none(),
+            AlertSource::MailCode(..) => !self.fullscreen_hidden,
             AlertSource::Messenger(client) => client.enabled(&self.settings),
             #[cfg(windows)]
             AlertSource::Plugin { .. } => true,
@@ -2127,6 +2124,24 @@ pub(crate) fn status_color(name: &str) -> Color32 {
 impl App {
     pub(crate) fn draw_notice(&mut self, c: &Card, panel: Rect, a: &Alert, _cmds: &mut Vec<Cmd>) {
         let nc = c.clipped(0.0, 0.0, panel.width(), panel.height());
+        if let AlertSource::MailCode(account,uid)=&a.source {
+            if let Some(item)=self.mail.alert_code_item(account,*uid,self.t,self.settings.mail_code_hide_seconds) {
+                let code=item.code.as_deref().unwrap_or_default();
+                let width=nc.text_w(code,27.0,W::Bold);
+                let size=27.0*(126.0/width).min(1.0);
+                crate::paint::bell(&nc,22.0,30.0,theme::GRAY,0.0);
+                nc.centered_text(135.0,16.0,&nc.fit(&item.from,11.0,W::Regular,126.0),11.0,W::Regular,theme::GRAY,H::Center);
+                nc.centered_text(135.0,39.0,code,size,W::Bold,theme::GREEN,H::Center);
+                let copy_id=format!("mail-code-copy:{account}:{uid}");
+                if notice_button(&nc,204.0,20.0,52.0,"复制",&copy_id) {
+                    let code=code.to_owned();
+                    self.notice=None;
+                    self.code_copied(&code);
+                    _cmds.push(Cmd::Copy(code));
+                }
+            }
+            return;
+        }
         // 上游 v0.6.70：插件通知走自己的横幅绘制（打开会话/看详情/关闭）。
         #[cfg(windows)]
         if let AlertSource::Plugin { source, id } = &a.source {
@@ -5802,7 +5817,13 @@ impl App {
                         ui.add_enabled_ui(on,|ui|{
                         settings_label(ui,"设置");
                         settings_card(ui,|ui|{
+                            setting_row(ui,"仅提醒验证码邮件","所有邮箱共用。其他邮件静默收进列表，可随时查看。",&mut self.settings.mail_code_only_notifications);
+                            ui.separator();
                             setting_row(ui,"验证码高亮","识别到验证码时在岛上放大显示，点击即复制",&mut self.settings.mail_code);
+                            ui.separator();
+                            ui.add_enabled_ui(self.settings.mail_code,|ui|{
+                                setting_row(ui,"避让时弹出验证码","自动避让时短暂显示新收到的验证码，点击即可复制",&mut self.settings.mail_code_popup);
+                            });
                             ui.separator();
                             let sync_before=self.settings.mail_sync_operations;
                             ui.add_enabled_ui(self.mail.manage.pending.is_empty(),|ui|{
