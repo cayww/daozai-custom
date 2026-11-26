@@ -5052,7 +5052,12 @@ impl App {
         settings_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add(
-                    egui::Image::new(settings_page_icon(page))
+                    egui::Image::new({
+                        #[cfg(feature="sdk-js")]
+                        { self.plugins.appearance_icon(page,false).unwrap_or_else(||settings_page_icon(page)) }
+                        #[cfg(not(feature="sdk-js"))]
+                        { settings_page_icon(page) }
+                    })
                         .fit_to_exact_size(egui::vec2(36.0, 36.0)),
                 );
                 ui.add_space(4.0);
@@ -5214,6 +5219,10 @@ impl App {
                         SETTINGS_TAB_PLUGINS=>egui::include_image!("../assets/settings-icons/system/shelf.svg"),
                         _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
                     };
+                    #[cfg(feature="sdk-js")]
+                    let icon=settings_tab_module(start)
+                        .and_then(|page|self.plugins.appearance_icon(page,true))
+                        .unwrap_or(icon);
                     let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(23.0,23.0));
                     egui::Image::new(icon).paint_at(ui,icon_bg);
                     ui.painter().text(egui::pos2(rect.left()+40.0,rect.center().y),egui::Align2::LEFT_CENTER,name,egui::FontId::proportional(13.0),if selected{settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41))}else{settings_color(ui.ctx(),Color32::from_gray(225),Color32::from_gray(55))});
@@ -5360,6 +5369,8 @@ impl App {
                                 ui.label(egui::RichText::new("至少保留一个页面。").size(11.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             }
                         });
+                        #[cfg(feature="sdk-js")]
+                        if let Some(route)=self.plugins.status_page_settings(ui) {self.apply_plugin_navigation(route);}
                     }
                     0=>{
                         settings_label(ui,"设置页外观");

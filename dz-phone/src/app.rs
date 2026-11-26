@@ -1031,6 +1031,10 @@ pub struct App {
     plugin_canvas_frame: Option<(usize, crate::plugin_status_ui::InteractionResponse)>,
     #[cfg(feature="sdk-js")]
     plugin_form_focused: bool,
+    #[cfg(feature="sdk-js")]
+    pub(crate) pinned_displays: Vec<crate::local_plugins_root::local::PinnedDisplay>,
+    #[cfg(feature="sdk-js")]
+    pinned_horizontal_width: f32,
     page_scroll_area: Option<Rect>,
     page_dir: f32,
     page_t0: f64,
@@ -1459,6 +1463,10 @@ impl App {
             plugin_canvas_frame: None,
             #[cfg(feature="sdk-js")]
             plugin_form_focused: false,
+            #[cfg(feature="sdk-js")]
+            pinned_displays: Vec::new(),
+            #[cfg(feature="sdk-js")]
+            pinned_horizontal_width: WIN_W,
             page_scroll_area: None,
             page_dir: 1.0,
             page_t0: -10.0,
@@ -2174,6 +2182,15 @@ impl App {
         self.system_idle.unwrap_or(self.t - self.last_input)
     }
 
+    /// 无线设备兼容包提供的接收器数据源；未安装插件时用默认空存储。
+    #[cfg(windows)]
+    pub fn wireless_compat_store(&self) -> crate::bt::compat::Store {
+        #[cfg(feature="sdk-js")]
+        { self.plugins.wireless_store() }
+        #[cfg(not(feature="sdk-js"))]
+        { crate::bt::compat::Store::default() }
+    }
+
     /// 打开插件的设置页（上游 v0.6.70 插件市场）。
     #[cfg(feature="sdk-js")]
     pub(crate) fn open_plugin_settings(&mut self, id: &str) {
@@ -2320,6 +2337,14 @@ impl App {
     pub(crate) fn island_palette(&self)->Option<crate::skin_paint::Palette> { self.skin_palette() }
     #[cfg(feature="sdk-js")]
     pub(crate) fn island_overlay_fill(&self)->Color32 { self.preview_fill() }
+    /// 常驻内容缩放：有插件停靠内容或歌词时不压缩，保证内容完整可读。
+    fn resident_fit(&self)->f32 {
+        #[cfg(feature="sdk-js")]
+        if !self.pinned_displays.is_empty() { return 1.0; }
+        if self.island_lyrics_active() { return 1.0; }
+        ((WIN_W-32.0)/self.resident.target.width).min(1.0)
+    }
+
 
     /// 收信线程是否应运行：邮箱模块开启且打开了「新邮件提醒」。
     pub fn mail_active(&self)->bool {self.module_on(MAIL_PAGE) && self.settings.mail_enabled}
@@ -2682,7 +2707,10 @@ impl App {
     pub fn frame(&mut self, ui: &mut egui::Ui, win: Rect, env: &Env) -> FrameOut {
         let ctx = ui.ctx().clone();
         #[cfg(feature="sdk-js")]
-        self.plugins.sync_canvas_fonts(&ctx);
+        {
+            self.plugins.sync_canvas_fonts(&ctx);
+            self.pet.expressions.set_sheets(self.plugins.appearance_pet());
+        }
         let dt = match self.last_t {
             Some(t0) => (env.t - t0).clamp(0.0, 0.1) as f32,
             None => 0.0,
@@ -2817,6 +2845,25 @@ impl App {
         if status_width>0.0 {layout.add_status(status_width);}
        layout.reorder(&self.settings.resident_order);
         // 两个电量环并排：电池槽加宽 20px，其余槽位自动让开。
+        #[cfg(feature="sdk-js")]
+        {
+            // 插件停靠内容：同步数据、测量宽度，并入常驻布局。
+            let suppress=self.effective_minimal()||self.notice.is_some()||self.hud_alpha>0.003
+                ||self.island_lyrics_active()||env.fullscreen_hidden||env.screen_locked;
+            let (mut displays,repaint)=self.plugins.pinned_displays(self.open||suppress);
+            if let Some(delay)=repaint { ctx.request_repaint_after(delay); }
+            for display in &mut displays { display.measure_width(ui); }
+            self.pinned_horizontal_width=WIN_W;
+            if !self.side() {
+                let widths:Vec<f32>=displays.iter().map(|d|d.width(156.0)).collect();
+                let pinned_width: f32=widths.iter().map(|w|w+12.0).sum();
+                if pinned_width>0.0 {
+                    self.pinned_horizontal_width=(layout.width+pinned_width+32.0).max(WIN_W);
+                }
+                layout.append_pinned(&widths,WIN_W-32.0);
+            }
+            self.pinned_displays=displays;
+        }
         if self.battery_ring_count()==2 {layout.widen_battery(20.0);}
         for (position,extra) in self.quota_balance_layout(&ctx){layout.balance_tail(position,extra);}
         if self.settings.clock_period!=0 { layout.widen_clock(40.0); }
@@ -3199,7 +3246,7 @@ impl App {
         if pet_alpha>0.004 && !minimal_pill {
             let y=(h.min(self.base_size().1)-BAR_H).max(0.0)/2.0;
             // 吉祥物跟随皮肤换色：浅色底上变成深色版本，保持清晰。
-            let fit=if self.island_lyrics_active()||self.notice.is_some(){1.0}else{((WIN_W-32.0)/self.resident.target.width).min(1.0)};
+            let fit=if self.island_lyrics_active()||self.notice.is_some(){1.0}else{self.resident_fit()};
             self.pet.draw(&base.scaled(cx-origin.x,15.0,fit).shifted(0.0,y).faded(pet_alpha),cx-origin.x+self.resident.position(bar::PET),self.pet_anim_t,self.skin_palette());
         }
         if reveal > 0.004 && !banner && !restoring_lyrics {
@@ -3627,6 +3674,8 @@ impl App {
 
     /// 当前皮肤的换色调色板（经典为 None）。
     pub(crate) fn skin_palette(&self)->Option<crate::skin_paint::Palette> {
+        #[cfg(feature="sdk-js")]
+        if let Some(skin)=self.plugins.active_skin() { return Some(skin.palette); }
         // 液态皮肤：文字/描边 ink 随背景明暗切换 —— 深背景白字（GLASS_DARK），
         // 浅背景深墨字（GLASS_LIGHT），让任何壁纸上都看得清。切换阈值走 liquid_k
         // 自带的滞回（0.52/0.66）+ 指数平滑，不会逐帧黑白跳变；玻璃材质深浅仍由
@@ -4630,7 +4679,7 @@ impl App {
 
     fn shared_header(&mut self, base: &Card, cx: f32, p: f32, reveal: f32, env: &Env) {
         let local_cx = cx - base.origin.x;
-        let fit=((WIN_W-32.0)/self.resident.target.width).min(1.0);
+        let fit=self.resident_fit();
         let fitted=base.scaled(local_cx,15.0,lerp(fit,1.0,p));
         let base=&fitted;
         let lyric=self.island_lyric().map(|(index,_)|index);
@@ -4821,6 +4870,21 @@ impl App {
             let c=base.faded(compact_alpha);let c=if compact_alpha<0.8{c.ghost()}else{c};
             self.draw_quota_bar(&c,local_cx,&layout);
             if let Some(x)=layout.x[bar::WEATHER] { self.draw_pill_weather(&c,local_cx+x,&layout); }
+            #[cfg(feature="sdk-js")]
+            {
+                let theme=crate::plugin_canvas_ui::CanvasTheme{
+                    palette:self.island_palette(),accent:None,background:self.island_overlay_fill(),
+                };
+                let mut clicked=None;
+                for (slot,display) in layout.pinned_slots().zip(&self.pinned_displays) {
+                    if let Some(x)=layout.x[slot] {
+                        if display.draw(&c,local_cx+x,15.0,layout.widths[slot],false,theme) {
+                            clicked=Some(display.plugin.clone());
+                        }
+                    }
+                }
+                if let Some(id)=clicked { self.show_status_page(&id); }
+            }
         }
         if self.pomo.running && compact_alpha>0.004 {
             crate::focus_bar::draw(&base.faded(compact_alpha),local_cx+layout.x[bar::FOCUS].unwrap(),15.0,self.t,&self.pomo,self.phase_secs(self.pomo.phase),false);
@@ -5036,9 +5100,24 @@ impl App {
         let mut x = PW / 2.0 - total / 2.0;
         let mut clicked = None;
         for i in pages {
+            // 插件状态页若定义了导航图标，用图标替代默认横条豆。
+            #[cfg(feature="sdk-js")]
+            let nav_icon=i.checked_sub(PAGE_NAMES.len())
+                .and_then(|index|self.status_pages.get(index))
+                .and_then(|(id,_)|self.plugins.navigation_icon(id))
+                .map(|icon|icon.commands().to_vec());
             let w = dot_w(i).max(3.0);
             let on = anim::remap(w, 4.0, 16.0);
             let col = paint::mix(Color32::from_rgb(92, 92, 96), theme::WHITE, on);
+            #[cfg(feature="sdk-js")]
+            if let Some(commands)=&nav_icon {
+                let area=egui::Rect::from_min_size(
+                    c.painter.clip_rect().min+egui::vec2(x,dot_y-7.0),
+                    egui::vec2(16.0,16.0),
+                );
+                crate::plugin_canvas_ui::draw_navigation_icon(&c.painter,area,commands,col);
+            } else { c.fill(x, dot_y - 2.0, w, 4.0, 2.0, col); }
+            #[cfg(not(feature="sdk-js"))]
             c.fill(x, dot_y - 2.0, w, 4.0, 2.0, col);
             let hr = c.hit(x - 2.0, dot_y - 6.0, w + 4.0, 12.0, ("dot", i));
             hr.clone().on_hover_text(self.navigation_page_name(i));

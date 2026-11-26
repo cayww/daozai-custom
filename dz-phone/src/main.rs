@@ -83,6 +83,11 @@ struct Shell {
     /// v0.5.4：蓝牙音频设备（后台线程推送）与音量回声的静默窗口。
     #[cfg(windows)]
     bt_rx: Option<daozai::bt::Service>,
+    /// 2.4G 接收器插件数据源（兼容包启用时由后台线程推送）。
+    #[cfg(windows)]
+    receiver_rx: Option<daozai::bt::Service>,
+    #[cfg(windows)]
+    receivers: Vec<daozai::bt::Device>,
     bt: Vec<daozai::bt::Device>,
     bt_ready: bool,
     volume_quiet: PollClock,
@@ -235,6 +240,10 @@ impl Shell {
             autostart,
             #[cfg(windows)]
             bt_rx: None,
+            #[cfg(windows)]
+            receiver_rx: None,
+            #[cfg(windows)]
+            receivers: Vec::new(),
             bt: Vec::new(),
             bt_ready: false,
             volume_quiet: PollClock::default(),
@@ -348,7 +357,7 @@ impl Shell {
             volume: self.system_state.volume,
             bt: self.bt.clone(),
 
-            receivers: Vec::new(),
+            receivers: self.receivers.clone(),
             bt_ready: self.bt_ready,
             screen,
             window_origin:[origin.x,origin.y],
@@ -494,6 +503,21 @@ impl Shell {
             }
             if let Some(service)=&self.bt_rx {
                 while let Ok(found)=service.rx.try_recv(){ self.bt=found; self.bt_ready=true; }
+            }
+            #[cfg(windows)]
+            {
+                // 兼容包插件启用时，用插件提供的 store 启动 USB 接收器监听。
+                let wireless_on=self.app.module_on(10);
+                if wireless_on {
+                    let service=self.receiver_rx.get_or_insert_with(||{
+                        let ctx=ctx.clone();
+                        daozai::bt::spawn_receivers(self.app.wireless_compat_store(),move||ctx.request_repaint())
+                    });
+                    while let Ok(found)=service.rx.try_recv(){ self.receivers=found; }
+                } else {
+                    self.receiver_rx=None;
+                    self.receivers.clear();
+                }
             }
             let previous_pending=self.app.pending_messengers.clone();
             for event in self.messengers.poll_taskbar(&ctx,&self.app.settings){match event{
