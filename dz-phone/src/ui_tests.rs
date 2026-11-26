@@ -9584,12 +9584,14 @@ fn page_flip_to_taller_page_does_not_slide_content(){
     let mut ys=Vec::new();
     for _ in 0..60 {
         h.frame(vec![]);
-        if let Some(r)=find_text_bounds(&h.shapes,"日程") { ys.push(r.min.y); }
+        // 标题现在画在独立 header 上，会随面板高度动画上下移动；这里用正文里的
+        // 「日历 / 列表」分段验收内容本身不滑。
+        if let Some(r)=find_text_bounds(&h.shapes,"日历") { ys.push(r.min.y); }
     }
-    assert!(ys.len()>20,"切页过渡里应能取到新页标题：{ys:?}");
+    assert!(ys.len()>20,"切页过渡里应能取到新页正文：{ys:?}");
     let first=ys[0];
     let dev=ys.iter().map(|y|(y-first).abs()).fold(0.0f32,f32::max);
-    assert!(dev<0.01,"切页过渡中页面内容不应上下移动，实测位移 {dev}px：{ys:?}");
+    assert!(dev<0.01,"切页过渡中页面正文不应上下移动，实测位移 {dev}px：{ys:?}");
 }
 
 /// 没有输入事件时窗口会睡死：展开态必须自己预约「状态该变」的那一帧，

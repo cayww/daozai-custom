@@ -428,4 +428,17 @@ float4 material(MaterialIn i) {
   - 移除「来电中 / 未接来电」卡片、计数与关闭清零逻辑；`missed_calls` 字段删除。
   - `phone_alerts` 设置项彻底删除（配置键忽略），手机通知只受通知读取总开关与手机 App 名单约束；`accepts_notification()` 与 `tick_alerts()` 同步。
   - 设置页「手机功能」删除「短信与来电」「验证码自动复制」两行及相关提示，只保留 App 名单；连接状态文案改为“普通通知上岛、验证码单独成卡”。
-- **验证**：未跑全量测试；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
+- **验证**：`cargo check --lib --bin daozai --tests` 通过；release 打包成功。首次全量 1544 passed / 1 failed，失败项是本地旧测试拿「标题」当内容坐标（标题按上游走 header 后会随面板高度动画移动）；已改为用正文「日历」分段验收，最终全量 **1545 passed / 0 failed / 138 ignored**。
+- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,089,773 bytes，sha256 前 16 `4938722f1095a177`（exe `f4306a9f727ac23e`）。该包只包含行为代码，测试文件修正不影响二进制。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-phone-trim`。
+
+---
+
+## 23. 上游 commit 对齐审计（2026-11-26 21:44+）
+- **方法**：从 `git log v0.6.66..v0.6.70` 出发，逐个读上游 commit diff，再对照本地当前代码。
+- **已对齐**：切页平滑动效（d558a2f/3cd180a/52a8d86）、箭头位置主体、性能页重做（5b3d375/3799104/3e4a4cc）、电量环（7f36821）、喝水切换（ed035e7）、健康待处理、CalDAV/日历、插件画布/SDK/状态卡、Gmail 代理、验证码大字卡片。
+- **真正仍漏、待确认是否合入**：
+  1. `1918f17` 保持展开整套：图钉按钮、`page_height` 弹簧、顶栏时钟 fit、切页跳动修复；箭头锚点（0c216b6）要彻底对齐依赖它。
+  2. `507b394` 通知被任务栏遮挡时的点击判定（`native.rs` 的 `keep_above_top_bar` 需 notice 参数）。
+  3. `0cdf0f1` 仅提醒验证码邮件的开关字段与读写。
+  4. 帧分段诊断的 `PREVIOUS_PARTS`、`requested_repaint_last_pass`、过渡/交互起点字段（只影响可观测性）。
+- **有意不合/定制**：DX12 分层读回、wgpu 回退、WGSL 材质链、官方集市测试索引、用户删除的手机短信/来电转发（仅保留验证码卡片）。
