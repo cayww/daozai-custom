@@ -12,6 +12,12 @@
 2. **恢复官方集市测试索引夹具**：`spike/market_state.rs` 的 `test_index` 字段/`set_official_test_index`/test 分支索引注入恢复为上游 `#[cfg(test)]` 形态。调用它的 spike 集市测试模块仍整批关闭，故当前无启用测试使用它；真正生效需重开整批测试，风险大，未做。
 3. **设置侧栏可滚动（对齐上游截图）**：`extras.rs` 新增 `SETTINGS_BOTTOM_ROWS`、`settings_sidebar_builtin`；侧栏用 `egui::ScrollArea::vertical().id_salt("settings-sidebar-scroll").max_height(main_height)` 包住功能列表，插件/关于/自定义与集成固定在底部并加分隔线；新增回归测试 `settings_sidebar_scrolls_main_and_keeps_bottom_items_fixed`。
 
+## 〇之二、构建加速（2026-11-27，提交 `43f09ba`）
+
+- **新增 `[profile.dev-release]`**：继承 release（opt-level 3、行为一致），但 `lto=false` + `codegen-units=8`。测试命令改用 `--profile dev-release`，增量重编从约 6 分钟降到约 **1 分 18 秒**（实测），全量测试结果与 release 一致（1545 passed）。**正式包仍用 release，LTO 不变**。
+- **启用 rust-lld**：`.cargo/config.toml` 加 `linker-flavor=lld-link` + 本机 `rust-lld.exe` 绝对路径（换机器需改路径，注释已写；删掉两条 linker flag 即回退 MSVC link.exe）。sccache 原本已配好且实测 release 命中率 100%，未改动。
+- **新测试命令**：`cargo test --locked --profile dev-release --lib -- --test-threads=1`（不用 `--release`）。
+
 ## 一、已完成（代码）
 
 | # | 项目 | 上游提交 | 本地落地 | 验证 |

@@ -2024,3 +2024,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **验证**：最终全量 **1545 passed / 0 failed / 138 ignored**（release 串行，日志 `merge-work/full-test-20261127-final.log`）。中间 1 个失败是 ZCode 删除后配额测试文案未同步，已修。
 - **打包**：release 双 bin 构建通过；Inno Setup 7 编译成功（HKCU/admin 警告是历史固有）。包 `installer/daozai-setup-custom-isolated.exe`，**包 sha256 前16 `0f95d1d9b64ff20d`**（12M），内含 exe sha `3643e33292430b5b`、bridge `4105df7ec3243c6d`。
 - **状态**：未部署、未推 origin。`docs/HANDOFF-plugin-material.md` 已更新为完成/未完成对照表。
+
+### 7.0zzzo 构建加速（2026-11-27 01:28，提交 `43f09ba`）
+
+- 新增 `[profile.dev-release]`（继承 release，但 `lto=false`、`codegen-units=8`）：测试改用 `--profile dev-release`，增量重编实测 1m18s（原 release 约 6 分钟，约 4.6×），全量结果一致（1545 passed / 0 failed / 138 ignored）。正式包仍用 release + LTO。
+- `.cargo/config.toml` 启用 rust-lld（`linker-flavor=lld-link` + 本机 `rust-lld.exe` 绝对路径，换机需改；删两条 flag 回退 MSVC link.exe）。sccache 已配且 release 命中率实测 100%，未动。
+- 新测试命令：`cargo test --locked --profile dev-release --lib -- --test-threads=1`。
