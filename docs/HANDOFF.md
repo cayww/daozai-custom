@@ -2051,3 +2051,24 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 
 **打包**：`installer/daozai-setup-custom-isolated.exe`，dev-release 构建（`-CargoProfile dev-release`），包 sha256 前16 `c131dae07f7815c2`、exe `348ea3ad`、bridge `ab3c994c`。用户实机确认接缝消失。
 
+
+
+### 7.0zzzr 补齐上游跨屏拖动与底部停靠（2026-11-27 04:25，提交 `76ae63f`）
+
+**背景**：用户指出这两个上游 v0.6.70 功能本地缺失/半成品，且要求「D3D11 没有的实现看社区」。社区调研结论：`egui_docking` 是编辑器多视口停靠（需 fork egui，不适用）；Riter #90 的透明工具箱方案是覆盖整个虚拟桌面（岛仔已有更好的物理坐标定位，不需采用）。上游跨屏拖动的核心是 `GetCursorPos`/`GetAsyncKeyState` + `display_layout` 纯几何计算，不依赖 eframe/wgpu/D3D11，可直接移植。
+
+**本地差距（已补齐）**：
+- `Env` 缺 `desktop_cursor` / `cancel_position_drag` / `primary_down`；`PositionDrag` 不记起点屏；`update_position_drag` 只用窗口内 `env.cursor`，无跨屏判定；`App` 缺 `seam_guide` / `crossed_at`。
+- 主定位循环用 `placement_bounds`（无底部任务栏热区）、只按 `ctx.pixels_per_point` 放置，不按目标屏 DPI。
+- `native.rs::place_on_display` 上游多 `horizontal_width` 参数（展开宽岛）——本地画布是固定 `CANVAS_W`，无对应概念，未引入；上游 `crop` 机制是 D3D11 自绘栈特有，本地跳过。
+
+**实现**：
+- `app.rs`：Env 补三字段（main.rs 用 Win32 `cursor_physical` + `GetAsyncKeyState` 采集）；PositionDrag 记 `original_display`/`original_monitor`；`update_position_drag` 用 `drag_target`/`dock_bounds`/`shared_edge` 判定换屏、换停靠边、16 点滞回与回滚；加 `seam_guide`/`crossed_at` 与接缝/抵达提示线；`start_position_drag` 记录起点屏。
+- `main.rs`：主定位循环跟踪 `placed_bounds`，拖动/换屏时按目标屏 `d.scale(island_scale*zoom)` 放置；底部停靠改用 `dock_bounds`（含自动隐藏任务栏热区、工作区左右界）。
+- **有意不合**：未引入 `crop` 机制与 `horizontal_width`（D3D11 自绘栈不适用）。
+
+**验证**：dev-release check 通过；全量 lib **1551 passed / 0 failed / 138 ignored**（新增 2 个跨屏拖动测试：共享边 16 点滞回、非相邻屏不换屏）。release 双 bin 构建通过。
+
+**产物**：`installer/daozai-setup-custom-isolated.exe`（release + LTO），包 sha256 前16 `0e5878ba212c9588`、exe `9c12be1f4f020737`、bridge `8d6c2b3d3b67f850`。提交 `76ae63f` 在本地分支，**未 push、未部署**。
+
+**待用户实机确认**：跨屏拖动（越过共享边 16 点后换屏、底部停靠不压任务栏、Esc 回滚）；两屏不同缩放比时岛体是否按目标屏 DPI 正确缩放。
