@@ -44,6 +44,10 @@ sdk-material = [
   "windows/Win32_System_WinRT_Direct3D11", "windows/Win32_System_WinRT_Graphics_Capture",
 ]
 sdk-wasm = ["dep:wasmi"]
+# 仅用于标注有意关闭的上游/插件测试模块；默认不启用，避免 unexpected cfg warning。
+__spike_tests_off__ = []
+__plugin_tests_disabled__ = []
+__upstream_tests_off__ = []
 
 [patch.crates-io]
 imap = { path = "vendor/imap" }

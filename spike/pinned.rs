@@ -1,4 +1,4 @@
-use super::{fail, fs, valid_id, LocalPlugins, Path, Result, Surface};
+use super::{fail, valid_id, LocalPlugins, Path, Result, Surface};
 use crate::{
     plugin_canvas::Canvas,
     plugin_canvas_ui::{self, CanvasTheme},

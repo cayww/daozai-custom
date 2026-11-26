@@ -853,7 +853,7 @@ fn text_shape(
     group_clip: &Clip,
     deadline: Option<Instant>,
 ) -> Option<(Rect, Shape)> {
-    let mut galley = c.ui.fonts_mut(|fonts| fonts.layout_job(job.clone()));
+    let galley = c.ui.fonts_mut(|fonts| fonts.layout_job(job.clone()));
     let first_glyph = galley.rows.first()?.glyphs.first();
     let ascent = first_glyph.map_or(0.0, |glyph| glyph.pos.y);
     let rotation = egui::emath::Rot2::from_angle(angle);

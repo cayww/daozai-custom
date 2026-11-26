@@ -1087,15 +1087,14 @@ mod tests {
                 for v in &mesh.vertices {
                     assert!((v.pos.x*scale-(v.pos.x*scale).round()).abs()<0.001 && (v.pos.y*scale-(v.pos.y*scale).round()).abs()<0.001,"图标边界应对齐物理像素");
                 }
-                if let egui::ImageData::Color(image)=image {
-                    if provider==Provider::Doubao{
-                        assert!(image.pixels().iter().any(|pixel|pixel.a()>150&&pixel.b()>pixel.r().saturating_add(20)),"豆包头像应保留官方原始配色");
-                        assert!(image.pixels().iter().any(|pixel|pixel.a()==0),"豆包头像应保留透明底");
-                    }else if provider==Provider::MiniMax{
-                        let original=egui_extras::image::load_svg_bytes_with_size(include_bytes!("../assets/ai-icons/minimax.svg"),egui::load::SizeHint::Size { width: pixels as u32, height: pixels as u32, maintain_aspect_ratio: true }, &Default::default()).unwrap();
-                        assert_eq!(image.pixels(),original.pixels(),"MiniMax 应保留品牌颜色和透明边缘");
-                    }else{for pixel in image.pixels() {let expected=if keeps_brand_color(provider){*pixel}else if provider==Provider::DeepSeek{Color32::from_rgba_unmultiplied(77,107,254,pixel.a())}else{Color32::from_white_alpha(pixel.a())};assert_eq!(*pixel,expected,"标识颜色与透明边缘应保持一致");}}
-                }
+                let egui::ImageData::Color(image)=image;
+                if provider==Provider::Doubao{
+                    assert!(image.pixels().iter().any(|pixel|pixel.a()>150&&pixel.b()>pixel.r().saturating_add(20)),"豆包头像应保留官方原始配色");
+                    assert!(image.pixels().iter().any(|pixel|pixel.a()==0),"豆包头像应保留透明底");
+                }else if provider==Provider::MiniMax{
+                    let original=egui_extras::image::load_svg_bytes_with_size(include_bytes!("../assets/ai-icons/minimax.svg"),egui::load::SizeHint::Size { width: pixels as u32, height: pixels as u32, maintain_aspect_ratio: true }, &Default::default()).unwrap();
+                    assert_eq!(image.pixels(),original.pixels(),"MiniMax 应保留品牌颜色和透明边缘");
+                }else{for pixel in image.pixels() {let expected=if keeps_brand_color(provider){*pixel}else if provider==Provider::DeepSeek{Color32::from_rgba_unmultiplied(77,107,254,pixel.a())}else{Color32::from_white_alpha(pixel.a())};assert_eq!(*pixel,expected,"标识颜色与透明边缘应保持一致");}}
             }}
         }
     }

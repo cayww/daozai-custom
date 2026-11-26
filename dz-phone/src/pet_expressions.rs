@@ -234,7 +234,7 @@ mod tests {
         });
         let mut output=frame(&mut expressions,None);let id=expressions.sheet.as_ref().unwrap().2.id();
         let delta=&output.textures_delta.set.iter().find(|(texture,_)|**texture==id).unwrap().1[0];
-        let egui::ImageData::Color(image)=&delta.image else{panic!("表情应为彩色纹理")};
+        let egui::ImageData::Color(image)=&delta.image;
         assert_eq!(image.resolution(),[144,1440],"只上传正在播放的表情，不上传整张图集");
         let white=image.pixels().iter().position(|p|p.a()>250&&p.r()>240&&p.g()>240&&p.b()>240).unwrap();
         output.textures_delta.clear();
@@ -244,7 +244,7 @@ mod tests {
         for palette in [crate::skin_paint::CREAM,crate::skin_paint::GLASS_LIGHT] {
             let mut output=frame(&mut expressions,Some(palette));assert_eq!(expressions.sheet.as_ref().unwrap().2.id(),id);
             let delta=&output.textures_delta.set.iter().find(|(texture,_)|**texture==id).unwrap().1[0];
-            let egui::ImageData::Color(image)=&delta.image else{unreachable!()};
+            let egui::ImageData::Color(image)=&delta.image;
             assert!(image.pixels()[white].r()<70&&image.pixels()[white].g()<70&&image.pixels()[white].b()<70,"浅色皮肤上的眼睛应为深色");
             output.textures_delta.clear();
         }

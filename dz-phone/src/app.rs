@@ -4966,7 +4966,6 @@ impl App {
         let clock = self.settings.clock_text(&env.clock);
         let show_battery=resident_battery;
         let pc_ring=self.battery_rings().0;
-        let ring_offset=0.0;
 
         // 顶栏终点布局：[电池][日期][时钟] 作为一组整体居中
         let date_w = base.text_w(&env.date, size::DATE, W::Regular);
