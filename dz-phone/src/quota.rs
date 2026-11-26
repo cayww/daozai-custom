@@ -22,8 +22,6 @@ pub(crate) mod relay;
 pub(crate) mod api;
 #[path="kiro_quota.rs"]
 pub(crate) mod kiro;
-#[path="zcode_quota.rs"]
-pub(crate) mod zcode;
 #[path="antigravity_quota/mod.rs"]
 pub(crate) mod antigravity;
 #[path="native_auth.rs"]
@@ -157,7 +155,7 @@ impl Config {
     }
     pub fn add(&mut self,provider:Provider,alias:String,source:PathBuf)->Result<(),String>{
         if provider.api_key(){return Err("请使用 API Key 连接，无需登录 JSON".into());}
-        if provider==Provider::ZCode{return zcode::add(self,&source,&alias);}
+        if provider==Provider::ZCode{return Err(ZCODE_RECONNECT.into());}
         if provider==Provider::Antigravity{return Err("请从当前 Antigravity CLI 登录连接".into());}
         if provider==Provider::Kiro{return kiro::add(self,&source,&alias);}
         if provider==Provider::WorkBuddy{return Err("请使用浏览器连接 WorkBuddy".into());}
@@ -538,7 +536,7 @@ fn http_agent_with_connect_timeout(timeout:Duration)->ureq::Agent{
 fn fetch(agent:&ureq::Agent,account:&Account)->Result<Snapshot,(String,u64)>{
     if account.provider.api_key(){return api::fetch(agent,account);}
     if account.provider==Provider::Claude{return claude::fetch(account).map_err(|e|(e,0));}
-    if account.provider==Provider::ZCode{return zcode::fetch(agent,account).map_err(|e|(e,60));}
+    if account.provider==Provider::ZCode{return Err((ZCODE_RECONNECT.into(),0));}
     if account.provider==Provider::WorkBuddy{return workbuddy::fetch(agent,account);}
     if account.provider==Provider::DeepSeek{return deepseek::fetch(agent,account);}
     if account.provider==Provider::GrokBot{return grok::fetch(agent,account);}
@@ -728,11 +726,8 @@ fn fetch_subscription_at(agent:&ureq::Agent,account:&Account,url:&str)->Result<S
         assert!(service.refresh_with(original.accounts,|_,_|panic!("旧 ZCode 账号不应创建查询任务")));
         assert!(service.workers.is_empty());
         let agent=ureq::AgentBuilder::new().middleware(|_:ureq::Request,_:ureq::MiddlewareNext|panic!("旧 ZCode 账号不应发请求")).build();
-        // 定制版：本机 ZCode 登录仍可用，fetch 会读本地凭据；此处只验证不发网络请求。
-        let _=fetch(&agent,&config.accounts[0]);
-        // 定制版保留本机 ZCode 登录：add 会读本地凭据文件，合成路径不存在时返回错误；
-        // 关键是它不再无条件返回 GLM 重连提示。
-        assert_ne!(config.add(Provider::ZCode,String::new(),"synthetic/credentials.json".into()).unwrap_err(),ZCODE_RECONNECT);
+        assert_eq!(fetch(&agent,&config.accounts[0]).unwrap_err().0,ZCODE_RECONNECT);
+        assert_eq!(config.add(Provider::ZCode,String::new(),"synthetic/credentials.json".into()).unwrap_err(),ZCODE_RECONNECT);
         assert_eq!(config,Config::from_json(&legacy));
     }
     #[test]

@@ -4650,6 +4650,10 @@ const SETTINGS_GROUPS: [(&str, usize, usize, &str); 17] = [
         "",
     ),
 ];
+/// 侧栏固定在底部的行数：插件、关于、自定义与集成（无 sdk-js 时插件不编译）。
+/// 其余功能项放进可滚动区，对齐上游设置侧栏的交互。
+const SETTINGS_BOTTOM_ROWS: usize = 2 + if cfg!(feature="sdk-js") { 1 } else { 0 };
+
 /// 分页标题；合并页（3→2、5→4）显示合并后的名字。
 fn settings_tab_title(tab: usize) -> &'static str {
     SETTINGS_GROUPS
@@ -5111,6 +5115,65 @@ impl App {
         self.module_on(page)
     }
 
+    /// 侧栏一个内置项：图标、选中底色、文字与点击。滚动区与固定底部共用。
+    fn settings_sidebar_builtin(
+        &mut self, ui: &mut egui::Ui, (name, start, end): (&str, usize, usize),
+        row_h: f32, row_gap: f32,
+    ) {
+        let icon = match start {
+            0 => egui::include_image!("../assets/settings-icons/system/general.svg"),
+            11 => egui::include_image!("../assets/settings-icons/system/quota.svg"),
+            10 => egui::include_image!("../assets/settings-icons/system/pages.svg"),
+            1 => egui::include_image!("../assets/settings-icons/system/music.svg"),
+            2 => egui::include_image!("../assets/settings-icons/system/focus.svg"),
+            4 => egui::include_image!("../assets/settings-icons/system/tasks.svg"),
+            6 => egui::include_image!("../assets/settings-icons/system/notifications.svg"),
+            12 => egui::include_image!("../assets/settings-icons/system/weather.svg"),
+            7 => egui::include_image!("../assets/settings-icons/system/mail.svg"),
+            8 => egui::include_image!("../assets/settings-icons/system/calendar.svg"),
+            SETTINGS_TAB_APPEARANCE => egui::include_image!("../assets/settings-icons/system/appearance.svg"),
+            SETTINGS_TAB_POSITION => egui::include_image!("../assets/settings-icons/system/position.svg"),
+            SETTINGS_TAB_CUSTOM => egui::include_image!("../assets/settings-icons/system/browser.svg"),
+            SETTINGS_TAB_WIRELESS => egui::include_image!("../assets/settings-icons/system/wireless.svg"),
+            SETTINGS_TAB_PERFORMANCE => egui::include_image!("../assets/settings-icons/system/performance.svg"),
+            #[cfg(feature="sdk-js")]
+            SETTINGS_TAB_PLUGINS => egui::include_image!("../assets/settings-icons/system/shelf.svg"),
+            _ => egui::include_image!("../assets/settings-icons/system/about.svg"),
+        };
+        #[cfg(feature="sdk-js")]
+        let icon = settings_tab_module(start)
+            .and_then(|page| self.plugins.appearance_icon(page, true))
+            .unwrap_or(icon);
+        let selected = (start..=end).contains(&self.settings_tab);
+        let ctx = ui.ctx().clone();
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
+        if response.clicked() && !selected {
+            self.settings_tab = start;
+            #[cfg(feature="sdk-js")]
+            { self.settings_plugin = None; }
+        }
+        if selected || response.hovered() {
+            let fill = if selected {
+                settings_color(&ctx, Color32::from_rgb(43,43,46), Color32::from_rgb(214,221,232))
+            } else {
+                settings_color(&ctx, Color32::from_rgb(30,30,33), Color32::from_rgb(225,230,238))
+            };
+            ui.painter().rect_filled(rect, 7.0, fill);
+        }
+        let icon_bg = egui::Rect::from_center_size(egui::pos2(rect.left()+21.0, rect.center().y), egui::vec2(23.0,23.0));
+        egui::Image::new(icon).paint_at(ui, icon_bg);
+        let color = if selected {
+            settings_color(&ctx, Color32::WHITE, Color32::from_rgb(30,34,41))
+        } else {
+            settings_color(&ctx, Color32::from_gray(225), Color32::from_gray(55))
+        };
+        ui.painter().with_clip_rect(rect.shrink2(egui::vec2(5.0,0.0))).text(
+            egui::pos2(rect.left()+40.0, rect.center().y), egui::Align2::LEFT_CENTER, name,
+            egui::FontId::proportional(13.0), color,
+        );
+        ui.add_space(row_gap);
+    }
+
     pub fn settings_ui(&mut self, ctx: &egui::Context, autostart: bool) {
         if !self.settings_open {
             self.window_layout().close();
@@ -5174,88 +5237,77 @@ impl App {
             let sidebar_fill=settings_color(ctx,Color32::from_rgb(29,29,32),Color32::from_rgb(237,239,243));
             egui::Panel::left("settings-sidebar").resizable(false).exact_size(180.0).frame(egui::Frame::new().fill(sidebar_fill).stroke(egui::Stroke::NONE).inner_margin(egui::Margin::symmetric(10,12))).show(ctx,|ui|{
                 ui.add_space(2.0);
-                // 各项加分组标题：窗口拉到最矮时按可用高度压缩行高，「关于 / 自定义与集成」贴底可见。
-                // 每项占 行高 + 控件间距(3) + 行后空隙；分组标题和底部两项上方预留约 80。
-                let per=(ui.available_height()-80.0)/SETTINGS_GROUPS.len() as f32;
+                // 上游 v0.6.70：功能列表可滚动，插件/关于/自定义与集成固定在底部。
+                // 行高按窗口高度分配，但滚动区自己裁剪，窗口再矮也不会把项目压成不可点的小条。
+                let per=(ui.available_height()-80.0)/(SETTINGS_GROUPS.len()+plugin_pages.len()) as f32;
                 let row_h=(per-6.0).clamp(20.0,32.0);
                 let row_gap=(per-3.0-row_h).clamp(0.0,3.0);
-                for (name,start,end,section) in SETTINGS_GROUPS {
-                    if !section.is_empty() {
-                        ui.add_space(if start==0{2.0}else{8.0});
-                        ui.label(egui::RichText::new(section).size(11.0).color(settings_color(ui.ctx(),Color32::from_gray(150),Color32::from_gray(105))));
-                        ui.add_space(3.0);
-                    }
-                    // 插件独立设置页插在「功能」分组最前面，和内置功能页同一视觉层级。
-                    if section=="功能" {
-                        for (id,name) in &plugin_pages {
-                            let selected=self.settings_tab==SETTINGS_TAB_PLUGIN_DETAIL
-                                && self.settings_plugin.as_ref()==Some(id);
-                            let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width(),row_h),egui::Sense::click());
-                            if response.clicked() && !selected {self.open_plugin_settings(id);}
-                            if selected || response.hovered() {
-                                ui.painter().rect_filled(rect,7.0,if selected{settings_color(ui.ctx(),Color32::from_rgb(43,43,46),Color32::from_rgb(214,221,232))}else{settings_color(ui.ctx(),Color32::from_rgb(30,30,33),Color32::from_rgb(225,230,238))});
+                let (main, bottom)=SETTINGS_GROUPS.split_at(SETTINGS_GROUPS.len()-SETTINGS_BOTTOM_ROWS);
+                let footer_height=bottom.len() as f32*(row_h+row_gap+ui.spacing().item_spacing.y)+17.0;
+                let main_height=(ui.available_height()-footer_height).max(0.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("settings-sidebar-scroll")
+                    .max_height(main_height)
+                    .auto_shrink([false,false])
+                    .show(ui, |ui| {
+                        for &(name,start,end,section) in main {
+                            if !section.is_empty() {
+                                ui.add_space(if start==0 {2.0} else {8.0});
+                                let color=settings_color(ui.ctx(),Color32::from_gray(150),Color32::from_gray(105));
+                                ui.label(egui::RichText::new(section).size(11.0).color(color));
+                                ui.add_space(3.0);
                             }
-                            let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(23.0,23.0));
                             #[cfg(feature="sdk-js")]
-                            let used_plugin_icon=if let Some(nav)=self.plugins.navigation_icon(id) {
-                                let [r,g,b]=nav.background();
-                                ui.painter().rect_filled(icon_bg,6.0,Color32::from_rgb(r,g,b));
-                                crate::plugin_canvas_ui::draw_navigation_icon(ui.painter(),icon_bg,nav.commands(),Color32::WHITE);
-                                true
-                            } else { false };
-                            #[cfg(not(feature="sdk-js"))]
-                            let used_plugin_icon=false;
-                            if !used_plugin_icon {
-                                let icon=egui::include_image!("../assets/settings-icons/system/pages.svg");
-                                egui::Image::new(icon).paint_at(ui,icon_bg);
+                            if section=="功能" {
+                                for (id,name) in &plugin_pages {
+                                    let selected=self.settings_tab==SETTINGS_TAB_PLUGIN_DETAIL
+                                        && self.settings_plugin.as_ref()==Some(id);
+                                    let icon=egui::include_image!("../assets/settings-icons/system/pages.svg");
+                                    let response=ui.push_id(("plugin-settings-sidebar",id),|ui|{
+                                        let ctx=ui.ctx().clone();
+                                        let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width(),row_h),egui::Sense::click());
+                                        if selected || response.hovered() {
+                                            let fill=if selected {
+                                                settings_color(&ctx,Color32::from_rgb(43,43,46),Color32::from_rgb(214,221,232))
+                                            }else{
+                                                settings_color(&ctx,Color32::from_rgb(30,30,33),Color32::from_rgb(225,230,238))
+                                            };
+                                            ui.painter().rect_filled(rect,7.0,fill);
+                                        }
+                                        let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(23.0,23.0));
+                                        let used=if let Some(nav)=self.plugins.navigation_icon(id) {
+                                            let [r,g,b]=nav.background();
+                                            ui.painter().rect_filled(icon_bg,6.0,Color32::from_rgb(r,g,b));
+                                            crate::plugin_canvas_ui::draw_navigation_icon(ui.painter(),icon_bg,nav.commands(),Color32::WHITE);
+                                            true
+                                        }else{false};
+                                        if !used {egui::Image::new(icon).paint_at(ui,icon_bg);}
+                                        let color=if selected {
+                                            settings_color(&ctx,Color32::WHITE,Color32::from_rgb(30,34,41))
+                                        }else{
+                                            settings_color(&ctx,Color32::from_gray(225),Color32::from_gray(55))
+                                        };
+                                        ui.painter().with_clip_rect(rect.shrink2(egui::vec2(5.0,0.0))).text(
+                                            egui::pos2(rect.left()+40.0,rect.center().y),egui::Align2::LEFT_CENTER,name,
+                                            egui::FontId::proportional(13.0),color);
+                                        response
+                                    }).inner;
+                                    if selected && focus_requested && !ui.clip_rect().contains_rect(response.rect) {
+                                        response.scroll_to_me(Some(egui::Align::Center));
+                                    }
+                                    if response.clicked() && !selected {self.open_plugin_settings(id);}
+                                    ui.add_space(row_gap);
+                                }
                             }
-                            if selected && focus_requested && !ui.clip_rect().contains_rect(response.rect) {
-                                response.scroll_to_me(Some(egui::Align::Center));
-                            }
-                            ui.painter().text(egui::pos2(rect.left()+40.0,rect.center().y),egui::Align2::LEFT_CENTER,name,egui::FontId::proportional(13.0),if selected{settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41))}else{settings_color(ui.ctx(),Color32::from_gray(225),Color32::from_gray(55))});
-                            ui.add_space(row_gap);
+                            self.settings_sidebar_builtin(ui,(name,start,end),row_h,row_gap);
                         }
-                    }
-                    if start==SETTINGS_TAB_CUSTOM {ui.add_space((ui.available_height()-row_h*2.0-8.0).max(4.0));}
-                    let selected=(start..=end).contains(&self.settings_tab);
-                    let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width(),row_h),egui::Sense::click());
-                    if response.clicked() && !selected{
-                        self.settings_tab=start;
-                        #[cfg(feature="sdk-js")]
-                        { self.settings_plugin=None; }
-                    }
-                    if selected || response.hovered(){
-                        ui.painter().rect_filled(rect,7.0,if selected{settings_color(ui.ctx(),Color32::from_rgb(43,43,46),Color32::from_rgb(214,221,232))}else{settings_color(ui.ctx(),Color32::from_rgb(30,30,33),Color32::from_rgb(225,230,238))});
-                    }
-                    let icon=match start {
-                        0=>egui::include_image!("../assets/settings-icons/system/general.svg"),
-                        11=>egui::include_image!("../assets/settings-icons/system/quota.svg"),
-                        10=>egui::include_image!("../assets/settings-icons/system/pages.svg"),
-                        1=>egui::include_image!("../assets/settings-icons/system/music.svg"),
-                        2=>egui::include_image!("../assets/settings-icons/system/focus.svg"),
-                        4=>egui::include_image!("../assets/settings-icons/system/tasks.svg"),
-                        6=>egui::include_image!("../assets/settings-icons/system/notifications.svg"),
-                        12=>egui::include_image!("../assets/settings-icons/system/weather.svg"),
-                        7=>egui::include_image!("../assets/settings-icons/system/mail.svg"),
-                        8=>egui::include_image!("../assets/settings-icons/system/calendar.svg"),
-                        SETTINGS_TAB_APPEARANCE=>egui::include_image!("../assets/settings-icons/system/appearance.svg"),
-                        SETTINGS_TAB_POSITION=>egui::include_image!("../assets/settings-icons/system/position.svg"),
-                        // 自定义与集成：里面是浏览器 / 手机 / MAA / 网易云等外部集成，用浏览器图标比「关于」贴切。
-                        SETTINGS_TAB_CUSTOM=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
-                        SETTINGS_TAB_WIRELESS=>egui::include_image!("../assets/settings-icons/system/wireless.svg"),
-                        SETTINGS_TAB_PERFORMANCE=>egui::include_image!("../assets/settings-icons/system/performance.svg"),
-                        #[cfg(feature="sdk-js")]
-                        SETTINGS_TAB_PLUGINS=>egui::include_image!("../assets/settings-icons/system/shelf.svg"),
-                        _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
-                    };
-                    #[cfg(feature="sdk-js")]
-                    let icon=settings_tab_module(start)
-                        .and_then(|page|self.plugins.appearance_icon(page,true))
-                        .unwrap_or(icon);
-                    let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(23.0,23.0));
-                    egui::Image::new(icon).paint_at(ui,icon_bg);
-                    ui.painter().text(egui::pos2(rect.left()+40.0,rect.center().y),egui::Align2::LEFT_CENTER,name,egui::FontId::proportional(13.0),if selected{settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41))}else{settings_color(ui.ctx(),Color32::from_gray(225),Color32::from_gray(55))});
-                    ui.add_space(row_gap);
+                    });
+                ui.add_space(4.0);
+                ui.painter().hline(ui.max_rect().x_range().shrink(4.0),ui.cursor().top(),egui::Stroke::new(1.0,
+                    settings_color(ui.ctx(),Color32::from_rgb(46,46,51),Color32::from_rgb(218,222,229))));
+                ui.add_space(9.0);
+                for &(name,start,end,_) in bottom {
+                    self.settings_sidebar_builtin(ui,(name,start,end),row_h,row_gap);
                 }
             });
             let panel_fill=settings_color(ctx,Color32::from_rgb(25,25,27),Color32::from_rgb(246,247,249));

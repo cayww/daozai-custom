@@ -2,9 +2,15 @@
 
 > 更新：2026-11-27 00:00。基线 `v0.6.70`；分支 `merge-upstream-v0670`。
 > 已提交：`9318765`（验证码两项）、`c6868f3`（其余对齐项）、`3372f12`（交接文档）。工作树干净。
-> **最终全量测试：1551 passed / 0 failed / 138 ignored**（`--test-threads=1`，release）。
+> **最终全量测试：1545 passed / 0 failed / 138 ignored**（release，`--test-threads=1`；日志 `merge-work/full-test-20261127-final.log`）。
 
 ---
+
+## 〇、2026-11-27 追加三项（用户要求）
+
+1. **删除 ZCode 本地凭据路径**（用户判定无用）：删除 `zcode_quota.rs`、`quota.rs` 的 zcode 模块/add/fetch 分支改回上游 `ZCODE_RECONNECT`、`quota_ui.rs` 删除"连接本机 ZCode"按钮与连接方式单选、`dz-phone/README.md` 同步文案。GLM 额度解析不受影响。配套测试 `quota_acceptance_grouped_connections_preserve_saved_sources` 已按上游预期修正（ZCode 旧账号重连时 provider 变 Glm、source=cn）。
+2. **恢复官方集市测试索引夹具**：`spike/market_state.rs` 的 `test_index` 字段/`set_official_test_index`/test 分支索引注入恢复为上游 `#[cfg(test)]` 形态。调用它的 spike 集市测试模块仍整批关闭，故当前无启用测试使用它；真正生效需重开整批测试，风险大，未做。
+3. **设置侧栏可滚动（对齐上游截图）**：`extras.rs` 新增 `SETTINGS_BOTTOM_ROWS`、`settings_sidebar_builtin`；侧栏用 `egui::ScrollArea::vertical().id_salt("settings-sidebar-scroll").max_height(main_height)` 包住功能列表，插件/关于/自定义与集成固定在底部并加分隔线；新增回归测试 `settings_sidebar_scrolls_main_and_keeps_bottom_items_fixed`。
 
 ## 一、已完成（代码）
 
@@ -31,11 +37,11 @@
 ## 二、未完成 / 有意不合
 
 ### 有意保留的定制差异（未按上游改动）
-1. **上游删除 ZCode 本地凭据路径**（`9b539fe`）：本地保留 `zcode_quota.rs`，属定制。
-2. **集市材质包白名单**（`ae57460`）：上游只放行固定 sha256 的 `cayww.liquid-glass` 1.0.2，本地放宽为所有校验通过的包（见 §7.0zzze「只按 id 屏蔽 `cayww.liquid-glass`」）。**是否符合预期仍需你确认**。
+1. ~~**上游删除 ZCode 本地凭据路径**（`9b539fe`）~~ **已按上游删除**（2026-11-27）：删除 `zcode_quota.rs` 与"连接本机 ZCode"入口，ZCode 账号改为 GLM Key 重连提示；GLM 额度解析不受影响。
+2. **集市材质包白名单**（`ae57460`）：上游只放行固定 sha256 的 `cayww.liquid-glass` 1.0.2，本地放宽为所有校验通过的包（见 §7.0zzze「只按 id 屏蔽 `cayww.liquid-glass`」）。**已按用户要求保留放宽**（本轮未改）。
 3. **喝水页逐帧交付**（`ed035e7`）：D3D11 的 `transitioning` 已含 `water_view_t`，上游 `FrameOut.water_view_transition` 只服务 DX12 读回，有意不合。
 4. **DX12/WGSL 材质渲染链**：本地用 D3D11 自绘栈替代，架构定制。
-5. **官方集市测试索引夹具**：测试夹具定制，未放回。
+5. ~~**官方集市测试索引夹具**~~ **已恢复为上游形态**（2026-11-27）：`spike/market_state.rs` 的 `test_index` 字段/`set_official_test_index`/test 分支索引注入已改回 `#[cfg(test)]`。注意：调用它的 spike 集市测试模块仍整批关闭（`__spike_tests_off__`），所以夹具当前不被任何启用测试使用；真正生效需连同 `market.rs`/`local.rs` 的测试模块一起重开，风险较大，本轮未做。
 6. **手机连接短信/来电转发**：按你此前要求删除，仅保留验证码卡片。
 
 ### 尚未做的收尾

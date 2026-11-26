@@ -35,7 +35,7 @@ pub(super) struct OfficialMarket {
     error: Option<String>,
     image_job: Option<(String, JoinHandle<Option<OfficialImage>>)>,
     images: BTreeMap<String, Option<OfficialImage>>,
-    #[cfg(all(test, feature="__spike_tests_off__"))]
+    #[cfg(test)]
     test_index: Option<url::Url>,
 }
 
@@ -210,7 +210,7 @@ impl LocalPlugins {
         #[cfg(not(test))]
         let index = market::official_index_url().map(Some);
         #[cfg(test)]
-        let index: Result<_> = Ok(url::Url::parse("https://example.invalid/index.json").ok());
+        let index: Result<_> = Ok(official.test_index.clone());
         let index = match index {
             Ok(Some(index)) => index,
             Ok(None) => return,
@@ -242,7 +242,7 @@ impl LocalPlugins {
         self.official_market.sync_job.is_some()
     }
 
-    #[cfg(all(test, feature="__spike_tests_off__"))]
+    #[cfg(test)]
     pub(super) fn set_official_test_index(&mut self, index: url::Url) {
         self.official_market.test_index = Some(index);
     }

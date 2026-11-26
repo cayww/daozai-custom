@@ -2014,3 +2014,13 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **本地适配**：验证码铃铛保留 `otp_seconds`；pinned egui 0.37 无 `interactive_frame_start`，用 `out.animating`+`requested_repaint_last_pass()`+`render_compat_running` 代替；`canvas_rect()` 直接取 `GetWindowRect`。
 - **有意不合**：ZCode 凭据路径、DX12/WGSL 材质链、喝水页逐帧字段、集市测试索引夹具、手机短信/来电转发。**待确认**：集市材质包白名单放宽（上游只放行固定 sha256）是否符合预期。
 - **状态**：未打包、未部署、未推 origin。
+
+### 7.0zzzn 上游对齐收尾三项 + 打包（2026-11-27 00:15–01:22，分支 `merge-upstream-v0670`）
+
+- **三项收尾**（用户要求）：
+  1. **删除 ZCode 本地凭据路径**：删 `zcode_quota.rs`，`quota.rs`/`quota_ui.rs` 改回上游（`ZCODE_RECONNECT`，ZCode 旧账号用 GLM Key 重连），`dz-phone/README.md` 文案同步；配额测试 `quota_acceptance_grouped_connections_preserve_saved_sources` 按上游预期修正（ZCode→Glm、source=cn、提示文案"请填写 Coding Plan 套餐 Key"）。
+  2. **恢复官方集市测试索引夹具**：`spike/market_state.rs` 的 `test_index`/`set_official_test_index`/test 索引注入改回 `#[cfg(test)]`；调用方 spike 集市测试模块仍整批关闭，当前无启用测试使用。
+  3. **设置侧栏可滚动**（对齐用户截图的上游形态）：`extras.rs` 新增 `SETTINGS_BOTTOM_ROWS`、`settings_sidebar_builtin`，功能列表进 `ScrollArea`，插件/关于/自定义与集成固定底部 + 分隔线；新回归测试 `settings_sidebar_scrolls_main_and_keeps_bottom_items_fixed`。
+- **验证**：最终全量 **1545 passed / 0 failed / 138 ignored**（release 串行，日志 `merge-work/full-test-20261127-final.log`）。中间 1 个失败是 ZCode 删除后配额测试文案未同步，已修。
+- **打包**：release 双 bin 构建通过；Inno Setup 7 编译成功（HKCU/admin 警告是历史固有）。包 `installer/daozai-setup-custom-isolated.exe`，**包 sha256 前16 `0f95d1d9b64ff20d`**（12M），内含 exe sha `3643e33292430b5b`、bridge `4105df7ec3243c6d`。
+- **状态**：未部署、未推 origin。`docs/HANDOFF-plugin-material.md` 已更新为完成/未完成对照表。

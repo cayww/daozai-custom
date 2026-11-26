@@ -2731,6 +2731,30 @@ fn hold_open_pin_keeps_shelf_expanded_and_nav_arrows_match_the_lens(){
     }
 }
 
+/// 上游 v0.6.70：设置侧栏的功能列表在滚动区里，插件/关于等固定在底部。
+/// 最小高度下底部项仍可见，且功能项仍被渲染（在滚动区内）。
+#[test]
+fn settings_sidebar_scrolls_main_and_keeps_bottom_items_fixed(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();h.app.open_settings();h.ctx.set_embed_viewports(false);
+    let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+    egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+        let id=viewport.ids.this;
+        let raw=egui::RawInput{viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(600.0,450.0))),
+            viewports:std::iter::once((id,egui::ViewportInfo::default())).collect(),..Default::default()};
+        *capture.lock().unwrap()=Some(ctx.run_ui(raw,|ctx|(viewport.viewport_ui_cb)(ctx)));
+    });
+    for _ in 0..3 {let _=h.ctx.run_ui(Default::default(),|ctx|h.app.settings_ui(ctx,false));}
+    let frame=output.lock().unwrap().take().unwrap();
+    let label_rect=|label:&str|frame.shapes.iter().find_map(|s|match &s.shape{
+        egui::Shape::Text(t) if t.galley.text()==label && t.pos.x<180.0=>Some(t.visual_bounding_rect()),_=>None});
+    let about=label_rect("关于").expect("侧栏应固定显示关于");
+    let custom=label_rect("自定义与集成").expect("侧栏应固定显示自定义与集成");
+    assert!(about.bottom()<=450.0 && custom.bottom()<=450.0,"底部项超出窗口");
+    assert!(custom.top()>about.top(),"自定义与集成应排在关于下方");
+    assert!(label_rect("系统性能").is_some(),"滚动区应保留功能列表项");
+}
+
 #[test]
 fn wheel_navigation_reaches_every_page_in_both_directions(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let mut h=H::new();
@@ -9188,16 +9212,23 @@ fn quota_acceptance_grouped_connections_preserve_saved_sources() {
     use crate::quota::{Provider,Account};
     let _guard=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     for provider in [Provider::ZCode,Provider::Glm,Provider::NewApi,Provider::OneApi,Provider::Sub2Api] {
-        let mut h=H::new();h.app.settings_open=true;h.app.quota.provider=provider;h.app.quota.connect_open=true;
+        // 上游 v0.6.70：ZCode 已无本机凭据路径，重新连接旧账号时用 GLM Key 就地替换。
+        let mut h=H::new();h.app.settings_open=true;h.app.quota.provider=if provider==Provider::ZCode{Provider::Glm}else{provider};h.app.quota.connect_open=true;
         let source=if provider.relay(){"https://relay.example/path"}else if provider==Provider::Glm{"global"}else{"fixture/credentials.json"};
         let account=Account{id:"existing".into(),provider,alias:"原账号".into(),source:source.into(),slot:Some("existing-reference".into()),enabled:true,pinned:false};
-        h.app.quota.config.accounts=vec![account.clone()];h.app.quota.config.selected=account.id.clone();h.app.quota.connect_target=Some(account.id.clone());h.app.quota.source=source.into();
+        h.app.quota.config.accounts=vec![account.clone()];h.app.quota.config.selected=account.id.clone();h.app.quota.connect_target=Some(account.id.clone());if provider!=Provider::ZCode{h.app.quota.source=source.into();}
         for _ in 0..3{
             let output=h.ctx.run_ui(egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(780.0,850.0))),..Default::default()}, |ui|{egui::CentralPanel::default().show(ui,|ui|h.app.quota_settings(ui));});h.shapes=output.shapes;
         }
         let expected=if provider.relay(){"中转站"}else{"GLM / ZCode"};
         assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()==expected)),"应显示统一入口：{expected}");
-        assert_eq!(h.app.quota.provider,provider);assert_eq!(h.app.quota.source,source);assert_eq!(h.app.quota.config.accounts,[account]);
+        if provider==Provider::ZCode{
+            assert_eq!(h.app.quota.provider,Provider::Glm);assert_eq!(h.app.quota.source,"cn");
+            assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text().contains("请填写 Coding Plan 套餐 Key"))));
+        }else{
+            assert_eq!(h.app.quota.provider,provider);assert_eq!(h.app.quota.source,source);
+        }
+        assert_eq!(h.app.quota.config.accounts,[account]);
         if provider.relay(){assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()=="高级设置")));}
     }
 }
