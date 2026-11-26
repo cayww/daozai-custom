@@ -325,4 +325,6 @@ float4 material(MaterialIn i) {
 - **根因**：`shared_header()` 的齿轮点击直接写 `self.settings_tab = PAGE_SETTINGS_TABS[self.page]`。便签等插件状态页页码从 `PAGE_NAMES.len()`（11）开始，数组只有 11 项，点齿轮必定越界 panic。
 - **修复**：按上游加回 `page_settings_tab()`（`.get(page).copied().unwrap_or(SETTINGS_TAB_PAGES)`）和 `open_page_settings()`：插件状态页转给 `open_plugin_settings(id)`，否则走安全的分组映射。`show_page()` 也统一调用它；齿轮点击改为 `open_page_settings(self.page)`。
 - **回归测试**：`plugin_page_settings_gear_does_not_index_out_of_bounds`，直接以 `page = PAGE_NAMES.len()` 调用，验证不再越界且打开设置窗口。
-- **状态**：全量测试结果见下次记录；需重新构建/打包后让用户点插件页齿轮确认不再退出。
+- **验证与打包**：全量 **1528 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
+- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,072,436 bytes，sha256 前 16 `c25fad96f64b4cbe`（exe `53bbb71120424743`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-crash-fix`。
+- **待用户确认**：点便签等插件页齿轮不再退出，并能打开对应插件设置页。

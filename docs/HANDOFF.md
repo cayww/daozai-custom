@@ -2082,4 +2082,5 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **日志**：`diagnostics/last-error.log` 指向 `src/app.rs:5083:49`，即齿轮点击处的 `PAGE_SETTINGS_TABS[self.page]`。
 - **根因**：插件状态页页码 ≥ 11，数组只有 11 项；点齿轮必 panic。上游用 `page_settings_tab()` 安全映射 + `open_page_settings()` 分流插件设置页。
 - **修复**：按上游补回这两个方法，`show_page()` 与齿轮点击统一走安全入口；新增越界回归测试。
-- **状态**：需全量测试 + 重新打包后让用户点便签页齿轮确认。
+- **验证**：全量 lib **1528 passed / 0 failed / 138 ignored**，release 构建与打包通过；当前包 sha256 前 16 `c25fad96f64b4cbe`（exe `53bbb71120424743`），提交 `c8a96b8`。
+- **待用户确认**：点便签等插件页齿轮不再退出，并能打开对应插件设置页。
