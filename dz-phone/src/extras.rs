@@ -4626,7 +4626,7 @@ pub(crate) const SETTINGS_TAB_PLUGINS: usize = 17;
 pub(crate) const SETTINGS_TAB_PLUGIN_DETAIL: usize = 18;
 /// 侧栏：一项就是一页，不再有页内子标签。专注与健康（2、3）、待办与置物（4、5）各合成一页；关于固定左下角。
 /// 第四列是这一项之前的分组标题。
-const SETTINGS_GROUPS: [(&str, usize, usize, &str); 15] = [
+const SETTINGS_GROUPS: [(&str, usize, usize, &str); 17] = [
     ("通用", 0, 0, "岛仔"),
     ("外观", SETTINGS_TAB_APPEARANCE, SETTINGS_TAB_APPEARANCE, ""),
     ("位置", SETTINGS_TAB_POSITION, SETTINGS_TAB_POSITION, ""),
@@ -4639,6 +4639,8 @@ const SETTINGS_GROUPS: [(&str, usize, usize, &str); 15] = [
     ("日程", 8, 8, ""),
     ("AI 额度", 11, 11, ""),
     ("天气", 12, 12, ""),
+    ("系统性能", 15, 15, ""),
+    ("无线设备", SETTINGS_TAB_WIRELESS, SETTINGS_TAB_WIRELESS, ""),
     #[cfg(feature="sdk-js")]
     ("插件", SETTINGS_TAB_PLUGINS, SETTINGS_TAB_PLUGINS, ""),
     (
@@ -5189,6 +5191,8 @@ impl App {
                         SETTINGS_TAB_POSITION=>egui::include_image!("../assets/settings-icons/system/position.svg"),
                         // 自定义与集成：里面是浏览器 / 手机 / MAA / 网易云等外部集成，用浏览器图标比「关于」贴切。
                         SETTINGS_TAB_CUSTOM=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
+                        SETTINGS_TAB_WIRELESS=>egui::include_image!("../assets/device-icons/bluetooth-linear.svg"),
+                        15=>egui::include_image!("../assets/settings-icons/system/performance.svg"),
                         #[cfg(feature="sdk-js")]
                         SETTINGS_TAB_PLUGINS=>egui::include_image!("../assets/settings-icons/system/shelf.svg"),
                         _=>egui::include_image!("../assets/settings-icons/system/about.svg"),
@@ -5210,6 +5214,27 @@ impl App {
                     // 右侧给滚动条留出空隙，卡片和开关不会被它压住。
                     ui.set_width((ui.available_width()-12.0).max(240.0));
                     match tab {
+                    15=>{
+                        let on=self.settings_feature_header(ui,crate::app::PERFORMANCE_PAGE,"查看硬件负载和实时吞吐量",|_,_|{});
+                        ui.add_enabled_ui(on,|ui|self.performance_settings(ui));
+                    }
+                    SETTINGS_TAB_WIRELESS=>{
+                        let on=self.settings_feature_header(ui,crate::app::BLUETOOTH_PAGE,"查看蓝牙电量和 2.4G 接收器状态",|_,_|{});
+                        ui.add_enabled_ui(on,|ui|{
+                            settings_label(ui,"岛上常驻");
+                            settings_card(ui,|ui|{
+                                setting_row(ui,"无线设备电量","收起时显示，最多两台",&mut self.settings.show_bluetooth);
+                                if self.settings.show_bluetooth {
+                                    settings_separator(ui);
+                                    self.wireless_resident_settings(ui);
+                                }
+                            });
+                            settings_label(ui,"电量提醒");
+                            settings_card(ui,|ui|{
+                                setting_row(ui,"岛上提示","接上电源、充满或电量偏低时提醒",&mut self.settings.bluetooth_battery_notifications);
+                            });
+                        });
+                    }
                     #[cfg(feature="sdk-js")]
                     SETTINGS_TAB_PLUGINS=>{
                         let tasks_on=self.module_on(crate::app::TODO_PAGE);

@@ -8724,6 +8724,28 @@ fn phone_alerts_is_independent_of_listen_scope(){
 
 
 /// 手机连接页要能渲染，且测试环境（未装「手机连接」）下短信开关处于锁定态。
+
+#[test]
+fn wireless_settings_page_renders_resident_and_battery_options(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings_open=true;
+    h.app.settings_tab=crate::extras::SETTINGS_TAB_WIRELESS;
+    h.app.set_page_visible(crate::app::BLUETOOTH_PAGE,true);
+    h.ctx.set_embed_viewports(false);
+    for _ in 0..2 {
+        let time=h.t;
+        let output=std::sync::Arc::new(Mutex::new(None));let capture=output.clone();
+        egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
+            let id=viewport.ids.this;
+            *capture.lock().unwrap()=Some(ctx.run_ui(egui::RawInput{time:Some(time),viewport_id:id,screen_rect:Some(Rect::from_min_size(Pos2::ZERO,egui::vec2(690.0,560.0))),viewports:std::iter::once((id,egui::ViewportInfo{native_pixels_per_point:Some(1.0),..Default::default()})).collect(),..Default::default()}, |ui| (viewport.viewport_ui_cb)(ui)));
+        });
+        let _root=h.ctx.run_ui(egui::RawInput{time:Some(time),..Default::default()}, |ui| h.app.settings_ui(ui.ctx(),false));
+        assert!(output.lock().unwrap().is_some(),"无线设备设置页应完成渲染");
+        h.t+=1.0/60.0;
+    }
+}
+
 #[test]
 fn phone_settings_page_renders_with_locked_sms_toggle(){
     let mut h=H::new();
