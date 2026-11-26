@@ -372,7 +372,21 @@ fn notice_icon(c: &Card, x: f32, y: f32, a: &Alert) {
     }
 }
 
+
 impl App {
+
+    /// 插件页导航：切设置页 / 打开插件独立设置 / 打开状态页。
+    #[cfg(feature="sdk-js")]
+    fn apply_plugin_navigation(&mut self, route: crate::local_plugins_root::local::SettingsNavigation) {
+        use crate::local_plugins_root::local::SettingsNavigation;
+        match route {
+            SettingsNavigation::Tab(tab) => { self.settings_tab=tab; self.settings_plugin=None; }
+            SettingsNavigation::Plugin(id) => self.open_plugin_settings(&id),
+            SettingsNavigation::OpenStatus(_id) => { self.settings_tab=SETTINGS_TAB_PLUGINS; self.settings_plugin=None; }
+        }
+    }
+
+
     pub(crate) fn health_badges(&self) -> Vec<HealthReminder> {
         if self.fullscreen_hidden || !self.module_on(crate::app::WATER_PAGE) {
             return Vec::new();
@@ -5208,13 +5222,31 @@ impl App {
             let panel_fill=settings_color(ctx,Color32::from_rgb(25,25,27),Color32::from_rgb(246,247,249));
             egui::CentralPanel::default().frame(egui::Frame::new().fill(panel_fill).inner_margin(egui::Margin::symmetric(22,16) )).show(ctx,|ui|{
                 settings_apply_style(ui);
-                ui.label(egui::RichText::new(settings_tab_title(self.settings_tab)).size(18.0).strong().color(settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41))));
+                // 插件页：标题行右侧放「集市 / 已安装」切换条。
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(settings_tab_title(self.settings_tab)).size(18.0).strong().color(settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41))));
+                    #[cfg(feature="sdk-js")]
+                    if self.settings_tab==SETTINGS_TAB_PLUGINS {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|self.plugins.header_tabs(ui));
+                    }
+                });
                 ui.add_space(6.0);
                 // 合并页：健康（3）并入专注（2），置物（4→5）并入待办，旧序号仍能打开对应页面。
                 let tab=match self.settings_tab {3=>2,5=>4,t=>t};
-                egui::ScrollArea::vertical().id_salt(("settings-scroll",tab)).auto_shrink([false,false]).show(ui,|ui|{
+                #[cfg(feature="sdk-js")]
+                let plugin=self.settings_plugin.clone();
+                #[cfg(feature="sdk-js")]
+                let scroll=if let Some(id)=&plugin {egui::ScrollArea::vertical().id_salt(("settings-plugin-scroll",id))}else{egui::ScrollArea::vertical().id_salt(("settings-scroll",tab))};
+                #[cfg(not(feature="sdk-js"))]
+                let scroll=egui::ScrollArea::vertical().id_salt(("settings-scroll",tab));
+                scroll.auto_shrink([false,false]).show(ui,|ui|{
                     // 右侧给滚动条留出空隙，卡片和开关不会被它压住。
                     ui.set_width((ui.available_width()-12.0).max(240.0));
+                    #[cfg(feature="sdk-js")]
+                    if let Some(id)=&plugin {
+                        self.plugins.standalone_settings(ui,id);
+                        return;
+                    }
                     match tab {
                     SETTINGS_TAB_PERFORMANCE=>{
                         let on=self.settings_feature_header(ui,crate::app::PERFORMANCE_PAGE,"查看硬件负载和实时吞吐量",|_,_|{});
@@ -5242,7 +5274,7 @@ impl App {
                         let tasks_on=self.module_on(crate::app::TODO_PAGE);
                         let calendar_on=self.module_on(crate::app::CALENDAR_PAGE);
                         let quota_on=self.quota_active();
-                        let _=self.plugins.manage(ui,tasks_on,calendar_on,quota_on);
+                        if let Some(route)=self.plugins.manage(ui,tasks_on,calendar_on,quota_on){self.apply_plugin_navigation(route);}
                     }
                     12=>{
                         let on=self.settings_feature_header(ui,crate::app::WEATHER_PAGE,"当地天气与七日预报",|_,_|{});
