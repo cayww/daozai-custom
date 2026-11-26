@@ -363,7 +363,7 @@ impl App {
             else {self.select_calendar_day(today);}
         }
         let (add,b)=paint::material_capsule(header,101.0,9.0,46.0,18.0,"calendar-add-local",theme::BTN,theme::BTN_HOVER,
-            self.glassy().then_some((self.glass_controls_ready(),0.16,0.42)));
+            self.glassy().then_some((self.ctl_glass_ready(),0.16,0.42)));
         b.centered_text(124.0,18.0,"＋ 新增",9.0,W::Regular,theme::WHITE,H::Center);
         if add.clicked(){self.open_calendar_editor(None);return;}
 

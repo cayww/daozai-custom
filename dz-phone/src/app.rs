@@ -2690,8 +2690,6 @@ impl App {
     }
     /// 常驻电量环：(本机, 手机)，None 表示该来源关闭或没有数据。
     /// 两个来源互不影响，都开就并排画两个环（本机在左）。
-    pub(crate) fn glass_controls_ready(&self) -> bool { false }
-
     pub(crate) fn battery_rings(&self)->(Option<(Option<u8>,bool)>,Option<(Option<u8>,bool)>) {
         let pc=(self.settings.show_battery&&self.resident_power.0.is_some()).then_some(self.resident_power);
         // 手机电量已迁入「无线设备」页，岛仔常驻栏只显示本机电量。
@@ -4017,7 +4015,7 @@ impl App {
     /// 之前过渡期回退矢量版，浅材质下白边要靠 `glass_chrome` 保，而且没有折射，
     /// 质感差一档 —— 翻一次页「玻璃变贴纸再变回玻璃」，观感跳。
     /// `flip_glass_until` 盖住翻页引发的高度弹簧收敛期，避免动画刚结束就掉回矢量版。
-    fn ctl_glass_ready(&self)->bool{
+    pub(crate) fn ctl_glass_ready(&self)->bool{
         if self.settings.skin!=model::Skin::Liquid {return false;}
         // 拓扑变化后的稳定期内纹理是旧屏内容，控件一并回退矢量版本。
         if crate::wgc::settling() {return false;}
@@ -4363,7 +4361,8 @@ impl App {
             // 圆钮的放大镜倍数跟拖动弹簧走：未拖 mag=1（浅玻璃胶囊）、拖动 1.9
             //（资料包标准），与胶囊尺寸的 ×(1+0.9·sp) 同步。
             let mag=if ctl==Ctl::Seek {1.0+0.9*self.seek_drag.pos.clamp(0.0,1.0)}else{ctl.mag()};
-            let rect=if tx!=0.0 && !matches!(ctl,Ctl::Gear|Ctl::NavL|Ctl::NavR) {
+            // 「＋ 新增」画在 header 上，和其它全局 chrome 一样不跟正文滑。
+            let rect=if tx!=0.0 && !matches!(ctl,Ctl::Gear|Ctl::NavL|Ctl::NavR|Ctl::CalAdd) {
                 rect.translate(egui::vec2(tx,0.0))
             }else{rect};
             // 材质样式: 分栏容器高斯模糊磨砂(1，不压暗)、指示器提亮(2)，其余普通(0)。

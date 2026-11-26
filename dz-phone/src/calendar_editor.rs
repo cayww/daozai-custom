@@ -221,7 +221,7 @@ impl App {
     }
     pub(crate) fn draw_calendar_editor(&mut self,c:&Card){
         let glassy=self.glassy();
-        let glass_gpu=self.glass_controls_ready();
+        let glass_gpu=self.ctl_glass_ready();
         let glass=|level|glassy.then_some((glass_gpu,level,0.42));
         let Some(d)=self.calendar.draft.as_mut() else{return;};
         if let Some(mut picker)=d.picker.take() {

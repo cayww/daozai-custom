@@ -392,3 +392,17 @@ float4 material(MaterialIn i) {
   - 本地自定义但已删：`shelf_tab_press` + `shelf_tab_spring` 滑动透镜。
 - **验证**：按用户要求**未跑全量测试**；`cargo check --lib --bin daozai --tests` 通过；release 双 bin 构建通过；Inno Setup 7 打包成功。
 - **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,089,634 bytes，sha256 前 16 `bb66d473a83af005`（exe `aab2d2fd436efbc4`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-tab-header`。
+
+---
+
+## 20. 日程「＋ 新增」双白边与单独滑入（2026-11-26 21:17+）
+- **现象**：按钮底层多一圈白边，且这圈白边独立于按钮左右滑入，看上去两层白边。
+- **根因**：本地有两套玻璃就绪开关：
+  - `glass_controls_ready()` 硬编码 `false`，被 `material_capsule()` 用来决定走 GPU 还是矢量；于是矢量 `glass_capsule()` 的白描边总在画。
+  - `ctl_glass_ready()` 在液态皮肤展开时为真，D3D11 shader 同时发布 `Ctl::CalAdd` 透镜，也画一圈白边。
+  - `glass_controls()` 又把非 chrome 控件按 `page_slide_tx()` 平移，`CalAdd` 虽然在 header 上，透镜却跟着正文滑。
+- **修复**：
+  - 删除硬编码 `glass_controls_ready()`；`calendar_ui.rs` 与 `calendar_editor.rs` 改用 `ctl_glass_ready()`，并把后者提升为 `pub(crate)`。
+  - GPU 透镜启用时 `material_capsule()` 走 GPU 分支，不再叠矢量白边。
+  - `Ctl::CalAdd` 加入不随 `page_slide_tx()` 平移的 chrome 列表，与 header 上的按钮原地对齐。
+- **验证**：按用户要求未跑全量测试；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
