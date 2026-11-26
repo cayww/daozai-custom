@@ -1340,9 +1340,71 @@ pub fn coffee(c: &Card, x: f32, y: f32, color: egui::Color32) {
     c.seg((x + 0.6, y - 6.4), (x + 0.6, y - 3.8), 1.0, color);
 }
 
-/// 页面快捷键图标（插件跳转用，定制版用文本占位）。
-#[cfg(feature="sdk-js")]
-pub fn page_shortcut_icon(_c: &Card, _page: usize, _x: f32, _y: f32, _color: egui::Color32) {}
+/// 底部快捷切换使用适合小尺寸的单色图标。
+pub(crate) fn page_shortcut_icon(c: &Card, page: usize, x: f32, y: f32, color: Color32) {
+    use crate::app::{BLUETOOTH_PAGE, CALENDAR_PAGE, FOCUS_PAGE, MAIL_PAGE, MUSIC_PAGE,
+                     PERFORMANCE_PAGE, QUOTA_PAGE, SHELF_PAGE, TODO_PAGE, WATER_PAGE, WEATHER_PAGE};
+
+    let c = c.shifted(x, y);
+    let stroke = 1.15;
+    let line = |a, b| c.seg(a, b, stroke, color);
+    let path = |points: &[(f32, f32)]| c.path(points, stroke, color);
+    let outline = |x, y, w, h| c.stroke(x, y, w, h, 1.0, stroke, color);
+
+    match page {
+        MUSIC_PAGE => note(&c, 0.0, 0.0, 12.0, color),
+        FOCUS_PAGE => {
+            c.ring(0.0, 1.0, 4.6, stroke, color);
+            line((-1.8, -5.8), (1.8, -5.8));
+            line((0.0, -5.8), (0.0, -3.8));
+            path(&[(0.0, -1.5), (0.0, 1.0), (1.7, 2.1)]);
+        }
+        WATER_PAGE => droplet(&c, 0.0, 0.0, 11.0, color),
+        SHELF_PAGE => {
+            outline(-5.2, -1.8, 10.4, 6.7);
+            outline(-6.0, -5.0, 12.0, 3.2);
+            line((-1.4, 0.5), (1.4, 0.5));
+        }
+        TODO_PAGE => {
+            outline(-4.4, -4.8, 8.8, 10.0);
+            line((-1.8, -5.4), (1.8, -5.4));
+            check(&c, 0.0, 0.2, 4.0, 1.0, stroke, color);
+        }
+        MAIL_PAGE => {
+            outline(-6.0, -4.2, 12.0, 8.4);
+            path(&[(-5.6, -3.5), (0.0, 0.8), (5.6, -3.5)]);
+        }
+        QUOTA_PAGE => path(&[
+            (0.0, -5.8), (1.6, -1.6), (5.8, 0.0), (1.6, 1.6),
+            (0.0, 5.8), (-1.6, 1.6), (-5.8, 0.0), (-1.6, -1.6), (0.0, -5.8),
+        ]),
+        CALENDAR_PAGE => {
+            outline(-5.2, -4.2, 10.4, 9.7);
+            line((-5.2, -1.3), (5.2, -1.3));
+            line((-2.5, -5.5), (-2.5, -3.0));
+            line((2.5, -5.5), (2.5, -3.0));
+            c.circle(-2.1, 1.6, 0.65, color);
+            c.circle(0.0, 1.6, 0.65, color);
+            c.circle(2.1, 1.6, 0.65, color);
+        }
+        WEATHER_PAGE => {
+            c.ring(0.0, 0.0, 2.8, stroke, color);
+            for i in 0..8 {
+                let (sin, cos) = (i as f32 * TAU / 8.0).sin_cos();
+                line((cos * 4.4, sin * 4.4), (cos * 6.0, sin * 6.0));
+            }
+        }
+        PERFORMANCE_PAGE => {
+            outline(-5.8, -4.6, 11.6, 9.2);
+            path(&[(-4.1, 0.5), (-2.2, 0.5), (-1.0, -2.3), (1.0, 2.4), (2.0, 0.2), (4.1, 0.2)]);
+        }
+        BLUETOOTH_PAGE => {
+            path(&[(0.0, -6.0), (4.0, -2.9), (-3.8, 3.2)]);
+            path(&[(0.0, -6.0), (0.0, 6.0), (4.0, 2.9), (-3.8, -3.2)]);
+        }
+        _ => outline(-5.5, -4.5, 11.0, 9.0),
+    }
+}
 
 
 /// 玻璃质感胶囊控件（上游 v0.6.70；材质层注册在 sdk-material 关闭时跳过）。

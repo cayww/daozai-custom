@@ -198,3 +198,63 @@ cd installer && MSYS_NO_PATHCONV=1 "/d/software/Inno Setup 7/ISCC.exe" daozai.is
 - 改动后**全量测试**（但本次用户中途多次要求"先不全量测试"，最终收尾要跑）
 - 沟通要如实：不确定的、舍弃的、风险都要明说，不要含糊带过
 - 液态玻璃是内置的、要保留；屏蔽的是 `cayww.liquid-glass` 这个插件，不是整个材质类
+
+---
+
+## 9. 本次续作进度（2026-11-26 16:xx）
+
+### 9.1 已落地
+| commit / 状态 | 内容 |
+|---|---|
+| `3cdeb76` | 提交 §2.2 的 pinned/外观图标/无线接收器注入；提交前全量测试 **1521 passed / 0 failed / 138 ignored** |
+| 工作树（待提交） | D3D11 方案 B 主体 + 外观/快捷切换接入 |
+
+### 9.2 方案 B 的实现形态（重要，接手先看这里）
+- **没有启用 `sdk-material`**，没有 WGSL→HLSL 转译。新增 `spike/material_d3d11.rs`：
+  - 材质包入口支持 `material.hlsl`（HLSL 源码，现场用 `d3dcompiler_47.dll` 编成 `ps_5_0` DXBC）或 `material.dxbc`（DXBC 二进制的 **base64 文本**，因为 `Package.source` 是 String）。
+  - 宿主 prelude 提供 `cbuffer U(b0)`（与 `GlassParams` 完全一致）、`cbuffer P(b1)`（8×float4 = 32 个设置值）、`bg/samp`、全屏三角形 VS、遮罩 fs。**插件只实现 `float4 material(MaterialIn i)`**，不要重复声明 `U/P/bg/samp/vs/fs/MaterialIn`。
+  - `MaterialIn` 字段：`uv`、`pixel`（窗口内物理像素，底原点）、`bounds`（xy=左下，zw=宽高）、`radius`、`values[8]`（设置值）。
+  - helper：`dz_backdrop(px)` 采样岛体背后画面；`dz_rr_sdf` / `dz_island_sdf` 做岛体边界遮罩。
+  - 入口 `.wgsl` 会给出明确错误"请改 HLSL/DXBC"，不再静默拒绝整个材质类。
+- `Cargo.toml` 给 windows 依赖加了 `Win32_Graphics_Direct3D_Fxc`（只加 feature，不动 Cargo.lock）。
+- `dz-phone/src/d3d11/runtime.rs`：`GlassPipeline` 增加 b1；`D3d11Runtime` 持有 `material_ps`，DXBC generation 变化时重建 PS，失败回退内置玻璃；材质与内置玻璃**互斥**，同一 pass 二选一。
+- `spike/local.rs` / `local_ui.rs`：材质激活/权限/设置相关的 `cfg(feature="sdk-material")` 改成 `cfg(windows)`；`MaterialSpec` 增加 `entry`。
+- `spike/market.rs`：`validate_material` 改走新校验；官方集市材质准入不再只放行 `cayww.liquid-glass@1.0.2`，改为按渠道信任（目录条目的 size/sha256 仍校验）。
+- `spike/local_ui.rs`：`visible_ids` 只隐藏 `cayww.liquid-glass`，其他材质包在"已安装"里可见。
+- `spike/local_ui.rs` 的 `manage()` 因材质 UI 解封新增第 5 个参数 `active_material`，所有调用点已补。
+
+### 9.3 外观与底栏快捷切换
+- 外观设置页接了 `appearance_picker`（皮肤/图标/吉祥物）和 `material_settings`（选择材质、权限确认、参数滑杆）。
+- 底栏快捷切换整行补齐：`app.rs` 新增 `PAGE_SHORTCUT_ROW_H=24`、`page_shortcuts_enabled()`，`expanded_height()` 预留行高；`nav()` 绘制图标+页码点同排；`paint::page_shortcut_icon` 从空实现改成完整矢量图标（复用 `paint::icons` 的 `note/droplet/check`）。
+- 与液态玻璃共存规则：激活材质包时 D3D11 pass 用材质 PS，否则用内置玻璃 PS；不会叠加。
+
+### 9.4 验证记录
+- `3cdeb76` 提交前：1521 passed / 0 failed / 138 ignored。
+- 方案 B 改动后首次全量：**1523 passed / 1 failed**（新加的 HLSL 编译测试失败：HLSL 不允许在定义前调用 `material`）。
+- 已修：把 prelude 拆成 `MATERIAL_PRELUDE` + `MATERIAL_EPILOGUE`，插件源码夹在中间。
+- 修复后全量：**1524 passed / 0 failed / 138 ignored**（新增 3 个材质编译测试，`expanded_height` +24px 未打破布局断言）。
+
+### 9.5 材质包最小示例（给插件作者/PR 用）
+`plugin.json` 关键字段：
+```json
+{
+  "id": "example.tint-glass", "runtime": "material", "entry": "material.hlsl",
+  "owner": "appearance", "capabilities": ["appearance.material", "settings"],
+  "permissions": {"screen.backdrop": true},
+  "material": {"controls": true, "spring": {"stiffness": 1.0, "damping": 0.5}},
+  "settings": [{"key":"tint","label":"着色","type":"number","min":0,"max":1,"step":0.05,"default":"0.5"}]
+}
+```
+`material.hlsl`：
+```hlsl
+float4 material(MaterialIn i) {
+    float3 bg = dz_backdrop(i.pixel);
+    return float4(lerp(bg, float3(0.05,0.35,0.75), saturate(i.values[0].x)), 1.0);
+}
+```
+
+### 9.6 待办（接手继续）
+1. ~~跑完整全量测试~~ 已完成：1524 passed / 0 failed / 138 ignored。
+2. 提交当前工作树。
+3. 实机验证：内置玻璃不受影响；装一个 HLSL 材质包并激活，截图确认材质生效；外观包在设置里可选择；快捷切换行能显示和点击。
+4. 打包并同步 `_archive/README.md` 指纹表、桌面 `HANDOFF.md` 与仓库副本。

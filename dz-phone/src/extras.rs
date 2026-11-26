@@ -5286,7 +5286,13 @@ impl App {
                         let tasks_on=self.module_on(crate::app::TODO_PAGE);
                         let calendar_on=self.module_on(crate::app::CALENDAR_PAGE);
                         let quota_on=self.quota_active();
-                        if let Some(route)=self.plugins.manage(ui,tasks_on,calendar_on,quota_on){self.apply_plugin_navigation(route);}
+                        #[cfg(all(windows, feature="sdk-js"))]
+                        let active_material=self.plugins.selected_material_id().map(str::to_owned);
+                        #[cfg(not(all(windows, feature="sdk-js")))]
+                        let active_material: Option<String>=None;
+                        if let Some(route)=self.plugins.manage(ui,tasks_on,calendar_on,quota_on,active_material.as_deref()){
+                            self.apply_plugin_navigation(route);
+                        }
                     }
                     12=>{
                         let on=self.settings_feature_header(ui,crate::app::WEATHER_PAGE,"当地天气与七日预报",|_,_|{});
@@ -5420,8 +5426,14 @@ impl App {
                         settings_label(ui,"岛体外观");
                         settings_card(ui,|ui|{
                             use crate::model::{self as model,Skin};
-                            let skins:Vec<(Skin,&str)>=Skin::ALL.iter().map(|s|(*s,s.label())).collect();
-                            settings_control_row_right(ui,"皮肤",|ui|{settings_segmented(ui,&mut self.settings.skin,&skins,64.0);});
+                            #[cfg(feature="sdk-js")]
+                            let plugin_skin=self.plugins.appearance_picker(ui,crate::local_plugins::appearance_assets::Kind::Skin,Some(&mut self.settings.skin));
+                            #[cfg(not(feature="sdk-js"))]
+                            let plugin_skin=false;
+                            if !plugin_skin {
+                                let skins:Vec<(Skin,&str)>=Skin::ALL.iter().map(|s|(*s,s.label())).collect();
+                                settings_control_row_right(ui,"皮肤",|ui|{settings_segmented(ui,&mut self.settings.skin,&skins,64.0);});
+                            }
                             settings_hint(ui,self.settings.skin.description());
                             // 「配置液态玻璃」入口夹在皮肤与形状之间，且只在当前就是液态玻璃皮肤时出现。
                             // 注意 is_glass() 只含毛玻璃浅/深，不含 Liquid，这里必须用 Skin::Liquid 判断。
@@ -5436,6 +5448,19 @@ impl App {
                                 setting_row(ui,"背景模糊","需开启系统“透明效果”；关闭后改为烟熏半透明",&mut blur);
                                 self.settings.glass_blur=blur;
                             }
+                            #[cfg(all(windows, feature="sdk-js"))]
+                            {
+                                // D3D11 材质包与内置液态玻璃互斥；material_settings 负责选择/调参。
+                                let active=self.plugins.selected_material_id().map(str::to_owned);
+                                if self.plugins.material_settings(ui,active.as_deref(),self.settings.render_compat) {
+                                    self.settings.render_compat=true;
+                                    self.settings.render_compat_reason.clear();
+                                    self.pending.push(Cmd::RestartApp);
+                                    ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
+                                }
+                            }
+                            #[cfg(feature="sdk-js")]
+                            self.plugins.appearance_picker(ui,crate::local_plugins::appearance_assets::Kind::Icon,None);
                             ui.separator();
                             let shapes:Vec<(model::IslandShape,&str)>=model::IslandShape::ALL.iter().map(|s|(*s,s.label())).collect();
                             settings_control_row_right(ui,"形状",|ui|{settings_segmented(ui,&mut self.settings.island_shape,&shapes,64.0);});
@@ -5460,6 +5485,8 @@ impl App {
                             let mut pet=self.settings.pet;
                             setting_row(ui,"岛仔吉祥物","收起时常驻，播放音乐时一起唱歌",&mut pet);
                             if pet!=self.settings.pet {self.set_pet(pet);}
+                            #[cfg(feature="sdk-js")]
+                            self.plugins.appearance_picker(ui,crate::local_plugins::appearance_assets::Kind::Pet,None);
                             settings_advanced(ui,"settings-appearance-advanced",|ui|{
                                 setting_row(ui,"OLED 像素偏移","防止 OLED 屏幕烧屏：收起静止时让岛体缓慢移动几个像素，不改动你保存的位置",&mut self.settings.oled_shift);
                             });

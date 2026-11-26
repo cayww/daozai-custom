@@ -613,7 +613,7 @@ fn wait_for_catalog_action(host: &mut LocalPlugins) {
 }
 
 #[test]
-fn online_market_material_is_limited_to_preview_or_the_reviewed_stable_package() -> Result<()> {
+fn online_market_material_follows_channel_trust_not_a_single_plugin_id() -> Result<()> {
     let preview = Url::parse(&format!("https://gitee.com{}?ref=master", official_index_path("preview")))?;
     let stable = Url::parse(&format!("https://gitee.com{}?ref=master", official_index_path("stable")))?;
     let approved: Entry = serde_json::from_value(json!({
@@ -631,14 +631,15 @@ fn online_market_material_is_limited_to_preview_or_the_reviewed_stable_package()
     assert!(allows_market_material(Some(&stable), false, &approved));
     assert!(!allows_market_material(Some(&stable), true, &approved));
 
-    for unreviewed in [
+    // 其他材质包与版本只要出现在官方目录里就可安装；内容仍由目录的 size/sha256 校验。
+    for candidate in [
         Entry { id: "example.other-material".into(), ..approved.clone() },
         Entry { version: "1.0.3".into(), ..approved.clone() },
         Entry { sha256: "0".repeat(64), ..approved.clone() },
         Entry { size: approved.size + 1, ..approved.clone() },
     ] {
-        assert!(allows_market_material(Some(&preview), true, &unreviewed));
-        assert!(!allows_market_material(Some(&stable), false, &unreviewed));
+        assert!(allows_market_material(Some(&preview), true, &candidate));
+        assert!(allows_market_material(Some(&stable), false, &candidate));
     }
 
     for (trusted, preview_build) in [(&preview, true), (&stable, false)] {

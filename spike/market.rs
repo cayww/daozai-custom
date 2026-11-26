@@ -45,7 +45,7 @@ pub(super) fn official_index_url() -> Result<Url> {
     ))?)
 }
 
-fn allows_market_material(index: Option<&Url>, preview_build: bool, entry: &Entry) -> bool {
+fn allows_market_material(index: Option<&Url>, preview_build: bool, _entry: &Entry) -> bool {
     index.is_none_or(|index| {
         if !is_https_host(index, "gitee.com") || index.query() != Some("ref=master") {
             return false;
@@ -53,12 +53,9 @@ fn allows_market_material(index: Option<&Url>, preview_build: bool, entry: &Entr
         if preview_build {
             return index.path() == official_index_path("preview");
         }
-        // 正式集市只接受验收过的液态玻璃包。下载后仍须校验实际文件的大小与哈希。
+        // 正式集市里的材质包由目录条目本身完成验收（Zip 大小/SHA-256 仍会逐项校验）。
+        // 液态玻璃是内置实现，按 id 在 UI 层单独隐藏，不在这里限制整个材质类。
         index.path() == official_index_path("stable")
-            && entry.id == "cayww.liquid-glass"
-            && entry.version == "1.0.2"
-            && entry.size == 180301
-            && entry.sha256 == "01619b45b3ba6cf0a71c8d952c8a2aada5fad25379ced21e481784d561d197d8"
     })
 }
 
@@ -651,10 +648,11 @@ fn decode_zip(raw: &[u8], allow_material: bool) -> Result<Package> {
 
 fn validate_material(package: &Package) -> Result<()> {
     if package.manifest.is_material() {
-        #[cfg(all(windows, feature = "sdk-material"))]
-        crate::material::validate_plugin_shader(&package.source).map_err(|error| fail(&error))?;
-        #[cfg(not(all(windows, feature = "sdk-material")))]
-        return Err(fail("当前版本未启用 GPU 材质支持"));
+        super::material_d3d11::validate_plugin_shader(
+            &package.manifest.entry,
+            &package.source,
+        )
+        .map_err(|error| fail(&error))?;
     }
     Ok(())
 }

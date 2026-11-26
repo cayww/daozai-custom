@@ -213,6 +213,8 @@ struct GlassPipeline {
     cbuf: ID3D11Buffer,
     sampler: ID3D11SamplerState,
     blend: ID3D11BlendState,
+    /// b1：材质插件设置值（8 x float4），内置玻璃不用，仍每帧更新。
+    plugin_cbuf: ID3D11Buffer,
     bg_srv: ID3D11ShaderResourceView,
     bg_tex: ID3D11Texture2D,
     bg_w: u32,
@@ -256,6 +258,11 @@ pub struct D3d11Runtime {
     rt: Option<ID3D11RenderTargetView>,
     dcomp: DcompState,
     glass: GlassPipeline,
+    /// 当前激活材质包编译出的像素着色器；None 时用内置玻璃 PS。
+    #[cfg(feature="sdk-js")]
+    material_ps: Option<ID3D11PixelShader>,
+    #[cfg(feature="sdk-js")]
+    material_gen: u64,
     wgc: Option<WgcCapture>,
     wgc_ever_frame: bool,
     /// 创建当前 WGC 会话时的桌面拓扑代数。与 `wgc::topo_epoch()` 不等说明
@@ -342,6 +349,10 @@ impl D3d11Runtime {
 
         Ok(Self {
             device, ctx, swap, rt: Some(rt), dcomp, glass, wgc,
+            #[cfg(feature="sdk-js")]
+            material_ps: None,
+            #[cfg(feature="sdk-js")]
+            material_gen: 0,
             wgc_ever_frame: false, wgc_epoch: crate::wgc::topo_epoch(),
             wgc_retry_at: None, wgc_retry_backoff_ms: 200, wgc_last_frame_at: None,
             egui_ctx, egui_renderer, egui_winit: Some(egui_winit),
@@ -472,6 +483,16 @@ impl D3d11Runtime {
                     CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
                     MiscFlags: 0, StructureByteStride: 0,
                 }, None, Some(&mut cbuf))?;
+            // b1: 32 个材质插件参数（8 x float4）。内置玻璃不读它，但材质 pass 需要。
+            let mut plugin_cbuf = None;
+            device.CreateBuffer(
+                &D3D11_BUFFER_DESC {
+                    ByteWidth: 32 * std::mem::size_of::<f32>() as u32,
+                    Usage: D3D11_USAGE_DYNAMIC,
+                    BindFlags: D3D11_BIND_CONSTANT_BUFFER.0 as u32,
+                    CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
+                    MiscFlags: 0, StructureByteStride: 0,
+                }, None, Some(&mut plugin_cbuf))?;
             let mut sampler = None;
             device.CreateSamplerState(
                 &D3D11_SAMPLER_DESC {
@@ -514,6 +535,7 @@ impl D3d11Runtime {
 
             Ok(GlassPipeline {
                 vs: vs.unwrap(), ps: ps.unwrap(), cbuf: cbuf.unwrap(),
+                plugin_cbuf: plugin_cbuf.unwrap(),
                 sampler: sampler.unwrap(), blend: blend.unwrap(),
                 bg_srv: bg_srv.unwrap(), bg_tex, bg_w, bg_h,
             })
@@ -764,7 +786,31 @@ impl D3d11Runtime {
                      viewport_commands: platform.1, active_viewports: platform.2, device_lost }
     }
 
+    /// 材质包 DXBC 变化时重建像素着色器；编译失败回退内置玻璃 pass。
+    #[cfg(feature="sdk-js")]
+    fn sync_material_shader(&mut self) {
+        let Some((generation, dxbc, _)) = crate::local_plugins::material_d3d11::snapshot() else {
+            self.material_ps = None;
+            self.material_gen = 0;
+            return;
+        };
+        if generation == self.material_gen { return; }
+        self.material_gen = generation;
+        unsafe {
+            let mut ps = None;
+            match self.device.CreatePixelShader(&dxbc, None, Some(&mut ps)) {
+                Ok(()) => self.material_ps = ps,
+                Err(error) => {
+                    dlog(&format!("material pixel shader FAILED: {error:?}"));
+                    self.material_ps = None;
+                }
+            }
+        }
+    }
+
     fn draw_glass(&mut self, win_w: u32, win_h: u32, u: &GlassParams) {
+        #[cfg(feature="sdk-js")]
+        self.sync_material_shader();
         unsafe {
             let mut mapped = std::mem::zeroed::<D3D11_MAPPED_SUBRESOURCE>();
             if self.ctx.Map(&self.glass.cbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).is_ok() {
@@ -772,11 +818,26 @@ impl D3d11Runtime {
                     mapped.pData as *mut u8, std::mem::size_of::<GlassParams>());
                 self.ctx.Unmap(&self.glass.cbuf, 0);
             }
+            #[cfg(feature="sdk-js")]
+            {
+                let values = crate::local_plugins::material_d3d11::active_params();
+                let mut mapped = std::mem::zeroed::<D3D11_MAPPED_SUBRESOURCE>();
+                if self.ctx.Map(&self.glass.plugin_cbuf, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut mapped)).is_ok() {
+                    ptr::copy_nonoverlapping(values.as_ptr() as *const u8,
+                        mapped.pData as *mut u8, values.len() * std::mem::size_of::<f32>());
+                    self.ctx.Unmap(&self.glass.plugin_cbuf, 0);
+                }
+            }
             let ctx = &self.ctx;
             ctx.VSSetShader(&self.glass.vs, None);
-            ctx.PSSetShader(&self.glass.ps, None);
+            #[cfg(feature="sdk-js")]
+            let ps = self.material_ps.as_ref().unwrap_or(&self.glass.ps);
+            #[cfg(not(feature="sdk-js"))]
+            let ps = &self.glass.ps;
+            ctx.PSSetShader(ps, None);
             ctx.VSSetConstantBuffers(0, Some(&[Some(self.glass.cbuf.clone())]));
             ctx.PSSetConstantBuffers(0, Some(&[Some(self.glass.cbuf.clone())]));
+            ctx.PSSetConstantBuffers(1, Some(&[Some(self.glass.plugin_cbuf.clone())]));
             ctx.PSSetShaderResources(0, Some(&[Some(self.glass.bg_srv.clone())]));
             ctx.PSSetSamplers(0, Some(&[Some(self.glass.sampler.clone())]));
             ctx.RSSetViewports(Some(&[D3D11_VIEWPORT {

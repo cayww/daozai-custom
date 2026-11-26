@@ -19,6 +19,10 @@ mod pinned;
 pub(crate) use pinned::PinnedDisplay;
 #[path = "cover.rs"]
 mod cover;
+/// D3D11 原生材质包：方案 B 的 HLSL/DXBC 校验与运行时请求状态。
+#[cfg(windows)]
+#[path = "material_d3d11.rs"]
+pub(crate) mod material_d3d11;
 #[cfg(windows)]
 #[path = "market.rs"]
 pub(super) mod market;
@@ -72,6 +76,8 @@ const BACKDROP_PERMISSION: &str = "screen.backdrop";
 const SOURCE_PERMISSION: &str = "source.read";
 const API_VERSION: u32 = 1;
 const WIRELESS_PLUGIN_ID: &str = "daozai.wireless-receivers";
+/// 液态玻璃已内置在 D3D11 栈里，只屏蔽这个插件 ID，不影响其他材质包。
+pub(crate) const LIQUID_GLASS_PLUGIN_ID: &str = "cayww.liquid-glass";
 #[cfg(windows)]
 const WIRELESS_FEEDBACK_URL: &str = "https://github.com/Renly1994/xiaotang-daozai/issues/267";
 
@@ -332,7 +338,7 @@ impl Record {
             .is_some_and(|package| package.manifest.is_page_shortcuts())
     }
 
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     fn material_package(&self) -> Option<&Package> {
         #[cfg(windows)]
         if self.market_revoked {
@@ -344,9 +350,10 @@ impl Record {
     }
 }
 
-#[cfg(feature = "sdk-material")]
+#[cfg(windows)]
 pub struct MaterialSpec<'a> {
     pub id: &'a str,
+    pub entry: &'a str,
     pub source: &'a str,
     pub controls: bool,
     pub stiffness: f32,
@@ -664,17 +671,17 @@ impl Manifest {
                 && s.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         };
-        let suffix = if material {
-            ".wgsl"
-        } else if m.runtime == "assets" {
-            ".json"
+        // 方案 B：材质包入口为 HLSL 源码或 base64 编码的 DXBC；保留 .wgsl 后缀
+        // 让旧包给出明确的"请改 D3D11 格式"提示，而不是清单层的泛化错误。
+        let stem = if material {
+            [".hlsl", ".dxbc", ".wgsl"]
+                .iter()
+                .find_map(|suffix| m.entry.strip_suffix(suffix))
         } else {
-            ".js"
+            let suffix = if m.runtime == "assets" { ".json" } else { ".js" };
+            m.entry.strip_suffix(suffix)
         };
-        if !m
-            .entry
-            .strip_suffix(suffix)
-            .is_some_and(|name| name.split('/').all(allowed_name))
+        if !stem.is_some_and(|name| name.split('/').all(allowed_name))
             || !entry
                 .components()
                 .all(|c| matches!(c, Component::Normal(_)))
@@ -691,7 +698,7 @@ impl Manifest {
 fn validate_code_free_files(
     dir: &Path, manifest: &Path, entry: &Path, material: bool, fonts: Option<&font_assets::Entry>,
 ) -> Result<()> {
-    let (package_type, entry_type) = if material { ("材质包", "WGSL") } else { ("外观资源包", "JSON") };
+    let (package_type, entry_type) = if material { ("材质包", "HLSL/DXBC") } else { ("外观资源包", "JSON") };
     let mut folders = vec![dir.to_path_buf()];
     while let Some(folder) = folders.pop() {
         for item in fs::read_dir(folder)? {
@@ -1099,7 +1106,7 @@ pub struct LocalPlugins {
     focus: Option<String>,
     drafts: BTreeMap<String, Values>,
     card_index: usize,
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     selected_material: Option<String>,
 }
 impl LocalPlugins {
@@ -1121,7 +1128,7 @@ impl LocalPlugins {
             #[cfg(windows)]
             market_metrics: market_metrics::MarketMetrics::open(&dir),
             invalid: Default::default(),
-            #[cfg(feature = "sdk-material")]
+            #[cfg(windows)]
             selected_material: Self::read_material_id(&dir),
             appearance: appearance_assets::Selection::read(&dir),
             dir,
@@ -1256,7 +1263,7 @@ impl LocalPlugins {
             .get()
     }
 
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     fn read_material_id(dir: &Path) -> Option<String> {
         let text = bounded(&dir.join("active-material.json"), 128).ok()?;
         serde_json::from_str::<Option<String>>(&text)
@@ -1264,7 +1271,7 @@ impl LocalPlugins {
             .filter(|id| valid_id(id))
     }
 
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     pub fn startup_material(dir: &Path) -> bool {
         Self::read_material_id(dir).is_some_and(|id| {
             bounded(&dir.join(format!("local-{id}.json")), 2 * 1024 * 1024)
@@ -1278,21 +1285,21 @@ impl LocalPlugins {
         })
     }
 
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     pub fn selected_material_id(&self) -> Option<&str> {
         self.selected_material
             .as_deref()
             .filter(|id| self.material_permission_granted(id))
     }
 
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     pub fn material_permission_granted(&self, id: &str) -> bool {
         self.records
             .get(id)
             .is_some_and(|record| record.material_granted && record.material_package().is_some())
     }
 
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     pub fn activate_material(&mut self, id: Option<&str>, grant: bool) -> Result<()> {
         if let Some(id) = id {
             let mut record = self.installed(id)?;
@@ -1321,7 +1328,7 @@ impl LocalPlugins {
         Ok(())
     }
 
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     pub fn active_material(&self) -> Option<MaterialSpec<'_>> {
         let id = self.selected_material_id()?;
         let record = self.records.get(id)?;
@@ -1333,6 +1340,7 @@ impl LocalPlugins {
         }
         Some(MaterialSpec {
             id,
+            entry: &package.manifest.entry,
             source: &package.source,
             controls: material.controls,
             stiffness: material.spring.stiffness,
@@ -1343,7 +1351,7 @@ impl LocalPlugins {
         })
     }
 
-    #[cfg(feature = "sdk-material")]
+    #[cfg(windows)]
     pub fn set_material_parameter(&mut self, id: &str, key: &str, value: f32) -> Result<()> {
         let mut record = self.installed(id)?;
         let field = record
@@ -1388,8 +1396,8 @@ impl LocalPlugins {
         if pkg.manifest.is_wireless() {
             return Err(fail("请从插件集市安装无线设备兼容包"));
         }
-        if !cfg!(all(windows, feature = "sdk-material")) && pkg.manifest.is_material() {
-            return Err(fail("当前版本未启用 Windows GPU 材质支持"));
+        if !cfg!(windows) && pkg.manifest.is_material() {
+            return Err(fail("材质包仅支持 Windows 的 D3D11 渲染栈"));
         }
         let id = pkg.manifest.id.clone();
         let mut record = Record {
@@ -1444,14 +1452,14 @@ impl LocalPlugins {
             return Err(fail("当前插件版本已撤回，请更新后启用"));
         }
         if r.package.as_ref().unwrap().manifest.is_material() {
-            #[cfg(feature = "sdk-material")]
+            #[cfg(windows)]
             if on || self.selected_material_id() == Some(id) {
                 return self.activate_material(on.then_some(id), false);
             } else {
                 return Ok(());
             }
-            #[cfg(not(feature = "sdk-material"))]
-            return Err(fail("当前版本未启用 GPU 材质支持"));
+            #[cfg(not(windows))]
+            return Err(fail("材质包需要 Windows 的 D3D11 渲染栈"));
         }
         r.enabled = on;
         self.put(id, r)?;
@@ -1569,7 +1577,7 @@ impl LocalPlugins {
             self.forget_view(id);
             source_https::delete_secret(id)?;
         }
-        #[cfg(feature = "sdk-material")]
+        #[cfg(windows)]
         if self.selected_material.as_deref() == Some(id) {
             self.activate_material(None, false)?;
         }

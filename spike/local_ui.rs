@@ -678,10 +678,10 @@ fn row_separator(ui: &mut egui::Ui) {
     ui.add_space(5.0);
 }
 
-#[cfg(all(windows, feature = "sdk-material"))]
+#[cfg(windows)]
 const CAPTURE_PERMISSION: &str = "读取岛体背后一小块屏幕画面，只在本机用于绘制材质，不保存、不上传；插件本身没有网络和文件权限。";
 
-#[cfg(all(windows, feature = "sdk-material"))]
+#[cfg(windows)]
 fn material_name(ui: &egui::Ui, name: &str, selected: bool, active: bool) -> egui::RichText {
     let title = egui::RichText::new(name);
     if !selected {
@@ -721,7 +721,7 @@ fn material_name(ui: &egui::Ui, name: &str, selected: bool, active: bool) -> egu
     title.color(color)
 }
 
-#[cfg(all(windows, feature = "sdk-material"))]
+#[cfg(windows)]
 fn material_changed(ui: &egui::Ui, result: Result<()>) -> bool {
     let id = egui::Id::new("settings-material-error");
     match result {
@@ -737,7 +737,7 @@ fn material_changed(ui: &egui::Ui, result: Result<()>) -> bool {
     }
 }
 
-#[cfg(all(windows, feature = "sdk-material"))]
+#[cfg(windows)]
 fn material_error(ui: &mut egui::Ui) {
     if let Some(error) =
         ui.data(|data| data.get_temp::<String>(egui::Id::new("settings-material-error")))
@@ -885,10 +885,10 @@ impl LocalPlugins {
     fn visible_ids(&self) -> Vec<String> {
         self.records
             .iter()
-            .filter(|(_, r)| {
-                // 液态玻璃是本项目自维护的 D3D11 实现；插件市场的 GPU 材质插件一律屏蔽，
-                // 不让它接管岛体外观（即使将来启用了 sdk-material feature）。
-                r.package.as_ref().is_some_and(|p| !p.manifest.is_material())
+            .filter(|(id, r)| {
+                // 只屏蔽内置的液态玻璃插件；其他 D3D11 材质包要能在「已安装」里出现。
+                id.as_str() != super::LIQUID_GLASS_PLUGIN_ID
+                    && r.package.is_some()
             })
             .map(|(id, _)| id.clone())
             .collect()
@@ -945,7 +945,7 @@ impl LocalPlugins {
         tasks_on: bool,
         calendar_on: bool,
         quota_on: bool,
-        #[cfg(all(windows, feature = "sdk-material"))] active_material: Option<&str>,
+        #[cfg(windows)] active_material: Option<&str>,
     ) -> Option<SettingsNavigation> {
         let mut jump = None;
         let ids = self.visible_ids();
@@ -1047,7 +1047,7 @@ impl LocalPlugins {
                             tasks_on,
                             calendar_on,
                             quota_on,
-                            #[cfg(all(windows, feature = "sdk-material"))]
+                            #[cfg(windows)]
                             active_material,
                             &mut jump,
                         );
@@ -1100,7 +1100,7 @@ impl LocalPlugins {
         self.detail_drawer(ui, true);
         #[cfg(windows)]
         self.source_dialog(ui);
-        #[cfg(all(windows, feature = "sdk-material"))]
+        #[cfg(windows)]
         {
             if self.confirm_material_permission(ui) {
                 jump = Some(SettingsNavigation::Tab(crate::extras::SETTINGS_TAB_APPEARANCE));
@@ -1119,7 +1119,7 @@ impl LocalPlugins {
         tasks_on: bool,
         calendar_on: bool,
         quota_on: bool,
-        #[cfg(all(windows, feature = "sdk-material"))] active_material: Option<&str>,
+        #[cfg(windows)] active_material: Option<&str>,
         jump: &mut Option<SettingsNavigation>,
     ) {
         let r = &self.records[id];
@@ -1151,9 +1151,9 @@ impl LocalPlugins {
             manifest.author.clone(),
             manifest.version.clone(),
         );
-        #[cfg(all(windows, feature = "sdk-material"))]
+        #[cfg(windows)]
         let selected = self.selected_material_id() == Some(id);
-        #[cfg(not(all(windows, feature = "sdk-material")))]
+        #[cfg(not(windows))]
         let selected = false;
         let on = if material { selected } else { r.enabled };
         #[cfg(windows)]
@@ -1230,7 +1230,7 @@ impl LocalPlugins {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         let title = egui::RichText::new(&name).size(13.5).strong();
-                        #[cfg(all(windows, feature = "sdk-material"))]
+                        #[cfg(windows)]
                         let title = if material {
                             material_name(ui, &name, selected, active_material == Some(id))
                                 .size(13.5)
@@ -1362,7 +1362,7 @@ impl LocalPlugins {
                 }
                 if !revoked && plugin_switch(ui, id, on, if on { "停用插件" } else { "启用插件" }) {
                     if material {
-                        #[cfg(all(windows, feature = "sdk-material"))]
+                        #[cfg(windows)]
                         if self.request_material(ui, (!selected).then_some(id)) && !selected {
                             *jump = Some(SettingsNavigation::Tab(crate::extras::SETTINGS_TAB_APPEARANCE));
                         }
@@ -1751,7 +1751,7 @@ impl LocalPlugins {
         opened
     }
 
-    #[cfg(all(windows, feature = "sdk-material"))]
+    #[cfg(windows)]
     fn request_material(&mut self, ui: &egui::Ui, id: Option<&str>) -> bool {
         if let Some(id) = id.filter(|id| !self.material_permission_granted(id)) {
             ui.data_mut(|data| {
@@ -1762,7 +1762,7 @@ impl LocalPlugins {
         material_changed(ui, self.activate_material(id, false))
     }
 
-    #[cfg(all(windows, feature = "sdk-material"))]
+    #[cfg(windows)]
     fn confirm_material_permission(&mut self, ui: &egui::Ui) -> bool {
         use crate::extras::{
             settings_apply_style, settings_hint, settings_modal_frame, settings_modal_title,
@@ -1801,7 +1801,7 @@ impl LocalPlugins {
         allow && material_changed(ui, self.activate_material(Some(&id), true))
     }
 
-    #[cfg(all(windows, feature = "sdk-material"))]
+    #[cfg(windows)]
     pub(crate) fn material_settings(
         &mut self,
         ui: &mut egui::Ui,

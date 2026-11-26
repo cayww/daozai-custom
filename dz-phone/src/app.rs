@@ -134,6 +134,8 @@ pub(crate) const PAGE_SHORTCUT_KEYS: [&str; 11] = [
     "music", "focus", "health", "shelf", "tasks", "mail", "quota", "calendar", "weather",
     "performance", "wireless",
 ];
+/// 插件「快捷切换图标」整行预留高度。与页码点共用底栏，展开面板高度会把它算进去。
+pub(crate) const PAGE_SHORTCUT_ROW_H: f32 = 24.0;
 pub(crate) const PAGE_SETTINGS_TABS: [usize; 11] = [1,2,3,5,4,7,11,8,12,crate::extras::SETTINGS_TAB_PERFORMANCE,crate::extras::SETTINGS_TAB_WIRELESS];
 
 // ---------- 动效参数 ----------
@@ -2191,6 +2193,20 @@ impl App {
         { crate::bt::compat::Store::default() }
     }
 
+    /// 当前激活的 D3D11 材质包（方案 B；不依赖已退役的 sdk-material/wgpu 栈）。
+    #[cfg(all(windows, feature="sdk-js"))]
+    pub fn material_spec(&self) -> Option<crate::local_plugins::MaterialSpec<'_>> {
+        self.plugins.active_material()
+    }
+
+    /// 取消材质包激活，回退到内置液态玻璃 pass。
+    #[cfg(all(windows, feature="sdk-js"))]
+    pub fn deactivate_material(&mut self) -> Result<(), String> {
+        self.plugins
+            .activate_material(None, false)
+            .map_err(|error| error.to_string())
+    }
+
     /// 打开插件的设置页（上游 v0.6.70 插件市场）。
     #[cfg(feature="sdk-js")]
     pub(crate) fn open_plugin_settings(&mut self, id: &str) {
@@ -2293,6 +2309,19 @@ impl App {
         #[cfg(feature="sdk-js")]
         if let Some((_,name))=self.status_pages.get(page-PAGE_NAMES.len()) { return name.as_str(); }
         "页面管理"
+    }
+
+    fn active_page_shortcut_colors(&self) -> Option<&std::collections::BTreeMap<String, [u8; 3]>> {
+        #[cfg(feature="sdk-js")]
+        { self.plugins.active_page_shortcut_colors() }
+        #[cfg(not(feature="sdk-js"))]
+        { None }
+    }
+
+    fn page_shortcuts_enabled(&self) -> bool {
+        self.settings.show_page_shortcuts
+            && self.active_page_shortcut_colors().is_some()
+            && self.navigation_pages().nth(1).is_some()
     }
 
     #[cfg(feature="sdk-js")]
@@ -2687,18 +2716,28 @@ impl App {
     }
 
     pub(crate) fn expanded_height(&self)->f32 {
-        #[cfg(feature="sdk-js")]
-        if let Some(index)=self.page.checked_sub(PAGE_NAMES.len()) {
-            let height=self.status_pages.get(index).map_or(
-                crate::plugin_status_ui::STATUS_PAGE_H,|(id,_)|self.plugins.status_height(id),
-            );
-            #[cfg(windows)]
-            if self.status_pages.get(index).is_some_and(|(id,_)|self.plugins.source_attribution(id).is_some()) {
-                return height+crate::plugin_status_ui::ATTRIBUTION_HEIGHT;
+        let base = {
+            #[cfg(feature="sdk-js")]
+            if let Some(index)=self.page.checked_sub(PAGE_NAMES.len()) {
+                let height=self.status_pages.get(index).map_or(
+                    crate::plugin_status_ui::STATUS_PAGE_H,|(id,_)|self.plugins.status_height(id),
+                );
+                #[cfg(windows)]
+                let height=height+if self.status_pages.get(index)
+                    .is_some_and(|(id,_)|self.plugins.source_attribution(id).is_some())
+                { crate::plugin_status_ui::ATTRIBUTION_HEIGHT } else { 0.0 };
+                height
+            } else {
+                if self.page==CALENDAR_PAGE {CALENDAR_H}else if self.page==WEATHER_PAGE {WEATHER_H}
+                else if self.page==6{176.0}else if self.page==5&&self.mail.open_uid.is_some(){236.0}else{PH}
             }
-            return height;
-        }
-        if self.page==CALENDAR_PAGE {CALENDAR_H}else if self.page==WEATHER_PAGE {WEATHER_H}else if self.page==6{176.0}else if self.page==5&&self.mail.open_uid.is_some(){236.0}else{PH}
+            #[cfg(not(feature="sdk-js"))]
+            {
+                if self.page==CALENDAR_PAGE {CALENDAR_H}else if self.page==WEATHER_PAGE {WEATHER_H}
+                else if self.page==6{176.0}else if self.page==5&&self.mail.open_uid.is_some(){236.0}else{PH}
+            }
+        };
+        base + if self.page_shortcuts_enabled() { PAGE_SHORTCUT_ROW_H } else { 0.0 }
     }
 
     // ---------------------------------------------------------------
@@ -2710,6 +2749,22 @@ impl App {
         {
             self.plugins.sync_canvas_fonts(&ctx);
             self.pet.expressions.set_sheets(self.plugins.appearance_pet());
+        }
+        #[cfg(all(windows, feature="sdk-js"))]
+        {
+            // 每帧同步激活材质到 D3D11 运行时。源码未变时只更新参数，不会重复编译。
+            let applied = if let Some(spec) = self.plugins.active_material() {
+                crate::local_plugins::material_d3d11::set_active(
+                    Some(spec.id), spec.entry, spec.source, spec.params,
+                )
+            } else {
+                crate::local_plugins::material_d3d11::clear();
+                Ok(())
+            };
+            // 安装时已经校验过；这里失败就回退内置玻璃，不逐帧弹提示打扰用户。
+            if let Err(error) = applied {
+                crate::wgc::log(&format!("材质包加载失败：{error}"));
+            }
         }
         let dt = match self.last_t {
             Some(t0) => (env.t - t0).clamp(0.0, 0.1) as f32,
@@ -5067,8 +5122,8 @@ impl App {
     }
 
     fn nav(&mut self, c: &Card) {
-        let pages: Vec<_>=self.navigation_pages().collect();
-        if pages.len()<2 { return; }
+        let all_pages: Vec<_>=self.navigation_pages().collect();
+        if all_pages.len()<2 { return; }
         // 上游 v0.6.70：停靠方式决定箭头锚点，切页改变面板高度时仍可原地点击。
         let anchor_y=if self.page==6||self.page==8{88.0}else{68.0};
         let arrow_y=match self.dock() {
@@ -5089,25 +5144,84 @@ impl App {
         paint::chevron(c, 398.0, arrow_y, 1.0, rh, sr, glass, gr);
         if l.clicked() { self.navigate_page(false); }
         if r.clicked() { self.navigate_page(true); }
-        // 页码豆：宽度由弹簧驱动，整行实时居中；当前页是白色长条
-        let gap = 4.0;
-        let dot_y=self.expanded_height()-7.2;
+        // 页码豆与插件快捷切换图标共用一行；有资源包时图标占据页码左侧一整段。
+        let shortcuts = self.page_shortcuts_enabled();
+        let gap = if shortcuts { 3.0 } else { 4.0 };
+        let dot_scale = if shortcuts { 0.75 } else { 1.0 };
+        let dot_size = 4.0 * dot_scale;
+        let dot_y = if shortcuts {
+            self.expanded_height() - PAGE_SHORTCUT_ROW_H / 2.0
+        } else {
+            self.expanded_height() - 7.2
+        };
         let dot_w=|page:usize|->f32 {
             if page<PAGE_NAMES.len() { self.dots[page].pos }
             else { #[cfg(feature="sdk-js")]{self.status_dots.get(page-PAGE_NAMES.len()).map_or(4.0,|d|d.pos)} #[cfg(not(feature="sdk-js"))]{4.0} }
         };
-        let total: f32 = pages.iter().map(|&page| dot_w(page)).sum::<f32>() + gap * (pages.len()-1) as f32;
-        let mut x = PW / 2.0 - total / 2.0;
+        let max_slots = if shortcuts { PAGE_NAMES.len() } else { 40 };
+        let current = all_pages.iter().position(|&page|page==self.page).unwrap_or_default();
+        let start = current.saturating_sub(max_slots/2).min(all_pages.len().saturating_sub(max_slots));
+        let pages = &all_pages[start..(start+max_slots).min(all_pages.len())];
+        let dots_width: f32 = pages.iter().copied().map(dot_w).sum::<f32>() * dot_scale
+            + gap * pages.len().saturating_sub(1) as f32;
+        let shortcut_slot = 26.0;
+        let group_gap = 14.0;
+        let shortcut_width = if shortcuts { shortcut_slot * pages.len() as f32 + group_gap } else { 0.0 };
+        let mut x = (PW - dots_width - shortcut_width) / 2.0;
         let mut clicked = None;
-        for i in pages {
+        if shortcuts {
+            let row = c.clipped(x - 2.0, dot_y - 11.0, dots_width + shortcut_width + 4.0, 22.0);
+            for &page in pages {
+                let center = x + shortcut_slot / 2.0;
+                let button = row.hit(x, dot_y - 11.0, shortcut_slot, 22.0, ("page-shortcut", page))
+                    .on_hover_text(self.navigation_page_name(page))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                let (hover, press) = row.hover_t(&button);
+                let (ink, bg) = if page == self.page {
+                    let accent = self.active_page_shortcut_colors()
+                        .and_then(|colors| PAGE_SHORTCUT_KEYS.get(page).and_then(|key| colors.get(*key)))
+                        .map_or(theme::GRAY, |&[r, g, b]| Color32::from_rgb(r, g, b));
+                    (paint::mix(accent, theme::WHITE, 0.45), paint::alpha(accent, 0.30))
+                } else {
+                    (paint::mix(Color32::from_gray(174), theme::WHITE, hover),
+                     Color32::from_white_alpha((hover * 25.0) as u8))
+                };
+                row.fill(center - 10.5, dot_y - 9.0, 21.0, 18.0, 5.0, bg);
+                let icon = row.scaled(center, dot_y, 1.0 - 0.08 * press);
+                let mut use_default = true;
+                #[cfg(feature="sdk-js")]
+                if page < PAGE_NAMES.len() {
+                    paint::page_shortcut_icon(&icon, page, center, dot_y, ink);
+                    use_default = false;
+                } else if let Some((id, _)) = self.status_pages.get(page - PAGE_NAMES.len()) {
+                    if let Some(custom) = self.plugins.navigation_icon(id) {
+                        crate::plugin_canvas_ui::draw_navigation_icon(
+                            &icon.painter, icon.rect(center - 9.0, dot_y - 9.0, 18.0, 18.0),
+                            custom.commands(), ink,
+                        );
+                        use_default = false;
+                    }
+                }
+                if use_default {
+                    icon.seg((center - 5.0, dot_y + 4.0), (center - 5.0, dot_y + 1.0), 1.7, ink);
+                    icon.seg((center, dot_y + 4.0), (center, dot_y - 4.0), 1.7, ink);
+                    icon.seg((center + 5.0, dot_y + 4.0), (center + 5.0, dot_y - 1.0), 1.7, ink);
+                }
+                if button.clicked() { clicked = Some(page); }
+                x += shortcut_slot;
+            }
+            row.seg((x + group_gap / 2.0, dot_y - 6.0), (x + group_gap / 2.0, dot_y + 6.0), 1.0, Color32::from_gray(55));
+            x += group_gap;
+        }
+        for &i in pages {
             // 插件状态页若定义了导航图标，用图标替代默认横条豆。
             #[cfg(feature="sdk-js")]
             let nav_icon=i.checked_sub(PAGE_NAMES.len())
                 .and_then(|index|self.status_pages.get(index))
                 .and_then(|(id,_)|self.plugins.navigation_icon(id))
                 .map(|icon|icon.commands().to_vec());
-            let w = dot_w(i).max(3.0);
-            let on = anim::remap(w, 4.0, 16.0);
+            let w = dot_w(i).max(3.0) * dot_scale;
+            let on = anim::remap(w, 4.0 * dot_scale, 16.0 * dot_scale);
             let col = paint::mix(Color32::from_rgb(92, 92, 96), theme::WHITE, on);
             #[cfg(feature="sdk-js")]
             if let Some(commands)=&nav_icon {
@@ -5116,17 +5230,16 @@ impl App {
                     egui::vec2(16.0,16.0),
                 );
                 crate::plugin_canvas_ui::draw_navigation_icon(&c.painter,area,commands,col);
-            } else { c.fill(x, dot_y - 2.0, w, 4.0, 2.0, col); }
+            } else { c.fill(x, dot_y - dot_size / 2.0, w, dot_size, dot_size / 2.0, col); }
             #[cfg(not(feature="sdk-js"))]
-            c.fill(x, dot_y - 2.0, w, 4.0, 2.0, col);
-            let hr = c.hit(x - 2.0, dot_y - 6.0, w + 4.0, 12.0, ("dot", i));
+            c.fill(x, dot_y - dot_size / 2.0, w, dot_size, dot_size / 2.0, col);
+            let extra = gap / 2.0;
+            let hr = c.hit(x - extra, dot_y - 6.0, w + gap, 12.0, ("dot", i));
             hr.clone().on_hover_text(self.navigation_page_name(i));
             if hr.hovered() && i != self.page {
-                c.fill(x - 1.0, dot_y - 3.0, w + 2.0, 6.0, 3.0, Color32::from_white_alpha(28));
+                c.fill(x - 1.0, dot_y - dot_size / 2.0 - 1.0, w + 2.0, dot_size + 2.0, 3.0, Color32::from_white_alpha(28));
             }
-            if hr.clicked() {
-                clicked = Some(i);
-            }
+            if hr.clicked() { clicked = Some(i); }
             x += w + gap;
         }
         if let Some(i) = clicked {
