@@ -2972,6 +2972,8 @@ impl App {
         self.clipboard.flush();
         if self.t-self.quota_checked_at>30.0 {self.quota_checked_at=self.t;self.quota_threshold_alert();}
         let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());
+        let performance_bar=self.performance_on_bar();
+        if performance_bar { layout.add_performance(self.settings.performance_bar.width(self.settings.performance_metrics)); }
         // 视频摘要要占一整块，其余常驻组件对称让位。
         if self.video_page(){layout.widen(bar::MUSIC,VIDEO_PILL_EXTRA);}
         // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
@@ -3003,6 +3005,10 @@ impl App {
         if self.settings.clock_period!=0 { layout.widen_clock(40.0); }
         if self.settings.clock_seconds { layout.widen_clock(24.0); }
         if let Some(extra)=self.weather_pill_extra(&ctx){ layout.widen(bar::WEATHER,extra); }
+        // 上游 v0.6.70：无线设备常驻整组接入；放不下就整组隐藏，不挤压其它常驻项。
+        let wireless=self.wireless_resident();
+        let wireless_w=self.wireless_bar_width();
+        if !wireless.is_empty() && wireless_w<=self.resident_limit()-layout.width-12.0 { layout.append_bluetooth(wireless_w); }
         if !self.settings.show_clock {layout.hide_clock();}
         if self.pet_enabled() {
             if let Some(a)=self.notice.as_ref().filter(|_|!self.compact_notices()&&!self.open){layout.x[bar::PET]=Some(22.0-(self.notice_size(a).0+self.pet_space())/2.0);}
@@ -5042,6 +5048,8 @@ impl App {
         if compact_alpha>0.004 {
             let c=base.faded(compact_alpha);let c=if compact_alpha<0.8{c.ghost()}else{c};
             self.draw_quota_bar(&c,local_cx,&layout);
+            if let Some(x)=layout.x[bar::PERFORMANCE] { self.performance_bar(&c,local_cx+x); }
+            self.draw_wireless_bar(&c,local_cx,&layout);
             if let Some(x)=layout.x[bar::WEATHER] { self.draw_pill_weather(&c,local_cx+x,&layout); }
             #[cfg(feature="sdk-js")]
             {

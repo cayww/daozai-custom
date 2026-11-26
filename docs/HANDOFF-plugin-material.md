@@ -406,3 +406,14 @@ float4 material(MaterialIn i) {
   - GPU 透镜启用时 `material_capsule()` 走 GPU 分支，不再叠矢量白边。
   - `Ctl::CalAdd` 加入不随 `page_slide_tx()` 平移的 chrome 列表，与 header 上的按钮原地对齐。
 - **验证**：按用户要求未跑全量测试；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
+
+---
+
+## 21. 收起态无线设备常驻缺失（2026-11-26 21:20+）
+- **现象**：在「无线设备」里把手机电量设备设为常驻，收起态却不显示。
+- **根因**：本地有完整的 `wireless_resident()` / `wireless_bar_width()` / `draw_wireless_bar()`，但 `shared_header()` 从未调用 `draw_wireless_bar()`，`tick()` 也没把 `append_bluetooth(width)` 并入常驻布局；`Ctl` 诊断里 `draw_wireless_bar`/`reserved_width` 的 never used 就是证据。
+- **修复**：按上游 v0.6.70 接回：
+  - `tick()` 布局里 `layout.append_bluetooth(wireless_w)`（整组放不下则隐藏，不挤压其它项）。
+  - `shared_header()` 的 `compact_alpha` 块里调用 `self.draw_wireless_bar(&c, local_cx, &layout)`。
+  - 顺手接回同段缺失的 `layout.add_performance()` 与 `performance_bar()` 绘制（上游同位置，之前也是未调用）。
+- **验证**：按用户要求未跑全量测试；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
