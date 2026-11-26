@@ -88,12 +88,91 @@ pub(crate) fn scissor_pixels(
     zoom_factor: f32,
     frame_size: (u32, u32),
 ) -> egui::Rect {
+    scissor_pixels_with(clip_rect, zoom_factor, frame_size, ScissorTuning::from_env())
+}
+
+/// 调试用取整方式。默认 `Round`（与上游 wgpu 一致）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ScissorRound {
+    Round,
+    Floor,
+    Ceil,
+    /// 直接 `as i32` 的向零截断（修复前的旧行为）。
+    Trunc,
+}
+
+impl ScissorRound {
+    fn apply(self, v: f32) -> f32 {
+        match self {
+            Self::Round => v.round(),
+            Self::Floor => v.floor(),
+            Self::Ceil => v.ceil(),
+            Self::Trunc => v.trunc(),
+        }
+    }
+}
+
+/// 可在运行时用环境变量微调，便于实机定位 1px 接缝，不用重编译：
+///
+/// - `DAOZAI_SCISSOR_ROUND=round|floor|ceil|trunc`（默认 round）
+/// - `DAOZAI_SCISSOR_EXPAND=<f32 像素>`：正数向外扩、负数向内缩（默认 0）
+/// - `DAOZAI_SCISSOR_OFF=1`：完全关闭裁剪（设为整个渲染目标），用于判断接缝是否来自裁剪
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct ScissorTuning {
+    pub round: ScissorRound,
+    pub expand: f32,
+    pub off: bool,
+}
+
+impl Default for ScissorTuning {
+    fn default() -> Self {
+        Self { round: ScissorRound::Round, expand: 0.0, off: false }
+    }
+}
+
+impl ScissorTuning {
+    fn from_env() -> Self {
+        // 每帧每个 mesh 都会问一次，缓存起来；环境变量改了需重启程序才生效。
+        static CACHED: std::sync::OnceLock<ScissorTuning> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(Self::read_env)
+    }
+
+    fn read_env() -> Self {
+        let mut t = Self::default();
+        if let Ok(v) = std::env::var("DAOZAI_SCISSOR_ROUND") {
+            t.round = match v.trim().to_ascii_lowercase().as_str() {
+                "floor" => ScissorRound::Floor,
+                "ceil" => ScissorRound::Ceil,
+                "trunc" => ScissorRound::Trunc,
+                _ => ScissorRound::Round,
+            };
+        }
+        if let Ok(v) = std::env::var("DAOZAI_SCISSOR_EXPAND") {
+            if let Ok(f) = v.trim().parse::<f32>() { t.expand = f; }
+        }
+        t.off = std::env::var("DAOZAI_SCISSOR_OFF").is_ok_and(|v| v.trim() == "1");
+        t
+    }
+}
+
+pub(crate) fn scissor_pixels_with(
+    clip_rect: egui::Rect,
+    zoom_factor: f32,
+    frame_size: (u32, u32),
+    tune: ScissorTuning,
+) -> egui::Rect {
     let w = frame_size.0 as f32;
     let h = frame_size.1 as f32;
-    let x0 = (clip_rect.min.x * zoom_factor).round().clamp(0.0, w);
-    let y0 = (clip_rect.min.y * zoom_factor).round().clamp(0.0, h);
-    let x1 = (clip_rect.max.x * zoom_factor).round().clamp(x0, w);
-    let y1 = (clip_rect.max.y * zoom_factor).round().clamp(y0, h);
+    if tune.off {
+        // 完全裁到整块渲染目标，纯粹用于判断“接缝是否来自 scissor”。
+        return egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(w, h));
+    }
+    let r = tune.round;
+    let e = tune.expand;
+    let x0 = (r.apply(clip_rect.min.x * zoom_factor) - e).clamp(0.0, w);
+    let y0 = (r.apply(clip_rect.min.y * zoom_factor) - e).clamp(0.0, h);
+    let x1 = (r.apply(clip_rect.max.x * zoom_factor) + e).clamp(x0, w);
+    let y1 = (r.apply(clip_rect.max.y * zoom_factor) + e).clamp(y0, h);
     egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
 }
 
@@ -302,6 +381,20 @@ impl Renderer {
                 1.0 - p.y * zoom_factor / frame_size_scaled.1 * 2.0,
             )
         };
+        // 诊断开关（运行时环境变量，改完重启即生效，无需重编译）：
+        //   DAOZAI_TESS_FEATHER=0      关闭羽化抗锯齿
+        //   DAOZAI_TESS_FEATHER_PX=0.5 调整羽化宽度（默认 1.0）
+        {
+            let off = std::env::var("DAOZAI_TESS_FEATHER").is_ok_and(|v| v.trim() == "0");
+            let px = std::env::var("DAOZAI_TESS_FEATHER_PX").ok()
+                .and_then(|v| v.trim().parse::<f32>().ok());
+            if off || px.is_some() {
+                egui_ctx.tessellation_options_mut(|o| {
+                    o.feathering = !off;
+                    if let Some(px) = px { o.feathering_size_in_pixels = px; }
+                });
+            }
+        }
         let draw_ops: Vec<DrawOp> = egui_ctx
             .tessellate(egui_output.shapes, egui_output.pixels_per_point)
             .into_iter()
@@ -665,8 +758,13 @@ impl Renderer {
 
 #[cfg(test)]
 mod scissor_tests {
-    use super::scissor_pixels;
+    use super::{scissor_pixels_with, ScissorRound, ScissorTuning};
     use egui::{pos2, Rect};
+
+    /// 测试一律用显式 tuning，避免受本机调试环境变量影响。
+    fn scissor_pixels(r: Rect, zoom: f32, size: (u32, u32)) -> Rect {
+        scissor_pixels_with(r, zoom, size, ScissorTuning::default())
+    }
 
     /// 非整数 DPI 下必须四舍五入，不能向零截断——否则 1px 缝。
     #[test]
@@ -699,5 +797,41 @@ mod scissor_tests {
         let r = Rect::from_min_max(pos2(500.0, 500.0), pos2(400.0, 400.0));
         let out = scissor_pixels(r, 1.0, (450, 450));
         assert!(out.min.x <= out.max.x && out.min.y <= out.max.y);
+    }
+
+    #[test]
+    fn scissor_tuning_floor_and_ceil_differ_from_round() {
+        let r = Rect::from_min_max(pos2(10.4, 10.6), pos2(20.6, 20.4));
+        let floor = scissor_pixels_with(r, 1.0, (100, 100), ScissorTuning {
+            round: ScissorRound::Floor, expand: 0.0, off: false,
+        });
+        let ceil = scissor_pixels_with(r, 1.0, (100, 100), ScissorTuning {
+            round: ScissorRound::Ceil, expand: 0.0, off: false,
+        });
+        assert_eq!(floor, Rect::from_min_max(pos2(10.0, 10.0), pos2(20.0, 20.0)));
+        assert_eq!(ceil, Rect::from_min_max(pos2(11.0, 11.0), pos2(21.0, 21.0)));
+    }
+
+    #[test]
+    fn scissor_expand_grows_and_shrinks_the_rect() {
+        let r = Rect::from_min_max(pos2(10.0, 10.0), pos2(20.0, 20.0));
+        let grow = scissor_pixels_with(r, 1.0, (100, 100), ScissorTuning {
+            round: ScissorRound::Round, expand: 1.0, off: false,
+        });
+        assert_eq!(grow, Rect::from_min_max(pos2(9.0, 9.0), pos2(21.0, 21.0)));
+        let shrink = scissor_pixels_with(r, 1.0, (100, 100), ScissorTuning {
+            round: ScissorRound::Round, expand: -1.0, off: false,
+        });
+        assert_eq!(shrink, Rect::from_min_max(pos2(11.0, 11.0), pos2(19.0, 19.0)));
+    }
+
+    /// DAOZAI_SCISSOR_OFF=1：整块渲染目标，用于判断接缝是否来自裁剪。
+    #[test]
+    fn scissor_off_covers_the_whole_target() {
+        let r = Rect::from_min_max(pos2(10.0, 10.0), pos2(20.0, 20.0));
+        let out = scissor_pixels_with(r, 1.0, (300, 200), ScissorTuning {
+            round: ScissorRound::Round, expand: 0.0, off: true,
+        });
+        assert_eq!(out, Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 200.0)));
     }
 }
