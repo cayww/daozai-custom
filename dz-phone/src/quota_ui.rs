@@ -20,6 +20,8 @@ pub(crate) struct State {
     pub deepseek_connecting:Option<quota::deepseek::Connect>,pub deepseek_key:String,
     pub api_connecting:Option<quota::api::Connect>,pub api_key:String,
     pub detail_account:Option<String>,
+    /// 当前选中的 JS 插件额度源 id（内存状态）。
+    pub selected_plugin:Option<String>,
     pub kiro_connecting:Option<quota::kiro::Connect>,
     pub stale:HashMap<String,String>,
     pub gemini_connecting:Option<quota::gemini::Connect>,pub gemini_email:String,pub gemini_cookie:String,
@@ -409,7 +411,11 @@ impl App {
         if let Some(id)=chosen{self.quota.config.selected=id;self.quota.config.save();self.show_page(6);}
     }
     pub(crate) fn page_quota(&mut self,c:&Card){
-        if c.hit(303.0,8.0,32.0,21.0,"quota-refresh").on_hover_text("刷新额度").clicked(){self.pending.push(Cmd::QuotaRefresh);}
+        if c.hit(303.0,8.0,32.0,21.0,"quota-refresh").on_hover_text("刷新额度").clicked(){
+            #[cfg(feature="sdk-js")]
+            self.plugins.refresh_quota();
+            self.pending.push(Cmd::QuotaRefresh);
+        }
         c.text(319.0,23.0,if self.quota.busy.is_empty(){"刷新"}else{"更新中"},10.5,W::Regular,theme::GRAY,H::Center);
         let Some(selected)=self.quota.config.selected_index() else{
             c.text(43.0,61.0,"还没有添加 AI 账号",13.0,W::Bold,theme::WHITE,H::Left);
@@ -431,11 +437,75 @@ impl App {
             };
             b.text(90.0,108.0,"添加账号",10.0,W::Semibold,theme::WHITE,H::Center);if r.clicked(){self.settings_tab=11;self.open_settings();}return;
         };
-        let indices=self.quota.config.ordered_indices(false);
-        let pos=indices.iter().position(|i|*i==selected).unwrap_or(0);let start=pos/3*3;let mut picked=None;
-        if indices.len()>3{for (x,offset,label)in [(42.0,-1isize,"‹"),(357.0,1,"›")]{if c.hit(x-7.0,30.0,18.0,19.0,("quota-account-next",offset)).clicked(){picked=Some(indices[(pos as isize+offset).rem_euclid(indices.len() as isize) as usize]);}c.text(x+2.0,44.0,label,13.0,W::Regular,theme::GRAY,H::Center);}}
-        for (column,index)in indices.iter().skip(start).take(3).enumerate(){let a=&self.quota.config.accounts[*index];let x=59.0+column as f32*99.0;let on=*index==selected;let colors=accent_colors(&self.quota.config,a);let color=colors[0];let(r,b)=crate::paint::capsule(c,x,30.0,94.0,21.0,&format!("quota-account-{}",a.id),if on{Color32::from_rgb(color.r()/5,color.g()/5,color.b()/5)}else{Color32::BLACK},theme::BTN_HOVER);let text=b.fit(&a.alias,10.5,W::Regular,84.0);b.text(x+47.0,45.0,&text,10.5,W::Regular,if on{colors[1]}else{theme::GRAY},H::Center);if r.on_hover_text(format!("{} · {}",a.provider.name(),a.alias)).clicked(){picked=Some(*index);}}
-        if let Some(i)=picked{self.quota.config.selected=self.quota.config.accounts[i].id.clone();self.quota.config.save();}
+        #[derive(Clone,Copy)]
+        enum Source { Account(usize), #[cfg(feature="sdk-js")] Plugin(usize) }
+        let mut sources:Vec<_>=self.quota.config.ordered_indices(false).into_iter().map(Source::Account).collect();
+        #[cfg(feature="sdk-js")]
+        let plugin_sources:Vec<_>=self.plugins.quota_sources().map(|(id,name,q)|(id.to_owned(),name.to_owned(),q.clone())).collect();
+        let builtin_pos=sources.iter().position(|s|matches!(s,Source::Account(i) if *i==selected));
+        #[cfg(feature="sdk-js")]
+        let (sources,pos):(Vec<_>,Option<usize>)={
+            let plugin_pos=self.quota.selected_plugin.as_ref()
+                .and_then(|id|plugin_sources.iter().position(|(p,_,_)|p==id));
+            if plugin_pos.is_none() { self.quota.selected_plugin=None; }
+            let offset=sources.len();
+            sources.extend((0..plugin_sources.len()).map(Source::Plugin));
+            (sources, plugin_pos.map(|i|offset+i).or(builtin_pos))
+        };
+        #[cfg(not(feature="sdk-js"))]
+        let pos=builtin_pos;
+        let Some(pos)=pos.or_else(||(!sources.is_empty()).then_some(0)) else{
+            c.text(43.0,61.0,"还没有添加 AI 账号",13.0,W::Bold,theme::WHITE,H::Left);
+            c.text(43.0,80.0,"连接 AI 账号，查看剩余额度",10.5,W::Regular,theme::GRAY,H::Left);
+            let (r,b)=crate::paint::capsule(c,43.0,92.0,94.0,24.0,"add-quota-account",theme::BTN,theme::BTN_HOVER);
+            b.text(90.0,108.0,"添加账号",10.0,W::Semibold,theme::WHITE,H::Center);
+            if r.clicked(){self.settings_tab=11;self.open_settings();}
+            return;
+        };
+        let start=pos/3*3;let mut picked=None;
+        if sources.len()>3{for (x,offset,label)in [(42.0,-1isize,"‹"),(357.0,1,"›")]{if c.hit(x-7.0,30.0,18.0,19.0,("quota-account-next",offset)).clicked(){picked=Some((pos as isize+offset).rem_euclid(sources.len() as isize) as usize);}c.text(x+2.0,44.0,label,13.0,W::Regular,theme::GRAY,H::Center);}}
+        for (column,source) in sources.iter().skip(start).take(3).enumerate(){
+            let x=59.0+column as f32*99.0;
+            let (hit,name,colors,on)=match *source {
+                Source::Account(index)=>{
+                    let a=&self.quota.config.accounts[index];
+                    (format!("quota-account-{}",a.id),a.alias.clone(),accent_colors(&self.quota.config,a),index==selected && self.quota.selected_plugin.is_none())
+                },
+                #[cfg(feature="sdk-js")]
+                Source::Plugin(index)=>{
+                    let (id,name,_)=&plugin_sources[index];
+                    (format!("quota-plugin-{id}"),name.clone(),[crate::theme::CYAN,crate::theme::WHITE],self.quota.selected_plugin.as_deref()==Some(id.as_str()))
+                },
+            };
+            let color=colors[0];
+            let(r,b)=crate::paint::capsule(c,x,30.0,94.0,21.0,&hit,if on{Color32::from_rgb(color.r()/5,color.g()/5,color.b()/5)}else{Color32::BLACK},theme::BTN_HOVER);
+            let text=b.fit(&name,10.5,W::Regular,84.0);
+            b.text(x+47.0,45.0,&text,10.5,W::Regular,if on{colors[1]}else{theme::GRAY},H::Center);
+            if r.clicked(){picked=Some(start+column);}
+        }
+        if let Some(p)=picked {
+            match sources[p] {
+                Source::Account(i)=>{self.quota.config.selected=self.quota.config.accounts[i].id.clone();self.quota.selected_plugin=None;self.quota.config.save();},
+                #[cfg(feature="sdk-js")]
+                Source::Plugin(i)=>{self.quota.selected_plugin=Some(plugin_sources[i].0.clone());},
+            }
+        }
+        #[cfg(feature="sdk-js")]
+        if let Some(Source::Plugin(index))=sources.get(pos).copied() {
+            let (_id,_name,quota)=&plugin_sources[index];
+            c.text(43.0,64.0,"插件额度",13.0,W::Bold,theme::WHITE,H::Left);
+            for (i,w) in quota.windows.iter().take(3).enumerate() {
+                let y=90.0+i as f32*36.0;
+                c.circle(49.0,y-4.0,2.5,theme::CYAN);
+                c.text(60.0,y,&c.fit(&w.label,11.5,W::Semibold,150.0),11.5,W::Semibold,theme::WHITE,H::Left);
+                let value=if let Some(pct)=w.remaining_pct {format!("{pct:.0}%")}
+                    else if let (Some(rem),Some(lim))=(w.remaining,w.limit) {format!("{:.0}/{:.0}",rem,lim)}
+                    else if let Some(rem)=w.remaining {format!("{rem:.0}")} else {"—".into()};
+                c.text(355.0,y+4.0,&value,15.0,W::Semibold,theme::WHITE,H::Right);
+                if let Some(unit)=&w.unit { c.text(355.0,y+20.0,unit,9.5,W::Regular,theme::GRAY,H::Right); }
+            }
+            return;
+        }
         let a=&self.quota.config.accounts[selected];let result=self.quota.rows.get(&a.id);let snapshot=result.and_then(|r|r.as_ref().ok());
         let colors=accent_colors(&self.quota.config,a);
         if let Some(s)=snapshot.filter(|s|s.at>0){

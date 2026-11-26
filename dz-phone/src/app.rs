@@ -1025,6 +1025,12 @@ pub struct App {
     // 切页
     pub(crate) page: usize,
     page_from: usize,
+    #[cfg(feature="sdk-js")]
+    status_pages: Vec<(String, String)>,
+    #[cfg(feature="sdk-js")]
+    plugin_canvas_frame: Option<(usize, crate::plugin_status_ui::InteractionResponse)>,
+    #[cfg(feature="sdk-js")]
+    plugin_form_focused: bool,
     page_scroll_area: Option<Rect>,
     page_dir: f32,
     page_t0: f64,
@@ -1039,6 +1045,8 @@ pub struct App {
     /// 避免翻页刚结束又掉回矢量版闪一次边。
     flip_glass_until: f64,
     dots: [Spring; 11],
+    #[cfg(feature="sdk-js")]
+    status_dots: Vec<Spring>,
     wheel_delta: f32,
     wheel_at: f64,
     wheel_page_at: f64,
@@ -1445,6 +1453,12 @@ impl App {
             grip_hover_since: None,
             page: initial_page,
             page_from: initial_page,
+            #[cfg(feature="sdk-js")]
+            status_pages: Vec::new(),
+            #[cfg(feature="sdk-js")]
+            plugin_canvas_frame: None,
+            #[cfg(feature="sdk-js")]
+            plugin_form_focused: false,
             page_scroll_area: None,
             page_dir: 1.0,
             page_t0: -10.0,
@@ -1453,6 +1467,8 @@ impl App {
             slide: Spring::new(0.0, 260.0, 0.92),
             mail_tab: anim::Spring::new(0.0, 300.0, 0.5),
             dots: std::array::from_fn(|i| Spring::new(if i == initial_page { 16.0 } else { 4.0 }, 380.0, 0.86)),
+            #[cfg(feature="sdk-js")]
+            status_dots: Vec::new(),
             wheel_delta: 0.0,
             wheel_at: -1.0,
             wheel_page_at: -1.0,
@@ -2173,8 +2189,14 @@ impl App {
     }
 
     pub fn show_page(&mut self,page:usize) {
-        if !self.settings.visible_pages[page] {
-            self.settings_tab=PAGE_SETTINGS_TABS[page];
+        if !self.module_on(page) {
+            #[cfg(feature="sdk-js")]
+            if let Some(id)=page.checked_sub(PAGE_NAMES.len())
+                .and_then(|index|self.status_pages.get(index)).map(|(id,_)|id.clone()) {
+                self.open_plugin_settings(&id);
+                return;
+            }
+            self.settings_tab=PAGE_SETTINGS_TABS.get(page).copied().unwrap_or(crate::extras::SETTINGS_TAB_PLUGINS);
             self.open_settings();
             return;
         }
@@ -2229,7 +2251,76 @@ impl App {
     // ---------- 功能模块：页面开关即模块开关，关闭后页面隐藏、后台同步和提醒一并停止 ----------
 
     /// 模块是否开启（与「页面管理」里的页面开关一致）。
-    pub fn module_on(&self,page:usize)->bool {self.settings.visible_pages.get(page).copied().unwrap_or(false)}
+    pub fn module_on(&self,page:usize)->bool {
+        self.settings.visible_pages.get(page).copied().unwrap_or_else(||page-PAGE_NAMES.len()<self.status_page_count())
+    }
+    /// 当前是否为插件状态页（页码排在内置页之后）。
+    pub(crate) fn is_plugin_status_page(&self) -> bool { self.page >= PAGE_NAMES.len() }
+
+    fn status_page_count(&self) -> usize {
+        #[cfg(feature="sdk-js")]
+        { self.status_pages.len() }
+        #[cfg(not(feature="sdk-js"))]
+        { 0 }
+    }
+
+    /// 可导航的页：内置可见页 + 插件状态页。
+    fn navigation_pages(&self) -> impl Iterator<Item=usize> + '_ {
+        self.settings.page_order.iter().copied()
+            .filter(|page| self.settings.visible_pages.get(*page).copied().unwrap_or(false))
+            .chain(PAGE_NAMES.len()..PAGE_NAMES.len()+self.status_page_count())
+    }
+
+    fn navigation_page_name(&self, page: usize) -> &str {
+        if let Some(name)=PAGE_NAMES.get(page) { return name; }
+        #[cfg(feature="sdk-js")]
+        if let Some((_,name))=self.status_pages.get(page-PAGE_NAMES.len()) { return name.as_str(); }
+        "页面管理"
+    }
+
+    #[cfg(feature="sdk-js")]
+    fn sync_status_pages(&mut self) {
+        let current_pages:Vec<(&str,&str)>=self.plugins.status_pages().collect();
+        if self.status_pages.iter().map(|(id,name)|(id.as_str(),name.as_str())).eq(current_pages.iter().copied()) { return; }
+        let pages:Vec<_>=current_pages.into_iter().map(|(id,name)|(id.to_owned(),name.to_owned())).collect();
+        // 数字页码只用于绘制和翻页；安装/停用其他插件时按 ID 找回原来的页。
+        let remap=|page:usize| {
+            if page<PAGE_NAMES.len() { return Some(page); }
+            let (id,_)=self.status_pages.get(page-PAGE_NAMES.len())?;
+            pages.iter().position(|(other,_)|other==id).map(|i|PAGE_NAMES.len()+i)
+        };
+        let current=remap(self.page);
+        let previous=remap(self.page_from);
+        self.drag_saved=self.drag_saved.and_then(remap);
+        self.status_pages=pages;
+        if let Some(page)=current {
+            self.page=page;
+            self.page_from=previous.unwrap_or(page);
+        } else {
+            let fallback=self.navigation_pages().next().unwrap_or(0);
+            self.page=fallback;
+            self.page_from=self.page;
+            self.page_t0=self.t-1.0;
+            self.subpage=None;
+            self.cancel_edit();
+        }
+        self.dots_target();
+    }
+
+    #[cfg(feature="sdk-js")]
+    pub(crate) fn show_status_page(&mut self, id: &str) {
+        self.sync_status_pages();
+        if let Some(index)=self.status_pages.iter().position(|(source,_)|source==id) {
+            self.show_page(PAGE_NAMES.len()+index);
+        }
+    }
+
+    /// 上游插件画布用的岛体主题色；对接本地皮肤实现。
+    #[cfg(feature="sdk-js")]
+    pub(crate) fn island_palette(&self)->Option<crate::skin_paint::Palette> { self.skin_palette() }
+    #[cfg(feature="sdk-js")]
+    pub(crate) fn island_overlay_fill(&self)->Color32 { self.preview_fill() }
+
     /// 收信线程是否应运行：邮箱模块开启且打开了「新邮件提醒」。
     pub fn mail_active(&self)->bool {self.module_on(MAIL_PAGE) && self.settings.mail_enabled}
     /// 剪贴板监听是否应运行：置物架模块开启且打开了「记录剪贴板」。
@@ -2252,20 +2343,18 @@ impl App {
         }
         // 关掉专注模块时一并停止正在进行的计时，避免页面不可见却到点弹提醒。
         if !visible && page==FOCUS_PAGE {self.pomo.running=false;}
-        if !self.settings.visible_pages[self.page] {
-            if let Some(first)=self.settings.page_order.iter().copied().find(|page|self.settings.visible_pages[*page]) { self.go(first,1.0); }
+        if !self.module_on(self.page) {
+            let first=self.navigation_pages().next();
+            if let Some(first)=first { self.go(first,1.0); }
         }
     }
 
     fn navigate_page(&mut self,next:bool) {
-        let position=self.settings.page_order.iter().position(|page|*page==self.page).unwrap();
-        for offset in 1..=PAGE_NAMES.len() {
-            let page=self.settings.page_order[(position+if next {offset}else{PAGE_NAMES.len()-offset})%PAGE_NAMES.len()];
-            if self.settings.visible_pages[page] {
-                self.go(page,if next {1.0}else{-1.0});
-                break;
-            }
-        }
+        let pages:Vec<_>=self.navigation_pages().collect();
+        let Some(pos)=pages.iter().position(|&page|page==self.page) else {return;};
+        let offset=if next {1}else{pages.len()-1};
+        let target=pages[(pos+offset)%pages.len()];
+        self.go(target,if next {1.0}else{-1.0});
     }
 
     /// OLED 像素偏移只在收起动画完成、没有鼠标交互、不在编辑时移动；
@@ -2312,7 +2401,7 @@ impl App {
 
     /// 带过渡地切到某页。`dir` > 0 表示内容从右侧进入。
     pub(crate) fn go(&mut self, page: usize, dir: f32) {
-        if page == self.page || !self.settings.visible_pages[page] { return; }
+        if page == self.page || !self.module_on(page) { return; }
         self.music_volume_open=false;
         self.subpage=None;
         // 连点：上一段过渡还没结束时，以当前页为起点重新开始，位移速度保留。
@@ -2337,6 +2426,17 @@ impl App {
     fn dots_target(&mut self) {
         for (i, d) in self.dots.iter_mut().enumerate() {
             d.target = if i == self.page { 16.0 } else { 4.0 };
+        }
+        #[cfg(feature="sdk-js")]
+        {
+            // 状态页数量变化时同步弹簧数量，避免 nav() 越界。
+            if self.status_dots.len()!=self.status_pages.len() {
+                self.status_dots=(0..self.status_pages.len())
+                    .map(|i|Spring::new(if PAGE_NAMES.len()+i==self.page {16.0}else{4.0},380.0,0.86)).collect();
+            }
+            for (i,d) in self.status_dots.iter_mut().enumerate() {
+                d.target=if PAGE_NAMES.len()+i==self.page {16.0}else{4.0};
+            }
         }
     }
 
@@ -2562,6 +2662,17 @@ impl App {
     }
 
     pub(crate) fn expanded_height(&self)->f32 {
+        #[cfg(feature="sdk-js")]
+        if let Some(index)=self.page.checked_sub(PAGE_NAMES.len()) {
+            let height=self.status_pages.get(index).map_or(
+                crate::plugin_status_ui::STATUS_PAGE_H,|(id,_)|self.plugins.status_height(id),
+            );
+            #[cfg(windows)]
+            if self.status_pages.get(index).is_some_and(|(id,_)|self.plugins.source_attribution(id).is_some()) {
+                return height+crate::plugin_status_ui::ATTRIBUTION_HEIGHT;
+            }
+            return height;
+        }
         if self.page==CALENDAR_PAGE {CALENDAR_H}else if self.page==WEATHER_PAGE {WEATHER_H}else if self.page==6{176.0}else if self.page==5&&self.mail.open_uid.is_some(){236.0}else{PH}
     }
 
@@ -2570,6 +2681,8 @@ impl App {
     // ---------------------------------------------------------------
     pub fn frame(&mut self, ui: &mut egui::Ui, win: Rect, env: &Env) -> FrameOut {
         let ctx = ui.ctx().clone();
+        #[cfg(feature="sdk-js")]
+        self.plugins.sync_canvas_fonts(&ctx);
         let dt = match self.last_t {
             Some(t0) => (env.t - t0).clamp(0.0, 0.1) as f32,
             None => 0.0,
@@ -2845,11 +2958,21 @@ impl App {
                 self.navigate_page(right);
             } else if scroll!=0.0 {
                 let cursor=env.cursor.unwrap()-self.content_origin(win).to_vec2();
+                #[cfg(feature="sdk-js")]
+                let status_scroll = inside && self.page.checked_sub(PAGE_NAMES.len())
+                    .and_then(|index| self.status_pages.get(index))
+                    .and_then(|(id,_)| {
+                        let (_,status,health)=self.plugins.status_page(id)?;
+                        if health!=crate::plugin_status::StatusHealth::Ready { return None; }
+                        crate::plugin_status_ui::status_scroll_area(status?,self.plugins.status_layout(id)?)
+                    }).is_some_and(|area|area.contains(cursor));
+                #[cfg(not(feature="sdk-js"))]
+                let status_scroll=false;
                 let mail_reading=inside && self.page==5 && self.mail.open_uid.is_some();
                 let mail_list=self.page==5 && !self.mail.accounts.is_empty() && self.mail.open_uid.is_none() && self.mail_list_bounds().contains(cursor);
                 let music_volume=self.page==0 && !self.video_page() && (Rect::from_min_max(Pos2::new(354.0,106.0),Pos2::new(380.0,130.0)).contains(cursor)
                     || self.music_volume_open && crate::pages::MUSIC_VOLUME_RECT.contains(cursor));
-                if mail_reading || mail_list || music_volume {self.wheel_delta=0.0;}
+                if mail_reading || mail_list || music_volume || status_scroll {self.wheel_delta=0.0;}
                 else {
                     // 累积高精度滚轮的小幅输入；停顿或反向时丢弃上一段余量。
                     if self.t-self.wheel_at>0.18 || self.wheel_delta*scroll<0.0 {self.wheel_delta=0.0;}
@@ -3006,6 +3129,8 @@ impl App {
         let content_from=crate::skin_paint::shape_count(&ctx,layer);
         let clip = panel.intersect(win);
         let base = Card::new(ui, origin, clip);
+        #[cfg(feature="sdk-js")]
+        { self.plugin_form_focused=false; self.plugin_canvas_frame=None; }
         self.cursor_local = env.cursor.map(|p| base.to_local(p));
 
         let banner=!self.compact_notices()&&self.notice.is_some()&&!self.open;
@@ -4793,7 +4918,7 @@ impl App {
     // 面板主体：页标题 + 页面（带切页过渡）+ 翻页箭头 + 页码豆
     // ---------------------------------------------------------------
     fn panel_body(&mut self, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
-        let settings=c.hit(380.0,4.0,28.0,28.0,"page-settings").on_hover_text(format!("打开{}设置窗口",PAGE_NAMES[self.page]));
+        let settings=c.hit(380.0,4.0,28.0,28.0,"page-settings").on_hover_text(format!("打开{}设置窗口",self.navigation_page_name(self.page)));
         let (hover,_press)=c.hover_t(&settings);
         // 齿轮：玻璃（上了 GPU 就由着色器画）+ 图标一起走弹簧缩放。
         let (gear_s, gear_gpu)=(self.ctl_scale(Ctl::Gear), self.ctl_on_gpu(Ctl::Gear));
@@ -4847,6 +4972,15 @@ impl App {
     }
 
     fn page_title(&self, page: usize, c: &Card) {
+        #[cfg(feature="sdk-js")]
+        if page>=PAGE_NAMES.len() {
+            let accent=self.status_pages.get(page-PAGE_NAMES.len())
+                .and_then(|(id,_)|self.plugins.status_title_accent(id));
+            crate::plugin_status_ui::draw_title(
+                c,self.navigation_page_name(page),accent,self.island_overlay_fill(),
+            );
+            return;
+        }
         let base = 25.0;
         let (a, b, col) = match page {
             0 | CALENDAR_PAGE => return,
@@ -4869,7 +5003,7 @@ impl App {
     }
 
     fn nav(&mut self, c: &Card) {
-        let pages: Vec<_>=self.settings.page_order.iter().copied().filter(|page|self.settings.visible_pages[*page]).collect();
+        let pages: Vec<_>=self.navigation_pages().collect();
         if pages.len()<2 { return; }
         // 上游 v0.6.70：停靠方式决定箭头锚点，切页改变面板高度时仍可原地点击。
         let anchor_y=if self.page==6||self.page==8{88.0}else{68.0};
@@ -4894,16 +5028,20 @@ impl App {
         // 页码豆：宽度由弹簧驱动，整行实时居中；当前页是白色长条
         let gap = 4.0;
         let dot_y=self.expanded_height()-7.2;
-        let total: f32 = pages.iter().map(|page| self.dots[*page].pos).sum::<f32>() + gap * (pages.len()-1) as f32;
+        let dot_w=|page:usize|->f32 {
+            if page<PAGE_NAMES.len() { self.dots[page].pos }
+            else { #[cfg(feature="sdk-js")]{self.status_dots.get(page-PAGE_NAMES.len()).map_or(4.0,|d|d.pos)} #[cfg(not(feature="sdk-js"))]{4.0} }
+        };
+        let total: f32 = pages.iter().map(|&page| dot_w(page)).sum::<f32>() + gap * (pages.len()-1) as f32;
         let mut x = PW / 2.0 - total / 2.0;
         let mut clicked = None;
         for i in pages {
-            let w = self.dots[i].pos.max(3.0);
+            let w = dot_w(i).max(3.0);
             let on = anim::remap(w, 4.0, 16.0);
             let col = paint::mix(Color32::from_rgb(92, 92, 96), theme::WHITE, on);
             c.fill(x, dot_y - 2.0, w, 4.0, 2.0, col);
             let hr = c.hit(x - 2.0, dot_y - 6.0, w + 4.0, 12.0, ("dot", i));
-            hr.clone().on_hover_text(PAGE_NAMES[i]);
+            hr.clone().on_hover_text(self.navigation_page_name(i));
             if hr.hovered() && i != self.page {
                 c.fill(x - 1.0, dot_y - 3.0, w + 2.0, 6.0, 3.0, Color32::from_white_alpha(28));
             }
@@ -4913,19 +5051,46 @@ impl App {
             x += w + gap;
         }
         if let Some(i) = clicked {
-            let position=|page|self.settings.page_order.iter().position(|p|*p==page).unwrap();
+            let position=|page|self.settings.page_order.iter().position(|p|*p==page).unwrap_or(usize::MAX);
             let dir = if position(i) > position(self.page) { 1.0 } else { -1.0 };
             self.go(i, dir);
         }
     }
 
     fn render_page(&mut self, page: usize, c: &Card, env: &Env, cmds: &mut Vec<Cmd>) {
+        #[cfg(feature="sdk-js")]
+        if let Some((id,_))=page.checked_sub(PAGE_NAMES.len()).and_then(|index|self.status_pages.get(index)) {
+            let backdrop=crate::plugin_status_ui::StatusBackdrop{
+                palette:self.island_palette(),island:self.island_overlay_fill(),
+            };
+            let visible=self.open && !env.fullscreen_hidden && !env.screen_locked;
+            let page_card=if visible {c.clone()} else {c.ghost()};
+            let interaction=self.plugins.draw_status_controls(&page_card,id,backdrop,!self.open);
+            #[cfg(windows)]
+            if let Some((label,url,time))=self.plugins.source_attribution(id) {
+                let top=self.plugins.status_height(id);
+                crate::plugin_status_ui::draw_attribution(c,id,top,label,url,time);
+            }
+            if c.live {
+                self.plugin_form_focused=interaction.focused;
+                if interaction.gained_focus {cmds.push(Cmd::Focus);}
+                self.plugin_canvas_frame=Some((page,interaction));
+            }
+            return;
+        }
         match page {
             0 => if self.video_page(){self.page_video(c, env, cmds)}else{self.page_music(c, env, cmds)},
             1 => self.page_focus(c, env),
             2 => self.page_water(c, env),
             3 => self.page_shelf(c, env, cmds),
-            4 => self.page_todo(c, env, cmds),
+            4 => {
+                self.page_todo(c, env, cmds);
+                #[cfg(feature="sdk-js")]
+                if self.plugins.has_card() && self.plugins.card(c) {
+                    self.settings_tab=PAGE_SETTINGS_TABS[TODO_PAGE];
+                    self.open_settings();
+                }
+            },
             5 => self.page_mail(c, env, cmds),
             6 => self.page_quota(c),
             8 => self.page_weather(c,env,cmds),
@@ -5148,6 +5313,7 @@ impl App {
             for notice in self.plugins.take_script_notices(self.settings.notifications,chrono::Utc::now().timestamp_millis()) {
                 self.receive_plugin_notice(notice);
             }
+            self.sync_status_pages();
         }
     }
 
