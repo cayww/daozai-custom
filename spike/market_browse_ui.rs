@@ -997,7 +997,9 @@ impl LocalPlugins {
                 return false;
             }
         };
-        let mut response = ui.add_enabled(!self.market_busy() && has_cover, market_button(ui, label));
+        // 封面只是展示，不能因为 Gitee 限流导致封面没加载就禁用安装。
+        let mut response = ui.add_enabled(!self.market_busy(), market_button(ui, label));
+        let _ = has_cover;
         if state == MarketStatus::Update {
             let installed = &self.records[&entry.id].package.as_ref().unwrap().manifest.version;
             response = response.on_hover_text(format!("已安装 v{installed}，更新到 v{}", entry.version));
