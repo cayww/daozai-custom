@@ -308,3 +308,12 @@ float4 material(MaterialIn i) {
 - **根因 4（设置里没有便签页）**：本地设置侧栏没有上游的 `standalone_settings_pages()` 插件页面列表，也没有插件详情页标题上的"打开功能页"按钮。现已按上游补上：插件独立设置页出现在侧栏「功能」分组，详情页标题显示插件名+插件标，并可一键打开功能页。
 - **验证**：新增 `wireless_page_uses_upstream_title` / `wireless_page_content_height_matches_upstream`；全量 **1527 passed / 0 failed / 138 ignored**。
 - **待用户确认**：重新安装包后看无线页无叠字、便签插件出现在设置侧栏、便签 canvas 完整显示。
+
+---
+
+## 14. UI 修复版重新打包（2026-11-26 17:55）
+- 提交：`98b8dbc`。全量 **1527 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
+- 当前包：`installer/daozai-setup-custom-isolated.exe`，12,071,342 bytes，sha256 前 16 `68c0f32f5e3c3133`（完整 `68c0f32f5e3c3133e185349b69321ead478bf637daf3594ece4e4c378f81ea49`）。
+- 内含 exe sha256 前 16 `f0fffe5bb029cd7d9`。
+- 上一版备份：`merge-work/daozai-setup-custom-isolated.exe.prev-ui-fix`。
+- 这版同时包含：D3D11 材质包、2.4G 接收器修复、无线页/插件页 UI 对照上游修复。

@@ -2076,3 +2076,4 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **修复**：`page_title()` 补齐系统性能/无线设备/详情返回分支；`expanded_height()` 改用上游 `page_content_height()`（无线页 194、性能页 360）；`WIN_H` 从 270 恢复到 `378 + PAGE_SHORTCUT_ROW_H = 402`，避免便签 canvas 被裁；设置侧栏补上插件独立设置页与"打开功能页"按钮。
 - **验证**：全量 lib **1527 passed / 0 failed / 138 ignored**（新增 2 个无线页回归测试）。
 - **待用户实机确认**：无线页无叠字、便签插件在设置侧栏可见、便签 canvas 完整显示。
+- **当前包**：`installer/daozai-setup-custom-isolated.exe`，sha256 前 16 `68c0f32f5e3c3133`（exe `f0fffe5bb029cd7d9`），提交 `98b8dbc`。
