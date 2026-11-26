@@ -2054,3 +2054,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **改动**：仅把主窗口 DComp 合成交换链的 `SwapEffect` 从 `FLIP_DISCARD` 改为 `FLIP_SEQUENTIAL`；子窗口 HWND 交换链、alpha 模式、stretch、尺寸均不变。
 - **验证**：`cargo check --locked --lib --tests --bins --examples` 通过；release 双 bin 构建通过；全量 lib **1413 passed / 0 failed / 131 ignored**。bin 测试在用户取消前已通过过上一版；本轮 bin 测试被用户手动取消，未重跑。exe sha256 前16 `901a9cf46251c3b7`（daozai）、`7ff6dd985a370ad2`（bridge）。
 - **状态**：提交 `cb60452` 在本地 main，**未 push、未打包、未部署**；最终树不含诊断代码（诊断提交已 revert）。需用户重启到新 exe 裸眼确认毛刺是否改善；若无改善，下一步实验只剩 `SetBitmapInterpolationMode(NEAREST_NEIGHBOR)` 或更换 DPI 感知/显示器缩放条件，收益不确定。
+
+### 7.0zzze 插件生态融合 + D3D11 原生材质包（2026-11-26，分支 `merge-upstream-v0670`）
+
+- **专项交接**：`docs/HANDOFF-plugin-material.md`（格式规范、文件索引、待办都在这里，先读它）。
+- **提交**：`3cdeb76` 先锁定 pinned/外观图标/无线接收器注入；`1468292` 接入 D3D11 原生材质包与外观/底栏快捷切换。工作树 clean，未 push。
+- **方案 B 落地**：不启用 `sdk-material`，不做 WGSL 转译。新增 `spike/material_d3d11.rs`，材质包入口支持 `.hlsl`（用 `d3dcompiler_47` 现场编 `ps_5_0`）和 `.dxbc`（base64 文本）；D3D11 运行时按 generation 换 PS，材质与内置玻璃互斥。只按 id 屏蔽 `cayww.liquid-glass`，其他材质包可在集市/已安装中使用。
+- **验证**：全量 lib **1524 passed / 0 failed / 138 ignored**（新增 3 个材质编译测试）；release 双 bin 构建通过；Inno Setup 7 打包成功。
+- **安装包**：`installer/daozai-setup-custom-isolated.exe`，sha256 前 16 `bc23dee2c92ca6c9`；exe 前 16 `ef48c7b291e9f43df`。旧包备份在 `merge-work/daozai-setup-custom-isolated.exe.prev-material-d3d11`。
+- **待用户实机确认**：内置玻璃不受影响；HLSL/DXBC 材质包能激活显示；外观包能在设置里选；底栏快捷切换整行能显示/点击。

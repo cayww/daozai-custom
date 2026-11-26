@@ -257,4 +257,14 @@ float4 material(MaterialIn i) {
 1. ~~跑完整全量测试~~ 已完成：1524 passed / 0 failed / 138 ignored。
 2. 提交当前工作树。
 3. 实机验证：内置玻璃不受影响；装一个 HLSL 材质包并激活，截图确认材质生效；外观包在设置里可选择；快捷切换行能显示和点击。
-4. 打包并同步 `_archive/README.md` 指纹表、桌面 `HANDOFF.md` 与仓库副本。
+4. ~~打包~~ 已完成（见 §10）；~~同步主交接文档~~ 已追加到桌面 `HANDOFF.md` 与仓库副本。`_archive/README.md` 在当前环境不存在（桌面无 `Daozai-液态玻璃预览` 目录），未强行创建。
+
+---
+
+## 10. 打包结果（2026-11-26 16:38）
+- 提交：`1468292`（工作树 clean；安装包被 `.gitignore` 排除）。
+- release 双 bin 构建通过；Inno Setup 7 编译安装包成功。
+- 新包：`installer/daozai-setup-custom-isolated.exe`，12,064,983 bytes，sha256 `bc23dee2c92ca6c98feb96a53ffd2e8e40ae02dc43e251e119a6959d64735708`（前 16 `bc23dee2c92ca6c9`）。
+- 内含 exe：`dz-phone/target/release/daozai.exe`，sha256 前 16 `ef48c7b291e9f43df`（bridge `bd28a9d9a3064a58`）。
+- 旧包已备份到被忽略的 `merge-work/daozai-setup-custom-isolated.exe.prev-material-d3d11`（sha 前 16 `9ed7a3dfd3dc13c1`）。
+- **实机验证未完成**：需要用户安装/运行新包后确认内置玻璃、材质包激活、外观包选择、底栏快捷切换四项的视觉效果。测试已覆盖逻辑与布局断言，但未做 GUI 截图确认。
