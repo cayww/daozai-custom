@@ -2030,3 +2030,24 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 新增 `[profile.dev-release]`（继承 release，但 `lto=false`、`codegen-units=8`）：测试改用 `--profile dev-release`，增量重编实测 1m18s（原 release 约 6 分钟，约 4.6×），全量结果一致（1545 passed / 0 failed / 138 ignored）。正式包仍用 release + LTO。
 - `.cargo/config.toml` 启用 rust-lld（`linker-flavor=lld-link` + 本机 `rust-lld.exe` 绝对路径，换机需改；删两条 flag 回退 MSVC link.exe）。sccache 已配且 release 命中率实测 100%，未动。
 - 新测试命令：`cargo test --locked --profile dev-release --lib -- --test-threads=1`。
+
+### 7.0zzzp 图元边缘 1px 浅色接缝 —— 根因与修复（2026-11-27 03:28，提交 `ca3f7c1` / `cf2d436`）
+
+**现象**：设置页插件集市卡片上的爱心上方、宠物动作、以及其他多个 egui 图元边缘有 1px 浅色/暗色接缝。上游原仓库（wgpu 后端）没有。
+
+**根因（已实机确认）**：本地 D3D11 自绘栈用一个**全局采样器**（`ADDRESS_BORDER` + 白色 BorderColor + 双线性），完全忽略了 egui 每个纹理携带的 `TextureOptions`。egui 默认要求 `ClampToEdge` + 双线性：字体图集是紧打包的（字形间 padding 仅 1px），用 `BORDER` 采样时边缘会蹭到边界外/相邻像素，于是在**每个图形边缘**产生细线。这就解释了"处处都有、hover 抬升时坐标小数部分变化就消失、上游 wgpu 没有"。
+
+**修复**：
+- `d3d11/texture.rs`：`ManagedTexture`/`User` 纹理记录各自 `TextureOptions`；新增 `SamplerCache`，按 (min_linear, mag_linear, wrap) 缓存 `ID3D11SamplerState`；wrap 映射 ClampToEdge→`ADDRESS_CLAMP`、Repeat→`ADDRESS_WRAP`、MirroredRepeat→`ADDRESS_MIRROR`。
+- `d3d11/renderer.rs`：`Renderer` 持有 `sampler_cache`，`draw_mesh` 时按 `texture_pool.options(mesh.tex)` 绑定对应采样器（`setup()` 仍设一个默认采样器兜底）。
+- 4 个单测覆盖选项映射（已通过）。
+
+**已排除的错误方向**（探测代码已在 `cf2d436` 全部移除，只留上面的修复）：
+- scissor 裁剪取整（`SCISSOR_OFF=1` 实测无效）
+- 羽化抗锯齿（`TESS_FEATHER=0` 实测无效）
+- 心形"两圆+三角"拼接的几何余量（上游同代码）
+- egui 0.31→0.37 的羽化算法/图集 padding/圆盘优化差异（逐字对比相同）
+- 顶点色预乘语义、shader、混合状态、光栅化、NDC、纹理上传（与官方 `egui-directx11-0.12.1` 一致）
+
+**打包**：`installer/daozai-setup-custom-isolated.exe`，dev-release 构建（`-CargoProfile dev-release`），包 sha256 前16 `c131dae07f7815c2`、exe `348ea3ad`、bridge `ab3c994c`。用户实机确认接缝消失。
+
