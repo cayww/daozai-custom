@@ -1,7 +1,7 @@
 # 上游 v0.6.70 对齐状态
 
 > 更新：2026-11-27 00:00。基线 `v0.6.70`；分支 `merge-upstream-v0670`。
-> 已提交：`9318765`（验证码两项）。**工作树还有 8 个文件的改动未提交**（见文末）。
+> 已提交：`9318765`（验证码两项）、`c6868f3`（其余对齐项）、`3372f12`（交接文档）。工作树干净。
 > **最终全量测试：1551 passed / 0 failed / 138 ignored**（`--test-threads=1`，release）。
 
 ---
@@ -45,20 +45,15 @@
 
 ---
 
-## 三、当前工作树
+## 三、提交记录
 
 ```
- M dz-phone/src/app.rs
- M dz-phone/src/main.rs
- M dz-phone/src/native.rs
- M dz-phone/src/pages.rs
- M dz-phone/src/paint/icons.rs
- M dz-phone/src/paint/mod.rs
- M dz-phone/src/side_dock.rs
- M dz-phone/src/ui_tests.rs
+3372f12 docs: 记录上游 v0.6.70 对齐收尾（§7.0zzzm）
+c6868f3 feat: 合入顶栏遮挡点击修复、逐帧诊断与保持展开，统一翻页箭头锚点
+9318765 feat: 合入避让验证码大字横幅与仅提醒验证码开关
 ```
 
-已提交：`9318765 feat: 合入避让验证码大字横幅与仅提醒验证码开关`
+工作树干净。
 
 ---
 
