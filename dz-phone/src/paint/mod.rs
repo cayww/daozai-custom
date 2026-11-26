@@ -488,6 +488,19 @@ impl<'a> Card<'a> {
         self.painter
             .line_segment([p0, p1], Stroke::new(width * self.s, color));
     }
+    /// 控件靠近形变边缘时整颗淡出，避免露出半个按钮或留下半块热区。
+    pub fn edge_control(&self, x: f32, y: f32, w: f32, h: f32) -> Option<Self> {
+        let clip = self.painter.clip_rect();
+        let rect = self.rect(x, y, w, h);
+        let margin = (rect.left() - clip.left()).min(clip.right() - rect.right());
+        if margin <= 0.0 || rect.top() < clip.top() || rect.bottom() > clip.bottom() {
+            return None;
+        }
+        let alpha = crate::anim::smoothstep(0.0, 6.0 * self.s, margin);
+        let control = self.faded(alpha);
+        Some(if alpha < 0.8 { control.ghost() } else { control })
+    }
+
     pub fn path(&self, pts: &[(f32, f32)], width: f32, color: Color32) {
         let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.pos(x, y)).collect();
         self.painter

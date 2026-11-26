@@ -106,7 +106,7 @@ impl App {
     /// 展开面板（页面内容）的左上角。
     pub(crate) fn content_origin(&self, win: Rect) -> Pos2 {
         // 底部停靠以动画中的高度贴住屏幕下沿，其余停靠沿用展开目标高度。
-        let height=if self.dock()==Dock::Bottom {self.h.pos}else{self.expanded_height()};
+        let height=if self.dock()==Dock::Bottom {self.h.pos}else{self.page_height.pos};
         self.island_rect(win, PW, height).min
     }
 

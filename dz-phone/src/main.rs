@@ -375,7 +375,12 @@ impl Shell {
     /// 岛仔 UI 绘制主体（eframe 与新 winit 自绘循环共用）。
     fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        let update_start=Instant::now();
         let frame_start=Instant::now();
+        // DAOZAI_FRAME_TRACE：把前置段再细分，定位动画帧到底耗在哪一段。
+        let mut marks:Vec<(&str,Duration)>=Vec::with_capacity(10);
+        macro_rules! mark {($name:expr)=>{marks.push(($name,frame_start.elapsed()));}}
+        mark!("帧间隔等待");
         // 内存剖析运行：DAOZAI_MEMPROF_EXIT=<秒> 到点后优雅退出（走 Drop 写 dhat 报告）。
         #[cfg(feature = "memprof")]
         if let Some(secs)=std::env::var("DAOZAI_MEMPROF_EXIT").ok().and_then(|v|v.parse::<u64>().ok()) {
@@ -457,6 +462,7 @@ impl Shell {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             }
         }
+        mark!("定位");
         #[cfg(windows)]
         {
             while let Ok(observation)=self.system_rx.try_recv(){
@@ -494,6 +500,7 @@ impl Shell {
             } else {
                 self.backdrop=None;
             }
+            mark!("系统状态与取样");
             let wireless_on = self.app.module_on(crate::app::BLUETOOTH_PAGE);
             // 与上游一致：即使只开了无线设备页、没开"蓝牙提示"，也要启动蓝牙扫描，
             // 因为无线设备页把蓝牙设备和 2.4G 接收器合在一起显示。
@@ -522,6 +529,7 @@ impl Shell {
                     self.receivers.clear();
                 }
             }
+            mark!("蓝牙与无线");
             let previous_pending=self.app.pending_messengers.clone();
             for event in self.messengers.poll_taskbar(&ctx,&self.app.settings){match event{
                 TaskbarEvent::Status(client,status)=>self.app.set_messenger_status(client,status),
@@ -600,8 +608,11 @@ impl Shell {
                 if !success{self.app.say(message);}
             }
         }
+        mark!("消息客户端");
         let env = self.env(&ctx);
+        mark!("环境");
         self.reconcile_modules(&ctx);
+        mark!("模块对齐");
         // v0.5.5 邮件：开关 / 间隔 / 账号清单变了就重新对齐收信线程，再把事件交给界面。
         // 每帧只比较不复制，确有变化时才复制账号清单。
         if let Some(mail)=&self.mail {
@@ -641,7 +652,10 @@ impl Shell {
             }
             while let Some(ev)=self.quota.try_recv(self.app.quota_config()){self.app.quota_event(ev);}
         }
+        mark!("邮件日程额度");
         // 逐帧诊断：拆出前置/岛体/设置三段。D3D11 自绘栈没有上游的 native 读回段。
+        let pre_cost=frame_start.elapsed();
+        let pre_parts={let mut last=Duration::ZERO;marks.iter().filter_map(|(name,at)|{let part=at.saturating_sub(last);last=*at;(part>=Duration::from_micros(500)).then(||format!("{name} {:.1}",part.as_secs_f64()*1000.0))}).collect::<Vec<_>>().join("、")};
         let island_start=Instant::now();
         let mut out = None;
         egui::CentralPanel::default()
@@ -654,7 +668,6 @@ impl Shell {
             });
         let Some(out) = out else { return };
         let island_cost=island_start.elapsed();
-        let pre_cost=island_start.saturating_duration_since(frame_start);
 
         #[cfg(windows)]
         {
@@ -709,9 +722,12 @@ impl Shell {
             // 点击自然落到下层窗口；有通知时保留命中以便点开。
             let hit=if self.hidden || (out.click_through && out.notice_hit.is_none()) {(0.0,0.0,0.0,0.0)} else {r(out.hit)};
             native.update(region, hit, if self.hidden{None}else{out.notice_hit.map(r)},if self.hidden{None}else{out.strip_rect.map(r)},if self.hidden{None}else{out.file_drop_zone.map(r)},if self.hidden{None}else{out.glass.as_deref()},ctx.pixels_per_point(), out.editing, !self.hidden && out.expanded);
-            if !self.hidden && self.app.settings.avoids_top_bar() && self.app.settings.top_bar_on_top && !self.app.settings.dock.is_side() {
-                if let Some(display)=daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id) {
-                    native.keep_above_top_bar(display.bounds);
+            if !self.hidden && self.app.settings.dock==daozai::model::Dock::Top {
+                let on_top=self.app.settings.avoid_top_bar && self.app.settings.top_bar_on_top;
+                if let Some(display)=daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id)
+                    .filter(|_|on_top || out.top_bar_notice.is_some()) {
+                    let notice=out.top_bar_notice.filter(|_|!on_top).map(|rect|(rect,ctx.pixels_per_point()));
+                    native.keep_above_top_bar(display.bounds,notice);
                 }
             }
         }
@@ -913,24 +929,33 @@ impl Shell {
         }
         // DAOZAI_FRAME_TRACE：逐帧记间隔与上帧分段，定位动画帧到底耗在哪一段。
         thread_local!{
-            static PREVIOUS_FRAME:std::cell::Cell<Option<(Instant,Duration,Duration,Duration,Duration)>>=const{std::cell::Cell::new(None)};
+            static PREVIOUS_FRAME:std::cell::Cell<Option<(Instant,Duration)>>=const{std::cell::Cell::new(None)};
+            static PREVIOUS_PARTS:std::cell::Cell<[Duration;4]>=const{std::cell::Cell::new([Duration::ZERO;4])};
         }
         let trace=std::env::var_os("DAOZAI_FRAME_TRACE").is_some();
-        let animating=out.repaint_after<=Duration::from_millis(34);
+        let parts=PREVIOUS_PARTS.replace([
+            pre_cost,
+            settings_cost,
+            elapsed.saturating_sub(pre_cost+island_cost+settings_cost),
+            update_start.elapsed().saturating_sub(elapsed),
+        ]);
+        // 立即重绘推进的动画帧也要记（不是只靠 repaint_after 判断）。
+        let animating=out.repaint_after<=Duration::from_millis(34)
+            || ctx.requested_repaint_last_pass() && trace;
         if trace && animating {
-            if let Some((start,logic,pre,draw,settings))=PREVIOUS_FRAME.get() {
+            if let Some((start,logic))=PREVIOUS_FRAME.get() {
                 let interval=frame_start.saturating_duration_since(start);
                 let (page,open)=self.app.debug_state();
                 daozai::resources::append_log(&daozai::model::config_dir().join("diagnostics"),"frames",
-                    &format!("间隔 {:.0} ms｜页面 {}｜展开 {}｜上帧逻辑 {:.1}（前置 {:.1}、岛体 {:.1}、设置 {:.1}、其余 {:.1}）｜逻辑之外 {:.1}｜本帧岛体 {:.1}（插件 {:.1}）",
+                    &format!("间隔 {:.0} ms｜页面 {}｜展开 {}｜上帧逻辑 {:.1}（前置 {:.1}、设置窗口 {:.1}、其余 {:.1}、材质与提醒 {:.1}）｜逻辑之外 {:.1}｜本帧岛体 {:.1}（插件 {:.1}）｜本帧前置：{}｜过渡 {} 交互起点 {} 兼容 {}",
                         interval.as_secs_f64()*1000.0,page,open,logic.as_secs_f64()*1000.0,
-                        pre.as_secs_f64()*1000.0,draw.as_secs_f64()*1000.0,settings.as_secs_f64()*1000.0,
-                        logic.saturating_sub(pre+draw+settings).as_secs_f64()*1000.0,
+                        parts[0].as_secs_f64()*1000.0,parts[1].as_secs_f64()*1000.0,parts[2].as_secs_f64()*1000.0,parts[3].as_secs_f64()*1000.0,
                         interval.saturating_sub(logic).as_secs_f64()*1000.0,
-                        island_cost.as_secs_f64()*1000.0,plugin_cost.as_secs_f64()*1000.0));
+                        island_cost.as_secs_f64()*1000.0,plugin_cost.as_secs_f64()*1000.0,pre_parts,
+                        out.animating,ctx.requested_repaint_last_pass(),self.app.render_compat_running));
             }
         }
-        PREVIOUS_FRAME.set(Some((frame_start,pre_cost+island_cost+settings_cost,pre_cost,island_cost,settings_cost)));
+        PREVIOUS_FRAME.set(Some((frame_start,elapsed)));
     }
 }
 

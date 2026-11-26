@@ -305,9 +305,14 @@ impl App {
         cmds.push(Cmd::MusicVolume(command,self.media.source.clone()));
     }
 
+    /// 顶栏为「保持展开」图钉让位时，音量浮条移到扬声器左侧。
+    pub(crate) fn music_volume_bounds(&self)->Rect {
+        MUSIC_VOLUME_RECT.translate(egui::vec2(-43.0,27.0)*self.hold_slot)
+    }
+
     pub(crate) fn draw_music_volume(&mut self,c:&Card,cmds:&mut Vec<Cmd>){
         let ctx=c.ui.ctx();
-        let bounds=MUSIC_VOLUME_RECT;
+        let bounds=self.music_volume_bounds();
         let panel=c.rect(bounds.min.x,bounds.min.y,bounds.width(),bounds.height());
         let trigger=c.rect(354.0,106.0,26.0,24.0);
         if self.music_volume_open && ctx.input(|i|i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p|!panel.contains(p) && !trigger.contains(p))){
@@ -835,8 +840,10 @@ impl App {
         // 拖文件进来时回到「文件」分栏。
         if drag > 0.002 { self.shelf_tab = 0; }
         self.shelf_tabs(header, 13.0);
+        // 音乐快捷按钮为图钉左移时，右侧操作一起左移，避免盖住返回音乐页的命中区。
+        let header=header.shifted(-self.header_music_shift(),0.0);
         if self.shelf_tab == 1 {
-            self.page_clipboard(c, header, env, cmds);
+            self.page_clipboard(c, &header, env, cmds);
             return;
         }
         header.text(344.0,23.0,"添加",size::SMALL,W::Regular,theme::GRAY,H::Right);

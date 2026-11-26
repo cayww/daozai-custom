@@ -429,6 +429,24 @@ pub fn clock(c:&Card,x:f32,y:f32,text:&str,size:f32) {
     c.text(x,y,digits,size,W::Bold,theme::WHITE,H::Left);
 }
 
+/// 顶栏「保持展开」图钉：由倾斜轮廓过渡到竖直实心。
+pub fn hold_pin(c: &Card, cx: f32, cy: f32, active: f32, color: Color32) {
+    let (sin, cos) = ((1.0 - active) * 0.55).sin_cos();
+    let point = |x: f32, y: f32| (cx + x * cos - y * sin, cy + x * sin + y * cos);
+    let head = [
+        point(-2.7, -5.8), point(2.7, -5.8), point(2.0, -4.5), point(2.0, -0.8),
+        point(3.9, 1.5), point(-3.9, 1.5), point(-2.0, -0.8), point(-2.0, -4.5),
+    ];
+    if active > 0.0 {
+        let ink = c.faded(active);
+        ink.poly(&[head[0], head[1], head[2], head[7]], color);
+        ink.poly(&[head[7], head[2], head[3], head[6]], color);
+        ink.poly(&[head[6], head[3], head[4], head[5]], color);
+    }
+    for i in 0..head.len() { c.seg(head[i], head[(i + 1) % head.len()], 1.2, color); }
+    c.seg(point(0.0, 1.5), point(0.0, 6.0), 1.2, color);
+}
+
 /// 图钉：固定的剪贴板条目。
 pub fn pin(c: &Card, cx: f32, cy: f32, size: f32, color: Color32) {
     let s = size / 10.0;

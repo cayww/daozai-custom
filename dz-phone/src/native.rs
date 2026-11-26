@@ -490,16 +490,36 @@ fn surface_needs_outline_clip(backend: Option<Backend>, vendor: &str, renderer: 
 }
 
 /// 只识别同屏顶部的宽条窗口，普通弹窗、全屏窗口和其他屏幕不触发抬高。
-unsafe fn top_bar_above(hwnd: HWND, bounds: crate::display_layout::Bounds) -> bool {
+/// `target` 存在时只判断通知矩形是否被遮挡，没有遮挡就不要越过任务栏争抢置顶。
+unsafe fn top_bar_above(hwnd: HWND, bounds: crate::display_layout::Bounds, target: Option<RECT>) -> bool {
+    use windows::Win32::Graphics::Gdi::{GetWindowRgnBox, NULLREGION};
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+
     let mut island = RECT::default();
     if !IsWindowVisible(hwnd).as_bool() || GetWindowRect(hwnd, &mut island).is_err() {
         return false;
     }
+    if let Some(target) = target {
+        if GetWindowRgnBox(hwnd, &mut RECT::default()) == NULLREGION {
+            return false;
+        }
+        island.left = island.left.max(target.left);
+        island.top = island.top.max(target.top);
+        island.right = island.right.min(target.right);
+        island.bottom = island.bottom.min(target.bottom);
+        if island.left >= island.right || island.top >= island.bottom {
+            return false;
+        }
+    }
     let mut current = hwnd;
+    let click_through = (WS_EX_LAYERED | WS_EX_TRANSPARENT).0 as isize;
     while let Ok(previous) = GetWindow(current, GW_HWNDPREV) {
         current = previous;
-        if !IsWindowVisible(current).as_bool()
-            || GetWindowLongPtrW(current, GWL_EXSTYLE) & WS_EX_TOPMOST.0 as isize == 0
+        let style = GetWindowLongPtrW(current, GWL_EXSTYLE);
+        if style & WS_EX_TOPMOST.0 as isize == 0
+            || style & click_through == click_through
+            || !IsWindowVisible(current).as_bool()
+            || !IsWindowEnabled(current).as_bool()
         {
             continue;
         }
@@ -511,6 +531,7 @@ unsafe fn top_bar_above(hwnd: HWND, bounds: crate::display_layout::Bounds) -> bo
             && bar.right - bar.left >= (bounds.right - bounds.left) / 2
             && bar.left < island.right
             && bar.right > island.left
+            && bar.top < island.bottom
             && bar.bottom > island.top
         {
             return true;
@@ -606,15 +627,33 @@ impl Window {
         self.hwnd
     }
 
-    /// 顶栏重新置顶后恢复岛体层级；没有遮挡时不修改窗口顺序，也不激活窗口。
-    pub fn keep_above_top_bar(&mut self, bounds: crate::display_layout::Bounds) {
-        let display = match &self.layering {
-            Layering::Active(layered) => layered.display(),
-            _ => self.hwnd,
-        };
-        if unsafe { top_bar_above(display, bounds) } {
-            unsafe {
-                let _ = SetWindowPos(
+    fn canvas_rect(&self) -> Option<RECT> {
+        let mut r = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut r).ok()?; }
+        Some(r)
+    }
+
+    /// 顶栏遮挡通知或整岛时，恢复输入窗口及分层画面的层级，保留前台焦点。
+    /// `notice` 是通知矩形（画布逻辑坐标）与 DPI 倍率，只在通知确实被遮挡时抬高。
+    pub fn keep_above_top_bar(
+        &mut self,
+        bounds: crate::display_layout::Bounds,
+        notice: Option<(eframe::egui::Rect, f32)>,
+    ) {
+        let target = if let Some((rect, ppp)) = notice {
+            let Some(canvas) = self.canvas_rect() else { return; };
+            let x = |v: f32| canvas.left + (v * ppp).round() as i32;
+            let y = |v: f32| canvas.top + (v * ppp).round() as i32;
+            Some(RECT {
+                left: x(rect.left()),
+                top: y(rect.top()),
+                right: x(rect.right()),
+                bottom: y(rect.bottom()),
+            })
+        } else { None };
+        let raised = unsafe {
+            top_bar_above(self.hwnd, bounds, target)
+                && SetWindowPos(
                     self.hwnd,
                     HWND_TOPMOST,
                     0,
@@ -622,8 +661,9 @@ impl Window {
                     0,
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                );
-            }
+                ).is_ok()
+        };
+        if raised {
             if let Layering::Active(layered) = &mut self.layering {
                 layered.sync(self.hwnd, true);
             }
@@ -1490,12 +1530,12 @@ mod tests {
                 )
                 .unwrap();
                 assert!(
-                    top_bar_above(display, bounds),
+                    top_bar_above(display, bounds, None),
                     "复现顶栏遮挡，兼容渲染={layered}"
                 );
-                native.keep_above_top_bar(bounds);
+                native.keep_above_top_bar(bounds, None);
                 assert!(
-                    !top_bar_above(display, bounds),
+                    !top_bar_above(display, bounds, None),
                     "收起时也应恢复实际层级，兼容渲染={layered}"
                 );
                 assert_eq!(GetForegroundWindow(), foreground, "置顶不能抢走输入焦点");
@@ -1508,10 +1548,10 @@ mod tests {
                 ] {
                     SetWindowPos(cover.0, HWND_TOPMOST, x, y, w, h, flags).unwrap();
                     assert!(
-                        !top_bar_above(display, bounds),
+                        !top_bar_above(display, bounds, None),
                         "普通弹窗、全屏窗口和其他屏幕不触发顶栏适配"
                     );
-                    native.keep_above_top_bar(bounds);
+                    native.keep_above_top_bar(bounds, None);
                     assert!(above(cover.0, display), "不应越过无关弹窗争抢置顶");
                 }
                 SetWindowPos(
@@ -1525,7 +1565,7 @@ mod tests {
                 )
                 .unwrap();
                 let _ = ShowWindow(cover.0, SW_HIDE);
-                assert!(!top_bar_above(display, bounds), "隐藏的顶栏不触发抬高");
+                assert!(!top_bar_above(display, bounds, None), "隐藏的顶栏不触发抬高");
             }
         }
     }

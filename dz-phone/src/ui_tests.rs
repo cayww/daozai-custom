@@ -1305,6 +1305,7 @@ struct H {
     cmds:Vec<crate::app::Cmd>,
     region:Rect,
     hit:Rect,
+    top_bar_notice:Option<Rect>,
     animating:bool,
     shapes:Vec<egui::epaint::ClippedShape>,
     bt: Vec<crate::bt::Device>,
@@ -1329,7 +1330,7 @@ impl H {
         std::env::set_var("DAOZAI_DATA_DIR", &dir);
         let ctx = egui::Context::default();
         let app = App::new(&ctx, Options { fetch_lyrics: false, pet_idle: 1e9, ..Default::default() });
-        Self { ctx, app, t: 0.0, cursor: None,cmds:vec![],region:Rect::NOTHING,hit:Rect::NOTHING,animating:false,shapes:Vec::new(), bt:Vec::new(), receivers:Vec::new(),media:Default::default(),power:(None,false),network:None,system_idle:None,screen_locked:false,fullscreen:false,browser_at_top:None,file_drop_zone:None,hovered_files:vec![],dropped_files:vec![],repaint:std::time::Duration::MAX }
+        Self { ctx, app, t: 0.0, cursor: None,cmds:vec![],region:Rect::NOTHING,hit:Rect::NOTHING,top_bar_notice:None,animating:false,shapes:Vec::new(), bt:Vec::new(), receivers:Vec::new(),media:Default::default(),power:(None,false),network:None,system_idle:None,screen_locked:false,fullscreen:false,browser_at_top:None,file_drop_zone:None,hovered_files:vec![],dropped_files:vec![],repaint:std::time::Duration::MAX }
     }
     fn frame(&mut self, events: Vec<egui::Event>) {
         self.t += 1.0 / 60.0;
@@ -1365,12 +1366,13 @@ impl H {
         let cmds=&mut self.cmds;
         let region=&mut self.region;
         let hit=&mut self.hit;
+        let top_bar_notice=&mut self.top_bar_notice;
         let animating=&mut self.animating;
         let app = &mut self.app;
         let file_drop_zone=&mut self.file_drop_zone;
         let mut output = self.ctx.run_ui(raw, |ui|{
                 let win = Rect::from_min_size(ui.max_rect().min,Vec2::new(WIN_W,WIN_H));
-                let frame=app.frame(ui, win, &env);*region=frame.region;*hit=frame.hit;*animating=frame.animating;*file_drop_zone=frame.file_drop_zone;cmds.extend(frame.cmds);
+                let frame=app.frame(ui, win, &env);*region=frame.region;*hit=frame.hit;*top_bar_notice=frame.top_bar_notice;*animating=frame.animating;*file_drop_zone=frame.file_drop_zone;cmds.extend(frame.cmds);
             });
         self.shapes = std::mem::take(&mut output.shapes);
         self.repaint=output.viewport_output.values().map(|v|v.repaint_delay).min().unwrap_or(std::time::Duration::MAX);
@@ -2661,7 +2663,8 @@ fn music_header_shortcut_returns_from_every_page_without_controlling_playback() 
         for page in 1..crate::app::PAGE_NAMES.len() {
             if !h.app.settings.visible_pages[page] {continue;}
             h.app.show_page(page);h.hover(H::local(300.0,60.0),0.8);h.cmds.clear();
-            h.click(H::local(367.0,18.0));
+            // 置物架页显示图钉，音乐快捷按钮左移 28 点让位。
+            h.click(H::local(if page==3 {339.0}else{367.0},18.0));
             assert_eq!(h.app.page,0,"播放状态 {playing} 时应从页面 {page} 直达音乐页");
             assert!(h.app.open);assert!(!h.app.settings_open);assert_eq!(h.app.media.playing,playing);
             assert!(h.cmds.iter().all(|cmd|!matches!(cmd,crate::app::Cmd::Media(_)|crate::app::Cmd::MusicVolume(..))),"返回音乐页不能改变播放或音量");
@@ -2704,6 +2707,28 @@ fn arrows_and_dots_switch_pages() {
     h.hover(H::local(300.0, 60.0), 0.8);
     h.click(H::local(398.0, 68.0));
     assert_eq!(h.app.page, 2);
+}
+
+#[test]
+fn hold_open_pin_keeps_shelf_expanded_and_nav_arrows_match_the_lens(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.show_page(crate::app::SHELF_PAGE);
+    for _ in 0..90 {h.frame(vec![]);}
+    // 置物架页的图钉出现后点击；即使移开鼠标也应保持展开。
+    let pin=h.ctx.read_response(egui::Id::new(("card",true,"hold-open"))).expect("置物架应显示保持展开图钉").interact_rect.center();
+    h.click(pin);
+    h.cursor=None;
+    for _ in 0..120 {h.frame(vec![]);}
+    assert!(h.app.open,"点图钉后鼠标移开仍应保持展开");
+    // 箭头点击区（nav）与 GPU 透镜几何（ctl_geom）必须同锚点。
+    for page in [crate::app::SHELF_PAGE,crate::app::CALENDAR_PAGE,crate::app::MAIL_PAGE] {
+        h.app.show_page(page);
+        for _ in 0..60 {h.frame(vec![]);}
+        let expected=h.app.nav_arrow_y();
+        let lens=h.app.ctl_geom(crate::app::Ctl::NavL).unwrap().0.center().y;
+        assert!((lens-expected).abs()<0.01,"第 {page} 页透镜与箭头锚点不一致：{lens} vs {expected}");
+    }
 }
 
 #[test]
@@ -5063,6 +5088,36 @@ fn an_open_page_and_lyrics_can_coexist_with_notifications_and_the_bell(){
     assert!(h.app.open);
     assert!(h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t)if t.galley.text()=="Track")),"展开页面保留歌曲信息");
     assert!(!h.app.compact_notices(),"展开页面时不使用岛上歌词的小图标提示");
+}
+
+#[test]
+fn top_bar_notice_covers_the_compact_mail_badge_and_detail(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.island_lyrics=true;
+    h.media=crate::smtc::NowPlaying{title:"Track".into(),artist:"Artist".into(),playing:true,position:7.0,duration:120.0,..Default::default()};
+    h.app.set_lyrics("Track","Artist",120.0,crate::lyrics::parse_lrc("[00:00]晚风吹过了山岗\n[01:00]下一句"));
+    for _ in 0..60{h.frame(vec![]);}
+    assert!(h.top_bar_notice.is_none());
+
+    h.app.new_mail_alert("项目组 · 新邮件".into());
+    for _ in 0..60{h.frame(vec![]);}
+    assert!(h.app.compact_notices());
+    let badge=h.ctx.read_response(egui::Id::new(("card",true,"notice-badge"))).expect("应显示通知图标").interact_rect.center();
+    let hit=h.top_bar_notice.expect("紧凑的邮件通知应提供置顶命中区");
+    assert!(hit.contains(badge));
+    assert!(!hit.contains(h.hit.center()),"邮件通知命中区应避开歌词");
+
+    h.click_notice_badge();
+    h.frame(vec![]);
+    let detail=h.ctx.read_response(egui::Id::new(("card",true,"notice-action"))).expect("邮件详情应提供查看按钮");
+    let hit=h.top_bar_notice.expect("展开邮件详情后应继续提供通知命中区");
+    assert!(hit.contains(badge) && hit.contains_rect(detail.interact_rect));
+    h.click_text("查看");
+    h.frame(vec![]);
+    assert_eq!(h.app.page,crate::app::MAIL_PAGE);
+    for _ in 0..90 { h.frame(vec![]); }
+    assert!(h.top_bar_notice.is_none(),"邮件通知结束后应清空通知命中区");
 }
 
 #[test]
@@ -8030,11 +8085,18 @@ fn qq_bound_notices_open_their_original_account_and_clear_independently(){
     h.app.receive_notification_from("QQ".into(),"QQ".into(),"有新消息".into(),Some(b));
     assert_eq!(h.app.pending_messengers,[a,b]);
     for _ in 0..45{h.frame(vec![]);}
+    assert!(!h.app.open);
+    let hit=h.top_bar_notice.expect("收起态的消息横幅应提供置顶命中区");
+    for id in ["messenger-view","messenger-dismiss"] {
+        let button=h.ctx.read_response(egui::Id::new(("card",true,id))).expect("横幅按钮应可点击");
+        assert!(hit.contains_rect(button.interact_rect),"{id} 应位于通知命中区内");
+    }
     h.click_text("查看");assert!(h.cmds.contains(&Cmd::ViewMessenger(a)),"横幅应打开它自己的账号，不能取最近新增的另一个账号");
     h.app.viewed_client(Messenger::Qq,200);h.frame(vec![]);
     assert_eq!(h.app.pending_messengers,[a]);
     h.cmds.clear();h.click_text("查看");assert!(h.cmds.contains(&Cmd::ViewMessenger(a)));
     h.app.discard_unread(a);h.frame(vec![]);assert!(h.app.pending_messengers.is_empty());assert!(h.app.notice.is_none());
+    assert!(h.top_bar_notice.is_none());
 }
 
 #[test]
@@ -8396,6 +8458,7 @@ fn shelf_menu_last_action_fits_inside_window_and_works(){
         egui::Shape::Text(t) if t.galley.text()=="从置物架移除"=>Some(Rect::from_min_size(t.pos,t.galley.size())),
         _=>None,
     }).expect("右键菜单应显示移除操作");
+    assert!(h.top_bar_notice.is_none(),"置物架菜单不能触发通知置顶");
     assert!(h.region.contains_rect(h.app.shelf_menu_rect.unwrap() + h.ctx.style_of(egui::Theme::Dark).visuals.popup_shadow.margin()));
     assert!(h.app.shelf_menu_rect.unwrap().contains_rect(label));
     h.hover(label.center(),1.0);
