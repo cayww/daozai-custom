@@ -1723,7 +1723,7 @@ pub(crate) fn log_otp(source: &str, code: Option<&str>) {
         return;
     };
     let dir = std::path::PathBuf::from(base)
-        .join("Daozai")
+        .join("DaozaiCustom")
         .join("diagnostics");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
@@ -1787,7 +1787,7 @@ pub(crate) fn focus_stats_path() -> Option<std::path::PathBuf> {
     let base = std::env::var_os("APPDATA")?;
     Some(
         std::path::PathBuf::from(base)
-            .join("Daozai")
+            .join("DaozaiCustom")
             .join("focus-stats.json"),
     )
 }
@@ -1881,7 +1881,7 @@ pub(crate) fn notice_history_path() -> Option<std::path::PathBuf> {
     let base = std::env::var_os("APPDATA")?;
     Some(
         std::path::PathBuf::from(base)
-            .join("Daozai")
+            .join("DaozaiCustom")
             .join("notices.json"),
     )
 }
@@ -1951,7 +1951,7 @@ pub(crate) fn log_notice(note: &str) {
         return;
     };
     let dir = std::path::PathBuf::from(base)
-        .join("Daozai")
+        .join("DaozaiCustom")
         .join("diagnostics");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
@@ -1981,7 +1981,7 @@ pub(crate) fn log_mail(note: &str) {
         return;
     };
     let dir = std::path::PathBuf::from(base)
-        .join("Daozai")
+        .join("DaozaiCustom")
         .join("diagnostics");
     if std::fs::create_dir_all(&dir).is_err() {
         return;

@@ -6,17 +6,17 @@
 ;       开始菜单/桌面快捷方式、自带卸载器。
 ; 用户数据在 %APPDATA%\Daozai，安装/卸载都不碰。
 
-#define MyAppName "岛仔 Daozai"
+#define MyAppName "岛仔 DaozaiCustom"
 #define MyAppVersion "0.6.66"
-#define MyAppBuild "custom-135"
+#define MyAppBuild "custom-isolated"
 
 [Setup]
-AppId={{A58C1D9E-4F02-4B6A-9C33-1E7B5D2F8A44}}
+AppId={{C7E3A19D-5F42-4B8E-A1D6-9E2C4F7B83A5}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}（{#MyAppBuild}）
 AppPublisher=自定义构建
-DefaultDirName={autopf}\Daozai
+DefaultDirName={autopf}\DaozaiCustom
 DirExistsWarning=no
 AppendDefaultDirName=no
 PrivilegesRequired=admin

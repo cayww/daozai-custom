@@ -158,7 +158,7 @@ impl Reader {
 /// 文件不存在、写着 auto 或其它内容时返回 None，沿用推测逻辑。
 fn override_charging() -> Option<bool> {
     let base = std::env::var_os("APPDATA")?;
-    let path = PathBuf::from(base).join("Daozai").join("phone_charging.txt");
+    let path = PathBuf::from(base).join("DaozaiCustom").join("phone_charging.txt");
     parse_override(&std::fs::read_to_string(path).ok()?)
 }
 

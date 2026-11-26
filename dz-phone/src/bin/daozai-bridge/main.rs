@@ -216,7 +216,7 @@ fn status_path() -> Option<PathBuf> {
     #[cfg(not(test))]
     {
         let base = std::env::var_os("APPDATA")?;
-        Some(PathBuf::from(base).join("Daozai").join("island_status.json"))
+        Some(PathBuf::from(base).join("DaozaiCustom").join("island_status.json"))
     }
 }
 
@@ -359,7 +359,7 @@ fn config_dir() -> PathBuf {
     if let Ok(root) = std::env::var("DAOZAI_DATA_DIR") {
         return PathBuf::from(root);
     }
-    env_dir("APPDATA").join("Daozai")
+    env_dir("APPDATA").join("DaozaiCustom")
 }
 
 #[cfg(not(test))]
@@ -482,7 +482,7 @@ mod tests {
     fn 单测写状态不污染用户真实文件() {
         let mut speed = HashMap::new();
         handle_download(&serde_json::json!({"t":"dl","id":99,"name":"x.zip","state":"progress","received":1,"total":2}), &mut speed, &BridgePrefs::default_prefs());
-        let real = std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("Daozai").join("island_status.json"));
+        let real = std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("DaozaiCustom").join("island_status.json"));
         if let Some(path) = real.filter(|p| p.exists()) {
             let raw = std::fs::read_to_string(&path).unwrap_or_default();
             assert!(!raw.contains("x.zip"));

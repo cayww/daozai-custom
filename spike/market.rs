@@ -344,7 +344,21 @@ fn download(url: &Url, limit: u64) -> Result<Vec<u8>> {
         .timeout(Duration::from_secs(15))
         .build();
     let response = match market_request(&agent, url, "application/json").call() {
-        Ok(response) => response,
+        Ok(response) => {
+            // ureq 在非 2xx 时既可能返回 Err(Status)，也可能返回 Ok(response)：
+            // 两种都要检测限流，否则 Gitee 403 会直接当成「非预期跳转」，raw 镜像 fallback 永不触发。
+            let status = response.status();
+            if status != 200 {
+                let limited = gitee_rate_limited(status, response.into_reader());
+                if limited {
+                    if let Some(raw) = gitee_raw_url(url) {
+                        return download_gitee_raw(&agent, &raw, limit);
+                    }
+                }
+                return Err(fail(&format!("集市服务返回 HTTP {status}")));
+            }
+            response
+        }
         Err(ureq::Error::Status(status, response)) => {
             if gitee_rate_limited(status, response.into_reader()) {
                 if let Some(raw) = gitee_raw_url(url) {
@@ -1102,3 +1116,4 @@ pub(crate) fn author_command(args: &[OsString]) -> Option<ExitCode> {
 #[cfg(all(test, feature="__spike_tests_off__"))]
 #[path = "market_tests.rs"]
 mod tests;
+

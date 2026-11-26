@@ -46,7 +46,7 @@ const CMD_SETTINGS:u32=6;
 const TIMER_MENU: usize = 12;
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
-const RUN_VALUE: PCWSTR = w!("Daozai");
+const RUN_VALUE: PCWSTR = w!("DaozaiCustom");
 const MUTEX_NAME: PCWSTR = w!("Local\\Daozai.SingleInstance");
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

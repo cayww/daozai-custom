@@ -99,7 +99,7 @@ fn path() -> Option<PathBuf> {
     #[cfg(not(test))]
     {
         let base = std::env::var_os("APPDATA")?;
-        Some(PathBuf::from(base).join("Daozai").join("island_status.json"))
+        Some(PathBuf::from(base).join("DaozaiCustom").join("island_status.json"))
     }
 }
 
