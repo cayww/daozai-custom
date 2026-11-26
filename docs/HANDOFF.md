@@ -2101,3 +2101,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **不补**：上游 `ed035e7` 的 `water_view_transition` 只服务 DX12 兼容读回；D3D11 的 `transitioning` 已包含喝水页弹簧，仓库内未见社区 D3D11 专用实现。
 - **验证**：全量 lib **1545 passed / 0 failed / 138 ignored**；release 构建与打包通过；当前包 sha256 前 16 `dbb5ed1d1807c30`（exe `d7311475aab296b3`）。
 - **待用户确认**：切页标题动画、连点反向切换、宽常驻岛展开收起。
+
+### 7.0zzzl 标题与 tab 入场动画修正（2026-11-26 21:02+）
+- **提交**：`e0c995e`。上游把标题/tab/右上操作画在独立 `header`，正文画在 `c`；本地此前直接画在正文，导致「健康提醒」与「置物架/剪贴板」跟着正文滑。现已把 `header` 参数贯穿 `render_page` 与相关页面。
+- 置物架/剪贴板分栏回退为上游静态选中填充，删除本地 press+滑动透镜；D3D11 `transitioning` 补 `water_view_t`。
+- **验证**：按用户要求未跑全量测试；`cargo check --tests` 与 release 构建、打包通过。当前包 sha256 前 16 `bb66d473a83af005`（exe `aab2d2fd436efbc4`）。
+- **待用户实机确认**：健康提醒四字与置物架/剪贴板 tab 入场不再随正文滑动。

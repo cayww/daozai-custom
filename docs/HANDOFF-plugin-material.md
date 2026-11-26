@@ -390,4 +390,5 @@ float4 material(MaterialIn i) {
   - 与上游一致、无需改：`anim.rs`、`health_tabs` 胶囊滑动、`water_body`/`sit_body` 原地交叉淡化、focus/rest、settings/plugin/quota tabs、performance-tab-slide。
   - 本地 DISTINCT 且有意保留：`Ctl` GPU 透镜体系（D3D11 液态玻璃）、`mail_tab` 滑动、`ctl_appear`/`ctl_press` 按压反馈、`page_slide_tx` 只让透镜跟随上游同款切页滑动。
   - 本地自定义但已删：`shelf_tab_press` + `shelf_tab_spring` 滑动透镜。
-- **验证**：按用户要求**未跑全量测试**；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
+- **验证**：按用户要求**未跑全量测试**；`cargo check --lib --bin daozai --tests` 通过；release 双 bin 构建通过；Inno Setup 7 打包成功。
+- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,089,634 bytes，sha256 前 16 `bb66d473a83af005`（exe `aab2d2fd436efbc4`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-tab-header`。
