@@ -2163,6 +2163,12 @@ pub(crate) fn status_color(name: &str) -> Color32 {
 impl App {
     pub(crate) fn draw_notice(&mut self, c: &Card, panel: Rect, a: &Alert, _cmds: &mut Vec<Cmd>) {
         let nc = c.clipped(0.0, 0.0, panel.width(), panel.height());
+        // 上游 v0.6.70：插件通知走自己的横幅绘制（打开会话/看详情/关闭）。
+        #[cfg(windows)]
+        if let AlertSource::Plugin { source, id } = &a.source {
+            self.draw_plugin_notice_banner(&nc, a, source, id, _cmds);
+            return;
+        }
         // 关键词高亮：命中词表时在卡片最左侧亮一条琥珀色竖条。
         // 只加一条竖条，不动文字和任何控件的位置，布局与测试友好的部分保持原样。
         if a.status.is_none() && (self.keyword_hit(&a.title) || self.keyword_hit(&a.body)) {
@@ -5213,9 +5219,23 @@ impl App {
                             if selected || response.hovered() {
                                 ui.painter().rect_filled(rect,7.0,if selected{settings_color(ui.ctx(),Color32::from_rgb(43,43,46),Color32::from_rgb(214,221,232))}else{settings_color(ui.ctx(),Color32::from_rgb(30,30,33),Color32::from_rgb(225,230,238))});
                             }
-                            let icon=egui::include_image!("../assets/settings-icons/system/pages.svg");
                             let icon_bg=egui::Rect::from_center_size(egui::pos2(rect.left()+21.0,rect.center().y),egui::vec2(23.0,23.0));
-                            egui::Image::new(icon).paint_at(ui,icon_bg);
+                            #[cfg(feature="sdk-js")]
+                            let used_plugin_icon=if let Some(nav)=self.plugins.navigation_icon(id) {
+                                let [r,g,b]=nav.background();
+                                ui.painter().rect_filled(icon_bg,6.0,Color32::from_rgb(r,g,b));
+                                crate::plugin_canvas_ui::draw_navigation_icon(ui.painter(),icon_bg,nav.commands(),Color32::WHITE);
+                                true
+                            } else { false };
+                            #[cfg(not(feature="sdk-js"))]
+                            let used_plugin_icon=false;
+                            if !used_plugin_icon {
+                                let icon=egui::include_image!("../assets/settings-icons/system/pages.svg");
+                                egui::Image::new(icon).paint_at(ui,icon_bg);
+                            }
+                            if selected && focus_requested && !ui.clip_rect().contains_rect(response.rect) {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
                             ui.painter().text(egui::pos2(rect.left()+40.0,rect.center().y),egui::Align2::LEFT_CENTER,name,egui::FontId::proportional(13.0),if selected{settings_color(ui.ctx(),Color32::WHITE,Color32::from_rgb(30,34,41))}else{settings_color(ui.ctx(),Color32::from_gray(225),Color32::from_gray(55))});
                             ui.add_space(row_gap);
                         }
@@ -5223,7 +5243,11 @@ impl App {
                     if start==SETTINGS_TAB_CUSTOM {ui.add_space((ui.available_height()-row_h*2.0-8.0).max(4.0));}
                     let selected=(start..=end).contains(&self.settings_tab);
                     let (rect,response)=ui.allocate_exact_size(egui::vec2(ui.available_width(),row_h),egui::Sense::click());
-                    if response.clicked() && !selected{self.settings_tab=start;}
+                    if response.clicked() && !selected{
+                        self.settings_tab=start;
+                        #[cfg(feature="sdk-js")]
+                        { self.settings_plugin=None; }
+                    }
                     if selected || response.hovered(){
                         ui.painter().rect_filled(rect,7.0,if selected{settings_color(ui.ctx(),Color32::from_rgb(43,43,46),Color32::from_rgb(214,221,232))}else{settings_color(ui.ctx(),Color32::from_rgb(30,30,33),Color32::from_rgb(225,230,238))});
                     }
@@ -5299,17 +5323,22 @@ impl App {
                 ui.add_space(6.0);
                 // 合并页：健康（3）并入专注（2），置物（4→5）并入待办，旧序号仍能打开对应页面。
                 let tab=match self.settings_tab {3=>2,5=>4,t=>t};
+                // 插件正文只由「当前 tab + 当前插件」共同决定。旧代码只看 settings_plugin，
+                // 切到内置页后残留的插件 id 会让标题变了但正文仍是便签/金价页。
+                let scroll=egui::ScrollArea::vertical();
                 #[cfg(feature="sdk-js")]
-                let plugin=self.settings_plugin.clone();
-                #[cfg(feature="sdk-js")]
-                let scroll=if let Some(id)=&plugin {egui::ScrollArea::vertical().id_salt(("settings-plugin-scroll",id))}else{egui::ScrollArea::vertical().id_salt(("settings-scroll",tab))};
+                let scroll=if let Some((id,_))=plugin {
+                    scroll.id_salt(("settings-plugin-scroll",id))
+                } else {
+                    scroll.id_salt(("settings-scroll",tab))
+                };
                 #[cfg(not(feature="sdk-js"))]
-                let scroll=egui::ScrollArea::vertical().id_salt(("settings-scroll",tab));
+                let scroll=scroll.id_salt(("settings-scroll",tab));
                 scroll.auto_shrink([false,false]).show(ui,|ui|{
                     // 右侧给滚动条留出空隙，卡片和开关不会被它压住。
                     ui.set_width((ui.available_width()-12.0).max(240.0));
                     #[cfg(feature="sdk-js")]
-                    if let Some(id)=&plugin {
+                    if let Some((id,_))=plugin {
                         self.plugins.standalone_settings(ui,id);
                         return;
                     }

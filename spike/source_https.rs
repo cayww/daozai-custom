@@ -555,7 +555,7 @@ pub(super) fn delete_secret(id: &str) -> io::Result<()> {
     }
 }
 
-#[cfg(all(test, feature="__spike_tests_off__"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

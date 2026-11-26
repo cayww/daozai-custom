@@ -12,6 +12,7 @@ use crate::lyrics;
 use crate::mail;
 use crate::model;
 use crate::paint::{self, Card, H};
+use crate::resident_date::ResidentDay;
 use crate::shape;
 use crate::smtc::{NowPlaying, Transport};
 use crate::theme::{self, size, W};
@@ -2261,6 +2262,7 @@ impl App {
             self.open_plugin_settings(&id);
             return;
         }
+        self.settings_plugin = None;
         self.settings_tab = self.page_settings_tab(page);
         self.open_settings();
     }
@@ -2403,12 +2405,20 @@ impl App {
     pub(crate) fn island_palette(&self)->Option<crate::skin_paint::Palette> { self.skin_palette() }
     #[cfg(feature="sdk-js")]
     pub(crate) fn island_overlay_fill(&self)->Color32 { self.preview_fill() }
+    #[cfg(feature="sdk-js")]
+    pub(crate) fn pinned_canvas_theme(&self) -> crate::plugin_canvas_ui::CanvasTheme {
+        crate::plugin_canvas_ui::CanvasTheme {
+            palette: self.island_palette(),
+            accent: None,
+            background: self.island_overlay_fill(),
+        }
+    }
     /// 常驻内容缩放：有插件停靠内容或歌词时不压缩，保证内容完整可读。
     fn resident_fit(&self)->f32 {
         #[cfg(feature="sdk-js")]
         if !self.pinned_displays.is_empty() { return 1.0; }
         if self.island_lyrics_active() { return 1.0; }
-        ((WIN_W-32.0)/self.resident.target.width).min(1.0)
+        (self.resident_limit()/self.resident.target.width).min(1.0)*self.resident_squeeze()
     }
 
 
@@ -2724,21 +2734,36 @@ impl App {
     pub fn set_minimal(&mut self,enabled:bool) {
         self.settings.minimal=enabled;if enabled {self.settings.pet=false;}self.settings.save();
     }
+    /// 通知铃铛是否仍在停留，以及开始响的时刻（邮件提醒与新通知取较晚者）。
+    pub(crate) fn notification_bell(&self)->Option<f64>{
+        let mail=self.mail.bell_at.filter(|at|self.module_on(MAIL_PAGE)&&self.t<at+6.0);
+        if self.t<self.notification_bell_until {
+            Some(mail.map_or(self.notification_bell_at,|at|self.notification_bell_at.max(at)))
+        }else{mail}
+    }
     fn base_size(&self) -> (f32, f32) {
         if !self.compact_notices()&&!self.open {
             if let Some(a)=&self.notice {let (width,height)=self.notice_size(a);return (width+self.pet_space(),height);}
         }
         if self.side() {
             // 左右停靠：竖向胶囊（通知仍是贴边滑出的横向卡片，见上）。
-            return self.side_base_size(self.effective_minimal()&&self.t>=self.notification_bell_until);
+            return self.side_base_size(self.effective_minimal()&&self.notification_bell().is_none());
         }
         if self.island_lyrics_active() {
             (self.lyric_bar_width(),BAR_H)
-        } else if self.effective_minimal()&&self.t>=self.notification_bell_until {
+        } else if self.effective_minimal()&&self.notification_bell().is_none() {
             (BAR_W_MIN, BAR_H_MIN)
         } else {
-            (self.resident.target.width.min(WIN_W-32.0), BAR_H)
+            (self.resident.target.width.min(self.resident_limit()), BAR_H)
         }
+    }
+
+    /// 上游 v0.6.70：常驻区比展开面板还宽时（比如开了综合监测），展开、收起途中
+    /// 岛宽会先窄于常驻内容；让常驻内容跟着岛宽等比收拢，而不是被岛边缘直接切掉。
+    fn resident_squeeze(&self)->f32 {
+        if self.side()||self.island_lyrics_active()||self.notice.is_some() {return 1.0;}
+        let content=self.resident.target.width.min(self.resident_limit());
+        (self.w.pos/content.max(1.0)).clamp(0.5,1.0)
     }
 
     /// 0 = 药丸，1 = 完整面板（展开时可略超过 1）。
@@ -2901,6 +2926,14 @@ impl App {
         if self.plugins.watch_files_enabled() { ui.ctx().request_repaint_after(std::time::Duration::from_millis(200)); }
         self.sync_device(env);
         self.tick_alerts();
+        // 上游 v0.6.70：锁屏/全屏/Esc 时收起插件详情，并按设置隐藏通知正文。
+        #[cfg(windows)]
+        self.tick_plugin_notices(&ctx, env);
+        // 插件通知详情展开时独占岛体，普通常驻/面板内容让位。
+        #[cfg(windows)]
+        let plugin_notice_detail = self.plugin_notice_detail_open();
+        #[cfg(not(windows))]
+        let plugin_notice_detail = false;
         // hud_notice 是实际绘制用的快照。按 title+at 比较同步：
         // 同类 HUD 切换（中文→英文、大写→小写）title 不变但每次 alert 都刷新
         // at=self.t，旧逻辑只比 title 导致绘制层永远显示第一次的内容。
@@ -2914,11 +2947,11 @@ impl App {
         if content_changed {if let Some(a)=self.notice.as_ref(){self.hud_notice=Some(a.clone());}}
         self.hud_alpha=anim::approach(self.hud_alpha,if has_notice{1.0}else{0.0},if has_notice{16.0}else{8.0},dt);
         if !has_notice && self.hud_alpha<0.003 {self.hud_notice=None;}
-        let notice_target=if !self.notice.as_ref().is_some_and(|a|a.messenger().is_some()) && self.compact_notices()&&(self.notice.is_some()||self.t<self.notification_bell_until) {44.0}else{0.0};
+        let notice_target=if !self.notice.as_ref().is_some_and(|a|a.messenger().is_some()) && self.compact_notices()&&(self.notice.is_some()||self.notification_bell().is_some()) {44.0}else{0.0};
         self.notice_width.target=notice_target;
         if self.compact_notices(){self.notice_width.step(dt);}else{self.notice_width.snap(0.0);self.notice_details=false;}
         self.update_media(env,&ctx);
-        let bell=self.t<self.notification_bell_until&&!self.compact_notices();
+        let bell=self.notification_bell().is_some()&&!self.compact_notices();
         // 手机电量已迁入「无线设备」页，岛仔常驻不再轮询（避免每帧读手机连接卡片）。
         let phone=(None,false);
         // 本机电量与手机电量彻底分开：电量开关只管本机，手机电量开关只管手机，
@@ -2949,7 +2982,7 @@ impl App {
         {
             // 插件停靠内容：同步数据、测量宽度，并入常驻布局。
             let suppress=self.effective_minimal()||self.notice.is_some()||self.hud_alpha>0.003
-                ||self.island_lyrics_active()||env.fullscreen_hidden||env.screen_locked;
+                ||plugin_notice_detail||self.island_lyrics_active()||env.fullscreen_hidden||env.screen_locked;
             let (mut displays,repaint)=self.plugins.pinned_displays(self.open||suppress);
             if let Some(delay)=repaint { ctx.request_repaint_after(delay); }
             for display in &mut displays { display.measure_width(ui); }
@@ -2958,9 +2991,9 @@ impl App {
                 let widths:Vec<f32>=displays.iter().map(|d|d.width(156.0)).collect();
                 let pinned_width: f32=widths.iter().map(|w|w+12.0).sum();
                 if pinned_width>0.0 {
-                    self.pinned_horizontal_width=(layout.width+pinned_width+32.0).max(WIN_W);
+                    self.pinned_horizontal_width=(layout.width+pinned_width+32.0+self.unread_stack_len(true)).max(WIN_W);
                 }
-                layout.append_pinned(&widths,WIN_W-32.0);
+                layout.append_pinned(&widths,self.resident_limit());
             }
             self.pinned_displays=displays;
         }
@@ -3024,7 +3057,6 @@ impl App {
             self.maa_status=None;
         }
 
-        let cx = win.center().x;
         // 胶囊皮肤悬浮在屏幕顶边下方。
         let pill = self.settings.island_shape==model::IslandShape::Pill;
         let top = win.top() + if pill { PILL_GAP } else { 0.0 };
@@ -3058,7 +3090,11 @@ impl App {
 
         // ---------- 输入：悬停 ----------
         let p_prev = self.progress();
-        let hit = if side {self.side_hit_rect(win,p_prev)} else {self.hit_rect(cx, top, p_prev)};
+        // 上游 v0.6.70：常驻图标/通知与主面板共用停靠中线，必要时一起偏移，
+        // 命中区域也跟着挪；否则岛体被屏幕边界推开后，图标的 hover 会落在空处。
+        let (offset,badge,notice)=self.bar_parts(win,self.island_rect(win,self.w.pos,self.h.pos));
+        let cx = win.center().x+offset.x;
+        let hit = if side {self.side_hit_rect(win,p_prev,self.h.pos).translate(offset)} else {self.hit_rect(cx, top, p_prev)};
         let page_before=self.page;
         let previous_menu=self.shelf_menu_rect.take();
         let inside = env.cursor.is_some_and(|c| hit.contains(c) || previous_menu.is_some_and(|r|r.contains(c)));
@@ -3067,7 +3103,14 @@ impl App {
             && !env.fullscreen_hidden && !env.screen_locked && env.cursor.is_some_and(|c|area.contains(c))
             && !ctx.input(|i|i.pointer.any_pressed() || i.key_pressed(egui::Key::Escape)));
         let page_hover=inside || self.page_scroll_area.is_some();
-        let on_notice=env.cursor.is_some_and(|c|self.messenger_badge_rect(win,self.island_rect(win,self.w.pos,self.h.pos)).is_some_and(|r|r.contains(c)) || self.notice_rect(cx,top).is_some_and(|r|r.contains(c))||self.notice_details_rect(cx,top).is_some_and(|r|r.contains(c)));
+        // 展开时穿过面板到通知图标之间的空隙也算悬停；按钮仍只在图标本身响应点击。
+        let on_notice=env.cursor.is_some_and(|c|badge.into_iter().chain(notice).any(|mut r|{
+            if self.open {
+                r.extend_with_x(hit.x_range().clamp(r.center().x));
+                if !side {r.extend_with_y(hit.top());}
+            }
+            r.contains(c)
+        }) || self.notice_details_rect(notice).is_some_and(|r|r.contains(c)));
         if !inside {
             self.hover_lock = false;
         }
@@ -3096,7 +3139,7 @@ impl App {
             }
             self.cancel_edit();
         }
-        if (!self.is_editing() || self.todo_choosing) && page_hover && self.open && self.reveal > 0.95 {
+        if !plugin_notice_detail && (!self.is_editing() || self.todo_choosing) && page_hover && self.open && self.reveal > 0.95 {
             let (left, right, esc) = ctx.input(|i| (i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::Escape)));
             let scroll = raw_scroll_y(&ctx);
             if esc { self.hover_lock = true; }
@@ -3162,7 +3205,7 @@ impl App {
             }
         } else {self.wheel_delta=0.0;}
         let volume_dragging=self.music_volume_open && ctx.is_being_dragged(egui::Id::unique(("card-drag",true,"m-volume-track")));
-        let want = (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (self.is_editing() && self.open);
+        let want = plugin_notice_detail || (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (self.is_editing() && self.open);
         self.morph(want, inside, env.t, dt);
         // 收起判定靠「离开延迟到了」/「强制停留到点了」，两者都发生在未来某一帧；
         // 而窗口没有输入事件时会睡死，鼠标移开后再没有事件，岛仔就一直停在展开态。
@@ -3188,19 +3231,20 @@ impl App {
         let (max_w, max_h) = if side {(crate::side_dock::SIDE_W, crate::side_dock::SIDE_H)} else {(WIN_W, WIN_H)};
         let (w, h) = ((self.w.pos * sx).min((max_w - 24.0).max(self.w.pos)), (self.h.pos * sy).min((max_h - 24.0).max(self.h.pos)));
         let panel = self.island_rect(win, w, h);
-        let messenger_rect=self.messenger_badge_rect(win,panel);
+        let (offset,messenger_rect,notice_rect)=self.bar_parts(win,panel);
+        let panel=panel.translate(offset);
+        let cx=panel.center().x;
         let appear=self.messenger_appear();
         let outside_badge=messenger_rect.filter(|_|appear>0.02);
         let pc = anim::clamp01(p);
         let painter = ui.painter_at(ui.max_rect().expand(40.0));
         let feather = 1.0 / ctx.pixels_per_point();
-        let notice_rect=self.notice_rect(cx,top);
         let notice_shape=notice_rect.map(|r|Rect::from_min_max(Pos2::new(r.left()-36.0,r.top()),r.max));
         let body=messenger_rect.filter(|_|outside_badge.is_none()).map_or(panel,|badge|panel.union(badge));
         let body=notice_shape.map_or(body,|notice|body.union(notice));
         // 细条点穿：去掉动画门槛 pc，收起过程早期就进入「点击穿透」；
         // minimal_pill 仍保留 pc 门槛，视觉表现完全不变。
-        let minimal_strip = self.effective_minimal() && !self.island_lyrics_active() && self.notice.is_none() && self.t>=self.notification_bell_until;
+        let minimal_strip = self.effective_minimal() && !self.island_lyrics_active() && self.notice.is_none() && self.notification_bell().is_none();
         let minimal_pill = minimal_strip && pc < 0.02;
         let flare = if minimal_pill || pill { 0.0 } else { lerp(5.0, FLARE, pc) };
         let k = (w / PW).clamp(0.3, 1.1);
@@ -3280,6 +3324,11 @@ impl App {
         { self.plugin_form_focused=false; self.plugin_canvas_frame=None; }
         self.cursor_local = env.cursor.map(|p| base.to_local(p));
 
+        // 侧边常驻日期：与顶栏共用同一份按宿主日期算出的内容。
+        let resident_day=if self.settings.resident_date==model::ResidentDate::Off {None}else{
+            chrono::NaiveDate::parse_from_str(&env.today,"%Y-%m-%d").ok()
+                .and_then(|today|ResidentDay::new(self.settings.resident_date,today))
+        };
         let banner=!self.compact_notices()&&self.notice.is_some()&&!self.open;
         let restoring_lyrics=!self.open&&self.notice.is_none()&&self.island_lyrics_active()&&self.hud_notice.as_ref().is_some_and(|a|a.meeting.is_some()||a.source!=crate::extras::AlertSource::Internal);
         let fading_hud=!self.compact_notices()&&!self.open&&self.hud_notice.as_ref().is_some_and(|a|a.is_hud())&&(banner||self.hud_alpha>0.003);
@@ -3288,7 +3337,7 @@ impl App {
             let width_progress=if (to-from).abs()<1.0 {if banner{1.0}else{0.0}}else{((self.w.pos-from)/(to-from)).clamp(0.0,1.0)};
             let (opacity,header_opacity)=if banner {(self.hud_alpha*smoothstep(0.45,0.85,width_progress),1.0-smoothstep(0.05,0.40,width_progress))}
                 else {(self.hud_alpha*smoothstep(0.20,0.60,width_progress),1.0-smoothstep(0.05,0.25,width_progress))};
-            if !minimal_pill||pc>0.0 {self.resident_header(&base.faded(header_opacity),panel,cx,pc,reveal,env);}
+            if !minimal_pill||pc>0.0 {self.resident_header(&base.faded(header_opacity),panel,cx,pc,reveal,env,resident_day.as_ref());}
             if let Some(a)=self.hud_notice.clone(){
                 let overlay=Card::new(ui,panel.min+Vec2::new(self.pet_space(),0.0),panel.intersect(ui.max_rect())).faded(opacity);
                 let overlay=if opacity<0.85||!banner{overlay.ghost()}else{overlay};
@@ -3296,8 +3345,8 @@ impl App {
             }
         }else if banner {
             if let Some(a)=self.notice.clone(){self.draw_notice(&Card::new(ui,panel.min+Vec2::new(self.pet_space(),0.0),panel.intersect(ui.max_rect())),panel,&a,&mut cmds);}
-        }else if !minimal_pill || pc > 0.0 {
-            self.resident_header(&base, panel, cx, if restoring_lyrics{0.0}else{pc}, reveal, env);
+        }else if !plugin_notice_detail && (!minimal_pill || pc > 0.0) {
+            self.resident_header(&base, panel, cx, if restoring_lyrics{0.0}else{pc}, reveal, env, resident_day.as_ref());
         }
         if let Some(rect)=notice_rect {
             let c=Card::new(ui,rect.min,rect.intersect(ui.max_rect()));
@@ -3310,10 +3359,10 @@ impl App {
                 }else{crate::extras::notice_badge(&c,18.0,15.0,&a);}
                 let button=crate::quota_ui::bar_tooltip(c.hit(0.0,0.0,36.0,BAR_H,"notice-badge"),format!("{}\n{}",a.title,a.body));
                 if button.clicked(){if let Some(kind)=a.health(){self.confirm_health_reminder(kind);}else{self.notice_details=!self.notice_details;}}
-            }else if self.t<self.notification_bell_until {
-                paint::bell(&c.scaled_static(20.0,14.0,1.2),20.0,14.0,theme::WHITE,paint::bell_swing(self.t-self.notification_bell_at));
+            }else if let Some(at)=self.notification_bell() {
+                paint::bell(&c.scaled_static(20.0,14.0,1.2),20.0,14.0,theme::WHITE,paint::bell_swing(self.t-at));
                 c.circle(24.0,9.5,2.0,Color32::from_rgb(255,72,72));
-                if c.hit(6.0,0.0,28.0,30.0,"bell-mail").clicked(){self.show_page(5);}
+                if self.module_on(MAIL_PAGE) && c.hit(6.0,0.0,28.0,30.0,"bell-mail").clicked(){self.show_page(MAIL_PAGE);}
             }
         }
         if let Some(rect)=messenger_rect {
@@ -3329,7 +3378,7 @@ impl App {
             }
             keep_colors.push((from,crate::skin_paint::shape_count(&ctx,layer)));
         }
-        let notice_details=self.notice_details_rect(cx,top);
+        let notice_details=self.notice_details_rect(notice_rect);
         if let Some(rect)=notice_details {
             let radius=if self.hud_notice.as_ref().is_some_and(|a|a.meeting.is_some()){14.0}else{10.0};
             let from=crate::skin_paint::shape_count(&ctx,layer);
@@ -3349,7 +3398,12 @@ impl App {
             let fit=if self.island_lyrics_active()||self.notice.is_some(){1.0}else{self.resident_fit()};
             self.pet.draw(&base.scaled(cx-origin.x,15.0,fit).shifted(0.0,y).faded(pet_alpha),cx-origin.x+self.resident.position(bar::PET),self.pet_anim_t,self.skin_palette());
         }
-        if reveal > 0.004 && !banner && !restoring_lyrics {
+        // 上游 v0.6.70：插件通知详情展开时独占面板，不再绘制普通页面内容。
+        #[cfg(windows)]
+        if plugin_notice_detail && self.open && reveal > 0.6 {
+            self.draw_plugin_notice_detail(&base, &mut cmds);
+        }
+        if !plugin_notice_detail && reveal > 0.004 && !banner && !restoring_lyrics {
             // 「内容上浮 5px」只属于从胶囊展开那一段（面板还没到基础高度）。
             // 以前直接挂在 reveal 上：切页会改 expanded_height，progress 一回落
             // reveal 就跟着掉，整页内容跟着下滑 5px 再弹回来——这就是切页「上下抖」。
@@ -3371,12 +3425,12 @@ impl App {
             } else {origin};
             self.toast_layer(&Card::new(ui,toast_origin,win),h+8.0)
         }else{None};
-        if (self.adding||self.editing.is_some()) && reveal > 0.9 && self.page == 4 && self.page_e() > 0.25 {
+        if !plugin_notice_detail && (self.adding||self.editing.is_some()) && reveal > 0.9 && self.page == 4 && self.page_e() > 0.25 {
             self.input_field(ui, origin, &mut cmds);
         }
 
-        if self.task_dialog.is_some() && reveal>0.9 {self.task_editor_inputs(ui,origin,&mut cmds);}
-        if self.calendar.draft.is_some() && reveal>0.9 {self.calendar_editor_inputs(ui,origin,&mut cmds);}
+        if !plugin_notice_detail && self.task_dialog.is_some() && reveal>0.9 {self.task_editor_inputs(ui,origin,&mut cmds);}
+        if !plugin_notice_detail && self.calendar.draft.is_some() && reveal>0.9 {self.calendar_editor_inputs(ui,origin,&mut cmds);}
 
         // ---------- 输出 ----------
         let rel = |r: Rect| r.translate(-win.min.to_vec2());
@@ -3452,7 +3506,7 @@ impl App {
             || self.open && self.page==3 && self.shelf_x.values().any(|s| !s.settled(68.0))
             || self.open && self.page==2 && (!self.water_ring.settled(1.0) || !self.sit_view_t.settled(1.0) || !self.sit_t.settled(1.0))
             || self.toast.is_some()
-            || self.t < self.notification_bell_until && self.t-self.notification_bell_at < 0.95
+            || self.notification_bell().is_some_and(|at|self.t-at<0.95)
             || self.notice.as_ref().is_some_and(|a|a.source!=crate::extras::AlertSource::Internal&&self.t-a.at<0.95)
             || self.hud_alpha > 0.003 && self.hud_alpha < 0.997
             || !self.notice_width.settled(1.0);
@@ -3533,7 +3587,7 @@ impl App {
         cmds.append(&mut self.pending);
         // 翻到较矮页面时，把旧页命中区沿缩短一侧保留一条续滚带（与新页重叠 8px 防抖），
         // 这样鼠标停在旧页区域仍能继续滚轮翻页，也不会因命中区缩小而误收起。
-        let next_hit=if side {self.side_hit_rect(win,self.progress())} else {self.hit_rect(cx,top,self.progress())};
+        let next_hit=if side {self.side_hit_rect(win,self.progress(),self.h.pos)} else {self.hit_rect(cx,top,self.progress())};
         if page_before!=self.page && self.open {
             let previous=self.page_scroll_area.map_or(hit,|area|hit.union(area));
             self.page_scroll_area=env.cursor.filter(|&c|previous.contains(c)).and_then(|c|{
@@ -3555,7 +3609,7 @@ impl App {
             strip_rect: (minimal_strip && !self.open && self.position_drag.is_none()).then(|| rel(next_hit)),
             page_scroll_area:self.page_scroll_area.map(rel),
             notice_hit:notice_shape.into_iter().chain(notice_details).chain(messenger_rect).chain(self.shelf_menu_rect).reduce(|a,b|a.union(b)).map(rel),
-            file_drop_zone:self.settings.visible_pages[3].then(||rel(if side {self.island_rect(win,PW,self.expanded_height())} else {Rect::from_min_size(Pos2::new(cx-PW/2.0,top),Vec2::new(PW,96.0))})),
+            file_drop_zone:self.settings.visible_pages[3].then(||rel(if side {self.island_rect(win,PW,self.expanded_height()).translate(offset)} else {Rect::from_min_size(Pos2::new(cx-PW/2.0,top),Vec2::new(PW,96.0))})),
             expanded: self.open,
             editing: self.is_editing(),
             animating,
@@ -3615,7 +3669,12 @@ impl App {
     fn unread_slot(&self,height:f32)->f32 {
         if self.unread_count()>=3 {(height-4.0)/3.0} else {UNREAD_SLOT}
     }
-    fn unread_count(&self)->usize {self.pending_messengers.len()+self.health_badges().len()}
+    fn unread_count(&self)->usize {
+        let count=self.pending_messengers.len()+self.health_badges().len();
+        #[cfg(windows)]
+        let count=count+self.plugin_notice_ui.item_count();
+        count
+    }
     /// 收起时叠放的来源图标，每个客户端各占一个。
     fn unread_sources(&self)->Vec<Messenger>{
         let mut sources=Vec::new();
@@ -3624,14 +3683,45 @@ impl App {
     }
     /// 收起时叠放区沿胶囊方向的长度。
     fn unread_stack_len(&self,horizontal:bool)->f32 {
-        let icons=(self.unread_sources().len()+self.health_badges().len()) as f32;
-        32.0+unread_step(horizontal)*(icons-1.0)
+        let icons=self.unread_sources().len()+self.health_badges().len();
+        #[cfg(windows)]
+        let icons=icons+self.plugin_notice_ui.collapsed_count();
+        let icons=icons as f32;
+        if icons==0.0 {0.0}else{32.0+unread_step(horizontal)*(icons-1.0)}
+    }
+    /// 常驻区沿停靠方向能占的最大长度（扣掉未读叠放区）。
+    pub(crate) fn resident_limit(&self)->f32 {
+        let limit=if self.side() {
+            crate::side_dock::SIDE_H-24.0
+        }else{
+            self.screen.map_or(WIN_W,|screen|screen.width().min(WIN_W))-32.0
+        };
+        (limit-self.unread_stack_len(!self.side())).max(1.0)
+    }
+
+    /// 上游 v0.6.70：并入岛体的图标与主内容共用停靠中线；展开后独立显示的胶囊自行定位。
+    fn bar_parts(&self,win:Rect,panel:Rect)->(Vec2,Option<Rect>,Option<Rect>) {
+        let badge=self.messenger_badge_rect(win,panel);
+        let notice=self.notice_rect(panel);
+        let merged=badge.filter(|_|self.messenger_appear()<=0.02).into_iter().chain(notice);
+        let body=merged.fold(panel,Rect::union);
+        let bounds=self.screen.map_or(win,|screen|screen.intersect(win));
+        let along=|center:f32,mid:f32,low:f32,high:f32|{
+            let shift=center-mid;
+            if low<=high {shift.clamp(low,high)}else{shift}
+        };
+        let offset=if body==panel {Vec2::ZERO} else if self.side(){
+            Vec2::new(0.0,along(win.center().y,body.center().y,bounds.top()-body.top(),bounds.bottom()-body.bottom()))
+        }else{
+            Vec2::new(along(win.center().x,body.center().x,bounds.left()-body.left(),bounds.right()-body.right()),0.0)
+        };
+        (offset,badge.map(|r|r.translate(offset)),notice.map(|r|r.translate(offset)))
     }
 
     fn messenger_badge_rect(&self,win:Rect,panel:Rect)->Option<Rect>{
         if self.unread_count()==0 || self.browser_minimal_active && !self.open {return None;}
         // 完整横幅已包含该来源图标。歌词模式和横幅收起后使用常驻入口。
-        if !self.open && !self.compact_notices() && self.pending_messengers.len()==1 && self.health_badges().is_empty()
+        if !self.open && !self.compact_notices() && self.unread_count()==1 && self.pending_messengers.len()==1
             && self.notice.as_ref().and_then(|a|a.messenger())==self.pending_messengers.first().map(|u|u.source){return None;}
         let bounds=self.screen.map_or(win,|screen|screen.intersect(win));
         let appear=self.messenger_appear();
@@ -3641,10 +3731,11 @@ impl App {
             // 顶部停靠时面板贴着屏幕上沿，胶囊往下让一点，圆顶不会被屏幕边切掉。
             let inset=self.unread_top_inset();
             let height=self.unread_capsule_height(full.height()-inset);
-            let left=self.dock()==model::Dock::Right || self.dock()==model::Dock::Top && full.right()+UNREAD_GAP+UNREAD_W>bounds.right();
-            let width=UNREAD_W*appear;
-            let x=if left {panel.left()-UNREAD_GAP*appear-width}else{panel.right()+UNREAD_GAP*appear};
-            return Some(Rect::from_min_size(Pos2::new(x,panel.top()+inset),Vec2::new(width,height*appear)));
+            let left=self.dock()==model::Dock::Right || !self.side() && full.right()+UNREAD_GAP+UNREAD_W>bounds.right();
+            // 胶囊在展开后的中心原地显现，避免跟着岛体边缘越过终点再弹回来。
+            let cx=if left {full.left()-UNREAD_GAP-UNREAD_W/2.0}else{full.right()+UNREAD_GAP+UNREAD_W/2.0};
+            let center=Pos2::new(cx,full.top()+inset+height/2.0);
+            return Some(Rect::from_center_size(center,Vec2::new(UNREAD_W,height)*appear));
         }
         // 极简刘海：横幅照常弹出，收起后只留细线，未读不常挂在线条上；展开岛体时在面板旁出现。
         if self.effective_minimal(){return None;}
@@ -3659,7 +3750,7 @@ impl App {
         }else{
             let right=panel.right()+self.notice_width.pos;
             let y=if self.notice.is_some() && !self.compact_notices(){panel.center().y-BAR_H/2.0}else{panel.top()};
-            (if right+width<=bounds.right(){right}else{panel.left()-width},y)
+            (if !self.side() || right+width<=bounds.right(){right}else{panel.left()-width},y)
         };
         Some(Rect::from_min_size(Pos2::new(x,y),Vec2::new(width,height)))
     }
@@ -3695,8 +3786,13 @@ impl App {
             let button=inner.hit(0.0,cy-slot/2.0,UNREAD_W,slot,self.unread_id(i)).on_hover_text(format!("查看{name}"));
             if button.clicked(){cmds.push(Cmd::ViewMessenger(u));}
         }
-        for (i,kind) in self.health_badges().into_iter().enumerate() {
-            let cy=2.0+slot*((self.pending_messengers.len()+i) as f32+0.5)-self.messenger_scroll;
+        // 上游 v0.6.70：插件通知与消息、额度徽标共用同一条滚动胶囊。
+        let health=self.health_badges();
+        let health_offset=self.pending_messengers.len();
+        #[cfg(windows)]
+        self.draw_plugin_notice_capsule(&inner,health_offset+health.len(),slot,height,self.messenger_scroll,UNREAD_W,cmds);
+        for (i,kind) in health.into_iter().enumerate() {
+            let cy=2.0+slot*((health_offset+i) as f32+0.5)-self.messenger_scroll;
             if cy< -slot || cy>height+slot {continue;}
             kind.icon(&inner,x,cy,0.8);
             inner.circle(x+10.0,cy-9.0,2.6,Color32::from_rgb(255,59,48));
@@ -3717,6 +3813,8 @@ impl App {
         let health=self.health_badges();
         let count=self.pending_messengers.len();
         let icons=sources.len()+health.len();
+        #[cfg(windows)]
+        let icons=icons+self.plugin_notice_ui.collapsed_count();
         let step=unread_step(horizontal);
         let at=|k:usize|if horizontal {(16.0+step*k as f32,14.0)}else{(16.0,14.0+step*k as f32)};
         for k in 0..sources.len() {
@@ -3725,10 +3823,10 @@ impl App {
             crate::extras::messenger_icon(&c.scaled(x,y,scale),x,y,sources[k]);
         }
         for (i,kind) in health.iter().enumerate(){let (x,y)=at(sources.len()+i);kind.icon(c,x,y,0.7);}
-        // 每个来源图标右上角一个小红点，不显示数字。
-        for k in 0..icons {let (x,y)=at(k);c.circle(x+8.0,y-7.0,2.6,Color32::from_rgb(255,59,48));}
+        // 每个来源图标右上角一个小红点，不显示数字；插件徽标自带状态点。
+        for k in 0..sources.len()+health.len() {let (x,y)=at(k);c.circle(x+8.0,y-7.0,2.6,Color32::from_rgb(255,59,48));}
         let length=self.unread_stack_len(horizontal);
-        let messenger_length=if health.is_empty(){length}else{sources.len() as f32*step+if horizontal{5.0}else{3.0}};
+        let messenger_length=if icons==sources.len(){length}else{sources.len() as f32*step+if horizontal{5.0}else{3.0}};
         let (w,h)=if horizontal {(messenger_length,BAR_H)}else{(32.0,messenger_length)};
         if count==1 {
             let u=self.pending_messengers[0];
@@ -3738,6 +3836,9 @@ impl App {
             let button=c.hit(0.0,0.0,w,h,"messenger-stack").on_hover_text(format!("{count} 条未读 · 展开挑选"));
             if button.clicked(){self.reveal_unread();}
         }
+        // 上游 v0.6.70：插件通知的收起徽标接着消息/额度图标排布，各自可点开。
+        #[cfg(windows)]
+        self.draw_plugin_notice_stack(c,horizontal,sources.len()+health.len(),step,length,cmds);
         for (i,kind) in health.into_iter().enumerate() {
             let k=sources.len()+i;
             let (x,y)=at(k);
@@ -3754,14 +3855,14 @@ impl App {
         let target_h=self.expanded_height();
         self.tune_open(PW,target_h);
     }
-    fn notice_rect(&self,cx:f32,top:f32)->Option<Rect>{
+    fn notice_rect(&self,panel:Rect)->Option<Rect>{
         if !self.compact_notices(){return None;}
         let width=self.notice_width.pos-8.0;
-        (width>0.5).then(||Rect::from_min_size(Pos2::new(cx+self.w.pos/2.0+8.0,top),Vec2::new(width,BAR_H)))
+        (width>0.5).then(||Rect::from_min_size(Pos2::new(panel.right()+8.0,panel.top()),Vec2::new(width,BAR_H)))
     }
-    fn notice_details_rect(&self,cx:f32,top:f32)->Option<Rect>{
+    fn notice_details_rect(&self,badge:Option<Rect>)->Option<Rect>{
         let a=self.hud_notice.as_ref().filter(|_|self.notice_details&&self.notice.is_some())?;
-        let badge=self.notice_rect(cx,top)?;let (width,height)=self.notice_size(a);
+        let badge=badge?;let (width,height)=self.notice_size(a);
         let mut x=badge.left();
         // 岛体靠近屏幕右缘时，详情卡片向左展开，始终完整留在屏幕内。
         if let Some(screen)=self.screen {x=x.min(screen.right()-width-8.0).max(screen.left()+8.0);}
@@ -4432,7 +4533,7 @@ impl App {
             if let (Some(cursor),Some(screen))=(env.cursor,env.screen) {
                 // 使用屏幕内坐标，窗口移动或横竖画布切换不会累积位移。
                 let cursor=cursor-screen.min;
-                let edges=[(model::Dock::Top,cursor.y.max(0.0)),(model::Dock::Left,cursor.x.max(0.0)),(model::Dock::Right,(screen.width()-cursor.x).max(0.0))];
+                let edges=[(model::Dock::Top,cursor.y.max(0.0)),(model::Dock::Left,cursor.x.max(0.0)),(model::Dock::Right,(screen.width()-cursor.x).max(0.0)),(model::Dock::Bottom,(screen.height()-cursor.y).max(0.0))];
                 let &(nearest,distance)=edges.iter().min_by(|a,b|a.1.total_cmp(&b.1)).unwrap();
                 let current=edges.iter().find(|(dock,_)|*dock==self.dock()).map(|(_,d)|*d).unwrap_or(cursor.y.max(0.0));
                 // 靠近新边缘才换边；角落保留缓冲，防止横竖形态来回跳变。
@@ -4884,7 +4985,7 @@ impl App {
         let pb=(local_cx+layout.x[bar::BATTERY].unwrap_or(0.0),15.0);
         let pcx=layout.x[bar::CLOCK].map_or(hc,|x|local_cx+x-paint::clock_width(base,&clock,size::PILL_CLOCK)/2.0);
 
-        if self.effective_minimal() && self.t>=self.notification_bell_until && p < 0.02 { return; }
+        if self.effective_minimal() && self.notification_bell().is_none() && p < 0.02 { return; }
         // 电池：位置/大小连续插值
         let bk = lerp(1.0, 0.8, m);
         let bpos = (lerp(pb.0, hb.0, m), lerp(pb.1, hb.1, m));
@@ -4959,11 +5060,11 @@ impl App {
             }
         }
         let compact_alpha=1.0-smoothstep(0.0,0.22,p);
-        if self.t<self.notification_bell_until&&!self.compact_notices()&&p<0.1 {
-            if let Some(x)=layout.x[bar::BELL]{
-                let x=local_cx+x;paint::bell(&base.scaled_static(x,14.0,1.2),x,14.0,theme::WHITE,paint::bell_swing(self.t-self.notification_bell_at));
+        if !self.compact_notices()&&p<0.1 {
+            if let (Some(at),Some(x))=(self.notification_bell(),layout.x[bar::BELL]){
+                let x=local_cx+x;paint::bell(&base.scaled_static(x,14.0,1.2),x,14.0,theme::WHITE,paint::bell_swing(self.t-at));
                 base.circle(x+4.0,9.5,2.0,Color32::from_rgb(255,72,72));
-                if base.hit(x-14.0,3.0,28.0,25.0,"bell-mail").clicked(){self.show_page(5);}
+                if self.module_on(MAIL_PAGE)&&base.hit(x-14.0,3.0,28.0,25.0,"bell-mail").clicked(){self.show_page(MAIL_PAGE);}
             }
         }
         if compact_alpha>0.004 {
@@ -5041,14 +5142,14 @@ impl App {
 
     /// 常驻内容：顶部停靠走共享元素过渡（药丸里的电池、时钟飞到顶栏）；
     /// 左右停靠时竖排内容随展开淡出，顶栏随面板内容淡入。
-    fn resident_header(&mut self, base: &Card, panel: Rect, cx: f32, p: f32, reveal: f32, env: &Env) {
+    fn resident_header(&mut self, base: &Card, panel: Rect, cx: f32, p: f32, reveal: f32, env: &Env, resident_day: Option<&ResidentDay>) {
         if !self.side() {self.shared_header(base,cx,p,reveal,env);return;}
         let bar_alpha=1.0-smoothstep(0.0,0.3,p);
-        let minimal=self.effective_minimal()&&self.t>=self.notification_bell_until;
+        let minimal=self.effective_minimal()&&self.notification_bell().is_none();
         if bar_alpha>0.004 && !minimal {
             let c=base.shifted(panel.min.x-base.origin.x,panel.min.y-base.origin.y).faded(bar_alpha);
             let c=if bar_alpha<0.8 {c.ghost()} else {c};
-            self.side_bar(&c,panel.width(),panel.height(),env);
+            self.side_bar(&c,panel.width(),panel.height(),env,resident_day);
         }
         if reveal>0.004 {self.shared_header(&base.faded(reveal),base.origin.x+PW/2.0,1.0,reveal,env);}
     }

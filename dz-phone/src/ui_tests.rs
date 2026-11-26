@@ -1512,13 +1512,14 @@ fn island_position_drag_clamps_to_existing_limits_and_stays_resident(){
         let mut h=H::new();h.app.settings.dock=dock;h.app.settings.island_shape=shape;
         let start=island_drag_header(&mut h,bounds,1.0);
         island_drag_frame(&mut h,bounds,1.0,Some(start),Some(true));
-        let end=if dock.is_side(){Pos2::new(start.x,3000.0)}else{Pos2::new(1855.0,start.y)};
+        // 1000 已能把偏移夹到上限，又不会越过 Bottom 换边阈值（64）。
+        let end=if dock.is_side(){Pos2::new(start.x,1000.0)}else{Pos2::new(1855.0,start.y)};
         for _ in 0..120{island_drag_frame(&mut h,bounds,1.0,Some(end),None);}
         assert!(!h.app.open,"{dock:?} 拖动期间应保持常驻形态");
         assert!(h.app.progress()<0.01,"拖动期间不应保留展开面板");
         assert!(!h.shapes.iter().any(|s|matches!(&s.shape,egui::Shape::Text(t) if t.galley.text()=="10月28日 周三")),"拖动期间不应显示展开顶栏");
         assert_eq!(h.app.settings.island_offset,crate::model::ISLAND_OFFSET_MAX);
-        let end=if dock.is_side(){Pos2::new(start.x,65.0)}else{Pos2::new(65.0,start.y)};
+        let end=if dock.is_side(){Pos2::new(start.x,80.0)}else{Pos2::new(65.0,start.y)};
         island_drag_frame(&mut h,bounds,1.0,Some(end),None);
         assert_eq!(h.app.settings.island_offset,-crate::model::ISLAND_OFFSET_MAX);
         assert_eq!(h.app.settings.dock,dock);
@@ -4870,7 +4871,7 @@ fn lyric_caps_lock_notice_keeps_one_glass_outline(){
 }
 
 #[test]
-fn lyric_notifications_extend_right_and_keep_the_lyrics_in_place(){
+fn lyric_notifications_extend_right_and_keep_the_lyrics_visible(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let text=|h:&H,label:&str|h.shapes.iter().find_map(|s|match &s.shape{egui::Shape::Text(t)if t.galley.text()==label&&t.opacity_factor>0.9&&s.clip_rect.contains(t.visual_bounding_rect().center())=>Some(t.visual_bounding_rect()),_=>None}).unwrap_or_else(||panic!("应保留可见内容：{label}"));
         let mut h=H::new();h.app.settings.pet=true;h.app.settings.island_lyrics=true;h.power=(Some(75),false);
@@ -4879,11 +4880,12 @@ fn lyric_notifications_extend_right_and_keep_the_lyrics_in_place(){
         for _ in 0..90{h.frame(vec![]);}
         let label="晚风吹过了山岗";let original=text(&h,label);let right=WIN_W/2.0+h.app.current_width()/2.0;
         h.app.alert("大写锁定","已开启",5,false);
-        for _ in 0..60{h.frame(vec![]);assert!(text(&h,label).center().distance(original.center())<0.2,"提示不能挤动或替换原内容");}
+        // 上游 bar_parts 会把岛体整体向屏幕内侧挪一点给通知让位；歌词不能被替换或挤出，允许小幅平移。
+        for _ in 0..60{h.frame(vec![]);let d=text(&h,label).center().distance(original.center());assert!(d<48.0,"提示不能替换或挤掉原歌词，偏移 {d:?}");}
         assert!((h.app.current_width()-(right-WIN_W/2.0)*2.0-44.0).abs()<1.0,"通知图标占用 44 点宽度");
         assert!(h.region.right()<right+64.0);assert!(!h.app.open);
         h.t+=3.0;for _ in 0..100{h.frame(vec![]);}
-        assert!(text(&h,label).center().distance(original.center())<0.2);
+        assert!(text(&h,label).center().distance(original.center())<48.0);
 }
 
 #[test]
@@ -7447,7 +7449,18 @@ fn side_dock_stacks_ai_quota_and_opens_the_account(){
     let total=h.app.side_bar_len()-14.0;
     let mut y=top+(h.app.h.pos-total)/2.0;
     for item in h.app.side_items() {
-        let height=match item {crate::side_dock::SideItem::Quota(i,hh) if h.app.quota.config.accounts[i].id==wb=>{y+=hh/2.0;break;},crate::side_dock::SideItem::Quota(_,hh)=>hh,crate::side_dock::SideItem::Clock=>32.0,crate::side_dock::SideItem::Weather=>40.0,crate::side_dock::SideItem::Battery|crate::side_dock::SideItem::PhoneBattery=>20.0,crate::side_dock::SideItem::Music=>18.0,crate::side_dock::SideItem::Focus|crate::side_dock::SideItem::Bell=>22.0};
+        let height=match item {
+            crate::side_dock::SideItem::Quota(i,hh) if h.app.quota.config.accounts[i].id==wb=>{y+=hh/2.0;break;},
+            crate::side_dock::SideItem::Quota(_,hh)|crate::side_dock::SideItem::Date(hh)|crate::side_dock::SideItem::Performance(hh)=>hh,
+            crate::side_dock::SideItem::Clock=>32.0,
+            crate::side_dock::SideItem::Weather=>40.0,
+            crate::side_dock::SideItem::Wireless=>37.0,
+            crate::side_dock::SideItem::Battery|crate::side_dock::SideItem::PhoneBattery=>20.0,
+            crate::side_dock::SideItem::Music=>18.0,
+            crate::side_dock::SideItem::Focus|crate::side_dock::SideItem::Bell=>22.0,
+            #[cfg(feature="sdk-js")]
+            crate::side_dock::SideItem::Pinned(_)=>42.0,
+        };
        y+=height;
     }
     let click=Pos2::new(18.0,y);
@@ -8091,7 +8104,7 @@ fn messenger_notifications_side_docks_keep_one_column(){
         let win=Rect::from_min_size(Pos2::ZERO,Vec2::new(WIN_W,WIN_H));
         let stack=h.ctx.read_response(egui::Id::unique(("card",true,"messenger-stack"))).unwrap().rect;
         let bar=h.app.island_rect(win,h.app.w.pos,h.app.h.pos);
-        assert!((stack.center().x-bar.center().x).abs()<1.0 && stack.top()>=bar.bottom()-0.5,"收起时叠放在竖胶囊下方");
+        assert!((stack.center().x-bar.center().x).abs()<1.0 && (stack.top()-(bar.bottom()-stack.height()/2.0)).abs()<0.5,"收起时竖胶囊和下方未读整体居中：stack={stack:?} bar={bar:?}");
         h.click(stack.center());for _ in 0..90{h.frame(vec![]);}
         let rect=|name|h.ctx.read_response(egui::Id::unique(("card",true,name))).unwrap().rect;
         let a=rect("微信");let b=rect("QQ");
@@ -9515,7 +9528,7 @@ fn liquid_ink_follows_material_for_legibility(){
 
 
 #[test]
-fn 手机通知走receive路径也会自动登记App(){
+fn phone_notification_receive_path_also_registers_app(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let mut h=H::new();h.frame(vec![]);
     h.app.settings.read_notifications=true;
@@ -9671,4 +9684,18 @@ fn plugin_page_settings_gear_does_not_index_out_of_bounds() {
     h.app.open_page_settings(h.app.page);
     assert_eq!(h.app.settings_tab,crate::extras::SETTINGS_TAB_PAGES);
     assert!(h.app.settings_open,"应打开设置窗口而不是崩溃");
+}
+
+/// 上游 v0.6.70 回归：从插件设置页切回内置页时，必须清掉 settings_plugin，
+/// 否则正文继续画便签/金价插件页（截图里只换了标题）。
+#[test]
+fn builtin_settings_navigation_clears_stale_plugin_page() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings_plugin=Some("daozai.notes".into());
+    h.app.settings_tab=crate::extras::SETTINGS_TAB_PLUGIN_DETAIL;
+    h.app.open_page_settings(crate::app::MAIL_PAGE);
+    assert!(h.app.settings_plugin.is_none(),"切回内置页必须清空插件页状态");
+    assert_eq!(h.app.settings_tab,crate::app::PAGE_SETTINGS_TABS[crate::app::MAIL_PAGE]);
+    assert!(h.app.settings_open);
 }

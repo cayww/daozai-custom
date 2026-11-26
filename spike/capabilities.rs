@@ -154,7 +154,7 @@ pub(super) fn check(runtime: &str, owner: &str, names: &[String]) -> Result<Vec<
     Ok(surfaces)
 }
 
-#[cfg(all(test, feature="__spike_tests_off__"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

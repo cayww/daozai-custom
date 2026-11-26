@@ -6,8 +6,9 @@
 //! 吉祥物和岛上歌词是横向内容，侧边停靠时不显示。
 
 use crate::app::{App, Env, Phase, BAR_H_MIN, BAR_W_MIN, PILL_GAP, PW};
-use crate::model::{Dock, IslandShape};
+use crate::model::{Dock, IslandShape, ResidentDate};
 use crate::paint::{self, Card, H};
+use crate::resident_date::ResidentDay;
 use crate::theme::{self, size, W};
 use eframe::egui::{Color32, Pos2, Rect, Vec2};
 
@@ -16,19 +17,35 @@ pub const SIDE_W: f32 = 500.0;
 pub const SIDE_H: f32 = 600.0;
 /// 收起时竖向胶囊的厚度。
 pub const SIDE_BAR_W: f32 = 36.0;
+#[cfg(feature="sdk-js")]
+const PINNED_HEIGHT: f32 = 42.0;
 /// 岛体中心能离开屏幕竖直中线的预留：展开面板（最高约 236）与肩部、阴影留在屏幕内。
 pub const SIDE_HALF_EXTENT: f32 = 150.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum SideItem {
-    Clock, Weather, Battery, PhoneBattery, Music, Focus, Bell,
+    Clock, Date(f32), Weather, Battery, PhoneBattery, Music, Focus, Bell, Wireless, Performance(f32),
+    #[cfg(feature="sdk-js")]
+    Pinned(usize),
     /// AI 额度：账号下标（None 为「+N」）与高度。
     Quota(usize, f32),
 }
 
 impl SideItem {
     fn height(self, clock_seconds: bool) -> f32 {
-        match self { Self::Clock => if clock_seconds {46.0}else{32.0}, Self::Weather => 40.0, Self::Battery | Self::PhoneBattery => 20.0, Self::Music => 18.0, Self::Focus => 22.0, Self::Bell => 22.0, Self::Quota(_, h) => h }
+        match self {
+            #[cfg(feature="sdk-js")]
+            Self::Pinned(_) => PINNED_HEIGHT,
+            Self::Performance(h) | Self::Date(h) => h,
+            Self::Clock => if clock_seconds {46.0}else{32.0},
+            Self::Weather => 40.0,
+            Self::Wireless => 37.0,
+            Self::Battery | Self::PhoneBattery => 20.0,
+            Self::Music => 18.0,
+            Self::Focus => 22.0,
+            Self::Bell => 22.0,
+            Self::Quota(_, h) => h,
+        }
     }
 }
 
@@ -40,14 +57,23 @@ impl App {
     pub(crate) fn side_items(&self) -> Vec<SideItem> {
         let mut items = Vec::new();
         if self.settings.show_clock {items.push(SideItem::Clock);}
+        match self.settings.resident_date {
+            ResidentDate::Off=>{},
+            ResidentDate::Gregorian=>items.push(SideItem::Date(20.0)),
+            ResidentDate::LunarOnly | ResidentDate::Lunar=>items.push(SideItem::Date(44.0)),
+        }
         if self.weather_pill().is_some() {items.push(SideItem::Weather);}
+        if !self.wireless_resident().is_empty(){items.push(SideItem::Wireless);}
         let (pc_ring,phone_ring)=self.battery_rings();
         if pc_ring.is_some() { items.push(SideItem::Battery); }
         if phone_ring.is_some() { items.push(SideItem::PhoneBattery); }
+        if self.performance_on_bar() {items.push(SideItem::Performance(self.settings.performance_bar.side_height(self.settings.performance_metrics)));}
         if self.media.is_music() { items.push(SideItem::Music); }
         if self.pomo.running { items.push(SideItem::Focus); }
         items.extend(self.quota_side_items().into_iter().map(|(index, h)| SideItem::Quota(index, h)));
-        if self.t < self.notification_bell_until { items.push(SideItem::Bell); }
+        if self.notification_bell().is_some() { items.push(SideItem::Bell); }
+        #[cfg(feature="sdk-js")]
+        items.extend((0..self.pinned_displays.len()).map(SideItem::Pinned));
         items
     }
 
@@ -58,7 +84,7 @@ impl App {
 
     /// 收起态尺寸（屏幕宽 × 高）。极简模式是贴边的一小段竖线。
     pub(crate) fn side_base_size(&self, minimal: bool) -> (f32, f32) {
-        if minimal { (BAR_H_MIN, BAR_W_MIN) } else { (SIDE_BAR_W, self.side_bar_len().min(SIDE_H-24.0)) }
+        if minimal { (BAR_H_MIN, BAR_W_MIN) } else { (SIDE_BAR_W, self.side_bar_len().min(self.resident_limit())) }
     }
 
     fn side_gap(&self) -> f32 {
@@ -79,13 +105,15 @@ impl App {
 
     /// 展开面板（页面内容）的左上角。
     pub(crate) fn content_origin(&self, win: Rect) -> Pos2 {
-        self.island_rect(win, PW, self.expanded_height()).min
+        // 底部停靠以动画中的高度贴住屏幕下沿，其余停靠沿用展开目标高度。
+        let height=if self.dock()==Dock::Bottom {self.h.pos}else{self.expanded_height()};
+        self.island_rect(win, PW, height).min
     }
 
     /// 侧边停靠的命中区域：收起时是胶囊外扩几点并一直延伸到屏幕边缘，展开时是整个面板。
-    pub(crate) fn side_hit_rect(&self, win: Rect, p: f32) -> Rect {
+    pub(crate) fn side_hit_rect(&self, win: Rect, p: f32, page_height: f32) -> Rect {
         let rect = if p > 0.04 || self.open {
-            self.island_rect(win, PW, self.expanded_height()).expand2(Vec2::new(4.0, 2.0))
+            self.island_rect(win, PW, page_height).expand2(Vec2::new(4.0, 2.0))
         } else {
             let (w, h) = (self.w.pos, self.h.pos);
             self.island_rect(win, w, h).expand2(Vec2::new(4.0, 6.0))
@@ -99,12 +127,13 @@ impl App {
     }
 
     /// 毛玻璃取样点（画布坐标）：岛体外侧上下左右各取几处估计身后明暗。
-    pub fn backdrop_points(&self) -> Vec<(f32, f32)> {
+    pub fn backdrop_points(&self, horizontal_width: f32) -> Vec<(f32, f32)> {
         match self.dock() {
-            Dock::Top => {
-                let cx = crate::app::WIN_W / 2.0;
+            Dock::Top | Dock::Bottom => {
+                let cx = horizontal_width / 2.0;
                 let bottom = crate::app::WIN_H - 6.0;
-                vec![(cx - 270.0, 6.0), (cx - 270.0, 26.0), (cx + 270.0, 6.0), (cx + 270.0, 26.0), (cx - 130.0, bottom), (cx, bottom), (cx + 130.0, bottom)]
+                let y=|v| if self.dock()==Dock::Bottom {crate::app::WIN_H-v} else {v};
+                vec![(cx - 270.0, y(6.0)), (cx - 270.0, y(26.0)), (cx + 270.0, y(6.0)), (cx + 270.0, y(26.0)), (cx - 130.0, y(bottom)), (cx, y(bottom)), (cx + 130.0, y(bottom))]
             }
             dock => {
                 let (near, far) = if dock == Dock::Left { (6.0, SIDE_W - 6.0) } else { (SIDE_W - 6.0, 6.0) };
@@ -116,11 +145,11 @@ impl App {
     }
 
     /// 竖向胶囊的内容。`c` 的原点是胶囊左上角。
-    pub(crate) fn side_bar(&mut self, c: &Card, width: f32, height: f32, env: &Env) {
+    pub(crate) fn side_bar(&mut self, c: &Card, width: f32, height: f32, env: &Env, resident_day: Option<&ResidentDay>) {
         let items = self.side_items();
         let total: f32 = items.iter().map(|i| i.height(self.settings.clock_seconds)).sum();
         let cx = width / 2.0;
-        let fitted=c.scaled(cx,height/2.0,((SIDE_H-24.0)/(total+14.0)).min(1.0));
+        let fitted=c.scaled(cx,height/2.0,(self.resident_limit()/(total+14.0)).min(1.0));
         let c=&fitted;
         let mut y = (height - total) / 2.0;
         for item in items {
@@ -135,9 +164,12 @@ impl App {
                     c.text(cx, top + 14.0, &minute, 13.5, W::Bold, theme::WHITE, H::Center);
                     if self.settings.clock_seconds {c.text(cx,top+28.0,text.rsplit(':').next().unwrap_or("--"),12.0,W::Bold,theme::GRAY,H::Center);}
                 }
+                SideItem::Date(_) => if let Some(day)=resident_day {day.draw_side(c,cx,mid);},
                 SideItem::Weather => self.draw_side_weather(c,cx,mid),
+                SideItem::Wireless=>self.draw_wireless_side(c,cx,mid),
                 SideItem::Battery => paint::battery(c, cx, mid, self.resident_power.0, self.resident_power.1, 0.72),
                 SideItem::PhoneBattery => paint::battery(c, cx, mid, self.phone_resident.0, self.phone_resident.1, 0.72),
+                SideItem::Performance(h) => self.side_performance(c,cx,mid,h),
                 SideItem::Music => paint::playback_bars(c, cx, mid, self.t, self.media.playing, theme::WHITE),
                 SideItem::Focus => {
                     let minutes = (self.pomo.remaining / 60.0).ceil().max(0.0) as u32;
@@ -146,9 +178,18 @@ impl App {
                     c.text(cx, mid + 9.0, &format!("{minutes}′"), size::TINY, W::Semibold, theme::WHITE, H::Center);
                 }
                 SideItem::Quota(index, h) => self.draw_quota_side(c, cx, mid, h, index),
+                #[cfg(feature="sdk-js")]
+                SideItem::Pinned(index) => if let Some(display) = self.pinned_displays.get(index) {
+                    if display.draw(c, cx, mid, display.width(width), true, self.pinned_canvas_theme()) {
+                        let id=display.plugin.clone();
+                        self.show_status_page(&id);
+                    }
+                },
                 SideItem::Bell => {
-                    paint::bell(&c.scaled_static(cx, mid, 1.1), cx, mid, theme::WHITE, paint::bell_swing(self.t - self.notification_bell_at));
-                    c.circle(cx + 4.0, mid - 4.5, 2.0, Color32::from_rgb(255, 72, 72));
+                    if let Some(at)=self.notification_bell(){
+                        paint::bell(&c.scaled(cx, mid, 1.1), cx, mid, theme::WHITE, paint::bell_swing(self.t - at));
+                        c.circle(cx + 4.0, mid - 4.5, 2.0, Color32::from_rgb(255, 72, 72));
+                    }
                 }
             }
             y += h;

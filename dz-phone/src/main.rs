@@ -488,7 +488,7 @@ impl Shell {
                 let sampler=self.backdrop.get_or_insert_with(daozai::backdrop::Sampler::start);
                 let ppp=ctx.pixels_per_point();
                 if let Some(origin)=self.native.as_ref().and_then(|w|w.logical_origin(ppp)) {
-                    let points=self.app.backdrop_points();
+                    let points=self.app.backdrop_points(app::WIN_W);
                     sampler.set_points(points.iter().map(|&(x,y)|(((origin.x+x)*ppp).round() as i32,((origin.y+y)*ppp).round() as i32)).collect());
                 }
             } else {
@@ -641,6 +641,8 @@ impl Shell {
             }
             while let Some(ev)=self.quota.try_recv(self.app.quota_config()){self.app.quota_event(ev);}
         }
+        // 逐帧诊断：拆出前置/岛体/设置三段。D3D11 自绘栈没有上游的 native 读回段。
+        let island_start=Instant::now();
         let mut out = None;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(Color32::TRANSPARENT))
@@ -651,6 +653,8 @@ impl Shell {
                 out = Some(self.app.frame(ui, win, &env));
             });
         let Some(out) = out else { return };
+        let island_cost=island_start.elapsed();
+        let pre_cost=island_start.saturating_duration_since(frame_start);
 
         #[cfg(windows)]
         {
@@ -888,18 +892,45 @@ impl Shell {
 
         #[cfg(windows)] let autostart = self.autostart;
         #[cfg(not(windows))] let autostart = false;
+        let settings_start=Instant::now();
         self.app.settings_ui(&ctx, autostart);
         self.app.mail_reader_ui(&ctx);
+        let settings_cost=settings_start.elapsed();
         #[cfg(windows)] let repaint_after=if self.hidden{Duration::from_secs(1)}else{out.repaint_after};
         #[cfg(not(windows))] let repaint_after=out.repaint_after;
         schedule_repaint(&ctx,repaint_after);
-        // 只记慢帧：卡顿反馈时能直接看出是渲染慢还是输入被吞（页面/展开状态一并记下）。
+        // 只记慢帧：卡顿反馈时能直接看出是前置、岛体还是设置窗口慢。
         let elapsed=frame_start.elapsed();
+        let plugin_cost=Duration::from_micros(daozai::resources::PLUGIN_FRAME_US.load(std::sync::atomic::Ordering::Relaxed) as u64);
+        let other_cost=elapsed.saturating_sub(pre_cost+island_cost+settings_cost);
         if elapsed>=Duration::from_millis(60) {
             let (page,open)=self.app.debug_state();
             daozai::resources::append_log(&daozai::model::config_dir().join("diagnostics"),"frames",
-                &format!("帧 {:.0} ms｜页面 {}｜展开 {}",elapsed.as_secs_f64()*1000.0,page,open));
+                &format!("帧 {:.0} ms｜页面 {}｜展开 {}｜前置 {:.0}｜岛体 {:.0}（插件 {:.1}）｜设置 {:.0}｜其余 {:.0}",
+                    elapsed.as_secs_f64()*1000.0,page,open,pre_cost.as_secs_f64()*1000.0,
+                    island_cost.as_secs_f64()*1000.0,plugin_cost.as_secs_f64()*1000.0,
+                    settings_cost.as_secs_f64()*1000.0,other_cost.as_secs_f64()*1000.0));
         }
+        // DAOZAI_FRAME_TRACE：逐帧记间隔与上帧分段，定位动画帧到底耗在哪一段。
+        thread_local!{
+            static PREVIOUS_FRAME:std::cell::Cell<Option<(Instant,Duration,Duration,Duration,Duration)>>=const{std::cell::Cell::new(None)};
+        }
+        let trace=std::env::var_os("DAOZAI_FRAME_TRACE").is_some();
+        let animating=out.repaint_after<=Duration::from_millis(34);
+        if trace && animating {
+            if let Some((start,logic,pre,draw,settings))=PREVIOUS_FRAME.get() {
+                let interval=frame_start.saturating_duration_since(start);
+                let (page,open)=self.app.debug_state();
+                daozai::resources::append_log(&daozai::model::config_dir().join("diagnostics"),"frames",
+                    &format!("间隔 {:.0} ms｜页面 {}｜展开 {}｜上帧逻辑 {:.1}（前置 {:.1}、岛体 {:.1}、设置 {:.1}、其余 {:.1}）｜逻辑之外 {:.1}｜本帧岛体 {:.1}（插件 {:.1}）",
+                        interval.as_secs_f64()*1000.0,page,open,logic.as_secs_f64()*1000.0,
+                        pre.as_secs_f64()*1000.0,draw.as_secs_f64()*1000.0,settings.as_secs_f64()*1000.0,
+                        logic.saturating_sub(pre+draw+settings).as_secs_f64()*1000.0,
+                        interval.saturating_sub(logic).as_secs_f64()*1000.0,
+                        island_cost.as_secs_f64()*1000.0,plugin_cost.as_secs_f64()*1000.0));
+            }
+        }
+        PREVIOUS_FRAME.set(Some((frame_start,pre_cost+island_cost+settings_cost,pre_cost,island_cost,settings_cost)));
     }
 }
 
@@ -948,7 +979,9 @@ mod quota_sig_tests {
 
     #[test]
     fn matching_without_copy_agrees_with_the_copied_signature(){
-        let config=Config{accounts:vec![account("a"),account("b")],..Default::default()};
+        // Config 有 pub(crate) 字段，bin 侧不能用 ..Default::default() 结构体更新语法。
+        let mut config=Config::default();
+        config.accounts=vec![account("a"),account("b")];
         let known=quota_sig(true,&config);
         assert!(quota_sig_matches(&known,true,&config));
         let mut display_only=config.clone();display_only.accounts[0].alias="改名".into();display_only.accounts[1].pinned=true;

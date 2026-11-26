@@ -294,7 +294,7 @@ fn timezone_picker(ui: &mut egui::Ui, key: &str, value: &mut String) {
                     if ui.selectable_label(value == city.zone, label).clicked() {
                         *value = city.zone.to_owned();
                         ui.data_mut(|data| data.remove::<String>(search_id));
-                        
+                        egui::Popup::close_all(ui.ctx());
                     }
                 }
             });
