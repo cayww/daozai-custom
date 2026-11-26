@@ -355,3 +355,23 @@ float4 material(MaterialIn i) {
 - **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,091,660 bytes，sha256 前 16 `b1bdf0106bd1a2f7`（exe `5869af3d8863137b`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-upstream-remaining`。
 - **未合且有意保留**：DX12 分层读回节流/`cover()`/位移补偿、wgpu/GL 回退、WGSL/sdk-material 链均由 D3D11 自绘栈替代；官方集市测试索引仅测试夹具，生产路径一致。
 - **待用户实机确认**：设置页切换正文、侧边日期/无线/性能/pinned、Bottom 拖动、插件通知显示与点击。
+
+---
+
+## 18. 翻页平滑动效与宽岛同步过渡（2026-11-26 20:35+）
+- **提交**：`e5be1b7`（前序清理提交 `685952c` 已包含在本包）。
+- **合入 1：切页正文平滑动效 / 标题动画**（上游 `d558a2f`，合并 `3cd180a`）
+  - `PAGE_SLIDE` 46→32，新增 `PAGE_TURN_DURATION=0.34`；移除旧 `slide: Spring`。
+  - 新增 `page_from_offset` / `page_from_elapsed`：连点时旧页从当前位移与透明度继续淡出，不跳回。
+  - 新增 `page_slide_offset()` / `page_slide_alpha()` / `page_header_alpha()`；旧页原位淡出、新页单向滑入不回弹。
+  - 标题与正文分开 fading：标题先退后进，避免两页汉字在中间帧叠成重影。
+  - 本地适配：`render_page()` 仍是三参，`page_title()` 单独传 header Card；`page_slide_tx()` 跟随新位移，GPU 控件透镜与正文逐像素对齐。
+- **合入 2：超长常驻岛宽高同步过渡**（上游 `5b3d375`）
+  - 宽度不再单独走弹簧，按高度进度一次插值：`w.pos = lerp(from, PW, ease)`，`ease = 1-(1-k)^2`；避免展开/收起时出现又宽又高的空黑框。
+- **第 3 项：喝水页切换帧标记（`ed035e7`）不补**
+  - 上游该字段只服务 DX12 分层读回；本地 `native.wants_frames()` 恒 false。
+  - 本地 D3D11 主循环的 `transitioning` 已直接包含 `!water_ring.settled || !sit_view_t.settled || !sit_t.settled`， drinks 切换期间 `repaint_after` 已是 1/60，等价且更直接。
+  - `git log --all -S'water_view_transition'` 只有上游 `ed035e7`，仓库内未见社区 D3D11 专用实现。
+- **验证**：全量 **1545 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
+- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,088,968 bytes，sha256 前 16 `dbb5ed1d1807c30`（exe `d7311475aab296b3`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-page-turn`。
+- **待用户实机确认**：切页标题不再叠字/回弹、连点反向切换衔接、宽常驻岛展开收起无空黑框。
