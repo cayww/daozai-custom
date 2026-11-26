@@ -1,444 +1,64 @@
-# 交接：插件生态融合 + D3D11 原生材质包接入（2026-11-26 15:44）
+# 上游 v0.6.70 对齐状态
 
-> 新 agent 接手先读这份。主交接文档是 `docs/HANDOFF.md`（2056 行），本文件是本次专项的增量交接。
-> 当前分支：`merge-upstream-v0670`。工作树有**未提交改动**（见 §2），先看清楚再动手。
+> 只列当前**未合并**和**部分合并**项，不记过程。当前代码 HEAD：`265f4b6`。
 
----
+## 一、未合并（完全缺失）
 
-## 0. 30 秒速览
+1. **邮件验证码大字横幅**（`b553ee2` / `1acc03a`）
+   - 缺 `AlertSource::MailCode`、避让时验证码专用大字卡片、`mail_code_popup` 设置。
+   - 本地仍是旧 `mail_code_alert(&code, from, page)` + 外部 `mail-code` 通知复用普通验证码卡片。
 
-- 目标：把上游 v0.6.70 的插件生态完整接入定制版（D3D11 + 液态玻璃栈），并**只屏蔽液态玻璃这一个插件**，其他材质包要能正常用。
-- 已完成：插件市场/安装/设置注入/JS 运行时/状态页/额度页/导航图标/外观图标/无线接收器/pinned 等绝大多数注入点（详见 §2）。
-- **用户已确认走方案 B：D3D11 原生材质包**。理由：用户会提 PR 让材质插件作者改走 D3D11 架构，所以不做 WGSL→HLSL 转译层（方案 A），直接建 D3D11 材质 pass + HLSL/DXBC 材质包加载。**不要去做 Naga 转译**。
-- 未完成：材质渲染接入（§4，5 个阶段）、appearance_picker + 底栏快捷切换（§4.4）、pinned 改动的验证提交、全量测试与打包（§5）。
-- 现状包：`installer/daozai-setup-custom-isolated.exe`（12M，sha 前 16 `9ed7a3dfd3dc13c1`，commit `668e528`）——**这个包不含工作树里未提交的 pinned 改动**。
+2. **仅提醒验证码邮件开关**（`0cdf0f1`）
+   - 缺 `mail_code_only_notifications` 字段、配置读写、设置页行、通知过滤。
+   - 目前邮件仍按普通新邮件通知处理。
 
----
+3. **通知被任务栏遮挡时的点击修复**（`507b394`）
+   - `native.rs` 仍是单参数 `keep_above_top_bar(bounds)`。
+   - 缺上游带通知矩形抬升窗口的判定；通知被顶栏/任务栏遮挡时可能点不中。
 
-## 1. 红线与硬约束（务必先读）
+4. **逐帧诊断细分**（`ea40714` / `aaee47a` / `8d9e4fc` / `09f362a` / `5aab8d2` / `50b7cd1`）
+   - 缺 `PREVIOUS_PARTS` 分段、`requested_repaint_last_pass()`、过渡起点/交互帧标记。
+   - 只影响 `DAOZAI_FRAME_TRACE` 诊断可观测性，不影响功能。
 
-1. **不要启用 `sdk-material` 的 wgpu 路径**。本地 Cargo.toml:53 明确写"The legacy wgpu/D3D12/WGSL stack is gone; rendering is D3D11 + winit only"。上游 `material/` 那 2459 行是死代码，`lib.rs` 里没有 `mod material` 声明——开启 `sdk-material` feature 会直接编译失败（3 个错误，见 §4.1）。
-2. **不要恢复 wgpu/eframe 后端**。项目历史调研 `087b3d4` 和 `b440fee`（`docs/research-fence-device-lost.md` §19/§20）已确认：wgpu 24 无 D3D11 后端，eframe 无 D3D11 后端，此路不通。这是历史定论，别重复验证。
-3. **液态玻璃是内置的，走内置 D3D11 HLSL 管线**（`shaders/glass_vs.bin` / `glass_ps.bin`，`d3d11/runtime.rs:create_glass_pipeline`）。只按 id `cayww.liquid-glass` 屏蔽那个插件，**不要屏蔽其他材质插件**——用户明确要求其他材质包能正常用。
-4. **设置页 tab 编号已对齐上游**：13=外观、14=位置、15=系统性能、16=无线设备、17=插件、18=插件详情、**19=自定义与集成（定制版新增，排在关于之后）**。改 tab 编号会引发 `ui_tests.rs::every_module_settings_tab_maps_to_its_page` 失败，动前先看该测试。
-5. **数据/安装目录隔离**：安装到 DaozaiCustom 隔离目录，数据在 `%APPDATA%\DaozaiCustom`（commit `8e4204a`）。别改回 Daozai。
-6. **egui 用的是 git pin 0.35**（不是上游 0.31），windows crate 0.58，不要动依赖版本。
+5. **集市/插件测试未编译**（测试层）
+   - `spike/` 大量 `#[cfg(all(test, feature="__spike_tests_off__"))]`。
+   - 排序、头像、材质包安装等回归测试目前不进测试集；实现代码已对齐。
 
----
+6. **上游删除 ZCode 本地凭据路径**（`9b539fe`）
+   - 本地保留 `zcode_quota.rs`；属定制保留，未按上游删除。
 
-## 2. 当前状态：已完成 / 未提交 / 未验证
+7. **集市材质包白名单**（`ae57460`）
+   - 上游只放行固定 sha256 的 `cayww.liquid-glass` 1.0.2；本地放宽为所有校验通过的包。
+   - 是否为预期定制需确认。
 
-### 2.1 已提交（commit 序列，从旧到新）
+## 二、部分合并
 
-| commit | 内容 |
-|---|---|
-| `c1751c7` | 修复手机电量 UTF-8 崩溃与设置页 tab 冲突 |
-| `d190524` | 修复插件市场封面队列卡死与无线设备图标 |
-| `1212205` | 封面优先读本地已安装记录，绕开 Gitee 限流 |
-| `1bb7832` | 安装按钮不再依赖封面加载状态 |
-| `8e4204a` | 数据目录与安装目录隔离为 DaozaiCustom |
-| `f8bc05c` | 修 `PAGE_SHORTCUT_KEYS`（单字母→完整页面名，否则页面快捷切换装不上）+ 集市隐藏液态玻璃 |
-| `89090e4` | 补 `header_tabs` 集市入口 + 插件独立设置页渲染 + manage 返回值导航 |
-| `98a92ad` | 补设置页插件注入 + `SETTINGS_TAB_PAGES` 跳转 1→10 |
-| `f92218c` | JS 运行时驱动（tick_features/take_script_notices/focus_finished/watch_files_enabled/pause_owner）+ quota/tasks/calendar 设置注入 + tab 编号对齐上游 |
-| `668e528` | JS 状态页注入（status_pages/sync_status_pages/render_page/page_title/导航豆解耦）+ 额度页插件来源 |
+1. **保持展开整套**（`1918f17`）
+   - 已有：`hold_slot` 字段与少量占位。
+   - 仍缺：图钉按钮/交互驱动、`page_height` 弹簧、顶栏时钟 x/fit 插值、切页跳动修复的完整链路。
+   - 影响：置物架/剪贴板保持展开、切页顶栏稳定性。
 
-### 2.2 ⚠️ 工作树未提交改动（3 文件，+119/-5）
+2. **翻页箭头锚点**（`0c216b6` / `ccfd0e8` / `9263a7e` / `216cd2a`）
+   - `nav()` 已按停靠方式计算 `arrow_y`。
+   - `ctl_geom()` 的 `NavL` / `NavR` 仍写死旧 88/68，与绘制位置不一致。
+   - 性能页 `PERFORMANCE_PAGE => 190` 锚点分支缺失。
 
-`git status` 显示 `M dz-phone/src/app.rs` / `extras.rs` / `main.rs`。这些是本次会话最后阶段加的，**编译通过但没跑全量测试、没打包、没提交**：
+3. **喝水页逐帧交付**（`ed035e7`）
+   - 本地 D3D11 的 `transitioning` 已包含 `water_view_t`，功能上已覆盖。
+   - 上游 `FrameOut.water_view_transition` / `main.rs` 兼容读回字段未移植；属 D3D11 栈有意不合，不是功能缺失。
 
-- `app.rs`：pinned 字段（`pinned_displays`/`pinned_horizontal_width`）、`wireless_compat_store()`、`resident_fit()`、`appearance_pet`/`sync_canvas_fonts` 调用、pinned 同步与绘制、导航图标（`navigation_icon`）、状态页设置入口调用
-- `extras.rs`：插件外观图标两处（`appearance_icon`）、`status_page_settings` 入口
-- `main.rs`：`receiver_rx`/`receivers` 字段与 2.4G 接收器服务启停（`wireless_store`）
+4. **DX12/WGSL 材质渲染链**
+   - 上游 `material/`、wgpu 回退、WGSL→HLSL 转译未合。
+   - 本地用 D3D11 自绘栈替代；属架构定制，不按缺失处理。
 
-**接手第一步**：跑一次全量测试（命令见附录）确认这批改动没问题，通过就提交（建议 commit message：`merge: 补齐 pinned/外观图标/无线接收器注入`）。失败就修——最可能出问题的是 pinned 相关（`bar_layout.rs` 早就有 `append_pinned`/`pinned_slots`，但 App 层是这次才接的）。
+5. **官方集市测试索引夹具**
+   - 未按上游放回；属测试夹具定制。
 
-### 2.3 最后一次全量测试结果
+6. **手机连接短信/来电转发**
+   - 上游功能在本轮按用户要求删除，仅保留验证码卡片。
+   - 当前已实现；不是漏合，但属于本地与上游的行为差异。
 
-`668e528` 之后、**未提交改动之前**：`1521 passed / 0 failed / 138 ignored`。
-未提交改动之后的全量测试被用户中断，未跑完。
+## 三、说明
 
----
-
-## 3. 插件生态接入对照（已完成度）
-
-对上游 0615f19 的 40 个插件方法调用，**本地已调用 34 个**。仍未调用的 6 个：
-
-| 方法 | 状态 / 原因 |
-|---|---|
-| `activate_material` / `active_material` | 材质渲染未接（§4）——本次方案 B 要接 |
-| `material_settings` | 同上 |
-| `appearance_picker` | **未接**，用户已确认要接（§4.4） |
-| `active_page_shortcut_colors` | **未接**，依赖底栏快捷切换整行（§4.4） |
-| `pinned_reserved_width` | 架构差异，不需要接——本地用固定 960px 画布（`CANVAS_W = WIN_W + 320`），不动态扩交换链 |
-
-其他 noteworthy：
-- `wireless_store` 已接（`main.rs` 接收器服务）
-- `pinned_displays` 已接但**未验证**（§2.2）
-- `appearance_icon` / `appearance_pet` / `active_skin` 已接但未验证
-- 底栏快捷切换整行**缺失**：`paint/mod.rs:1345` 的 `page_shortcut_icon` 是空实现，没有 `page-shortcut` 命中区、没有 `PAGE_SHORTCUT_ROW_H`；`show_page_shortcuts` 字段存在但无人读
-
----
-
-## 4. 未完成的任务（按执行顺序）
-
-### 4.1 阶段 0：先验证并提交 §2.2 的未提交改动
-- 跑全量测试 → 通过则提交 → 打包一版保底
-- 这一步不做，后面出问题无法定位是新改动还是旧改动
-
-### 4.2 阶段 1：材质编译链（方案 B 的核心）
-**目标**：能把材质插件的 shader 编译成 D3D11 可用的 DXBC（或加载预编译的）。
-
-技术事实（已调研，别重复查）：
-- 材质插件 entry 固定是 `material.wgsl`（`spike/local.rs:668`，测试见 `spike/local_tests.rs:957`）
-- 示例材质 shader：`spike/examples/liquid-glass/material.wgsl`
-- 材质 WGSL 用 prelude 提供的入口 `daozai_vs` / `daozai_fs`，插件只提供 `material(MaterialIn) -> vec4<f32>`（`material/prelude.wgsl:88-112`）
-- **本地 D3D11 用预编译 `.bin`**（`d3d11/runtime.rs:459-465` 从 `include_bytes!("../../shaders/glass_ps.bin")` 创建 PixelShader），**没有运行时 HLSL 编译器**
-- 系统有 `C:\Windows\System32\d3dcompiler_47.dll`，但 windows crate 当前 feature 没有 d3dcompiler 绑定（Cargo.toml:154 只有 `Win32_Graphics_Direct3D11` 等）
-- 社区：Naga 支持 WGSL→HLSL（SM5.0+），但**用户已决定不做转译层**——等作者 PR 把材质包改成 HLSL/DXBC
-
-要做的：
-1. 加 `windows` crate 的 `Win32_Graphics_Direct3DCompiler`/`D3DCompileFromFile` 相关 feature，或用 `libloading` 动态加载 `d3dcompiler_47.dll`
-2. 定义 D3D11 材质包格式：建议 manifest `entry` 指向 `.hlsl` 源码或 `.dxbc` 预编译文件，两者都支持最好
-3. 写 shader 校验/编译测试：用一节测试 HLSL 验证能编出有效 DXBC
-4. 修 `spike/market.rs:655` 的 `crate::material::validate_plugin_shader` 引用——开 feature 时会编译失败（当前在 `sdk-material` 关闭下走另一个分支所以没事）；方案 B 下应改成走新的 D3D11 校验函数
-
-### 4.3 阶段 2：D3D11 材质 pass
-**目标**：能把编译好的 DXBC 画到岛体上。
-
-参考范式：`d3d11/runtime.rs` 的 `create_glass_pipeline`（459-480）+ `render`（617+）里玻璃 pass 的写法——同一个 device、WGC 抓屏纹理作输入、写 cbuffer、Draw(3)。
-
-关键差异（必须做适配层）：
-- 材质 WGSL 的 `Frame` uniform 有 13 个 vec4 字段（capture/body/shape/notch/env/tint/tex/count/ctl_rect×16/ctl_shape×16/ctl_spring×16/params×8/motion）——见 `material/prelude.wgsl:1-17`
-- 本地 HLSL 玻璃用 `cbuffer U`（16 个 float4 + 控件数组）——见 `shaders/glass.hlsl:7-24`
-- 两套接口**完全不同**，要写填充逻辑把材质 Frame 数据填进 D3D11 cbuffer
-- 材质的 `sample_backdrop` 等辅助函数要在 HLSL 侧提供对应实现
-
-建议：先用一个固定的测试 HLSL 材质（比如纯色/简单模糊）跑通 pass，再接插件数据。
-
-### 4.4 阶段 3：插件激活/设置/Appearance + 快捷切换
-1. 接 `activate_material` / `active_material` / `material_settings`（app.rs 的 `material_spec()` / `deactivate_material()`）
-2. 接 `appearance_picker` 三处（设置 → 外观页的皮肤/图标/吉祥物行）：
-   - 上游位置 `extras.rs:2191`（Skin）、`2217`（Icon）、`2246`（Pet，注意本地行号不同）
-   - 本地外观页在 `extras.rs` 搜 `settings_label(ui,"岛体外观")`（约 5420 行）
-   - 逻辑：装了外观包插件时，用 ComboBox 替换内置控件；没装时保持原样
-3. 接底栏快捷切换整行（让 `active_page_shortcut_colors` 生效）：
-   - 实现 `paint::page_shortcut_icon`（当前是空函数，`paint/mod.rs:1345`）
-   - 加 `page-shortcut` 命中区、图标绘制、配色（上游 `app.rs:4090-4130`）
-   - 加 `PAGE_SHORTCUT_ROW_H` 高度预留
-   - 让 `show_page_shortcuts` 字段真正被读取
-4. 与液态玻璃共存：材质包和内置玻璃**不能同时叠加**，要有互斥/优先级规则（建议：装了并激活材质包时停用内置玻璃 pass，反之亦然）
-
-### 4.5 阶段 4：验证
-- 全量测试（`1521 passed` 是基线，新增测试会增加）
-- 实机验证：内置液态玻璃不受影响（截图对比）、材质包能显示、外观包能在设置里选
-- 打包：`installer/daozai.iss` + Inno Setup 7
-
----
-
-## 5. 常用命令
-
-```bash
-cd D:\code\daozai-custom
-# 编译检查（默认 feature，sdk-material 关闭）
-MSYS_NO_PATHCONV=1 cargo check --locked --manifest-path dz-phone/Cargo.toml --lib --bins
-
-# 全量测试（约 100 秒，用隔离数据目录）
-MSYS_NO_PATHCONV=1 DAOZAI_DATA_DIR=D:/code/daozai-custom/merge-work/test-data \
-  cargo test --manifest-path dz-phone/Cargo.toml --locked --release --lib -- --test-threads=1
-
-# release 构建
-MSYS_NO_PATHCONV=1 cargo build --locked --release --manifest-path dz-phone/Cargo.toml \
-  --bin daozai --bin daozai-bridge
-
-# 打包（Inno Setup 7）
-cd installer && MSYS_NO_PATHCONV=1 "/d/software/Inno Setup 7/ISCC.exe" daozai.iss
-```
-
-注意：Git Bash 下路径用 `/d/...` 或 `D:/...`，`MSYS_NO_PATHCONV=1` 防止路径被转换。
-测试若失败先看 `ui_tests.rs::every_module_settings_tab_maps_to_its_page`（对 tab 编号敏感）。
-
----
-
-## 6. 关键文件索引
-
-| 文件 | 作用 |
-|---|---|
-| `dz-phone/src/d3d11/runtime.rs` | D3D11 渲染运行时，玻璃 pass 范式（459-480 创建、617+ 渲染、595 resize） |
-| `dz-phone/shaders/glass.hlsl` / `.bin` | 内置液态玻璃 shader（已预编译，运行时不编译 HLSL） |
-| `dz-phone/src/material/` | 上游材质模块死代码（2459 行，未接入 lib.rs，与上游逐字节一致） |
-| `spike/examples/liquid-glass/material.wgsl` | 材质插件 shader 示例 |
-| `spike/local.rs:455-457` | `is_material()` 判定（runtime == "material"） |
-| `spike/market.rs:651-660` | `validate_material`，当前 sdk-material 关闭时拒绝所有材质插件 |
-| `spike/local_ui.rs:888-892` | `visible_ids` 过滤材质插件（当前按 `is_material()` 全过滤，需改成只过滤液态玻璃 id——见 §7） |
-| `dz-phone/src/app.rs` | App 主体，字段/frame/render_page/nav/pinned 都在这 |
-| `dz-phone/src/bar_layout.rs:114-131` | `append_pinned` / `pinned_slots`（布局层早就就绪） |
-| `docs/research-fence-device-lost.md` §19/§20 | wgpu/D3D11 后端调研历史（定论：此路不通） |
-
----
-
-## 7. 一个待澄清的点（接手时注意）
-
-`spike/local_ui.rs:888-892` 的 `visible_ids` 现在按 `!p.manifest.is_material()` 过滤——这会把**所有材质插件**从已安装列表隐藏，而用户要的是"只屏蔽液态玻璃 `cayww.liquid-glass`"。
-
-但 §2.1 的 `f8bc05c` 又加了 `market_browse_ui.rs` 的集市列表过滤（按 id 精确过滤液态玻璃）。所以当前状态是：
-- 集市列表：只隐藏液态玻璃 ✓（符合要求）
-- 已安装列表：隐藏所有材质插件 ✗（需要改成只隐藏液态玻璃 id）
-
-方案 B 接入材质包时必须改这里，否则材质包装上了也看不见。
-
-另外 `spike/market.rs:651-660` 的 `validate_material` 在 sdk-material 关闭时**拒绝所有材质插件安装**——方案 B 下要改成 D3D11 校验（接受 HLSL/DXBC），否则材质包根本装不上。
-
----
-
-## 8. 用户偏好（本次会话体现）
-
-- 不要"一个个截图指出问题再补"，要系统对照上游排查（本次已做，见 §3）
-- 不会的实现**先查社区**，社区方案优先
-- 改动后**全量测试**（但本次用户中途多次要求"先不全量测试"，最终收尾要跑）
-- 沟通要如实：不确定的、舍弃的、风险都要明说，不要含糊带过
-- 液态玻璃是内置的、要保留；屏蔽的是 `cayww.liquid-glass` 这个插件，不是整个材质类
-
----
-
-## 9. 本次续作进度（2026-11-26 16:xx）
-
-### 9.1 已落地
-| commit / 状态 | 内容 |
-|---|---|
-| `3cdeb76` | 提交 §2.2 的 pinned/外观图标/无线接收器注入；提交前全量测试 **1521 passed / 0 failed / 138 ignored** |
-| 工作树（待提交） | D3D11 方案 B 主体 + 外观/快捷切换接入 |
-
-### 9.2 方案 B 的实现形态（重要，接手先看这里）
-- **没有启用 `sdk-material`**，没有 WGSL→HLSL 转译。新增 `spike/material_d3d11.rs`：
-  - 材质包入口支持 `material.hlsl`（HLSL 源码，现场用 `d3dcompiler_47.dll` 编成 `ps_5_0` DXBC）或 `material.dxbc`（DXBC 二进制的 **base64 文本**，因为 `Package.source` 是 String）。
-  - 宿主 prelude 提供 `cbuffer U(b0)`（与 `GlassParams` 完全一致）、`cbuffer P(b1)`（8×float4 = 32 个设置值）、`bg/samp`、全屏三角形 VS、遮罩 fs。**插件只实现 `float4 material(MaterialIn i)`**，不要重复声明 `U/P/bg/samp/vs/fs/MaterialIn`。
-  - `MaterialIn` 字段：`uv`、`pixel`（窗口内物理像素，底原点）、`bounds`（xy=左下，zw=宽高）、`radius`、`values[8]`（设置值）。
-  - helper：`dz_backdrop(px)` 采样岛体背后画面；`dz_rr_sdf` / `dz_island_sdf` 做岛体边界遮罩。
-  - 入口 `.wgsl` 会给出明确错误"请改 HLSL/DXBC"，不再静默拒绝整个材质类。
-- `Cargo.toml` 给 windows 依赖加了 `Win32_Graphics_Direct3D_Fxc`（只加 feature，不动 Cargo.lock）。
-- `dz-phone/src/d3d11/runtime.rs`：`GlassPipeline` 增加 b1；`D3d11Runtime` 持有 `material_ps`，DXBC generation 变化时重建 PS，失败回退内置玻璃；材质与内置玻璃**互斥**，同一 pass 二选一。
-- `spike/local.rs` / `local_ui.rs`：材质激活/权限/设置相关的 `cfg(feature="sdk-material")` 改成 `cfg(windows)`；`MaterialSpec` 增加 `entry`。
-- `spike/market.rs`：`validate_material` 改走新校验；官方集市材质准入不再只放行 `cayww.liquid-glass@1.0.2`，改为按渠道信任（目录条目的 size/sha256 仍校验）。
-- `spike/local_ui.rs`：`visible_ids` 只隐藏 `cayww.liquid-glass`，其他材质包在"已安装"里可见。
-- `spike/local_ui.rs` 的 `manage()` 因材质 UI 解封新增第 5 个参数 `active_material`，所有调用点已补。
-
-### 9.3 外观与底栏快捷切换
-- 外观设置页接了 `appearance_picker`（皮肤/图标/吉祥物）和 `material_settings`（选择材质、权限确认、参数滑杆）。
-- 底栏快捷切换整行补齐：`app.rs` 新增 `PAGE_SHORTCUT_ROW_H=24`、`page_shortcuts_enabled()`，`expanded_height()` 预留行高；`nav()` 绘制图标+页码点同排；`paint::page_shortcut_icon` 从空实现改成完整矢量图标（复用 `paint::icons` 的 `note/droplet/check`）。
-- 与液态玻璃共存规则：激活材质包时 D3D11 pass 用材质 PS，否则用内置玻璃 PS；不会叠加。
-
-### 9.4 验证记录
-- `3cdeb76` 提交前：1521 passed / 0 failed / 138 ignored。
-- 方案 B 改动后首次全量：**1523 passed / 1 failed**（新加的 HLSL 编译测试失败：HLSL 不允许在定义前调用 `material`）。
-- 已修：把 prelude 拆成 `MATERIAL_PRELUDE` + `MATERIAL_EPILOGUE`，插件源码夹在中间。
-- 修复后全量：**1524 passed / 0 failed / 138 ignored**（新增 3 个材质编译测试，`expanded_height` +24px 未打破布局断言）。
-
-### 9.5 材质包最小示例（给插件作者/PR 用）
-`plugin.json` 关键字段：
-```json
-{
-  "id": "example.tint-glass", "runtime": "material", "entry": "material.hlsl",
-  "owner": "appearance", "capabilities": ["appearance.material", "settings"],
-  "permissions": {"screen.backdrop": true},
-  "material": {"controls": true, "spring": {"stiffness": 1.0, "damping": 0.5}},
-  "settings": [{"key":"tint","label":"着色","type":"number","min":0,"max":1,"step":0.05,"default":"0.5"}]
-}
-```
-`material.hlsl`：
-```hlsl
-float4 material(MaterialIn i) {
-    float3 bg = dz_backdrop(i.pixel);
-    return float4(lerp(bg, float3(0.05,0.35,0.75), saturate(i.values[0].x)), 1.0);
-}
-```
-
-### 9.6 待办（接手继续）
-1. ~~跑完整全量测试~~ 已完成：1524 passed / 0 failed / 138 ignored。
-2. 提交当前工作树。
-3. 实机验证：内置玻璃不受影响；装一个 HLSL 材质包并激活，截图确认材质生效；外观包在设置里可选择；快捷切换行能显示和点击。
-4. ~~打包~~ 已完成（见 §10）；~~同步主交接文档~~ 已追加到桌面 `HANDOFF.md` 与仓库副本。`_archive/README.md` 在当前环境不存在（桌面无 `Daozai-液态玻璃预览` 目录），未强行创建。
-
----
-
-## 10. 打包结果（2026-11-26 16:38）
-- 提交：`1468292`（工作树 clean；安装包被 `.gitignore` 排除）。
-- release 双 bin 构建通过；Inno Setup 7 编译安装包成功。
-- 新包：`installer/daozai-setup-custom-isolated.exe`，12,064,983 bytes，sha256 `bc23dee2c92ca6c98feb96a53ffd2e8e40ae02dc43e251e119a6959d64735708`（前 16 `bc23dee2c92ca6c9`）。
-- 内含 exe：`dz-phone/target/release/daozai.exe`，sha256 前 16 `ef48c7b291e9f43df`（bridge `bd28a9d9a3064a58`）。
-- 旧包已备份到被忽略的 `merge-work/daozai-setup-custom-isolated.exe.prev-material-d3d11`（sha 前 16 `9ed7a3dfd3dc13c1`）。
-- **实机验证未完成**：需要用户安装/运行新包后确认内置玻璃、材质包激活、外观包选择、底栏快捷切换四项的视觉效果。测试已覆盖逻辑与布局断言，但未做 GUI 截图确认。
-
----
-
-## 11. 回归修复：2.4G 接收器显示未连接（2026-11-26 16:45+）
-- **用户现象**：已连接 2.4G 设备，岛上显示未连接；上游 v0.6.70 正常。
-- **根因**：本地 `App::sync_device()` 是从旧版移植的，漏掉上游这几行：
-  - `self.wireless_devices = env.bt.clone();`
-  - `if self.module_on(BLUETOOTH_PAGE) { self.wireless_devices.extend(env.receivers.iter().cloned()); }`
-  - `wireless_focus` 失效重置、`wireless_enter_at` 重置、`track_wireless_changes(&env.bt)`。
-  
-  这些必须在 `bluetooth_notifications == false` 的提前返回**之前**执行。本地之前只在 `bt_shown` 里维护蓝牙提示，完全没有把 `Env.receivers` 写进 `wireless_devices`，所以接收器永远不出现在设备上。
-- **顺带修**：`Shell` 的蓝牙扫描服务启动条件对齐上游——`bluetooth_notifications || module_on(BLUETOOTH_PAGE)`；原来只看通知开关，关掉通知时无线页也拿不到蓝牙设备。
-- **测试**：新增 `ui_tests::wireless_devices_include_plugin_receivers_regardless_of_connection_alerts`，即使关闭连接提示，插件提供的接收器也必须进入 `wireless_devices`。全量 **1525 passed / 0 failed / 138 ignored**。
-- 注：`bluetooth_ui_tests.rs` 当前没有被任何 `mod` 引入，里面的用例不会跑；本次没有贸然接入，避免一次引入大量未维护用例。
-
----
-
-## 12. 修复版重新打包（2026-11-26 17:06）
-- 提交：`bff72de`（接收器列表同步修复）+ 后续把 `BLUETOOTH_PAGE` 改为 `pub` 供宿主 bin 引用。
-- 全量测试 **1525 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 重新打包成功。
-- 当前包：`installer/daozai-setup-custom-isolated.exe`，12,077,111 bytes，sha256 前 16 `c002555fbc41698f2`（完整 `c002555fbc41698f2a7b38158989d63fd56b6ced9d4429b85666351a50cf5d48`）。
-- 内含 exe sha256 前 16 `8dd76ea0fdab0eba`。
-- 上一版（仅材质包）备份在 `merge-work/daozai-setup-custom-isolated.exe.prev-24g-fix`。
-- 待用户实机确认：2.4G 接收器显示已连接；其余四项材质/外观/快捷切换仍待确认。
-
----
-
-## 13. UI 对照上游修复（2026-11-26 17:12+）
-- **用户截图反馈**：无线设备页左上角标题叠字（"岛仔设置" 与详情标题重叠），设备文字/控件被底部快捷切换图标压住；新装的 `daozai.notes` 便签插件在设置里没有入口、岛上显示不完整。
-- **根因 1（标题）**：本地 `page_title()` 缺上游分支：
-  - `PERFORMANCE_PAGE => ("系统","性能", CPU_COLOR)`
-  - `BLUETOOTH_PAGE if wireless_focus && len>1 => return`（详情页标题由 `wireless_detail` 自己画）
-  - `BLUETOOTH_PAGE => ("无线","设备", CYAN)`
-  
-  缺这些时无线页落到兜底"岛仔设置"，详情页又有两套标题，故叠字。
-- **根因 2（控件被压）**：本地 `expanded_height()` 内联了一部分高度逻辑，缺上游 `page_content_height()` 的 `BLUETOOTH_PAGE=194`、`PERFORMANCE_PAGE=360`、插件通知详情/TODO 卡片分支；无线页只有 PH=140，内容按 194 排，底栏自然压字。现已按上游恢复 `page_content_height()`，`expanded_height()` 只在其上加 `PAGE_SHORTCUT_ROW_H`。
-- **根因 3（便签显示不完整）**：本地 `WIN_H` 仍是旧值 270，而上游是 `378 + PAGE_SHORTCUT_ROW_H = 402`。便签本 `status.canvas.height=230`，状态页需要 288，再加底栏 24 = 312，270 的画布直接裁切。现已对齐 402。
-- **根因 4（设置里没有便签页）**：本地设置侧栏没有上游的 `standalone_settings_pages()` 插件页面列表，也没有插件详情页标题上的"打开功能页"按钮。现已按上游补上：插件独立设置页出现在侧栏「功能」分组，详情页标题显示插件名+插件标，并可一键打开功能页。
-- **验证**：新增 `wireless_page_uses_upstream_title` / `wireless_page_content_height_matches_upstream`；全量 **1527 passed / 0 failed / 138 ignored**。
-- **待用户确认**：重新安装包后看无线页无叠字、便签插件出现在设置侧栏、便签 canvas 完整显示。
-
----
-
-## 14. UI 修复版重新打包（2026-11-26 17:55）
-- 提交：`98b8dbc`。全量 **1527 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
-- 当前包：`installer/daozai-setup-custom-isolated.exe`，12,071,342 bytes，sha256 前 16 `68c0f32f5e3c3133`（完整 `68c0f32f5e3c3133e185349b69321ead478bf637daf3594ece4e4c378f81ea49`）。
-- 内含 exe sha256 前 16 `f0fffe5bb029cd7d9`。
-- 上一版备份：`merge-work/daozai-setup-custom-isolated.exe.prev-ui-fix`。
-- 这版同时包含：D3D11 材质包、2.4G 接收器修复、无线页/插件页 UI 对照上游修复。
-
----
-
-## 15. 崩溃修复：插件页点齿轮越界（2026-11-26 18:19+）
-- **日志证据**：`%APPDATA%\DaozaiCustom\diagnostics\last-error.log`：`代码位置：src\app.rs:5083:49`；`auto-restart.log`：运行 1281 秒后异常自动重启。栈被裁剪成 `<unknown>`，但行号足够定位。
-- **根因**：`shared_header()` 的齿轮点击直接写 `self.settings_tab = PAGE_SETTINGS_TABS[self.page]`。便签等插件状态页页码从 `PAGE_NAMES.len()`（11）开始，数组只有 11 项，点齿轮必定越界 panic。
-- **修复**：按上游加回 `page_settings_tab()`（`.get(page).copied().unwrap_or(SETTINGS_TAB_PAGES)`）和 `open_page_settings()`：插件状态页转给 `open_plugin_settings(id)`，否则走安全的分组映射。`show_page()` 也统一调用它；齿轮点击改为 `open_page_settings(self.page)`。
-- **回归测试**：`plugin_page_settings_gear_does_not_index_out_of_bounds`，直接以 `page = PAGE_NAMES.len()` 调用，验证不再越界且打开设置窗口。
-- **验证与打包**：全量 **1528 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
-- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,072,436 bytes，sha256 前 16 `c25fad96f64b4cbe`（exe `53bbb71120424743`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-crash-fix`。
-- **待用户确认**：点便签等插件页齿轮不再退出，并能打开对应插件设置页。
-
----
-
-## 16. 设置页切换后残留插件正文（2026-11-26 18:39+）
-- **用户现象**：设置侧栏从「现货金价 / 便签本」切到「消息提醒」等内置页后，标题变了，正文仍是上一个插件页。
-- **根因**：本地内容区有两套插件判定：标题处按 `settings_tab == PLUGIN_DETAIL` 算 `plugin`，正文处却仍只看残留的 `settings_plugin`。上游只有前者。侧栏内置页点击也没像上游那样清空 `settings_plugin`。
-- **修复**：正文滚动区与 `standalone_settings()` 调用统一使用「当前 tab + 当前插件」判定；侧栏内置页点击清空 `settings_plugin`；`open_page_settings()` 对内置页也清空插件状态（防御性）。
-- **回归测试**：`builtin_settings_navigation_clears_stale_plugin_page`。
-
----
-
-## 17. 剩余上游能力补齐与统一打包（2026-11-26 19:09+）
-- **提交**：`6308d85`，一次性补齐按 D3D11 前提复核后仍成立的缺口。
-- **本轮内容**：
-  - 设置页切换残留插件正文（标题变、正文不变）修复并加回归测试。
-  - 设置侧栏插件页使用插件自定义导航图标并支持滚动到选中项。
-  - `spike/script_settings_ui.rs` 时区选中后关闭弹窗（egui 0.37 用 `Popup::close_all`）。
-  - 侧边停靠补齐 `Date / Wireless / Performance / Pinned`，`Dock::Bottom` 可拖动切换。
-  - 通知避让补齐 `resident_squeeze` / `bar_parts` / `resident_limit`；`unread_stack_len` 与 `unread_count` 计入插件折叠通知；接上 `draw_plugin_notice_banner/capsule/stack/detail`。
-  - 逐帧诊断：慢帧日志细分前置/岛体/设置，新增 `DAOZAI_FRAME_TRACE` 逐帧间隔与上帧分段（适配 D3D11，无 native 读回段）。
-  - 重新启用与渲染栈无关的插件纯逻辑测试：capabilities、source_https、source_read、plugin_storage_backup。
-  - 测试方法 `手机通知走receive路径也会自动登记App` 改名 `phone_notification_receive_path_also_registers_app`。
-  - 修复 `quota_sig_tests` 的 `Config{..Default::default()}` 在 bin 侧因 `pub(crate)` 字段报错，改为 `Config::default()` + 赋值。
-- **验证**：最终全量 **1545 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
-- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,091,660 bytes，sha256 前 16 `b1bdf0106bd1a2f7`（exe `5869af3d8863137b`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-upstream-remaining`。
-- **未合且有意保留**：DX12 分层读回节流/`cover()`/位移补偿、wgpu/GL 回退、WGSL/sdk-material 链均由 D3D11 自绘栈替代；官方集市测试索引仅测试夹具，生产路径一致。
-- **待用户实机确认**：设置页切换正文、侧边日期/无线/性能/pinned、Bottom 拖动、插件通知显示与点击。
-
----
-
-## 18. 翻页平滑动效与宽岛同步过渡（2026-11-26 20:35+）
-- **提交**：`e5be1b7`（前序清理提交 `685952c` 已包含在本包）。
-- **合入 1：切页正文平滑动效 / 标题动画**（上游 `d558a2f`，合并 `3cd180a`）
-  - `PAGE_SLIDE` 46→32，新增 `PAGE_TURN_DURATION=0.34`；移除旧 `slide: Spring`。
-  - 新增 `page_from_offset` / `page_from_elapsed`：连点时旧页从当前位移与透明度继续淡出，不跳回。
-  - 新增 `page_slide_offset()` / `page_slide_alpha()` / `page_header_alpha()`；旧页原位淡出、新页单向滑入不回弹。
-  - 标题与正文分开 fading：标题先退后进，避免两页汉字在中间帧叠成重影。
-  - 本地适配：`render_page()` 仍是三参，`page_title()` 单独传 header Card；`page_slide_tx()` 跟随新位移，GPU 控件透镜与正文逐像素对齐。
-- **合入 2：超长常驻岛宽高同步过渡**（上游 `5b3d375`）
-  - 宽度不再单独走弹簧，按高度进度一次插值：`w.pos = lerp(from, PW, ease)`，`ease = 1-(1-k)^2`；避免展开/收起时出现又宽又高的空黑框。
-- **第 3 项：喝水页切换帧标记（`ed035e7`）不补**
-  - 上游该字段只服务 DX12 分层读回；本地 `native.wants_frames()` 恒 false。
-  - 本地 D3D11 主循环的 `transitioning` 已直接包含 `!water_ring.settled || !sit_view_t.settled || !sit_t.settled`， drinks 切换期间 `repaint_after` 已是 1/60，等价且更直接。
-  - `git log --all -S'water_view_transition'` 只有上游 `ed035e7`，仓库内未见社区 D3D11 专用实现。
-- **验证**：全量 **1545 passed / 0 failed / 138 ignored**；release 双 bin 构建通过；Inno Setup 7 打包成功。
-- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,088,968 bytes，sha256 前 16 `dbb5ed1d1807c30`（exe `d7311475aab296b3`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-page-turn`。
-- **待用户实机确认**：切页标题不再叠字/回弹、连点反向切换衔接、宽常驻岛展开收起无空黑框。
-
----
-
-## 19. tab/标题入场动画对照修正（2026-11-26 21:02+）
-- **用户反馈**：「健康提醒」四个字与置物架/剪贴板 tab 的入场动画明显和上游不同。
-- **根因（这次真正漏的点）**：上游 `render_page(page, c, header, ...)` 把**标题、tab、右上操作**画在独立的 `header` Card，正文画在 `c`。本地此前仍是三参 `render_page`，把「健康提醒」和「置物架/剪贴板」分栏直接画在正文 Card，切页时被 `page_slide_offset()` 一起平移，所以看起来在滑。
-- **已修**：
-  - `render_page()` 补 `header: &Card` 参数；切页过渡里旧页/新页分别传 `old_header` / `header`，常态传 `c`。
-  - `page_focus` / `page_water` / `page_shelf` / `page_clipboard` / `page_calendar` 全部改用传入的 `header` 画标题、tab 与右上操作；正文仍用 `c`。
-  - 置物架/剪贴板分栏按上游 `v0.6.70` 回退为静态选中灰填充：删除本地独有的 `shelf_tab_press` / `shelf_tab_spring` / `shelf_tab_layout` / `shelf_tab_bar` 与 GPU 滑动透镜。
-  - D3D11 `transitioning` 补 `water_view_t`（环↔柱状图切换），等价覆盖上游 `ed035e7 water_view_transition` 的逐帧推进目的。
-- **系统对照结论**：
-  - 与上游一致、无需改：`anim.rs`、`health_tabs` 胶囊滑动、`water_body`/`sit_body` 原地交叉淡化、focus/rest、settings/plugin/quota tabs、performance-tab-slide。
-  - 本地 DISTINCT 且有意保留：`Ctl` GPU 透镜体系（D3D11 液态玻璃）、`mail_tab` 滑动、`ctl_appear`/`ctl_press` 按压反馈、`page_slide_tx` 只让透镜跟随上游同款切页滑动。
-  - 本地自定义但已删：`shelf_tab_press` + `shelf_tab_spring` 滑动透镜。
-- **验证**：按用户要求**未跑全量测试**；`cargo check --lib --bin daozai --tests` 通过；release 双 bin 构建通过；Inno Setup 7 打包成功。
-- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,089,634 bytes，sha256 前 16 `bb66d473a83af005`（exe `aab2d2fd436efbc4`）。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-tab-header`。
-
----
-
-## 20. 日程「＋ 新增」双白边与单独滑入（2026-11-26 21:17+）
-- **现象**：按钮底层多一圈白边，且这圈白边独立于按钮左右滑入，看上去两层白边。
-- **根因**：本地有两套玻璃就绪开关：
-  - `glass_controls_ready()` 硬编码 `false`，被 `material_capsule()` 用来决定走 GPU 还是矢量；于是矢量 `glass_capsule()` 的白描边总在画。
-  - `ctl_glass_ready()` 在液态皮肤展开时为真，D3D11 shader 同时发布 `Ctl::CalAdd` 透镜，也画一圈白边。
-  - `glass_controls()` 又把非 chrome 控件按 `page_slide_tx()` 平移，`CalAdd` 虽然在 header 上，透镜却跟着正文滑。
-- **修复**：
-  - 删除硬编码 `glass_controls_ready()`；`calendar_ui.rs` 与 `calendar_editor.rs` 改用 `ctl_glass_ready()`，并把后者提升为 `pub(crate)`。
-  - GPU 透镜启用时 `material_capsule()` 走 GPU 分支，不再叠矢量白边。
-  - `Ctl::CalAdd` 加入不随 `page_slide_tx()` 平移的 chrome 列表，与 header 上的按钮原地对齐。
-- **验证**：按用户要求未跑全量测试；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
-
----
-
-## 21. 收起态无线设备常驻缺失（2026-11-26 21:20+）
-- **现象**：在「无线设备」里把手机电量设备设为常驻，收起态却不显示。
-- **根因**：本地有完整的 `wireless_resident()` / `wireless_bar_width()` / `draw_wireless_bar()`，但 `shared_header()` 从未调用 `draw_wireless_bar()`，`tick()` 也没把 `append_bluetooth(width)` 并入常驻布局；`Ctl` 诊断里 `draw_wireless_bar`/`reserved_width` 的 never used 就是证据。
-- **修复**：按上游 v0.6.70 接回：
-  - `tick()` 布局里 `layout.append_bluetooth(wireless_w)`（整组放不下则隐藏，不挤压其它项）。
-  - `shared_header()` 的 `compact_alpha` 块里调用 `self.draw_wireless_bar(&c, local_cx, &layout)`。
-  - 顺手接回同段缺失的 `layout.add_performance()` 与 `performance_bar()` 绘制（上游同位置，之前也是未调用）。
-- **验证**：按用户要求未跑全量测试；`cargo check --lib --bin daozai --tests` 通过。尚未重新打包。
-
----
-
-## 22. 手机连接功能精简（2026-11-26 21:35+）
-- **需求**：手机连接本身依托 Windows 通知，普通通知会照常上岛；删掉重复转发所有短信与来电显示，只保留“验证码识别成单独验证码卡片”。设置页里的相关开关也删掉。
-- **行为改动**：
-  - WinRT 手机通知不再一律改走 `notify_phone()`；普通手机通知走普通通知路径，验证码短信才走 `notify_phone()` 的独立卡片。
-  - `notify_phone()` 非验证码直接丢弃；验证码卡片标题改为「验证码」，保留大号数字复制按钮；`auto_copy_otp` 仍按邮件共用设置决定是否自动写剪贴板。
-  - 移除「来电中 / 未接来电」卡片、计数与关闭清零逻辑；`missed_calls` 字段删除。
-  - `phone_alerts` 设置项彻底删除（配置键忽略），手机通知只受通知读取总开关与手机 App 名单约束；`accepts_notification()` 与 `tick_alerts()` 同步。
-  - 设置页「手机功能」删除「短信与来电」「验证码自动复制」两行及相关提示，只保留 App 名单；连接状态文案改为“普通通知上岛、验证码单独成卡”。
-- **验证**：`cargo check --lib --bin daozai --tests` 通过；release 打包成功。首次全量 1544 passed / 1 failed，失败项是本地旧测试拿「标题」当内容坐标（标题按上游走 header 后会随面板高度动画移动）；已改为用正文「日历」分段验收，最终全量 **1545 passed / 0 failed / 138 ignored**。
-- **当前包**：`installer/daozai-setup-custom-isolated.exe`，12,089,773 bytes，sha256 前 16 `4938722f1095a177`（exe `f4306a9f727ac23e`）。该包只包含行为代码，测试文件修正不影响二进制。上一版备份 `merge-work/daozai-setup-custom-isolated.exe.prev-phone-trim`。
-
----
-
-## 23. 上游 commit 对齐审计（2026-11-26 21:44+）
-- **方法**：从 `git log v0.6.66..v0.6.70` 出发，逐个读上游 commit diff，再对照本地当前代码。
-- **已对齐**：切页平滑动效（d558a2f/3cd180a/52a8d86）、箭头位置主体、性能页重做（5b3d375/3799104/3e4a4cc）、电量环（7f36821）、喝水切换（ed035e7）、健康待处理、CalDAV/日历、插件画布/SDK/状态卡、Gmail 代理、验证码大字卡片。
-- **真正仍漏、待确认是否合入**：
-  1. `1918f17` 保持展开整套：图钉按钮、`page_height` 弹簧、顶栏时钟 fit、切页跳动修复；箭头锚点（0c216b6）要彻底对齐依赖它。
-  2. `507b394` 通知被任务栏遮挡时的点击判定（`native.rs` 的 `keep_above_top_bar` 需 notice 参数）。
-  3. `0cdf0f1` 仅提醒验证码邮件的开关字段与读写。
-  4. 帧分段诊断的 `PREVIOUS_PARTS`、`requested_repaint_last_pass`、过渡/交互起点字段（只影响可观测性）。
-- **有意不合/定制**：DX12 分层读回、wgpu 回退、WGSL 材质链、官方集市测试索引、用户删除的手机短信/来电转发（仅保留验证码卡片）。
+- 上述“未合并/部分合并”以 `v0.6.70` 为基线，按上游 commit diff 对照当前代码得出。
+- 未列项为已对齐或无需对齐的定制差异。
