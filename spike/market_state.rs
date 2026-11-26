@@ -533,13 +533,10 @@ impl LocalPlugins {
             .is_some_and(|(_, job)| job.is_finished())
         {
             let (key, job) = official.image_job.take().unwrap();
-            if official
-                .catalog
-                .as_ref()
-                .is_some_and(|catalog| catalog.has_image(&key))
-            {
-                official.images.insert(key, job.join().unwrap_or(None));
-            }
+            // 无论 has_image 是否成立都必须登记结果，否则同一个 key 每帧重新排队，
+            // 单一 image_job 被永久占住，后面的插件封面永远轮不到。
+            let image = job.join().unwrap_or(None);
+            official.images.insert(key, image);
         }
         if synced {
             if let Some(catalog) = official.catalog.clone() {

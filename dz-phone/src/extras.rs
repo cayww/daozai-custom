@@ -5193,7 +5193,7 @@ impl App {
                         SETTINGS_TAB_POSITION=>egui::include_image!("../assets/settings-icons/system/position.svg"),
                         // 自定义与集成：里面是浏览器 / 手机 / MAA / 网易云等外部集成，用浏览器图标比「关于」贴切。
                         SETTINGS_TAB_CUSTOM=>egui::include_image!("../assets/settings-icons/system/browser.svg"),
-                        SETTINGS_TAB_WIRELESS=>egui::include_image!("../assets/device-icons/bluetooth-linear.svg"),
+                        SETTINGS_TAB_WIRELESS=>egui::include_image!("../assets/settings-icons/system/wireless.svg"),
                         SETTINGS_TAB_PERFORMANCE=>egui::include_image!("../assets/settings-icons/system/performance.svg"),
                         #[cfg(feature="sdk-js")]
                         SETTINGS_TAB_PLUGINS=>egui::include_image!("../assets/settings-icons/system/shelf.svg"),

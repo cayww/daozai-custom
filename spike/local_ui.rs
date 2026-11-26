@@ -98,10 +98,16 @@ fn plugin_cover(
     } else {
         cached.unwrap_or_else(|| {
             let Some(result) = load() else {
+                // 封面数据还没下载好：不要缓存 None，否则这辈子都不会再重试。
                 pending = true;
+                ui.ctx().request_repaint();
                 return None;
             };
-            let texture = result.ok().and_then(|png| {
+            let result = match result {
+                Ok(v) => Some(v),
+                Err(()) => { None },
+            };
+            let texture = result.and_then(|png| {
                 let image =
                     image::load_from_memory_with_format(&png, image::ImageFormat::Png).ok()?;
                 let (w, h) = (image.width(), image.height());
@@ -121,16 +127,17 @@ fn plugin_cover(
                 }
                 let size = [pixels.width() as usize, pixels.height() as usize];
                 let image = egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_raw());
-                Some(
-                    ui.ctx()
-                        .load_texture("plugin-cover", image, egui::TextureOptions::LINEAR),
-                )
+                // egui 0.37 下同名纹理会互相覆盖：每个封面用独立名字。
+                let tex_name = format!("plugin-cover-{:?}", key);
+                Some(ui.ctx().load_texture(tex_name, image, egui::TextureOptions::LINEAR))
             });
             ui.data_mut(|data| {
                 let cache = data.get_temp_mut_or_default::<CoverCache>(cache_id);
                 cache.push_front((key, texture.clone()));
                 cache.truncate(32);
             });
+            // 纹理是这一帧才创建的：必须再请求一次重绘，否则界面停留在占位图。
+            if texture.is_some() { ui.ctx().request_repaint(); }
             texture
         })
     };
@@ -1202,7 +1209,10 @@ impl LocalPlugins {
             ui.set_min_height(row_h);
             ui.spacing_mut().item_spacing.x = 12.0;
             plugin_cover(ui, key, 64.0, egui::CornerRadius::same(6), "暂无封面", !on, || {
-                Some(cover.as_ref().map(|cover| cover.bytes().to_vec()).ok_or(()))
+                {
+                    let r = cover.as_ref().map(|cover| cover.bytes().to_vec()).ok_or(());
+                    Some(r)
+                }
             });
             #[cfg(windows)]
             let actions_w = if update.is_some() { 152.0 } else { 96.0 };
