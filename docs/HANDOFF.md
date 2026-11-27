@@ -2086,3 +2086,20 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 **验证**：全量 lib **1551 passed / 0 failed / 138 ignored**；release 双 bin 构建通过。包 sha256 前16 `f54fb0beab83b6ec`、exe `27162248cde0e417`、bridge `d62fd0453d4233e0`。提交 `dac124d`，未 push、未部署。
 
 **教训**：缓存值（尤其初值 0 的）不能直接当渲染/定位输入；改动放置逻辑必须实机确认窗口矩形（本次靠 Win32 `GetWindowRect` 一眼看出 0.8 倍）。
+
+
+
+### 7.0zzzt 跨屏拖到副屏后玻璃背景错乱（2026-11-27 10:00，提交 `d2dfe7e`）
+
+**现象**：跨屏拖动正常，但岛体到另一块屏后玻璃折射采到的背景错乱。
+
+**根因**：D3D11 栈的 WGC 抓屏会话用 `MonitorFromWindow(NULL, MONITOR_DEFAULTTOPRIMARY)` **固定抓主屏**全屏帧；玻璃 shader 的 `sample_px` 却用岛体在**虚拟桌面**的绝对物理坐标（`quad.yz`）除以这张纹理尺寸采样。岛体在主屏时对，拖到副屏后坐标超出主屏纹理，`saturate` 夹到边缘 → 采到错误背景。`topo_epoch` 只跟踪显示器 rect 变化，岛体换屏不触发重建，所以会话一直抓主屏。
+
+**修复**：
+- `wgc_capture.rs`：`WgcCapture::new(device, hwnd)` 改用 `MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)` 抓窗口所在屏，并记录该屏虚拟桌面原点 `capture_origin`。
+- `runtime.rs`：加 `wgc_monitor_origin` 字段；每帧用 `MonitorFromWindow(window hwnd)` 查当前屏原点，变化即触发 `rebuild_wgc(hwnd)`（跨屏换会话）；shader `u.quad.yz` 与主题亮度采样框都改成 `origin - capture_origin`（相对所抓屏的局部坐标）。
+- `main.rs`：背景亮度采样点也改用 `physical_origin() + x*placement_scale`，不再依赖跨屏后可能滞后的 `ctx.pixels_per_point()`（`native.rs` 新增 `physical_origin()`）。
+
+**验证**：全量 lib **1551 passed / 0 failed / 138 ignored**；release 双 bin 构建通过。包 sha256 前16 `ce19adacb8184849`、exe `fe72ad8503976fc2`、bridge `271d3f8d8cdcd8ac`。提交 `d2dfe7e`，未 push、未部署。换屏瞬间会有约 1 秒稳定期回退纯色（WGC 重建），属预期。
+
+**待用户实机确认**：拖到副屏后玻璃背景是否跟随副屏桌面正确折射。
