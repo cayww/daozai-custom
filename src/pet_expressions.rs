@@ -137,17 +137,10 @@ impl Expressions {
             }
         }
         let frame=if crate::bar_layout::animations_enabled(){expression.frame(time)}else{7};
-        // 序列图 144×1440（16 帧纵向，每帧 144×90）。LINEAR 采样若用帧的精确
-        // UV 边界，会在矩形上边(v=frame/16)和右边(u=1)采到相邻帧/相邻列的像素，
-        // 在精灵边框上漏出一条白线（切换动作换帧时尤其明显）。
-        // 内缩半纹素避开边界，矩形内容不变、白线消失。
-        let inset_u = 0.5 / 144.0;
-        let inset_v = 0.5 / 1440.0;
-        let uv=Rect::from_min_max(
-            egui::pos2(inset_u, frame as f32/16.0 + inset_v),
-            egui::pos2(1.0 - inset_u, (frame+1) as f32/16.0 - inset_v),
-        );
-        // 序列图用连续矩形，避免动画期 snap 到整像素导致宽高 N/N+1 跳变而闪烁。
+        // 对照上游恢复原始 UV（回退 303a997 的半纹素内缩）：用户报「哼音符表情
+        // 首次加载会闪乱」，先按上游写法验证是否由内缩引起。
+        let uv=Rect::from_min_max(egui::pos2(0.0,frame as f32/16.0),egui::pos2(1.0,(frame+1) as f32/16.0));
+        // 保留 d86f719 的连续矩形（用户确认整体闪烁改善）
         c.painter.image(self.sheet.as_ref().unwrap().2.id(),c.rect_unsnapped(cx-24.0,0.0,48.0,30.0),uv,Color32::WHITE);
         true
     }

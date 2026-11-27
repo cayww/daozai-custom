@@ -187,26 +187,18 @@ pub(crate) fn device_icon(c: &Card, kind: crate::bt::DeviceKind, x: f32, y: f32,
             egui::include_image!("../assets/device-icons/bluetooth-linear.svg")
         }
     };
-    // 图像用连续矩形，不 snap 到物理像素：动画期 snap 会让宽高在 N/N+1 像素
-    // 间跳变，图标看起来忽大忽小地闪。
+    // 图像用连续矩形，不 snap 到物理像素（保留用户确认有效的改动）。
     let rect = c.rect_unsnapped(x, y, size, size);
     let egui::ImageSource::Bytes { uri, bytes } = icon else {
         return;
     };
-    // 社区解法（egui#3501 / #7071）：SVG 纹理缓存 key = (uri, SizeHint)。
-    // 关键坑：fit_to_exact_size(rect.size()) 让 size_hint 恒等于 rect 尺寸
-    // （image.rs: ImageFit::Exact(size) => size，pixel_size = ppp * size），
-    // 完全忽略 load_for_size 的 available_size。动画里 rect 逐帧微变 →
-    // 每帧一个新 SizeHint → 每帧重新光栅化 SVG → 加载间隙不画 = 图标闪烁。
-    // 正解：给 fit_to_exact_size 传**固定**尺寸（换算到 ppp 使光栅化恒定 32px），
-    // 拿到缓存纹理后手动 image() 画到任意 rect，让 GPU 缩放。
-    // 固定 uri + 固定 hint = 一张纹理，动画期零重载。
-    const RASTER_PX: f32 = 32.0;
-    let ppp = c.ui.ctx().pixels_per_point().max(0.1);
-    let icon = egui::Image::from_bytes(uri.clone(), bytes)
-        .fit_to_exact_size(egui::vec2(RASTER_PX / ppp, RASTER_PX / ppp))
-        .texture_options(egui::TextureOptions::LINEAR);
-    if let Ok(egui::load::TexturePoll::Ready { texture }) = icon.load_for_size(c.ui.ctx(), rect.size()) {
+    // SVG 加载恢复上游原始写法（回退 61c4043/f13c304：两版修复均未消除闪烁）。
+    let pixels = (rect.width() * c.ui.ctx().pixels_per_point()).ceil() as u32;
+    let icon = egui::Image::from_bytes(format!("{uri}/{pixels}.svg"), bytes);
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = icon
+        .fit_to_exact_size(rect.size())
+        .load_for_size(c.ui.ctx(), rect.size())
+    {
         c.painter.image(
             texture.id,
             rect,

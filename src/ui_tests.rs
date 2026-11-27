@@ -4249,8 +4249,8 @@ fn mascot_atlas_respects_visibility_and_skin_switches(){
             }).expect("新表情应画在常驻岛上");
             assert!(h.region.contains_rect(drawn.calc_bounds()),"新表情不能撑出岛体");
             // 每个表情单独一张序列图：横向铺满整张，纹理只有一列大小。
-            // 每帧内缩半纹素避开 LINEAR 采样边界（修复精灵边框白线），不是精确 0。
-            assert!((drawn.vertices[0].uv.x-0.5/144.0).abs()<0.001);
+            // UV 恢复上游原始写法（回退半纹素内缩，验证哼音符表情闪乱）。
+            assert!(drawn.vertices[0].uv.x.abs()<0.001);
             assert_eq!(h.ctx.tex_manager().read().meta(atlas).unwrap().resolution,[144,1440],"只保留正在播放的表情");
         }
     }

@@ -1241,10 +1241,6 @@ pub struct App {
     fluid_tex_state:Option<(f32,f32,f32,[f32;3],(f32,f32),f32,(f32,f32),f32)>,
     /// 液态玻璃材质系数：1 = 浅色材质（深墨字），0 = 深色材质（白字），按背景亮度平滑过渡。
     liquid_k:f32,
-    /// 常驻栏电量图标的目标透明度平滑值。收起动画中 quota 槽位突然出现/消失会让
-    /// layout.clearance(BATTERY) 在 1/0 间硬跳（弹簧位置扫过电量环），表现为图标
-    /// 一闪一闪；这里做 100ms 指数平滑，把它变成渐隐渐现。
-    battery_alpha_smooth: f32,
     /// 液态玻璃的重绘档位：0=不管（交给原有节拍）、1=60fps（有动画/悬停/拖动）、
     /// 2=30fps（有环境动画）、3=静止档（帧率=设置项 liquid_idle_fps，默认 15fps）；
     /// 收起深度休眠（1Hz）在 2/3 档上叠加，由 liquid_deep_sleep 开关控制。
@@ -1646,7 +1642,6 @@ impl App {
             fluid_tex:None,
             fluid_tex_state:None,
             liquid_k:1.0,
-            battery_alpha_smooth:1.0,
             glass_tick:0,
             pill_still_since:None,
             deep_sleep:false,
@@ -5259,19 +5254,7 @@ impl App {
         let bk = lerp(1.0, 0.8*fit, m);
         let bpos = (lerp(pb.0, hb.0, m), lerp(pb.1, hb.1, m));
         if show_battery {
-            // 收起动画中 quota/pet 槽位的弹簧位置会扫过电量环，clearance() 在 1/0 间
-            // 硬跳（圆环换边经过时故意淡出，避免遮挡），连续两三次就成了肉眼可见的
-            // 闪烁。对目标做 100ms 指数平滑，让它变成渐隐渐现；展开态(m→1)直接给 1。
-            let target_alpha=layout.clearance(bar::BATTERY);
-            let k=(self.dt*5.0).clamp(0.0,1.0);
-            self.battery_alpha_smooth+=(target_alpha-self.battery_alpha_smooth)*k;
-            let alpha=lerp(self.battery_alpha_smooth,1.0,m);
-            if crate::performance_ui::diag_perf_recent() {
-                crate::wgc::log(&format!("DIAG perf battery x={:.2} alpha={:.3} target={:.3} w={:.2} p={:.3} k={:.3}",bpos.0,alpha,target_alpha,self.w.pos,p,self.liquid_k));
-            }
-            // 抽动诊断：帧间差分，跳变超阈值自动记录（不依赖手动复现动作）。
-            crate::performance_ui::diag_battery_jump(bpos.0, alpha, p, self.liquid_k,
-                bk, fit, self.resident.target.width);
+            let alpha=lerp(layout.clearance(bar::BATTERY),1.0,m);
             if let Some((pct,chg))=pc_ring {paint::battery(&base.faded(alpha),bpos.0,bpos.1,pct,chg,bk);}
         }
 
