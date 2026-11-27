@@ -5,7 +5,21 @@ use crate::protocol::{Reading, ReceiverWire};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+pub mod mchose;
 pub mod simple;
+pub mod compx;
+pub mod razer;
+pub mod hyperx;
+
+/// 统一注册入口：所有协议族在这里汇总。
+pub fn all_providers() -> Vec<Box<dyn Provider>> {
+    let mut all = simple::all_providers();
+    all.extend(compx::all_providers());
+    all.extend(razer::all_providers());
+    all.extend(hyperx::all_providers());
+    all.extend(mchose::all_providers());
+    all
+}
 
 /// 一次观测的设备状态。
 #[derive(Clone, Debug)]

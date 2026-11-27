@@ -46,7 +46,8 @@ fn main() {
     }
 
     let mut engine = providers::Engine::new();
-    let providers = providers::simple::all_providers();
+    // 统一注册入口：simple + compx 等全部协议族（见 providers::all_providers）。
+    let providers = providers::all_providers();
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
 
