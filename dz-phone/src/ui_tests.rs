@@ -7817,6 +7817,20 @@ fn side_frame(h:&mut H,cursor:Option<Pos2>)->crate::app::FrameOut{
 }
 
 #[test]
+fn bottom_dock_region_flips_to_lower_half_of_canvas(){
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();h.app.settings.dock=crate::model::Dock::Bottom;
+    let bounds=crate::display_layout::Bounds{left:0,top:0,right:1920,bottom:1080};
+    let ppp=1.0;
+    // 光标放在底部岛体应在的位置：画布下半部。
+    let pointer=Some(Pos2::new(320.0,WIN_H-24.0));
+    for _ in 0..3 {island_drag_frame(&mut h,bounds,ppp,pointer,None);}
+    // 底部停靠的命中区与裁剪区必须落在窗口下半部——上游 orient 翻转的效果。
+    assert!(h.hit.center().y>WIN_H/2.0,"底部停靠命中区应在下半部：{:?}",h.hit);
+    assert!(h.region.center().y>WIN_H/2.0,"底部停靠裁剪区应翻转到下半部（漏 orient 会停在顶部）：{:?}",h.region);
+    assert!(h.region.contains_rect(h.hit.shrink(1.0)),"裁剪区应覆盖命中区：region={:?} hit={:?}",h.region,h.hit);
+}
+
 fn side_dock_opens_from_the_edge_and_collapses_back(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let (w,hgt)=(crate::side_dock::SIDE_W,crate::side_dock::SIDE_H);

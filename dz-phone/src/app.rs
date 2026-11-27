@@ -3128,6 +3128,13 @@ impl App {
         // 胶囊皮肤悬浮在屏幕顶边下方。
         let pill = self.settings.island_shape==model::IslandShape::Pill;
         let top = win.top() + if pill { PILL_GAP } else { 0.0 };
+        // 底部停靠：region 等矩形按顶部坐标系算出后要沿窗口垂直中线翻转到下部。
+        // 本地漏了这一步，导致 Bottom 时岛体画在 win 底部、裁剪区却在顶部 → 内容被裁掉看不见。
+        let bottom=self.dock()==model::Dock::Bottom;
+        let orient=|r:Rect| if bottom {
+            let axis=win.top()+win.bottom();
+            Rect::from_min_max(Pos2::new(r.left(),axis-r.bottom()),Pos2::new(r.right(),axis-r.top()))
+        }else{r};
         let side = self.side();
         let dock = self.dock();
 
@@ -3162,7 +3169,7 @@ impl App {
         // 命中区域也跟着挪；否则岛体被屏幕边界推开后，图标的 hover 会落在空处。
         let (offset,badge,notice)=self.bar_parts(win,self.island_rect(win,self.w.pos,self.h.pos));
         let cx = win.center().x+offset.x;
-        let hit = if side {self.side_hit_rect(win,p_prev,self.page_height.pos).translate(offset)} else {self.hit_rect(cx, top, p_prev)};
+        let hit = if side {self.side_hit_rect(win,p_prev,self.page_height.pos).translate(offset)} else {orient(self.hit_rect(cx, top, p_prev))};
         let page_before=self.page;
         let previous_menu=self.shelf_menu_rect.take();
         let inside = env.cursor.is_some_and(|c| hit.contains(c) || previous_menu.is_some_and(|r|r.contains(c)));
@@ -3550,6 +3557,7 @@ impl App {
             let (bw, bh) = self.base_size();
             Rect::from_center_size(Pos2::new(cx, top + (bh * SWELL.1 + 12.0) / 2.0), Vec2::new(bw * SWELL.0 + 24.0, bh * SWELL.1 + 12.0))
         };
+        region=orient(region);
         // 拿起放大、甩动拉伸以及加深的投影都要留在窗口区域内，否则两端会被系统裁掉。
         if self.drag_lift.pos.abs()>0.005 || self.drag_stretch.pos.abs()>0.001 {region=region.union(panel.expand2(Vec2::new(18.0,22.0)));}
         if let Some(r)=center_guide {region=region.union(r);}
@@ -3689,7 +3697,7 @@ impl App {
         cmds.append(&mut self.pending);
         // 翻到较矮页面时，把旧页命中区沿缩短一侧保留一条续滚带（与新页重叠 8px 防抖），
         // 这样鼠标停在旧页区域仍能继续滚轮翻页，也不会因命中区缩小而误收起。
-        let next_hit=if side {self.side_hit_rect(win,self.progress(),self.page_height.pos)} else {self.hit_rect(cx,top,self.progress())};
+        let next_hit=if side {self.side_hit_rect(win,self.progress(),self.page_height.pos)} else {orient(self.hit_rect(cx,top,self.progress()))};
         if page_before!=self.page && self.open {
             let previous=self.page_scroll_area.map_or(hit,|area|hit.union(area));
             self.page_scroll_area=env.cursor.filter(|&c|previous.contains(c)).and_then(|c|{
@@ -3712,7 +3720,7 @@ impl App {
             page_scroll_area:self.page_scroll_area.map(rel),
             notice_hit:notice_shape.into_iter().chain(notice_details).chain(messenger_rect).chain(self.shelf_menu_rect).reduce(|a,b|a.union(b)).map(rel),
             top_bar_notice:top_bar_notice.into_iter().chain(notice_details.map(|r|r.intersect(ui.max_rect()))).filter(|r|r.is_positive()).reduce(|a,b|a.union(b)).map(rel),
-            file_drop_zone:self.settings.visible_pages[3].then(||rel(if side {self.island_rect(win,PW,self.page_height.pos).translate(offset)} else {Rect::from_min_size(Pos2::new(cx-PW/2.0,top),Vec2::new(PW,96.0))})),
+            file_drop_zone:self.settings.visible_pages[3].then(||rel(if side {self.island_rect(win,PW,self.page_height.pos).translate(offset)} else {orient(Rect::from_min_size(Pos2::new(cx-PW/2.0,top),Vec2::new(PW,96.0)))})),
             expanded: self.open,
             editing: self.is_editing(),
             animating,
