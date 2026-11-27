@@ -2454,6 +2454,8 @@ Razer 去重 ×2）；主程序 release 全量 **1624 passed / 0 failed / 141 ig
 **新包**：`installer\daozai-setup-custom-isolated.exe`（12,678,778 B；包 sha `065babf6e011d920`，exe `47cfea52ab8236c5`，
 bridge `e47f3872be09cc8e`，halo `3a97b072d9e97ab0`）。上一版 `1c93e996075c3ff2` 已被覆盖。未部署 / 未推 origin。
 
+**提交**：`822e2cb`（main；未推 origin）。
+
 **仍未做**：Corsair `--probe` 诊断路径（主程序不发，优先级低）；Logitech `ui_message` 字面文案
 （wire format 无字段，语义已由 `approximate` / `charging_known` 表达）；HyperX 预读与 Asus Harpe II 路径
 仍为语义近似。**所有新通道均未在真机验证**，尤其 DJI WinUSB 与 Raw Input 门控需用户实机确认。
