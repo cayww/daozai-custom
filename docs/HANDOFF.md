@@ -2150,3 +2150,17 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 **验证**：全量 lib **1553 passed / 0 failed / 138 ignored**；release 双 bin 构建通过。包 sha256 前16 `38cb720a1ca2b2e0`、exe `44dbac5ef0431e32`、bridge `24eb2d3f02225845`。提交 `e3ad0d1`，未 push、未部署。
 
 **待用户实机确认**：拖到底部松手后岛仔稳定贴底；设置里选底部直接到位不消失。
+
+
+
+### 7.0zzzx 底部停靠闪一下消失的真正根因：screen_rect 未覆盖（2026-11-27 11:52，提交 `48effd9`）
+
+**为什么上游没问题**：上游 `main.rs:573` 的 `raw_input_hook` 把 ROOT 的 `screen_rect` 显式设成完整画布 `CANVAS_W × WIN_H`（左右停靠用 SIDE 尺寸）。本地虽然 `impl eframe::App`，但渲染走的是自定义 `winit_runner` → `ctx.run_ui`，**`raw_input_hook` 从不被调用**。于是 `scale_root_input` 把 egui-winit 算出的 `screen_rect` 又除以 `island_scale`（本机 1.25），逻辑画布高度缩到约 321（< WIN_H 402）。Top 停靠岛体画在 win 顶部 y=0~48 仍在画布内；Bottom 停靠画在 win 底部 y≈354，超出画布被裁掉 → 用户看到"闪一两秒就消失"。诊断日志 `place.log` 证实 placement 本身正常（bounds/scale/key 稳定、无 NO ORIGIN、无崩溃），排除放置与崩溃方向。
+
+**修复**：在 `winit_runner.rs::draw_main` 的 `scale_root_input` 之后，按上游把 ROOT 的 `screen_rect` 覆盖成 `CANVAS_W×WIN_H`（左右用 SIDE）。注意 `raw_input_hook` 在本架构无效，不能照抄到那里。排查用的 `place.log` 诊断日志已全部移除（提交 `7c73630`）。
+
+**验证**：全量 lib **1553 passed / 0 failed / 138 ignored**；release 双 bin 构建通过。最终包 sha256 前16 `6f6d48c95f52ca02`、exe `5645607606ad380f`、bridge `8554a7d7f44b82f6`。提交 `48effd9` / `7c73630`，未 push、未部署。
+
+**待用户实机确认**：底部停靠直接到位并保持可见；跨屏、换边、超宽过渡仍正常。
+
+**教训**：上游用 eframe 框架的 hook（`raw_input_hook`）做的输入修正，本地换成自定义 winit 循环后不会自动生效——对照上游时必须检查该逻辑在本地架构里挂在哪里，不能只 diff 代码文本。
