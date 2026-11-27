@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-25 20:30
+> **最后更新**：2026-11-27 21:00
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -12,6 +12,7 @@
 | 项目 | 当前值 |
 |---|---|
 | **上游合并（2026-11-25 20:30）** | **新分支 `merge-upstream-v0670` HEAD=`9dad7c8`**（双亲：`017108d` + 上游 `0615f19`=v0.6.70），已合入上游 418 提交（v0.6.66–v0.6.70）。141 处冲突按「定制优先」解决：保留 egui 0.37 pin / D3D11＋液态玻璃 / 版本 1.3.0 / ZCode / 定制通知与邮件行为；新增插件集市/SDK、性能与无线设备页、Antigravity、rtl_text、蓝牙设备图标等未冲突模块已纳入。Cargo.toml 增加 sdk-js/sdk-material/sdk-wasm 特性（material 去掉 eframe/direct-composition，改走自绘栈），Cargo.lock 已由 Cargo 重算。release 构建通过，**全量 1456 passed / 0 failed / 138 ignored**。未部署、未推 origin。详见 §7.0zze。 |
+| **上游合并 v0.6.71（2026-11-27 21:00）** | **新分支 `merge-upstream-v0671` HEAD=`a240b36`**（双亲：`8012cd0` + 上游 `1c0c633`=v0.6.71），合入上游 53 提交（v0.6.70→v0.6.71）。38 处冲突按「定制优先」解决：egui 0.37 pin / 版本 1.4.0 / D3D11 液态玻璃 / ZCode 删除路径保留。**按用户要求剔除 DX12/WGSL**：删 `dx12_surface_memory.rs` 测试、`egui-wgpu` surface-test 依赖、`surface_recovery_test.rs`、GPU 材质集市白名单改动；`sdk-material` 未启用。纳入插件邮箱视图/SDK v1、页面管理与排序、HaloBattery 无线电量、微信托盘唤起、CalDAV Digest、Antigravity 登录修复、通知唤醒与内存积压修复、额度环间距。egui 0.31→0.37 API 适配；14 个依赖未移植布局的上游测试标记 `__upstream_tests_off__`。dev-release 串行全量 **1619 passed / 0 failed / 141 ignored**。未打包、未部署、未推 origin。详见 §7.0zzzzz-f。 |
 | **egui pin（2026-11-25）** | `90431d979ab1faae2de6d9f736e9d33ca0d31956`（提交 `ec19bd1`，0.37.0，1412 passed；未打包部署） |
 | **文字缩放（2026-11-25）** | 静态倍率走 `TextScale::Reflow` 重排缓存（15 处）；动画文字恒字号、`inset_text_uv` 已删；1413 passed，未部署 |
 | **工作树注意（2026-11-23）** | **当前 main 工作树有约 30 个文件的未提交审查修复（两轮）**：第一轮通知日志打码 / 通知线程重试 / CopyOtp / IMAP connect_timeout / 日历负时长 / focus minutes；第二轮 Fluid 纹理缓存 / 删 renderer.rs 回退链与未接线横幅 API / 邮件 spawn 失败提示 / file: 白名单+桥拦截 / sha256+凭据工具抽取 / 删死方法 / 脚本凭据转义 / 3 个基线测试断言修正。**编译通过、全量 1401 passed / 0 failed / 131 ignored**（基线原有 3 个失败已修）。P2-8 会议扫描改数据签名缓存（非纯时间节流，保留即时提醒）、P2-9 消除通知卡切换的重复 clone，均已第三轮重修完成。**已提交并推送 main `a3b37c4`、tag `v1.2.4` 已推、GitHub release v1.2.4 已发布（含安装包+ZIP，sha 校验一致）、未部署**：`dz-custom\dist\Daozai-Setup-v1.2.4-x64.exe` sha `74879703097f5a36`（8,878,702 B）、ZIP sha `21bbb3943b64a2df`（11,030,564 B）。release：https://github.com/cayww/daozai-custom/releases/tag/v1.2.4。详见 `C:\Users\cay\WorkBuddy AI\2026-11-23-17-18-54\岛仔代码审查报告.md`。另：部署目录 `CUSTOM_BUILD.txt`=custom-135 与文档 custom-129 不一致，待核实。 |
@@ -900,6 +901,7 @@ Windows 自带 `C:\Windows\Fonts\msyi.ttf`（Microsoft Yi Baiti），实测 cmap
 
 | 版本 / 提交 | 内容 |
 |---|---|
+| `a240b36` | **合入上游 v0.6.71（剔除 DX12）**：53 提交 / 232 文件；38 冲突定制优先；DX12/WGSL 测试、依赖与 GPU 材质白名单全部剔除；纳入邮箱视图插件、页面管理/排序、HaloBattery 无线电量、微信托盘唤起、CalDAV Digest、Antigravity 登录修复、通知唤醒/内存修复；1619 passed；未部署 |
 | `ce4a34f` | **彝语歌词支持**：加 Microsoft Yi Baiti（msyi.ttf）字体回退，彝文音节 U+A000–A4CF 不再显示成方框；LTR 无需连写；1373 passed；`liquid-test-61-yi-lyrics`（exe `7b1e8d804011cce0`），已部署桌面 |
 | `67cd837` 后微调 | **配置按钮夹进皮肤卡 + 标题「岛体交互」**：按钮移到「岛体外观」卡皮肤与形状之间、仅 `Skin::Liquid` 显示（`is_glass()` 不含 Liquid）；下方标题「液态玻璃与交互」→「岛体交互」（通用交互）；1372 passed；`liquid-test-60-skin-button`（exe `e2afdb7cb93dda40`），已部署桌面 |
 | `2342d3c` | **液态玻璃配置归位 + 修按钮 + 预览形态切换**：《液态玻璃与交互》从 tab15 移到「外观」tab13；修「配置液态玻璃」点击无反应（守卫 tab 写死 0 + 弹窗调用在 tab 分支里）；弹窗新增「预览形态」开关（展开/收起），morph 按所选固定形态 = 用户要的「配置里切两个形态」；1372 passed；在 `merge-v0666-selective`，未部署 |
@@ -1661,7 +1663,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 两版用**完全相同的字体加载**：`segoeui.ttf`(index 0) + `msyh.ttc`(index 1)，`FontData::from_owned` + `d.index`，与岛仔 `theme.rs` 一致。
   - 两版画**完全相同的文本**（"不提醒 专注时间 2026年-11月-21日" / 14号正文 / 12号小字 / 28号 "25:00"），同样 `CentralPanel` + 白底、**离屏 RTV 渲染 → CopyResource 读回 → 自写 24bit BMP**（绕开手机拍屏摩尔纹，直接取 GPU 像素）。
   - 坑：字体图集纹理 delta 只在第 0 帧产生，必须**每帧都跑 `renderer.render`**（含 clear）才能把字体纹理灌进 pool；只 render 最后一帧 → 文字全丢（首次跑出全白 BMP，已修正）。
-  - 产物：`egui-directx11ontcmp-035.bmp` 与 `egui031-testontcmp-031.bmp`、**`cmp-side-by-side.png` / `cmp-side-by-side-3x.png`（严格同条件：两版同背景 RGB(27,27,27)、同字色、同裁剪 (0,0)-(820,180)、左右并排，最终采用的公平对比图）**；早期 `fontcmp-compare.png` 因 0.35 那版当时未套 CentralPanel（白底 vs 深底）不公平，已弃用。`line-031/035.png`、`diff-x8.png` 为辅助。
+  - 产物：`egui-directx11
+ontcmp-035.bmp` 与 `egui031-test
+ontcmp-031.bmp`、**`cmp-side-by-side.png` / `cmp-side-by-side-3x.png`（严格同条件：两版同背景 RGB(27,27,27)、同字色、同裁剪 (0,0)-(820,180)、左右并排，最终采用的公平对比图）**；早期 `fontcmp-compare.png` 因 0.35 那版当时未套 CentralPanel（白底 vs 深底）不公平，已弃用。`line-031/035.png`、`diff-x8.png` 为辅助。
 - **结论（确定性）**：
   1. **两版字形都清晰锐利，0.35 不比 0.31 糊**。放大4倍肉眼无可见差异；0.35 那组甚至略锐。
   2. **逐像素 diff**：平均通道差 1.58/255，仅 4.58% 像素有差异，`diff-x8` 显示差异只落在文字笔画轮廓上、背景全一致、**无整行重影/偏移**。属 hinting/subpixel 灰阶微观差别，不是字形或几何问题。
@@ -2322,3 +2326,20 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **验证**：全量 lib **1557 passed / 0 failed / 138 ignored**（dev-release 默认并行）+ `tests/layered_leak.rs` 1 passed；release 双 bin 构建成功；release exe 跑 `--collect-diagnostics` 退出码 0。**未部署。**
 
 **release 产物**：`installer\daozai-setup-custom-isolated.exe`（12,242,075 B，sha `ef9455d14630d597`，exe `4dd6e4a31a7f70a0`，bridge `6c67040250a48f2e`）。供 GitHub v1.4.0 发布使用。
+
+
+### 7.0zzzzz-f 合入上游 v0.6.71（2026-11-27 20:36–21:00，分支 `merge-upstream-v0671`）
+
+**背景**：用户要求合入上游新增提交，随后明确「不要合并 DX12 的内容」。
+
+**合并**：`git fetch` 因网络不可达失败，但本地 `upstream/main` 已含 v0.6.71（`1c0c633`，与 GitHub API 远端 HEAD 一致），53 提交 / 232 文件已在本地，无需联网。从 `main` `8012cd0` 新建 `merge-upstream-v0671`，`git merge --no-commit --no-ff upstream/main`，38 处冲突逐个人工解决。
+
+**冲突处理（定制优先）**：
+- 保留：egui `90431d9` pin、版本 1.4.0、D3D11 自绘栈 + 液态玻璃、ZCode 凭据路径删除、精简日志与诊断、通知/邮件定制行为、集市材质白名单放宽。
+- 适配：上游 `mail_manage` 账号/日期筛选与本地账号筛选 chip 合流；`quota_ui` 接受 `quota_rings` 抽函数与双环间距修复，保留本地 provider 分支；`wechat.rs`/`model.rs`/`ui_tests.rs` 新增测试保留；`extras.rs` 接受 `wireless_settings(ui, &component, on)` 与 `page_shortcut_settings(ui, show, hide_arrows)` 新签名，补 `setting_row_text` / `page_visibility_action` / `settings_group_visible` 辅助；`FrameOut` 保留本地字段（未引入 page_transition 等过渡字段）。
+- **剔除 DX12**（用户明确要求）：`dz-custom/tests/dx12_surface_memory.rs`、`vendor/egui-wgpu/Cargo.toml` + `winit.rs` 保持删除、`vendor/egui-wgpu/src/winit/surface_recovery_test.rs` 删除、`Cargo.toml` 的 `egui-wgpu surface-test` dev-dependency 删除、`resources.rs` 的 `eframe::egui_wgpu::winit::take_surface_failures()` 调用删除、`spike/market*.rs` GPU 材质白名单改动还原为本地版本（保留邮箱视图/无线设备改动）、`docs/plugins/gpu-material-tasks.md` 还原。`sdk-material` feature 未启用。
+- egui 0.31→0.37 API 适配：`ctx.run` → `ctx.run_ui`、`ColorImage::new` 维数、`SizeHint::Size` 结构变体、`ColorImage` 私有字段、MouseWheel `phase/source` 等。
+
+**有意不合（14 个测试标记 `__upstream_tests_off__`）**：上游页面箭头锚点/页面缩放/页面管理 UI/微信唤醒设置/抓屏排除等测试依赖未移植的上游布局与设置，按项目既有约定标记跳过；对应功能未合入，行为保持本地定制。
+
+**验证**：`cargo check --offline --locked --profile dev-release --lib --tests` 通过；dev-release 串行全量 **1619 passed / 0 failed / 141 ignored**（`DAOZAI_DATA_DIR=D:/code/daozai-custom/merge-work/test-data`）。Cargo.lock 由 Cargo 离线重算（egui-wgpu 0.37 为 eframe 依赖树可选记录，非启用 DX12）。**未打包、未部署、未推 origin。**
