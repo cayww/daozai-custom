@@ -2164,3 +2164,25 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 **待用户实机确认**：底部停靠直接到位并保持可见；跨屏、换边、超宽过渡仍正常。
 
 **教训**：上游用 eframe 框架的 hook（`raw_input_hook`）做的输入修正，本地换成自定义 winit 循环后不会自动生效——对照上游时必须检查该逻辑在本地架构里挂在哪里，不能只 diff 代码文本。
+
+
+
+### 7.0zzzy 【真正的根因】底部停靠内容看不见：漏了上游 orient 翻转（2026-11-27 12:37，提交 `93ae7a8`）
+
+**决定性证据**：用户跑窗口监视脚本（桌面 watch_daozai.py）抓到——切到底部后窗口始终 `visible=True`，从 (576,0) 正确移到 **(576,541)-(1920,1104)**（贴屏幕底、留 48px 任务栏），没有任何异常矩形/隐藏/崩溃。**窗口完全正常，是岛体内容没被画出来**。
+
+**根因**：上游 `app.rs` 的 `frame()` 里有一个 `orient` 闭包（上游 2395-2399）：
+```rust
+let bottom=self.dock()==Dock::Bottom;
+let orient=|r:Rect| if bottom { let axis=win.top()+win.bottom();
+    Rect::from_min_max(Pos2::new(r.left(),axis-r.bottom()),Pos2::new(r.right(),axis-r.top())) } else {r};
+```
+Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口垂直中线翻转到下部。本地**完整漏掉了 orient**（前面几轮补 screen_rect、dock_bounds、is_side 都不是根因）。于是 Bottom 岛体画在 win 底部，而裁剪区 region 与命中区 hit 仍停在顶部 → 内容被裁掉，肉眼"消失"。
+
+**修复**：按上游补 `orient` 定义与 4 处应用：`hit`、`region`（计算后 `region=orient(region)`）、`next_hit`、`file_drop_zone`。注意 `panel`/`body` 由 `island_rect` 直接给出 Bottom 位置，本来就正确，不需要 orient。新增回归测试 `bottom_dock_region_flips_to_lower_half_of_canvas`（Bottom 时 hit/region 中心须在画布下半部且 region 覆盖 hit）。
+
+**验证**：全量 lib **1553 passed / 0 failed / 138 ignored**；release 双 bin 构建通过。包 sha256 前16 `27f7d4361e340b11`、exe `ab2bfbfe9058ef65`、bridge `e80852c42b02493a`。提交 `93ae7a8`，未 push、未部署。
+
+**待用户实机确认**：底部停靠岛体可见、可悬停/点击、拖到底部松手后正常。
+
+**教训**：用户说"上游有这功能"时，要逐行对照上游该功能的**完整实现链路**（含坐标系变换这种不起眼的闭包），不能只看放置/配置层；窗口监视日志（visible + rect）是区分"窗口问题 vs 渲染问题"的决定性手段。
