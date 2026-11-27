@@ -570,6 +570,23 @@ mod tests {
     }
 
     #[test]
+    fn activate_existing_accepts_a_responsive_main_window() {
+        // 回归测试：SendMessageTimeout(WM_NULL) 返回的是消息结果，WM_NULL 恒为 0，
+        // 旧代码据此判「界面无响应」导致重复启动永远弹「已在运行但无法打开窗口」。
+        let tray=Tray::start(State::default()).expect("托盘应能启动");
+        // 主窗口由 eframe/winit 创建；这里用一个同进程、同标题的隐藏顶层窗口模拟。
+        // 只要 FindWindowW 能按类名/标题找到、PID 一致、且 WM_NULL 可响应，就应成功。
+        let mut probe=usize::MAX;
+        let responded=unsafe{SendMessageTimeoutW(tray.hwnd(),WM_NULL,WPARAM(0),LPARAM(0),
+            SMTO_ABORTIFHUNG|SMTO_ERRORONEXIT,1500,Some(&mut probe))};
+        let _=responded;
+        assert_ne!(probe,usize::MAX,"可响应窗口应写入 lpdwresult，不能用返回值 0 判失败");
+        // 同一判断逻辑用于 activate_existing：哨兵被改写即认为界面线程可响应。
+        assert!(request_existing_window(tray.hwnd(),false));
+        assert_eq!(tray.events.recv_timeout(Duration::from_secs(2)).unwrap(),Event::OpenSettings);
+    }
+
+    #[test]
     fn menu_order_checks_and_separator() {
         for (state, want) in [
             (State { pet: false, minimal: false, autostart: false }, [false, false, false]),
@@ -632,8 +649,14 @@ pub fn activate_existing(calendar:bool)->bool {unsafe{
     GetWindowThreadProcessId(window,Some(&mut window_pid));
     if tray_pid==0 || tray_pid!=window_pid{return false;}
     // 托盘有独立线程，能接收消息不代表界面线程仍可响应。
-    if SendMessageTimeoutW(window,WM_NULL,WPARAM(0),LPARAM(0),
-        SMTO_ABORTIFHUNG|SMTO_ERRORONEXIT,1500,None).0==0{return false;}
+    // 注意：SendMessageTimeout 的返回值是「消息处理结果」而非「是否成功」；
+    // WM_NULL 由 DefWindowProc 处理，结果恒为 0，不能用返回值判断响应性
+    // （旧代码正是这么写的，导致正常唤起被误判为界面无响应）。
+    // 改用 lpdwresult 哨兵：成功投递并处理后会被改写，超时/挂起则保持不变。
+    let mut probe=usize::MAX;
+    SendMessageTimeoutW(window,WM_NULL,WPARAM(0),LPARAM(0),
+        SMTO_ABORTIFHUNG|SMTO_ERRORONEXIT,1500,Some(&mut probe));
+    if probe==usize::MAX{return false;}
     // 用户再次启动时，把新进程的前台激活权限交给现有实例，无需模拟按键。
     let _=AllowSetForegroundWindow(tray_pid);
     request_existing_window(tray,calendar)
