@@ -60,3 +60,11 @@
 - 协议里很多是实机抓包逆向的结果（源码注释标注了抓包文件和 SHA），没有真实设备时只能做静态移植，无法验证正确性
 - Python 侧有复杂异步调度（hid_transport 861 行 + io_scheduler 485 行）处理设备忙/超时/取消，Rust 版目前用同步调用 + deadline，需要在实机确认不会卡住
 - 单实例保护（InstanceGuard）Rust 版尚未实现
+
+## 接线与发布（2026-11-27）
+
+- `build-release.ps1`：构建 `dist/daozai-halo.exe` 并输出 size + sha256 + component.json 模板。
+- **主程序零改动**：`halo_component.rs` 从 Gitee 下载 `daozai-halo.exe`（版本由 `component.json` 指定），wire 协议 VERSION=1 完全一致。
+- 发布步骤：把 Rust exe 发布为 Gitee `wireless-battery-vX.Y.Z/daozai-halo.exe`，更新 `component.json` 的 `version` / `size` / `sha256` 即可。
+- 实测产物：684,032 B（Python PyInstaller onefile 约 10 MB+），SHA256 `e60d1907139db8805c7ae7b34072dee88956fbb1666cbff8c805aab4eda28c1d`。
+- 未做：未上传到 Gitee、未发布新 component.json、未在主程序里切换组件版本。这是发布决策，需用户确认。
