@@ -529,10 +529,12 @@ impl Shell {
             // 毛玻璃：在岛体左右两侧和画布底边（都在窗口区域之外）取样，估计岛背后的明暗。
             if self.app.settings.skin.is_glass() && !self.hidden {
                 let sampler=self.backdrop.get_or_insert_with(daozai::backdrop::Sampler::start);
-                let ppp=ctx.pixels_per_point();
-                if let Some(origin)=self.native.as_ref().and_then(|w|w.logical_origin(ppp)) {
+                // 用窗口实际放置时的缩放换算采样点：跨屏后 egui 的 ppp 可能仍是旧屏值，
+                // 而窗口是按 placement_scale（目标屏 DPI）摆放的，二者不一致会让采样点偏到旧位置。
+                let scale=if self.placed && self.placement_scale.is_finite() && self.placement_scale>0.0 {self.placement_scale}else{ctx.pixels_per_point()};
+                if let Some((ox,oy))=self.native.as_ref().and_then(|w|w.physical_origin()) {
                     let points=self.app.backdrop_points(app::WIN_W);
-                    sampler.set_points(points.iter().map(|&(x,y)|(((origin.x+x)*ppp).round() as i32,((origin.y+y)*ppp).round() as i32)).collect());
+                    sampler.set_points(points.iter().map(|&(x,y)|((ox as f32+x*scale).round() as i32,(oy as f32+y*scale).round() as i32)).collect());
                 }
             } else {
                 self.backdrop=None;

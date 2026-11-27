@@ -264,6 +264,8 @@ pub struct D3d11Runtime {
     #[cfg(feature="sdk-js")]
     material_gen: u64,
     wgc: Option<WgcCapture>,
+    /// 当前 WGC 会话所抓显示器在虚拟桌面中的原点；窗口换屏后与当前屏不同则重建。
+    wgc_monitor_origin: Option<(i32, i32)>,
     wgc_ever_frame: bool,
     /// 创建当前 WGC 会话时的桌面拓扑代数。与 `wgc::topo_epoch()` 不等说明
     /// 换过分辨率/显示模式：会话绑定的主屏/帧尺寸已失效，必须重建（社区标准做法：
@@ -336,10 +338,12 @@ impl D3d11Runtime {
 
         // WGC 与主 device 同一份，CopyResource 纯 GPU、零回读。失败时背景保持黑色，
         // 玻璃仍可显示（HLSL 采样黑底），不影响 UI 交互。
-        let wgc = match WgcCapture::new(&device) {
-            Ok(c) => { eprintln!("[d3d11] WGC OK {}x{}", c.size().0, c.size().1); Some(c) }
+        let hwnd = HWND(h.hwnd.get() as _);
+        let wgc = match WgcCapture::new(&device, hwnd) {
+            Ok(c) => { eprintln!("[d3d11] WGC OK {}x{} origin={:?}", c.size().0, c.size().1, c.capture_origin()); Some(c) }
             Err(e) => { eprintln!("[d3d11] WGC unavailable: {:?}", e); None }
         };
+        let wgc_monitor_origin = wgc.as_ref().map(|c| c.capture_origin());
         let (bg_w, bg_h) = wgc.as_ref().map(|c| c.size()).unwrap_or((1920, 1080));
         eprintln!("[d3d11] creating glass pipeline bg={}x{}", bg_w, bg_h);
         let glass = match Self::create_glass_pipeline(&device, bg_w, bg_h) {
@@ -348,7 +352,7 @@ impl D3d11Runtime {
         };
 
         Ok(Self {
-            device, ctx, swap, rt: Some(rt), dcomp, glass, wgc,
+            device, ctx, swap, rt: Some(rt), dcomp, glass, wgc, wgc_monitor_origin,
             #[cfg(feature="sdk-js")]
             material_ps: None,
             #[cfg(feature="sdk-js")]
@@ -550,12 +554,12 @@ impl D3d11Runtime {
     /// 覆盖「换分辨率」和「主屏互换/扩展复制」两种情形，且旧帧一并丢弃。
     /// bg_tex 尺寸必须跟着新帧走——D3D11 CopyResource 要求 src/dst 尺寸一致，
     /// 否则静默失败、一直拿旧纹理画 = 玻璃永久定格（用户实测的故障）。
-    fn rebuild_wgc(&mut self) {
+    fn rebuild_wgc(&mut self, hwnd: HWND) {
         let epoch = crate::wgc::topo_epoch();
         // 关键：new 失败（多屏切换中间态主屏 item 暂不可用）时**不设 None、不更新 epoch**，
         // 保留旧会话 + 退避重试。否则 epoch 被标记为已处理 → 永不重建 → 玻璃永久定格。
         // 这正是社区 streaming 项目反复强调的「reinit 失败不能 latch 成永久状态」。
-        let fresh = match WgcCapture::new(&self.device) {
+        let fresh = match WgcCapture::new(&self.device, hwnd) {
             Ok(c) => c,
             Err(e) => {
                 let backoff = self.wgc_retry_backoff_ms.min(2000);
@@ -603,6 +607,7 @@ impl D3d11Runtime {
             }
         }
         // 全部成功：换上新会话、标记 epoch 已处理、清退避（下次拓扑变化从 200ms 重新起）。
+        self.wgc_monitor_origin = Some(fresh.capture_origin());
         self.wgc = Some(fresh);
         self.wgc_ever_frame = false;
         self.wgc_epoch = epoch;
@@ -645,7 +650,20 @@ impl D3d11Runtime {
         // 重建触发条件（社区「持续自愈状态机」）：
         //   ① 拓扑 epoch 变化；② 上次重建失败后的退避到期；③ 帧尺寸与 bg 纹理不匹配。
         // 三者任一即重建，且失败会继续退避重试，不再一次失败就永久 latch。
-        let epoch_changed = self.wgc_epoch != crate::wgc::topo_epoch();
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let hwnd = match window.window_handle().map(|h| h.as_raw()) {
+            Ok(RawWindowHandle::Win32(h)) => HWND(h.hwnd.get() as _),
+            _ => HWND(std::ptr::null_mut()),
+        };
+        // 窗口所在屏变了（跨屏拖动）：WGC 会话必须重建，否则还抓旧屏。
+        let current_origin = {
+            use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST, GetMonitorInfoW, MONITORINFO};
+            let m = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+            let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            if unsafe { GetMonitorInfoW(m, &mut mi).as_bool() } { Some((mi.rcMonitor.left, mi.rcMonitor.top)) } else { None }
+        };
+        let monitor_changed = current_origin.is_some() && current_origin != self.wgc_monitor_origin;
+        let epoch_changed = self.wgc_epoch != crate::wgc::topo_epoch() || monitor_changed;
         let retry_due = self.wgc_retry_at.is_some_and(|t| std::time::Instant::now() >= t);
         // watchdog：稳定期外、会话已建立，但超过 1.5s 没抓到任何新帧 → 会话是
         // 「活着但不送帧」（稳定期中间建立的会话常这样），尺寸校验也无从触发，
@@ -658,7 +676,7 @@ impl D3d11Runtime {
             if frame_stalled && !epoch_changed && !retry_due {
                 dlog("WGC no frame >1.5s, watchdog rebuild");
             }
-            self.rebuild_wgc();
+            self.rebuild_wgc(hwnd);
         }
         // WGC 抓屏（GPU 侧 CopyResource）。稳定期内不抓过渡帧，沿用旧纹理；
         // app 层 paint_gpu_glass 同期回退纯色，看不到旧拓扑画面。
@@ -686,8 +704,10 @@ impl D3d11Runtime {
         // params.bounds 是窗口内物理像素(y 从底)，换算成屏幕顶原点坐标作为采样框。
         if self.wgc_ever_frame && params.bounds[2] > 4.0 && params.bounds[3] > 4.0 {
             let win_h = window.inner_size().height as f32;
-            let bx = origin.0 + params.bounds[0];
-            let by = origin.1 + (win_h - params.bounds[1] - params.bounds[3]);
+            // WGC 纹理只含所抓屏，主题采样框也要用相对该屏的局部坐标。
+            let (cap_x, cap_y) = self.wgc_monitor_origin.unwrap_or((0, 0));
+            let bx = origin.0 - cap_x as f32 + params.bounds[0];
+            let by = origin.1 - cap_y as f32 + (win_h - params.bounds[1] - params.bounds[3]);
             let bw = params.bounds[2];
             let bh = params.bounds[3];
             // 采样框比玻璃略窄、贴玻璃上缘（与旧栈 theme_rect 的「上缘锚定」一致），
@@ -707,8 +727,11 @@ impl D3d11Runtime {
         // WGC 帧与 D3D11 纹理同为 top-down（v=0 顶部），不要额外翻转 uv.y；
         // 窗口局部 y 已在 shader 的 sample_px 里按 extra.z 翻正。
         u.quad[0] = 0.0;
-        u.quad[1] = origin.0;
-        u.quad[2] = origin.1;
+        // WGC 纹理只含所抓显示器；采样坐标必须是相对该屏左上角的局部坐标，
+        // 用虚拟桌面绝对坐标跨到副屏会超出纹理被 saturate 夹边 → 背景错乱。
+        let (cap_x, cap_y) = self.wgc_monitor_origin.unwrap_or((0, 0));
+        u.quad[1] = origin.0 - cap_x as f32;
+        u.quad[2] = origin.1 - cap_y as f32;
         u.notch[3] = 1.0; // DComp 逐像素 alpha
 
         // 融球水滴：app 写窗口内逻辑点（顶原点），这里换成画布 device px。

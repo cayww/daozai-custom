@@ -894,6 +894,14 @@ impl Window {
         ))
     }
 
+    /// 窗口左上角的屏幕物理坐标（GetWindowRect 原值，不除 ppp）。
+    /// 跨屏背景采样要用它直接加物理偏移，避免依赖 egui 的 ppp（跨屏后可能滞后）。
+    pub fn physical_origin(&self) -> Option<(i32, i32)> {
+        let mut r = RECT::default();
+        unsafe { GetWindowRect(self.hwnd, &mut r).ok()?; }
+        Some((r.left, r.top))
+    }
+
     /// 极简细条点穿且鼠标键按下时返回 true，main.rs 据此过滤光标避免岛抢回悬停。
     /// 读普通 passive 标志，不依赖 WS_EX_TRANSPARENT 样式位。
     pub fn holding_through_strip(&self) -> bool {

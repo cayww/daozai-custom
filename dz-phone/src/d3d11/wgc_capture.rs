@@ -35,12 +35,15 @@ pub struct WgcCapture {
     size_warned: AtomicBool,
     /// 帧尺寸与 bg_tex 不一致（取走即清）。上层据此重建会话/纹理。
     size_mismatch: AtomicBool,
+    /// 所抓显示器在虚拟桌面中的原点（物理像素），把窗口屏幕坐标换成纹理局部坐标用。
+    capture_origin: (i32, i32),
 }
 
 impl WgcCapture {
-    /// Capture the primary monitor. `device` should be the same device that
-    /// drives the swapchain so CopyResource is a pure GPU-side operation.
-    pub fn new(device: &ID3D11Device) -> windows::core::Result<Self> {
+    /// Capture the monitor that owns `hwnd` (not always the primary one).
+    /// `device` should be the same device that drives the swapchain so
+    /// CopyResource is a pure GPU-side operation.
+    pub fn new(device: &ID3D11Device, hwnd: HWND) -> windows::core::Result<Self> {
         // WGC/WinRT requires a COM apartment. The app main thread may not have
         // one; initialize MTA (idempotent — RPC_E_CHANGED_MODE is harmless).
         let _ = unsafe { windows::Win32::System::WinRT::RoInitialize(
@@ -55,11 +58,16 @@ impl WgcCapture {
         // Create a capture item for the primary monitor via the interop factory.
         let interop: IGraphicsCaptureItemInterop =
             factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
-        let primary = unsafe { windows::Win32::Graphics::Gdi::MonitorFromWindow(
-            HWND(std::ptr::null_mut()),
-            windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTOPRIMARY,
+        // 跨屏拖动后岛体可能在副屏：必须抓窗口所在屏，否则玻璃采样坐标对不上。
+        let monitor = unsafe { windows::Win32::Graphics::Gdi::MonitorFromWindow(
+            hwnd, windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST,
         ) };
-        let item: GraphicsCaptureItem = unsafe { interop.CreateForMonitor(primary)? };
+        use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO};
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        let origin = if unsafe { GetMonitorInfoW(monitor, &mut mi).as_bool() } {
+            (mi.rcMonitor.left, mi.rcMonitor.top)
+        } else { (0, 0) };
+        let item: GraphicsCaptureItem = unsafe { interop.CreateForMonitor(monitor)? };
 
         // Use item.Size() (not monitor rect) per Microsoft guidance.
         let size = item.Size()?;
@@ -81,10 +89,13 @@ impl WgcCapture {
                   diag_done: std::cell::Cell::new(false),
                   size_checked: std::cell::Cell::new(false),
                   size_warned: AtomicBool::new(false),
-                  size_mismatch: AtomicBool::new(false) })
+                  size_mismatch: AtomicBool::new(false),
+                  capture_origin: origin })
     }
 
     pub fn size(&self) -> (u32, u32) { (self.width, self.height) }
+    /// 所抓显示器在虚拟桌面中的原点（物理像素）。
+    pub fn capture_origin(&self) -> (i32, i32) { self.capture_origin }
 
     /// 取走「帧尺寸与背景纹理不匹配」信号（取后清零，只报一次）。
     pub fn take_size_mismatch(&self) -> bool {
