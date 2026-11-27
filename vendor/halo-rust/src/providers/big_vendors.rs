@@ -445,7 +445,9 @@ mod corsair {
                     parse_bragi_cable(&r)
                 }
             } else if pid == BRAGI_XT_CABLE_PID && route == BRAGI_ROUTE_DONGLE {
-                let parsed = parse_bragi_xt_cable(&r, charge)?;
+                let Some(parsed) = parse_bragi_xt_cable(&r, charge) else {
+                    continue;
+                };
                 if charge {
                     parsed.charge().map(|b| b as u8)
                 } else {
