@@ -2417,6 +2417,8 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **根因 2：HID 集合白名单漏掉雷蛇鼠标集合**。Viper V3 Pro 的电量 90 字节 feature report 在标准 HID 鼠标集合 `0001:0002`；`hid.rs` 原先只放行 `usage_page >= 0xFF00` 加少数例外（page 1 只放行 usage 0/4/5，旧单测还断言 usage 2 不放行），集合根本进不了引擎。
 - 修复：`HidD_GetAttributes` 给 `Collection` 增加 vid/pid；放行 `VID_1532 && page 0001 && usage 0002 && interface != 3`；该集合被 Windows 独占时用 `dwDesiredAccess=0` 打开再做 Feature IOCTL（失败再退回普通读写）；`Razer::poll` 补上 Python `maybe_wireless` 的产品名门控，未知 PID 只要名字含 hyperspeed/wireless/receiver/dongle/dock/blackshark/barracuda/nari 也探测。
 
+**提交**：`52b055d`（main；未推 origin）。
+
 **社区依据（仅取协议事实，未复制代码）**：
 - OpenRazer `razermouse_driver.c` 与社区整理 `Skesov/rigbat/docs/razer.md`：90 字节报告、`07:80`/`07:84`、事务号 0x1F、CRC `[2..88)` XOR、Viper V3 Pro 61ms 等待。
 - `linglochen/RazerV3BatteryTray`：00C1 无线 / 00C0 有线、`0001:0002`、`dwDesiredAccess=0` 绕独占、插线两条链路只有一条响应。
