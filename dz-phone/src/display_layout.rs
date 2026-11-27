@@ -304,6 +304,18 @@ mod bottom_dock_tests {
     }
 
     #[test]
+    fn horizontal_origin_bottom_docks_to_screen_bottom() {
+        let m=Bounds{left:0,top:0,right:1920,bottom:1080};
+        let scale=1.0;
+        let (_,y_top)=super::horizontal_origin(m,Dock::Top,scale,0.0).unwrap();
+        let (_,y_bottom)=super::horizontal_origin(m,Dock::Bottom,scale,0.0).unwrap();
+        let expected_bottom=m.bottom-(crate::app::WIN_H*scale).round() as i32;
+        assert_eq!(y_top,m.top,"顶部停靠贴屏幕上沿");
+        assert_eq!(y_bottom,expected_bottom,"底部停靠贴屏幕下沿，而不是屏幕中间");
+        assert!(y_bottom>y_top,"底部应比顶部低");
+    }
+
+    #[test]
     fn drag_switches_to_adjacent_monitor_only_after_crossing_shared_edge() {
         let left=Display{id:"left".into(),label:String::new(),bounds:Bounds{left:-1920,top:0,right:0,bottom:1080},work:Bounds{left:-1920,top:0,right:0,bottom:1080},auto_bottom:0,primary:false,dpi:96};
         let right=Display{id:"right".into(),label:String::new(),bounds:Bounds{left:0,top:0,right:1920,bottom:1080},work:Bounds{left:0,top:0,right:1920,bottom:1080},auto_bottom:0,primary:true,dpi:96};

@@ -751,9 +751,11 @@ impl Window {
                     offset,
                 )
             } else {
-                crate::display_layout::island_origin_offset(
+                // 用 horizontal_origin（按 dock 选顶/底边）；island_origin_offset 只认顶边，
+                // 底部停靠会被放到屏幕上方。
+                crate::display_layout::horizontal_origin(
                     bounds,
-                    crate::app::WIN_W,
+                    dock,
                     scale,
                     offset,
                 )
