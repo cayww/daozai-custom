@@ -2122,3 +2122,17 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 **验证**：全量 lib **1552 passed / 0 failed / 138 ignored**（新增 1 个测试）；release 双 bin 构建通过。包 sha256 前16 `240a0144279fe78e`、exe `87ce04fdf1d81beb`、bridge `72febf99f85555d3`。提交 `c72f2a2`，未 push、未部署。
 
 **待用户实机确认**：超宽岛收起/展开过程两端完整；底部停靠为横向胶囊并向上展开。
+
+
+
+### 7.0zzzv 底部停靠停在屏幕中间（2026-11-27 11:05，提交 `c85669e`）
+
+**现象**：§7.0zzzu 修好底部横向后，岛体横是横了，但停在屏幕中间而非贴底。
+
+**根因**：`native::place_on_display` 对非左右停靠仍调用 `island_origin_offset`，该函数只按 `m.top` 定位、**忽略 dock 参数**。上游用的是 `horizontal_origin`（内部 `if dock==Bottom { y = m.bottom - WIN_H*scale }`）。本地 `horizontal_origin` 本已存在且正确，只是没被调用。
+
+**修复**：`place_on_display` 改用 `horizontal_origin(bounds, dock, scale, offset)`；新增回归测试 `horizontal_origin_bottom_docks_to_screen_bottom`（Bottom 贴下沿、Top 贴上沿、Bottom 比 Top 低）。
+
+**验证**：全量 lib **1553 passed / 0 failed / 138 ignored**（新增 1 个测试）；release 双 bin 构建通过。包 sha256 前16 `6cd7686ff38529be`、exe `9fdce4e3792feece`、bridge `d99e6ebbae853d38`。提交 `c85669e`，未 push、未部署。
+
+**待用户实机确认**：底部停靠贴屏幕下沿（含自动隐藏任务栏热区），展开向上。
