@@ -24,10 +24,10 @@
 |---|---|---|
 | 骨架 / 协议 / HID | ✅ 完成 | 4 单测通过，协议握手实测正确 |
 | BEITONG KP40D | ✅ 完成 | 首个迁移协议 |
-| CompX 系列 | 🔄 进行中 | compx.py + 5 个厂商 |
+| CompX 系列 | ✅ 完成 | compx.py + 5 个厂商，517 行 Rust |
 | mchose 系列 | 🔄 进行中 | mchose.py / k99 / kb / v9 / a7 |
-| HyperX/Kingston | 🔄 进行中 | 8 个 provider |
-| Razer | 🔄 进行中 | razer.py |
+| HyperX/Kingston | ✅ 完成 | 8 个 provider，1112 行 Rust；部分私有会话跳过 |
+| Razer | ✅ 完成 | 通用 0x07 帧协议，565 行；8 个子协议跳过 |
 | 其余 ~85 个 | ⬜ 待迁移 | 见下方分组 |
 
 ## 剩余协议分组
@@ -38,7 +38,7 @@
 
 ## 验证状态
 
-- `cargo test --offline`：4 passed（骨架阶段）
+- `cargo test --offline`：12 passed（骨架 + Razer 阶段）
 - `cargo build --release`：8.4s，二进制 ~1 MB（PyInstaller onefile 约 10 MB+ 且启动需解压）
 - 协议握手：`ready` + `poll` 回复格式正确
 - **硬件验证**：未在真实设备上进行。每个协议的字节格式必须在实机上确认。
