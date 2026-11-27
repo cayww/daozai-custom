@@ -232,45 +232,9 @@ fn compositor_blur_allowed() -> bool {
             }
         }
         let allowed = system_transparency() != Some(false);
-        if last.is_some_and(|last| last != allowed) || last.is_none() && !allowed {
-            glass_diagnostic(if allowed {
-                "系统透明效果已开启，恢复合成引擎模糊"
-            } else {
-                "系统透明效果关闭，不使用合成引擎模糊"
-            });
-        }
         cache.set((Some(std::time::Instant::now()), Some(allowed)));
         allowed
     })
-}
-
-/// 毛玻璃诊断：写到数据目录的 glass-diagnostics.txt（只记录状态变化，不会持续增长）。
-fn glass_diagnostic(message: &str) {
-    use std::io::Write;
-    let path = crate::model::config_dir().join("glass-diagnostics.txt");
-    if std::fs::metadata(&path).is_ok_and(|m| m.len() > 64 * 1024) {
-        let _ = std::fs::write(&path, b"");
-    }
-    let transparency = {
-        match system_transparency() {
-            Some(true) => "开",
-            Some(false) => "关",
-            None => "未知",
-        }
-    };
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(
-            file,
-            "{} · {} · 系统透明效果：{}",
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-            message,
-            transparency
-        );
-    }
 }
 
 /// 把逻辑坐标的轮廓换算成物理像素，作为去重的键和区域的输入。
@@ -847,15 +811,9 @@ impl Window {
             match crate::layered::Layered::new() {
                 Ok(layered) => {
                     self.outline.active = !real;
-                    glass_diagnostic(if real {
-                        "渲染兼容：已切换为分层窗口逐像素透明（边缘抗锯齿）"
-                    } else {
-                        "渲染兼容：读回的画面没有透明通道，按岛体轮廓补算边缘透明度（分层窗口，边缘抗锯齿）"
-                    });
                     self.layering = Layering::Active(layered);
                 }
-                Err(error) => {
-                    glass_diagnostic(&format!("渲染兼容：分层显示窗口创建失败：{error:?}"));
+                Err(_) => {
                     self.layering = Layering::Unavailable;
                     return false;
                 }
@@ -872,10 +830,7 @@ impl Window {
         match layered.present(self.hwnd, size, frame) {
             // 切到分层窗口后，下一次 update 换回矩形区域（岛仔窗口本身已几乎不可见，只负责命中）。
             Ok(changed) => changed,
-            Err(error) => {
-                glass_diagnostic(&format!(
-                    "渲染兼容：分层窗口不可用，回到轮廓裁剪：{error:?}"
-                ));
+            Err(_) => {
                 layered.detach(self.hwnd);
                 self.layering = Layering::Unavailable;
                 self.glass = None;
@@ -1008,21 +963,14 @@ impl Window {
             Some(shapes) => {
                 if self.backdrop.is_none() {
                     match crate::composition::Backdrop::new() {
-                        Ok(backdrop) => {
-                            glass_diagnostic("合成引擎模糊底板已创建");
-                            self.backdrop = Some(backdrop);
-                        }
-                        Err(error) => {
-                            glass_diagnostic(&format!("合成引擎模糊层创建失败：{error:?}"));
-                            self.blur_unavailable = true;
-                        }
+                        Ok(backdrop) => self.backdrop = Some(backdrop),
+                        Err(_) => self.blur_unavailable = true,
                     }
                 }
                 if let Some(backdrop) = &mut self.backdrop {
                     match backdrop.show(self.hwnd, &crate::app::blur_pieces(shapes, ppp)) {
                         Ok(()) => self.blur = true,
-                        Err(error) => {
-                            glass_diagnostic(&format!("模糊层更新失败：{error:?}"));
+                        Err(_) => {
                             backdrop.hide();
                             self.blur = false;
                             self.blur_unavailable = true;
@@ -1051,17 +999,6 @@ impl Window {
         // 窗口区域是二值裁剪，会把非液态皮肤的圆角和文字边缘切出锯齿。
         // D3D11+DComp 走逐像素 alpha；旧 wgpu 时代的 SetWindowRgn 二值硬裁已整体停用。
         let outline_clip = false;
-        {
-            // 一次性诊断：透明合成走的是哪条路，直接影响圆角是柔边还是硬裁。
-            // 排障时先看这一行，比截图猜快得多。
-            static LOG: std::sync::Once = std::sync::Once::new();
-            LOG.call_once(|| {
-                glass_diagnostic(&format!(
-                    "透明合成：opaque={} dcomp={} outline_clip={}",
-                    self.opaque_surface, true, outline_clip
-                ))
-            });
-        }
         match glass.filter(|_| outline_clip) {
             Some(shapes) => {
                 let key = glass_key(shapes, ppp);
@@ -1069,12 +1006,6 @@ impl Window {
                     unsafe {
                         if let Some(rgn) = glass_region(&key) {
                             if SetWindowRgn(self.hwnd, rgn, true) != 0 {
-                                glass_diagnostic(&format!(
-                                    "区域：玻璃轮廓 dcomp={} oc={} key[:6]={:?}",
-                                    true,
-                                    outline_clip,
-                                    &key[..key.len().min(6)]
-                                ));
                                 self.glass = Some(key);
                                 // 回到矩形区域时必须重新设置。
                                 self.region = (i32::MIN, 0, 0, 0);
@@ -1090,10 +1021,6 @@ impl Window {
             None if self.region != r || self.glass.is_some() => unsafe {
                 let rgn = CreateRectRgn(r.0, r.1, r.2, r.3);
                 if SetWindowRgn(self.hwnd, rgn, true) != 0 {
-                    glass_diagnostic(&format!(
-                        "区域：整块矩形 dcomp={} oc={} r={:?}",
-                        true, outline_clip, r
-                    ));
                     self.region = r;
                     self.glass = None;
                     let _ = windows::Win32::Graphics::Dwm::DwmFlush();

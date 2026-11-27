@@ -35,7 +35,7 @@
   崩溃 / 闪退 / 启动失败
     last-error.log、last-startup.log、auto-restart.log
   黑屏 / 界面不出 / 圆角异常 / 液态玻璃异常
-    liquid-glass.log、glass-diagnostics.txt（在数据目录根下）
+    liquid-glass.log（在数据目录的 diagnostics 子目录下）
   内存高 / 睡眠后不回落
     resources.log、last-resource-anomaly.log、resource-guard.log
   歌词不显示 / 没封面 / 没歌名

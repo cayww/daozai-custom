@@ -27,8 +27,8 @@ try {
         'calendar.log', 'calendar.previous.log', 'lyrics.log', 'lyrics.previous.log',
         'music-gaps.log', 'music-gaps.previous.log', 'music-volume.log', 'frames.log', 'frames.previous.log',
         'liquid-glass.log', 'otp.log', 'notice.log', 'mail.log', 'auto-restart.log')
-    foreach ($name in $logs + @('glass-diagnostics.txt')) {
-        $source = if ($name -eq 'glass-diagnostics.txt') { Join-Path $DataDirectory $name } else { Join-Path (Join-Path $DataDirectory 'diagnostics') $name }
+    foreach ($name in $logs) {
+        $source = Join-Path (Join-Path $DataDirectory 'diagnostics') $name
         if (!(Test-Path -LiteralPath $source -PathType Leaf)) { $missing.Add($name); continue }
         try { Save-Text $name ([IO.File]::ReadAllText($source)) }
         catch { $missing.Add($name + '：无法读取') }

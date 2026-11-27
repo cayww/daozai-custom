@@ -79,7 +79,6 @@ mod archive {
         "notice.log",
         "mail.log",
         "auto-restart.log",
-        "glass-diagnostics.txt",
     ];
 
     pub(super) fn run(data_dir: &Path) -> Result<(), String> {
@@ -243,9 +242,7 @@ mod archive {
         let mut zip = ZipWriter::new(Cursor::new(Vec::<u8>::new()));
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
         for name in LOGS {
-            let source = if *name == "glass-diagnostics.txt" {
-                data_dir.join(name)
-            } else if diagnostics_is_plain {
+            let source = if diagnostics_is_plain {
                 diagnostics.join(name)
             } else {
                 missing.push((*name).to_owned());
