@@ -27,7 +27,7 @@ MIT 协议要求在软件的所有副本或实质性部分中保留版权声明�
 
 1. **完整保留** [`LICENSE`](LICENSE) 原文，包括原始版权行，未作任何改动。
 2. 在 [`README.md`](README.md) 顶部与本文中**显著标注**上游项目地址、作者与版权信息。
-3. 在 [`dz-phone/Cargo.toml`](dz-phone/Cargo.toml) 的 `license` 字段与 `repository` 字段保留上游信息。
+3. 在 [`dz-custom/Cargo.toml`](dz-custom/Cargo.toml) 的 `license` 字段与 `repository` 字段保留上游信息。
 4. 修改部分同样以 MIT 协议发布，任何人可继续按 MIT 条款使用、修改、再分发。
 
 MIT 协议**不授予商标权**：项目名称「岛仔 / Daozai」、Logo 与图标归原作者所有，本仓库仅将它们用于如实指明来源，不表示原作者对本仓库的认可。
@@ -49,9 +49,9 @@ MIT 协议**不授予商标权**：项目名称「岛仔 / Daozai」、Logo 与�
 
 本仓库包含的上游代码中引用了若干第三方开源组件与素材，其许可与署名见：
 
-- [`dz-phone/THIRD_PARTY_NOTICES.txt`](dz-phone/THIRD_PARTY_NOTICES.txt) — 含 [fly-island](https://github.com/flyl1u/fly-island)（微信 / QQ 通知接入参考实现）等
-- `dz-phone/assets/device-icons/LICENSE.txt`、`dz-phone/assets/settings-icons/LICENSE` — 图标素材许可
-- `dz-phone/vendor/` — 5 个被 `[patch.crates-io]` 本地覆盖的依赖（egui / eframe / imap / imap-proto / ureq），各自保留原有许可
+- [`dz-custom/THIRD_PARTY_NOTICES.txt`](dz-custom/THIRD_PARTY_NOTICES.txt) — 含 [fly-island](https://github.com/flyl1u/fly-island)（微信 / QQ 通知接入参考实现）等
+- `dz-custom/assets/device-icons/LICENSE.txt`、`dz-custom/assets/settings-icons/LICENSE` — 图标素材许可
+- `dz-custom/vendor/` — 5 个被 `[patch.crates-io]` 本地覆盖的依赖（egui / eframe / imap / imap-proto / ureq），各自保留原有许可
 
 ## 移除本声明？
 

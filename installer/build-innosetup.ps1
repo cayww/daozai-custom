@@ -5,7 +5,7 @@
 .DESCRIPTION
     自动探测 ISCC.exe（优先 D:\software\Inno Setup 7\ISCC.exe，其次注册表/PATH/常见路径），
     编译 daozai.iss，输出安装包路径与 sha256。构建 daozai.exe / daozai-bridge.exe 需先执行：
-      cargo build --locked --release --manifest-path dz-phone\Cargo.toml --bin daozai --bin daozai-bridge
+      cargo build --locked --release --manifest-path dz-custom\Cargo.toml --bin daozai --bin daozai-bridge
 
 .PARAMETER InnoCompiler
     显式指定 ISCC.exe 路径，跳过自动探测。
@@ -33,7 +33,7 @@ $ErrorActionPreference = 'Stop'
 $installerDir = $PSScriptRoot
 $projectRoot = Split-Path $installerDir -Parent
 $iss = Join-Path $installerDir 'daozai.iss'
-$targetDir = Join-Path $projectRoot ('dz-phone\target\' + $CargoProfile)
+$targetDir = Join-Path $projectRoot ('dz-custom\target\' + $CargoProfile)
 $exe = Join-Path $targetDir 'daozai.exe'
 $bridge = Join-Path $targetDir 'daozai-bridge.exe'
 

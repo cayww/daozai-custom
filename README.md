@@ -25,7 +25,7 @@ Windows 桌面伙伴，把消息、音乐、日程、天气和 AI 额度放到�
 > 本仓库使用自己的版本号（1.x），并保留液态玻璃等定制渲染栈；
 > 接手开发请先读 [`docs/HANDOFF.md`](docs/HANDOFF.md)。
 >
-> 构建：`cd dz-phone && cargo build --locked --release --bin daozai`；
+> 构建：`cd dz-custom && cargo build --locked --release --bin daozai`；
 > 全量测试需加 `-- --test-threads=1`。
 
 岛仔是一款开源的 Windows 桌面小工具。平时收起在屏幕边缘，鼠标靠近就展开；切歌、看日程、复制验证码、记一条待办，都能顺手完成。小岛里的伙伴会眨眼、打盹、喝水，也会跟着音乐唱歌。

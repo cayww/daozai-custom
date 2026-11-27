@@ -29,7 +29,7 @@ DefaultGroupName=岛仔
 DisableProgramGroupPage=yes
 OutputDir=.
 OutputBaseFilename=daozai-setup-{#MyAppBuild}
-SetupIconFile=..\dz-phone\assets\daozai.ico
+SetupIconFile=..\dz-custom\assets\daozai.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -46,10 +46,10 @@ Name: "autostart"; Description: "开机自动启动岛仔"; GroupDescription: "�
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "其他："; Flags: unchecked
 
 [Files]
-Source: "..\dz-phone\target\{#TargetProfile}\daozai.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dz-phone\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dz-custom\target\{#TargetProfile}\daozai.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dz-custom\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; 浏览器扩展桥宿主：独立精简版二进制（不链接 GUI 栈，约 460KB），复制为 daozai_bridge.exe。
-Source: "..\dz-phone\target\{#TargetProfile}\daozai-bridge.exe"; DestDir: "{app}\bridge"; DestName: "daozai_bridge.exe"; Flags: ignoreversion
+Source: "..\dz-custom\target\{#TargetProfile}\daozai-bridge.exe"; DestDir: "{app}\bridge"; DestName: "daozai_bridge.exe"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\manifest.json"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\sw.js"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion
 Source: "INSTALL-NOTES.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme

@@ -172,7 +172,7 @@ cargo test --locked --release -j 2 --lib -- phone_battery::   # 只跑新增模�
 
 ## 想加自己的功能
 
-1. 直接改 `dz-phone/src/` 里的代码，编译验证；
+1. 直接改 `dz-custom/src/` 里的代码，编译验证；
 2. 稳定后把改动补进 `daozai-patches/apply.py`：
    - 新增文件放进本目录，在 `main()` 里加一行 `shutil.copyfile(...)`；
    - 修改已有文件就在 `EDITS` 里加一条 `(相对路径, 原文片段, 新片段)`；
@@ -859,7 +859,7 @@ album 空」保守返回 `Unknown`（避免把视频作者当成歌手），而 
 （提交 `c18055f`，同时同步了 `apply.py` 里的 EDITS）。这行提交晚于 custom-119 的构建，
 所以重新构建打包部署一次，让工作源码与部署 exe 一致。**没有功能改动**。
 
-- 版本标记三处同步：`installer/daozai.iss`、`dz-phone/CUSTOM_BUILD.txt`、`PATCH_ID`
+- 版本标记三处同步：`installer/daozai.iss`、`dz-custom/CUSTOM_BUILD.txt`、`PATCH_ID`
 - 干净重放 180 处 / 跳过 0 / diff 空；exe SHA256 `5fdae99e6df8f02b`
 - 二进制校验：新文案在 exe 中，旧文案已不存在
 - 静默部署用 `MSYS_NO_PATHCONV=1` 正确传递 `/VERYSILENT`，几秒完成
@@ -1468,12 +1468,12 @@ exe SHA256 `c42c6e4a53b450e3`，旧版备份 `daozai.exe.bak-custom82`。
 - **bin target 盲区**：`cargo test --lib` 不编译 `src/main.rs`。合并时 system.rs 架构取上游，
   丢了定制的 `pick_exe` / `pick_folder`，直到 `cargo build --bin daozai` 才报 E0425。
   从 custom-81 原样补回 47 行；以后交付前必须 build 两个 bin + 全量 test 一起跑。
-- 补丁链重建：用 v0.6.64 干净源码替换 `dz-phone.tar.gz`；写 `merge-work/rebuild_chain.py`
+- 补丁链重建：用 v0.6.64 干净源码替换 `dz-custom.tar.gz`；写 `merge-work/rebuild_chain.py`
   按「基线 → 工作源码」净差异生成 EDITS（逐 hunk 模拟 apply.py 顺序替换，要求 old 当下唯一、
   应用后逐字节还原），**496 → 137 条 / 20 个文件**；`NEW_FILES` 10 个副本与工作源码一致。
   `replay_check.py`：应用 137 处、跳过 0、diff 空、marker custom-82。
 - 版本标记 custom-82：`apply.py` PATCH_ID、`installer/daozai.iss` MyAppBuild、
-  `INSTALL-NOTES.txt`、`dz-phone/CUSTOM_BUILD.txt`；分支 fast-forward 合回 main。
+  `INSTALL-NOTES.txt`、`dz-custom/CUSTOM_BUILD.txt`；分支 fast-forward 合回 main。
 
 **验证**：串行全量 `1164 passed / 0 failed / 119 ignored`（并行下 4 个 QQ/豆包/微信共享状态
 用例偶发失败，串行全过）；`cargo build --locked --release --bin daozai --bin daozai-bridge`
@@ -2072,7 +2072,7 @@ custom-55 静默装回，岛重启正常。
 - `browser-bridge/extension/sw.js`：加 `seen`（id → 状态）记忆，complete 只在
   从 in_progress/新状态首次转完成时发一次（杜绝 SW 重启重放历史）；interrupted
   发 cancel（带文件名）；cancelled 等终态只记录不打扰。
-- `dz-phone/src/bridge.rs`：下载改为**单聚合 key "dl"**——状态文件里永远只有
+- `dz-custom/src/bridge.rs`：下载改为**单聚合 key "dl"**——状态文件里永远只有
   一条下载胶囊。progress 时 text 尾部按活跃下载数带 (+N) 角标、进度只看最新
   一条；complete 只显示「下载完成 · 本次文件名」；cancel 时若还有别的活跃
   下载则静默撤下（由剩余下载的 progress 续写），最后一个被取消则显示

@@ -8,7 +8,7 @@
 
 ## 〇、2026-11-27 追加三项（用户要求）
 
-1. **删除 ZCode 本地凭据路径**（用户判定无用）：删除 `zcode_quota.rs`、`quota.rs` 的 zcode 模块/add/fetch 分支改回上游 `ZCODE_RECONNECT`、`quota_ui.rs` 删除"连接本机 ZCode"按钮与连接方式单选、`dz-phone/README.md` 同步文案。GLM 额度解析不受影响。配套测试 `quota_acceptance_grouped_connections_preserve_saved_sources` 已按上游预期修正（ZCode 旧账号重连时 provider 变 Glm、source=cn）。
+1. **删除 ZCode 本地凭据路径**（用户判定无用）：删除 `zcode_quota.rs`、`quota.rs` 的 zcode 模块/add/fetch 分支改回上游 `ZCODE_RECONNECT`、`quota_ui.rs` 删除"连接本机 ZCode"按钮与连接方式单选、`dz-custom/README.md` 同步文案。GLM 额度解析不受影响。配套测试 `quota_acceptance_grouped_connections_preserve_saved_sources` 已按上游预期修正（ZCode 旧账号重连时 provider 变 Glm、source=cn）。
 2. **恢复官方集市测试索引夹具**：`spike/market_state.rs` 的 `test_index` 字段/`set_official_test_index`/test 分支索引注入恢复为上游 `#[cfg(test)]` 形态。调用它的 spike 集市测试模块仍整批关闭，故当前无启用测试使用它；真正生效需重开整批测试，风险大，未做。
 3. **设置侧栏可滚动（对齐上游截图）**：`extras.rs` 新增 `SETTINGS_BOTTOM_ROWS`、`settings_sidebar_builtin`；侧栏用 `egui::ScrollArea::vertical().id_salt("settings-sidebar-scroll").max_height(main_height)` 包住功能列表，插件/关于/自定义与集成固定在底部并加分隔线；新增回归测试 `settings_sidebar_scrolls_main_and_keeps_bottom_items_fixed`。
 

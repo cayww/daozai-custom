@@ -14,10 +14,10 @@
 | **上游合并（2026-11-25 20:30）** | **新分支 `merge-upstream-v0670` HEAD=`9dad7c8`**（双亲：`017108d` + 上游 `0615f19`=v0.6.70），已合入上游 418 提交（v0.6.66–v0.6.70）。141 处冲突按「定制优先」解决：保留 egui 0.37 pin / D3D11＋液态玻璃 / 版本 1.3.0 / ZCode / 定制通知与邮件行为；新增插件集市/SDK、性能与无线设备页、Antigravity、rtl_text、蓝牙设备图标等未冲突模块已纳入。Cargo.toml 增加 sdk-js/sdk-material/sdk-wasm 特性（material 去掉 eframe/direct-composition，改走自绘栈），Cargo.lock 已由 Cargo 重算。release 构建通过，**全量 1456 passed / 0 failed / 138 ignored**。未部署、未推 origin。详见 §7.0zze。 |
 | **egui pin（2026-11-25）** | `90431d979ab1faae2de6d9f736e9d33ca0d31956`（提交 `ec19bd1`，0.37.0，1412 passed；未打包部署） |
 | **文字缩放（2026-11-25）** | 静态倍率走 `TextScale::Reflow` 重排缓存（15 处）；动画文字恒字号、`inset_text_uv` 已删；1413 passed，未部署 |
-| **工作树注意（2026-11-23）** | **当前 main 工作树有约 30 个文件的未提交审查修复（两轮）**：第一轮通知日志打码 / 通知线程重试 / CopyOtp / IMAP connect_timeout / 日历负时长 / focus minutes；第二轮 Fluid 纹理缓存 / 删 renderer.rs 回退链与未接线横幅 API / 邮件 spawn 失败提示 / file: 白名单+桥拦截 / sha256+凭据工具抽取 / 删死方法 / 脚本凭据转义 / 3 个基线测试断言修正。**编译通过、全量 1401 passed / 0 failed / 131 ignored**（基线原有 3 个失败已修）。P2-8 会议扫描改数据签名缓存（非纯时间节流，保留即时提醒）、P2-9 消除通知卡切换的重复 clone，均已第三轮重修完成。**已提交并推送 main `a3b37c4`、tag `v1.2.4` 已推、GitHub release v1.2.4 已发布（含安装包+ZIP，sha 校验一致）、未部署**：`dz-phone\dist\Daozai-Setup-v1.2.4-x64.exe` sha `74879703097f5a36`（8,878,702 B）、ZIP sha `21bbb3943b64a2df`（11,030,564 B）。release：https://github.com/cayww/daozai-custom/releases/tag/v1.2.4。详见 `C:\Users\cay\WorkBuddy AI\2026-11-23-17-18-54\岛仔代码审查报告.md`。另：部署目录 `CUSTOM_BUILD.txt`=custom-135 与文档 custom-129 不一致，待核实。 |
+| **工作树注意（2026-11-23）** | **当前 main 工作树有约 30 个文件的未提交审查修复（两轮）**：第一轮通知日志打码 / 通知线程重试 / CopyOtp / IMAP connect_timeout / 日历负时长 / focus minutes；第二轮 Fluid 纹理缓存 / 删 renderer.rs 回退链与未接线横幅 API / 邮件 spawn 失败提示 / file: 白名单+桥拦截 / sha256+凭据工具抽取 / 删死方法 / 脚本凭据转义 / 3 个基线测试断言修正。**编译通过、全量 1401 passed / 0 failed / 131 ignored**（基线原有 3 个失败已修）。P2-8 会议扫描改数据签名缓存（非纯时间节流，保留即时提醒）、P2-9 消除通知卡切换的重复 clone，均已第三轮重修完成。**已提交并推送 main `a3b37c4`、tag `v1.2.4` 已推、GitHub release v1.2.4 已发布（含安装包+ZIP，sha 校验一致）、未部署**：`dz-custom\dist\Daozai-Setup-v1.2.4-x64.exe` sha `74879703097f5a36`（8,878,702 B）、ZIP sha `21bbb3943b64a2df`（11,030,564 B）。release：https://github.com/cayww/daozai-custom/releases/tag/v1.2.4。详见 `C:\Users\cay\WorkBuddy AI\2026-11-23-17-18-54\岛仔代码审查报告.md`。另：部署目录 `CUSTOM_BUILD.txt`=custom-135 与文档 custom-129 不一致，待核实。 |
 | 正式版（日常使用） | `D:\software\Daozai` 仍跑 custom-129（exe `58432d96c07d9d0e`）。**custom-134 已打包、未部署（最新，2026-11-19）**：`installer\daozai-setup-custom-134.exe`（11,109,904 B，包 sha `1f2f9df72d88b08d`，0.6.66，内含 exe `2ebc1313b2241ad6` + bridge `9832e44f133f5ac0`，构建自 main `912d636`= 在 950433b 基础上仅更新版本号；1373 passed；静默安装验证通过，详见 §7.0ad）。**custom-133**：`installer\daozai-setup-custom-133.exe`（11,241,513 B，包 sha `a9455e0ad655bb9f`，内含 exe `02786373d87ba563` + bridge `f1ae28626c9db18e`，构建自 main 工作树（告警清理 `2ea229a` + 液态玻璃按钮缩小 + 关配置弹窗收起 + INSTALL-NOTES 反馈日志说明，提交 `14bb37f`）= 在 custom-132 基础上：液态玻璃控制按钮略微缩小避开分页指示条、安装说明新增反馈日志清单；**custom-132 已打包、未部署**：：`installer\daozai-setup-custom-132.exe`（11,241,512 B，包 sha `6afb7ff8c6b5039d`，内含 exe `e342ccf062574afc` + bridge `1da2199b59ef5653`，构建自 main 工作树 = liquid_shadow 开关 + 液态玻璃参数弹窗（去重，仅 D3D12 兼容渲染开启时显示）+ 折叠三角指示 + phone-apps 移除内置种子）；**custom-131 已打包、未部署**：`installer\daozai-setup-custom-131.exe`（11,238,544 B，包 sha `c46e227a3eabf850`，内含 exe `74b854afddc88c5c` + bridge `1da2199b59ef5653`，构建自 `294d483` = 液态玻璃 DirectComposition 透明交换链 + 静置 20s 回收工作集 + 告警清理；**未部署，装前请先确认 DComp 路径在目标机可用**）；**custom-130 测试包（含上游合并）已生成未部署**：`installer\daozai-setup-custom-130.exe`（11,234,872 B，包 sha `bdb59ab5109d81e1`，内含 exe `5ebee4d9eb20c5fa` + bridge `5d81fa3a6f66703f`，构建自 merge-upstream-v0665 HEAD `2e4b64b` = 液态玻璃 + 上游 v0.6.65 + 全部定制 + 描述符堆优化；已覆盖 17:18 的合并前旧包，旧包 sha `7e469dd5db85cd7f` 见 git 历史）；默认安装 `C:\Program Files\Daozai`（admin），老 HKCU 卸载条目与 D:\software\Daozai 装完需手动清理；用户数据 `%APPDATA%\Daozai` 不受影响，装完需手动选液态玻璃皮肤；本轮 D3D12 轮廓裁剪修复只进预览（`liquid-test-46`），custom-130 包未重打 |
 | 液态玻璃源码 | 分支 `directcomp-spike` 与 `main` 已于 2026-11-18 10:44 快进合并同步，HEAD = `21b55ee`（新增 liquid_shadow 岛体投影开关；该功能**尚不在任何安装包里**，custom-131 早于它） |
-| **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。**【2026-11-21 16:00 更新】当前活跃分支=`research/egui035-migration`（egui 0.35 迁移研究线），HEAD=`6ca92e0`，本行上方旧值（2342d3c/merge-v0666-selective）是主线历史快照、非当前检出；研究分支 release exe sha `60ca4a035ec5eb10`（高 DPI 背景放大修复后，未部署）。详见 §7.0zzg.13。** **【2026-11-22 11:45 更新】同一研究分支 HEAD=`ccff129`（修设置大小/刘海形状/非液态皮肤玻璃残影，见 §7.0zzn），release exe sha `0f2dec64b11eb4c1`，全量 1389 passed；未部署。** **【2026-11-22 15:40 更新】同一研究分支 HEAD=`20d9f6a`，当前 release exe sha `711166f844695b3c`（target/release + 桌面预览目录，已启动 PID 37788）：修刘海展开玻璃铺不满——上轮改 notch_sdf 圆角时 qy 写成 abs(p.y)+(b.y-r)，底部整条判为岛体外致玻璃透明；改 -(p.y)-(b.y-r) 后铺满（数值验证）。同时删掉已移到 shader 的死代码 shape::shadow_ring + 测试。light_follow 测试通过。** **【2026-11-22 21:05 更新】同一研究分支 HEAD=`83459b6`（文字缩放 6% 死区，隔离阻尼比尾振，见 §7.0zzp），release exe sha `136be0d614d9eddec2`（已启动 PID 15688），全量 1391 passed / 0 failed。** **【2026-11-22 20:40 更新】同一研究分支 HEAD=`7cf3b9f`（分栏容器改高斯模糊磨砂、去暗底，见 §7.0zzp），release exe sha `c6b38aea44220ef9`（已启动 PID 21532）；全量 1391 passed / 0 failed / 131 ignored。** **【15:18 历史】HEAD=`81099ba`，exe `560394fee86cb218`（`D:\code\daozai-custom\dz-phone\target\release\daozai.exe` + 桌面预览目录 daozai.exe，已启动）：对照迁移前 5f5b428 找到两个真正根因并修复——① 删除 paint_gpu_glass 里迁移时多加的 rect_stroke 圆角白边（与 shader 刘海轮廓双影不重叠）；② 投影从 egui 移进 HLSL（D3D11 先玻璃后 egui，egui 阴影必然盖住玻璃；迁移前 wgpu 顺序相反才没事），用 SDF 高斯衰减画外阴影，set_shadow→lightcfg.z 传开关。此前 c263a3d/855f56c/c0830c6 修了刘海圆角方向、左右停靠控件 ppp、投影去肩部。教训：迁移 bug 必须先 git 对照迁移前完整绘制流程（含顺序），别自己推导。全量 1392 passed / 2 failed（messenger 基线 flaky）/ 131 ignored；未再全测。早前安装包 daozai-liquid-setup-63 已过时勿用。**|
+| **工作树** | **干净**；HEAD = `2342d3c`，检出分支 = `merge-v0666-selective`（v0.6.66 选择性合并，见 §7.0x）；`main` 仍在 `6a25af7`。`2342d3c` = 液态玻璃配置移入「外观」页 + 修「配置液态玻璃」按钮无反应 + 弹窗内切收起/展开态（见 §7.0aa），release exe `dfd191cc498aed8c8799c42ca822f4`（未部署，PR 用源码改动）。custom-133 包已生成（见 §7.0w，指纹被后续文案/合并更新，见 §7.0x）。**【2026-11-21 16:00 更新】当前活跃分支=`research/egui035-migration`（egui 0.35 迁移研究线），HEAD=`6ca92e0`，本行上方旧值（2342d3c/merge-v0666-selective）是主线历史快照、非当前检出；研究分支 release exe sha `60ca4a035ec5eb10`（高 DPI 背景放大修复后，未部署）。详见 §7.0zzg.13。** **【2026-11-22 11:45 更新】同一研究分支 HEAD=`ccff129`（修设置大小/刘海形状/非液态皮肤玻璃残影，见 §7.0zzn），release exe sha `0f2dec64b11eb4c1`，全量 1389 passed；未部署。** **【2026-11-22 15:40 更新】同一研究分支 HEAD=`20d9f6a`，当前 release exe sha `711166f844695b3c`（target/release + 桌面预览目录，已启动 PID 37788）：修刘海展开玻璃铺不满——上轮改 notch_sdf 圆角时 qy 写成 abs(p.y)+(b.y-r)，底部整条判为岛体外致玻璃透明；改 -(p.y)-(b.y-r) 后铺满（数值验证）。同时删掉已移到 shader 的死代码 shape::shadow_ring + 测试。light_follow 测试通过。** **【2026-11-22 21:05 更新】同一研究分支 HEAD=`83459b6`（文字缩放 6% 死区，隔离阻尼比尾振，见 §7.0zzp），release exe sha `136be0d614d9eddec2`（已启动 PID 15688），全量 1391 passed / 0 failed。** **【2026-11-22 20:40 更新】同一研究分支 HEAD=`7cf3b9f`（分栏容器改高斯模糊磨砂、去暗底，见 §7.0zzp），release exe sha `c6b38aea44220ef9`（已启动 PID 21532）；全量 1391 passed / 0 failed / 131 ignored。** **【15:18 历史】HEAD=`81099ba`，exe `560394fee86cb218`（`D:\code\daozai-custom\dz-custom\target\release\daozai.exe` + 桌面预览目录 daozai.exe，已启动）：对照迁移前 5f5b428 找到两个真正根因并修复——① 删除 paint_gpu_glass 里迁移时多加的 rect_stroke 圆角白边（与 shader 刘海轮廓双影不重叠）；② 投影从 egui 移进 HLSL（D3D11 先玻璃后 egui，egui 阴影必然盖住玻璃；迁移前 wgpu 顺序相反才没事），用 SDF 高斯衰减画外阴影，set_shadow→lightcfg.z 传开关。此前 c263a3d/855f56c/c0830c6 修了刘海圆角方向、左右停靠控件 ppp、投影去肩部。教训：迁移 bug 必须先 git 对照迁移前完整绘制流程（含顺序），别自己推导。全量 1392 passed / 2 failed（messenger 基线 flaky）/ 131 ignored；未再全测。早前安装包 daozai-liquid-setup-63 已过时勿用。**|
 | 预览版（液态玻璃试验） | 桌面预览目录 `daozai-liquid-setup.exe` = **`liquid-test-62-two-modes`（包 sha `ddc1516892d83117`，9,295,747 B；内含 exe `91424b6863533eca` + bridge `859a91518af04c91`；安装到 `%LOCALAPPDATA%\Programs\DaozaiLiquidTest`，独立数据目录）**，**2026-11-21 00:02 打包，待实机验证**。构建自 main `7200ee7`（`fix/wgc-recreate` 合并）：取消 GDI 实验、只保留零拷贝/非零拷贝两模式（`liquid_gpu_share` 控制）、去掉 EVENT query 非法 Begin、device-lost 冷却退避。换分辨率问题实测用非零拷贝（`liquid_gpu_share=0`）解决；零拷贝独有的 event query 风暴保留此前修复。编译通过、全量测试未跑（用户要求）。此前 -61（彝语字体）、-60 等见 `_archive/README.md` 指纹表 |
 | **DirectComposition 试验（spike）** | 分支 `directcomp-spike`（= 预览目录那版）。vendor `egui-winit` / `egui-wgpu` / `wgpu-hal`：DX12 期间 `WS_EX_NOREDIRECTIONBITMAP` + DComp visual surface + 强制 `PreMultiplied` + 手动 `Commit`；按 HWND 认领主窗口。包 `liquid-test-55-dcomp-hwnd`（exe `6eb9cdad9a585a09`，包 `8b4a7d8c4fa11818`，10,983,849 B）；详见 §7.0s |
 | 补丁链 | **已退役**（2026-11-17 归档，见红线区与 §2）；逐版历史 = `docs/PATCHES.md` |
@@ -37,7 +37,7 @@
 | 项目 | 规则 |
 |---|---|
 | `main` 分支 | 已含液态玻璃，**不要 reset 回 `4b0b427`**，不要把工作树丢弃 |
-| 补丁链 | **已退役（2026-11-17，用户同意归档）**：`daozai-patches/` 已从工作区移除，历史在 git（`git log -- daozai-patches` 可找回）；正式版源码锚点 = tag `custom-129`（`4b0b427`），重建正式版 `git checkout custom-129`；上游快照移到 `_archive\dz-phone-upstream-快照.tar.gz` |
+| 补丁链 | **已退役（2026-11-17，用户同意归档）**：`daozai-patches/` 已从工作区移除，历史在 git（`git log -- daozai-patches` 可找回）；正式版源码锚点 = tag `custom-129`（`4b0b427`），重建正式版 `git checkout custom-129`；上游快照移到 `_archive\dz-custom-upstream-快照.tar.gz` |
 | 正式部署 `D:\software\Daozai` | **不要覆盖**，不要在正式目录里跑预览版 |
 | `Cargo.lock` | **不要动**，加依赖会破坏 `--locked` 构建 |
 | 用户数据 | 验证时不要真发邮件 / 标已读 / 改账户；`%APPDATA%\Daozai\settings.txt` 是用户的 |
@@ -70,11 +70,11 @@
 
 ```
 D:\code\daozai-custom\                       源码库（main = 液态玻璃已合并）
-  dz-phone\src\                              Rust 源码
-  dz-phone\src\gpu_glass.rs                  液态玻璃核心（WGSL shader + 抓屏 + 组帧）
-  dz-phone\src\wgc.rs                        Windows Graphics Capture 封装
+  dz-custom\src\                              Rust 源码
+  dz-custom\src\gpu_glass.rs                  液态玻璃核心（WGSL shader + 抓屏 + 组帧）
+  dz-custom\src\wgc.rs                        Windows Graphics Capture 封装
   docs\PATCHES.md                           逐版详细记录（2963 行，补丁链退役后留作历史）
-  dz-phone\CHANGELOG.md                      面向用户的中文更新说明
+  dz-custom\CHANGELOG.md                      面向用户的中文更新说明
   merge-work\                                测试隔离数据目录 / 重建脚本 / 旧交接备份
   installer\                                 Inno Setup 工程与安装包
 
@@ -115,12 +115,12 @@ C:\Users\cay\.workbuddy\skills\daozai-custom-build\   本项目的 skill（脚�
 ```bash
 # 编译（两个 bin 都要，`cargo test` 不编译 main.rs）
 cd /d/code/daozai-custom
-MSYS_NO_PATHCONV=1 cargo build --release --locked --manifest-path dz-phone/Cargo.toml \
+MSYS_NO_PATHCONV=1 cargo build --release --locked --manifest-path dz-custom/Cargo.toml \
   --bin daozai --bin daozai-bridge
 
 # 全量测试（必须串行 + 数据目录隔离，约 5 分钟）
 MSYS_NO_PATHCONV=1 DAOZAI_DATA_DIR=D:/code/daozai-custom/merge-work/test-data \
-  cargo test --manifest-path dz-phone/Cargo.toml --locked --release --lib -- --test-threads=1
+  cargo test --manifest-path dz-custom/Cargo.toml --locked --release --lib -- --test-threads=1
 
 # 打包（Inno Setup 7 在 D:\software\Inno Setup 7）
 cd installer/<对应工程> && MSYS_NO_PATHCONV=1 "/d/software/Inno Setup 7/ISCC.exe" <工程>.iss
@@ -137,7 +137,7 @@ MSYS_NO_PATHCONV=1 "<setup.exe>" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 | 文件 | 内容 |
 |---|---|
 | ~~`daozai-patches/PATCHES.md`~~ | 补丁链已退役，此清单作废；现行交付 = 改源码 → 构建 → 测试 → 提交 main → 部署 + HANDOFF/工作日志 |
-| `dz-phone/CHANGELOG.md` | 面向用户的一条中文说明 |
+| `dz-custom/CHANGELOG.md` | 面向用户的一条中文说明 |
 | `~/Desktop/HANDOFF.md` | 标记 / EDITS 数 / 测试数 / 新章节 / 时间线 |
 | `memory/YYYY-MM-DD.md` | 追加式工作日志，含踩坑与实证 |
 
@@ -283,9 +283,9 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 **背景**：上游 `Renly1994/xiaotang-daozai` 从上次真实合并基线 `e080728`（v0.6.65，11-16）推进到 `0615f19`（tag **v0.6.70**，11-25），共 **418 提交 / 300+ 文件 / +60k 行**。按用户要求新开分支合并，增量从 commit 里逐条核对，冲突先对比优劣。
 
 **冲突处理总览**：预演 141 处冲突（101 文件位置、30 内容、10 删除/新增）。
-- **文件位置（101）**：本仓库把上游整棵源码移到 `dz-phone/`，上游新增文件自动映射到 `dz-phone/`，双方内容一致的直接暂存。
+- **文件位置（101）**：本仓库把上游整棵源码移到 `dz-custom/`，上游新增文件自动映射到 `dz-custom/`，双方内容一致的直接暂存。
 - **内容（30）**：核心原则 = **定制优先**。egui 0.37 git pin（90431d9）、版本号 1.3.0、D3D11＋液态玻璃、ZCode、自定义通知/邮件/歌词/避让行为全部保留；上游同位置的修改在不破坏定制的前提下吸收（如窗口 GATT 特性、新依赖、插件模块）。
-- **删除/新增（10）**：保留定制版 `collect-diagnostics.ps1`（`include_bytes!` 依赖）、`zcode_quota.rs` 与两个开发 `.cmd`；上游删除的旧路径文件按删除处理；上游 CHANGELOG 的 v0.6.66–0.6.70 摘要写进 `dz-phone/CHANGELOG.md`。
+- **删除/新增（10）**：保留定制版 `collect-diagnostics.ps1`（`include_bytes!` 依赖）、`zcode_quota.rs` 与两个开发 `.cmd`；上游删除的旧路径文件按删除处理；上游 CHANGELOG 的 v0.6.66–0.6.70 摘要写进 `dz-custom/CHANGELOG.md`。
 
 **已纳入的上游增量（未冲突部分）**：插件集市/已安装管理/插件 SDK（sdk-js、sdk-wasm、sdk-material 特性门控）、性能与无线设备页、底部停靠与跨屏拖动、日历按日期浏览与农历节气、邮箱仅验证码/Gmail 代理、音乐适配表与自动学习、Antigravity CLI、rtl_text、蓝牙设备图标集、联网感谢墙等。
 
@@ -486,9 +486,9 @@ UI 文案是简版（用户 `bf116c2` 定的），实测数据只留在本文档
 `merge-upstream-v0665` 分支，合并提交 `b1ce395`，未合回 main**（待用户实机验证后合）：
 
 - **历史连通（关键技巧）**：上游是「快照导入」无共同祖先（直接 merge 报 unrelated
-  histories）。实测确认 `6e3150b:dz-phone` 子树 == 上游 v0.6.64 tag 整树，用
+  histories）。实测确认 `6e3150b:dz-custom` 子树 == 上游 v0.6.64 tag 整树，用
   **`git replace --graft 6e3150b 232165f`（=v0.6.64 提交）** 接上血缘，再
-  `git merge upstream/main -X subtree=dz-phone`：合并基=v0.6.64，157 个上游提交
+  `git merge upstream/main -X subtree=dz-custom`：合并基=v0.6.64，157 个上游提交
   只有 **13 文件 30 处真冲突**。replace ref 是本地的，换机器/重克隆后要重建。
 - **用户拍板三项**：媒体控制线=上游为主融合我方（QQ 音乐 22.82 适配本来自用户
   PR #162）；graphics.rs=保留我方 MemoryHints::Manual；CHANGELOG=两边合并。
@@ -972,7 +972,7 @@ Windows 自带 `C:\Windows\Fonts\msyi.ttf`（Microsoft Yi Baiti），实测 cmap
 
 ## 9. 接手注意（操作层面）
 
-1. **布局改动前先 grep 测试坐标**：`grep -n "H::local(" dz-phone/src/ui_tests.rs`。
+1. **布局改动前先 grep 测试坐标**：`grep -n "H::local(" dz-custom/src/ui_tests.rs`。
    新增热区盖住已有点击点，测试会以「点了没反应」失败，从报错看不出原因。
 2. **视觉问题先问「哪些模式有、哪些没有」**，差异点直接指向代码分支，
    比反复调参数有效（custom-37/38 浪费两版在共用阴影上）。
@@ -1007,7 +1007,7 @@ Windows 自带 `C:\Windows\Fonts\msyi.ttf`（Microsoft Yi Baiti），实测 cmap
 python <skill>/scripts/locate_project.py
 
 # WGSL 语法校验（秒级，先跑这个再花 3 分钟编译）
-python -c "import io,re,pathlib;t=io.open('dz-phone/src/gpu_glass.rs',encoding='utf-8').read();\
+python -c "import io,re,pathlib;t=io.open('dz-custom/src/gpu_glass.rs',encoding='utf-8').read();\
 s=re.search(r'const SHADER: &str = r#\"(.*?)\"#;',t,re.S).group(1);\
 pathlib.Path('C:/Users/cay/AppData/Local/Temp/wgsl-check/shader.wgsl').write_text(s,encoding='utf-8')"
 cd /c/Users/cay/AppData/Local/Temp/wgsl-check && MSYS_NO_PATHCONV=1 cargo run --quiet
@@ -1017,7 +1017,7 @@ cd /c/Users/cay/AppData/Local/Temp/wgsl-check && MSYS_NO_PATHCONV=1 cargo run --
 # 部署到预览目录（必须先停旧实例，否则文件占用）
 Get-CimInstance Win32_Process -Filter "name='daozai.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 Start-Sleep -Seconds 3
-Copy-Item D:\code\daozai-custom\dz-phone\target\release\daozai.exe `
+Copy-Item D:\code\daozai-custom\dz-custom\target\release\daozai.exe `
   "C:\Users\cay\Desktop\Daozai-液态玻璃预览\daozai.exe" -Force
 
 # 实机验证
@@ -1112,7 +1112,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 用户要求：版本从 1.0.0 起、发布到自己的 releases（像上游那样）、更新检查改指本仓库、关于页去捐赠保留上游介绍。
 - **源码改动**（提交 `c80ac50`）：`Cargo.toml` 0.6.66→**1.0.0**；`updates.rs` REPOSITORY/API/RELEASES 全改 `cayww/daozai-custom`，按钮文案「检查更新」→「检查更新我的仓库」，去掉指向别人网盘的 BACKUP_DOWNLOAD 和「网盘下载」入口；关于页 `support_author`（微信/支付宝二维码）→ `about_upstream`（原仓库链接 + 简短介绍），连带删 `release_support_codes`/`support_code_image` 及二维码测试、旧预览测试。提交 `f15b9a7` 把 Cargo.toml 的 `repository` 也改成 `cayww/daozai-custom`（元数据，不进二进制）。
 - 验证：`cargo check --all-targets` 通过、全量 **1372 passed / 0 failed / 131 ignored**（比 1373 少 1 是删了旧预览测试）。
-- **NSIS 包**：把上游 `setup.nsi` 复制进 `installer/`（PROJECT_DIR 要传 `D:\code\daozai-custom\dz-phone` 才有 assets/LICENSE/THIRD_PARTY_NOTICES），`/INPUTCHARSET UTF8` + `/DAPP_VERSION=1.0.0`；安装器 exe `2df39c291a7d6cec`（FileVersion 1.0.0）；包 `installer\Daozai-v1.0.0-windows-x64.exe` sha `19d22dede8a86f58`（9,121,464 B）。
+- **NSIS 包**：把上游 `setup.nsi` 复制进 `installer/`（PROJECT_DIR 要传 `D:\code\daozai-custom\dz-custom` 才有 assets/LICENSE/THIRD_PARTY_NOTICES），`/INPUTCHARSET UTF8` + `/DAPP_VERSION=1.0.0`；安装器 exe `2df39c291a7d6cec`（FileVersion 1.0.0）；包 `installer\Daozai-v1.0.0-windows-x64.exe` sha `19d22dede8a86f58`（9,121,464 B）。
 - **GitHub release**：tag **`v1.0.0`**（用户要求像上游那样用版本号），name「岛仔 v1.0.0（自定义发布线）」，id 450962032，页面 https://github.com/cayww/daozai-custom/releases/tag/v1.0.0 ，body=「与上游不同的部分」清单（用户指定）。
 - **asset 两个**（对齐上游发布惯例 + 更新模块）：`Daozai-Setup-v1.0.0-x64.exe`（NSIS 安装器，sha 19d22ded）+ `Daozai-v1.0.0-windows-x64.zip`（便携 zip，内含 `Daozai-v1.0.0-windows-x64/daozai.exe`=2df39c29，sha 4f277493，11,245,228 B）。**zip 是关键**：`updates.rs::release_info` 硬编码期望 `Daozai-v{ver}-windows-x64.zip` + URL + sha256 digest，只有它匹配才能让「检查更新我的仓库 → 下载并安装」真正工作；已用 API 验证匹配通过。
 - 坑：从 Bash 启动系统脚本加载器被安全策略拦（改用专门的命令工具）、Bash 的 /tmp 与 Python 路径不互通（用 C:/Users/.../AppData/Local/Temp）。
@@ -1201,7 +1201,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 ### 7.0zg 正式安装包 v1.0.1 重打（2026-11-20 00:54）
 - 用户要求打正式安装包、覆盖 v1.0.1、不跑全量测试。
 - **打包命令**（NSIS，注意必传 SOURCE_EXE，且 /DIR 要紧跟 exe 才能生效）：
-  `makensis /INPUTCHARSET UTF8 /DPROJECT_DIR=D:\code\daozai-custom\dz-phone /DAPP_VERSION=1.0.1 /DSOURCE_EXE=<target\release\daozai.exe> /DOUTPUT_FILE=installer\Daozai-v1.0.1-windows-x64.exe installer\setup.nsi`
+  `makensis /INPUTCHARSET UTF8 /DPROJECT_DIR=D:\code\daozai-custom\dz-custom /DAPP_VERSION=1.0.1 /DSOURCE_EXE=<target\release\daozai.exe> /DOUTPUT_FILE=installer\Daozai-v1.0.1-windows-x64.exe installer\setup.nsi`
   - 坑1：漏传 `/DSOURCE_EXE` → `File: "${SOURCE_EXE}" -> no files found`（setup.nsi:267）。
   - 坑2：`/DIR=xxx` 没紧贴 exe 时被忽略，装到默认 `AppData\Local\Programs\Daozai`。
 - **产物**：`installer\Daozai-v1.0.1-windows-x64.exe`（9,253,646 B，包 sha256 `02e7b5eb11815742`），内含主 exe `fc73ef23f00e089b`（= 含重启按钮的最新版）+ bridge + extension + LICENSE + THIRD_PARTY_NOTICES。旧包备份 `Daozai-v1.0.1-windows-x64.exe.bak-pre-restart-btn`。
@@ -1330,7 +1330,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 ### 7.0zs v1.2.0 测试版 + 更新链路两处 bug + 零拷贝换屏修复（2026-11-20 14:10–15:50）
 - **v1.2.0 测试版**（用户要测「检查更新→下载→安装」，测完自删）：版本 1.1.0→1.2.0（Cargo.toml/lock），release id `452343951`，exe+zip 都传。
 - **bug1 过时提示**：更新弹窗常驻「当前是自定义构建：安装官方版会覆盖…先运行 reapply.ps1」（updates.rs:293，CUSTOM_BUILD 硬编码）。更新源早指向自有仓库、不会覆盖本地修改；reapply.ps1 随补丁链 11-17 退役已删。用户不要 → 删该提示 + CUSTOM_BUILD 常量（提交 `bb39ee6`）。
-- **bug2 版本不匹配**（用户实测更新报「安装包版本不匹配」）：根因 = `dz-phone/app.rc` VERSIONINFO 写死 0.6.66，自有发布线把 Cargo 版本升到 1.x 没同步资源版本；`installer/update.ps1:39` 拿 zip 内 exe 的 FileVersion 与目标版本比对，0.6.66≠1.2.0 必失败。**修法**：app.rc 改占位符 @DAOZAI_VERSION@，build.rs 用 CARGO_PKG_VERSION 渲染 + rerun-if-env-changed，以后升版本自动同步（提交 `9eaaa7b`）。验证 exe/zip 内 FileVersion 随版本双向生效。
+- **bug2 版本不匹配**（用户实测更新报「安装包版本不匹配」）：根因 = `dz-custom/app.rc` VERSIONINFO 写死 0.6.66，自有发布线把 Cargo 版本升到 1.x 没同步资源版本；`installer/update.ps1:39` 拿 zip 内 exe 的 FileVersion 与目标版本比对，0.6.66≠1.2.0 必失败。**修法**：app.rc 改占位符 @DAOZAI_VERSION@，build.rs 用 CARGO_PKG_VERSION 渲染 + rerun-if-env-changed，以后升版本自动同步（提交 `9eaaa7b`）。验证 exe/zip 内 FileVersion 随版本双向生效。
 - **版本回退**：用户要最终本地版本 = 1.1.0（保留上面两处修复），覆盖发布 v1.1.0 用于测 1.1.0→1.2.0。版本 1.2.0→1.1.0（提交 `d3bf5b6`），重打 v1.1.0：exe `16857da253bb4a79`（9,294,543 B）、zip `7006e37bed8c26ea`（11,294,846 B），删旧 asset 同名重传。v1.2.0 release 保持不动。
 - **bug3 零拷贝换屏玻璃异常**（用户实测：仅2→仅1 背景放大/切回定格静态壁纸；仅2→扩展 卡顿后重绘正常；仅2→复制 没铺满/发黑）：
   - **根因**：零拷贝在 wgpu 侧缓存导入的共享纹理，缓存键只有 (宽,高)。换屏/切显示模式重建 WGC 会话与共享纹理（新 NT handle），但岛仔 UI 决定的抓屏尺寸常不变 → `need_import=false` → 继续采样旧纹理，就是上述症状。非零拷贝每帧全量上传、无缓存句柄，故不受影响（这是"结合非零拷贝解法"的落点）。
@@ -1502,9 +1502,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - 新 exe `f7b93b47366235fa`，已部署。编译通过、全量测试未跑。分支 `fix/wgc-recreate` HEAD=3e349a6。
 
 ### 7.0zze.3 合并 fix 分支到 main + 打预览包 -62（2026-11-20 23:57 – 11-21 00:02）
-- **合并**：`fix/wgc-recreate` → `main`，merge commit `7200ee7`。冲突只在 `wgc.rs`（main 污染链 vs fix 干净线），按约定**整个 `dz-phone/src/` 取 fix 分支**（用户确认可用的线），docs 保留 main（含最新 HANDOFF）。合并后源码与 fix 分支逐字节一致，编译通过。合并前备份 tag：`backup/main-before-merge-20261120` / `backup/fix-recreate-before-merge-20261120`。
+- **合并**：`fix/wgc-recreate` → `main`，merge commit `7200ee7`。冲突只在 `wgc.rs`（main 污染链 vs fix 干净线），按约定**整个 `dz-custom/src/` 取 fix 分支**（用户确认可用的线），docs 保留 main（含最新 HANDOFF）。合并后源码与 fix 分支逐字节一致，编译通过。合并前备份 tag：`backup/main-before-merge-20261120` / `backup/fix-recreate-before-merge-20261120`。
   - 坑：只覆盖 wgc.rs 不够——main 的 gpu_glass.rs/main.rs 引用 fence API（`init_shared_fence` 等）而 fix 的 wgc.rs 没有 → 编译失败。必须整个 src 一起覆盖。
-- **打包**：NSIS `makensis /INPUTCHARSET UTF8 /DPROJECT_DIR=...\dz-phone /DAPP_ID=DaozaiLiquidTest /DAPP_VERSION=1.1.1 /DSOURCE_EXE=...\daozai.exe /DOUTPUT_FILE=...\daozai-liquid-setup-62.exe installer\setup.nsi`。产物 9,295,747 B，包 sha `ddc1516892d83117`，内含 exe `91424b6863533eca`/bridge `859a91518af04c91`。已同步为桌面 `daozai-liquid-setup.exe`。
+- **打包**：NSIS `makensis /INPUTCHARSET UTF8 /DPROJECT_DIR=...\dz-custom /DAPP_ID=DaozaiLiquidTest /DAPP_VERSION=1.1.1 /DSOURCE_EXE=...\daozai.exe /DOUTPUT_FILE=...\daozai-liquid-setup-62.exe installer\setup.nsi`。产物 9,295,747 B，包 sha `ddc1516892d83117`，内含 exe `91424b6863533eca`/bridge `859a91518af04c91`。已同步为桌面 `daozai-liquid-setup.exe`。
 - **未做**：未 push（main ahead origin 33）、未部署正式目录、未跑全量测试（用户一贯要求）。指纹表 `_archive/README.md` + HANDOFF 速览区已更新。
 
 ### 7.0zzf 换分辨率自动重启选项（提交 `29bb757`，2026-11-21 00:10–00:17）
@@ -1723,7 +1723,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **②③ repaint 调度（`winit_runner.rs`）**：user event 从 `()` 改为 `Wakeup::{Repaint{viewport_id,when,cumulative_pass_nr}, LayoutDirty}`，照 eframe `run.rs:299-332` 用 `ctx.cumulative_pass_nr_for(id)` 丢弃过期请求。`about_to_wait` 只在 `next_repaint` 到期时画，无请求时 `WaitUntil(now+60s)` 长睡；旧固定 16ms 心跳删除 → 空闲不再 60fps 空转，app 的隐藏 1fps / 静止 15fps 请求终于生效。
 - **④ 主窗口 resize（`winit_runner.rs`）**：`window_event` 不再丢弃 `repaint`；`Resized`/`ScaleFactorChanged` 强制即时重绘。子窗口输入 repaint 同时请求子窗口 Redraw 与父窗口绘制（immediate viewport UI 只在父窗口 `draw_main` 里跑）。
 - **缩放冻结修复保留**：子窗口 resize 置 `layout_dirty` → 发 `Wakeup::LayoutDirty` → 在 `user_event` 里用 `with_event_loop_context` 直接补跑父窗口（Windows 模态 sizing 循环里 `about_to_wait` 会停摆，不能只约下一帧）；`draw_main` 末尾清标记。
-- **验证**：`cargo check --locked --lib --tests --bins` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1402 passed / 0 failed / 131 ignored**；主程序 bin 10 passed（含新增 2 项单测：`readback_tests::screenshot_readback_flips_rows_and_swaps_bgra_to_rgba`、`root_scale_tests::repaint_scheduling_keeps_the_earliest_deadline`）；release exe sha `b7c92525f185de5f`（`dz-phone/target/release/daozai.exe`）。换行符已核对：改动文件仍为纯 LF。
+- **验证**：`cargo check --locked --lib --tests --bins` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1402 passed / 0 failed / 131 ignored**；主程序 bin 10 passed（含新增 2 项单测：`readback_tests::screenshot_readback_flips_rows_and_swaps_bgra_to_rgba`、`root_scale_tests::repaint_scheduling_keeps_the_earliest_deadline`）；release exe sha `b7c92525f185de5f`（`dz-custom/target/release/daozai.exe`）。换行符已核对：改动文件仍为纯 LF。
 - **状态与待办**：**未打包、未部署、未实机验证**——需用户拖设置页边框确认缩放跟手、观察空闲 CPU 是否下降；兼容渲染路径当前 `native.wants_frames()` 恒 false，截图回灌属机制补齐，暂无实机触发点。剩余 eframe 缺口见 §4⑤⑥⑦：设备丢失/suspended 恢复、子窗口位置持久化（`process::exit` 不跑 Drop）、viewport info 缺 `monitor_size/outer_rect`；低优先级 `device_event`/accesskit/首帧 viewport 命令未做。工作日志在 `C:\Users\cay\WorkBuddy\2026-11-23-20-18-17\.workbuddy\memory\2026-11-23.md`（**不在项目仓库**）。
 
 ### 7.0zzz 补齐 §4⑤⑥⑦：设备恢复 / 位置持久化 / 子窗口几何（2026-11-23 20:43–21:10，提交 `38ee776`）
@@ -1734,9 +1734,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **状态**：提交 `38ee776`（本地，**未 push**）；未打包、未部署。**⑤ 的设备丢失路径只做了代码级与单测验证，需实机显卡重置 / 远程桌面断开复现确认**；⑥⑦ 亦需跨屏/高 DPI 实机确认。低优先级 `device_event` / accesskit / 首帧 viewport 命令仍未做。工作日志路径同上（不在项目仓库）。
 
 ### 7.0zza 本地重打 1.2.4 安装包（2026-11-23 21:15–21:16）
-- 用 `dz-phone/scripts/package.ps1` 从当前 HEAD `c2dd732` 重打（版本沿用 1.2.4，用户早前明确要求）。首次运行被 2 分钟默认超时中断在 `Building 321/322`，**不是脚本/代码错误**；加大超时重跑成功。
-- 产物（`dz-phone/dist/`，gitignored）：`Daozai-Setup-v1.2.4-x64.exe` 8,884,310 B，sha `8c660650a94b0cd6e`（完整值见 `SHA256SUMS.txt`）；`Daozai-v1.2.4-windows-x64.zip` 11,033,907 B，sha `4b85385d15c3a0eb`；包内 exe sha `c09afb55ec86b584`。安装包版本信息 `FileVersion=1.2.4`。
-- **重要**：这是**本地新包**，与 GitHub release v1.2.4 上已发布的旧包（setup `74879703097f5a36`、ZIP `21bbb3943b64a2df`）**不是同一份**，勿混用；本轮未上传 release、未部署。下次打包前须先删 `dz-phone/dist/Daozai-v1.2.4-windows-x64` 暂存目录，否则脚本报 "Package directory already exists"。
+- 用 `dz-custom/scripts/package.ps1` 从当前 HEAD `c2dd732` 重打（版本沿用 1.2.4，用户早前明确要求）。首次运行被 2 分钟默认超时中断在 `Building 321/322`，**不是脚本/代码错误**；加大超时重跑成功。
+- 产物（`dz-custom/dist/`，gitignored）：`Daozai-Setup-v1.2.4-x64.exe` 8,884,310 B，sha `8c660650a94b0cd6e`（完整值见 `SHA256SUMS.txt`）；`Daozai-v1.2.4-windows-x64.zip` 11,033,907 B，sha `4b85385d15c3a0eb`；包内 exe sha `c09afb55ec86b584`。安装包版本信息 `FileVersion=1.2.4`。
+- **重要**：这是**本地新包**，与 GitHub release v1.2.4 上已发布的旧包（setup `74879703097f5a36`、ZIP `21bbb3943b64a2df`）**不是同一份**，勿混用；本轮未上传 release、未部署。下次打包前须先删 `dz-custom/dist/Daozai-v1.2.4-windows-x64` 暂存目录，否则脚本报 "Package directory already exists"。
 
 ### 7.0zzb 1.2.5 发布准备暂停 + WinRT 短信验证码修复（2026-11-23 21:20–21:42）
 - 用户要求打包上传 1.2.5、上传前检查文案；随后实测发现**短信验证码按「手机连接」普通通知显示、没有验证码卡片、也不自动复制**，明确要求先不发布。
@@ -1754,12 +1754,12 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
   - 再次复制：`copy_history_image()` 从 PNG 还原为 CF_DIB（32bpp BGRA 自下而上）+ 打 `HISTORY_COPY_FORMAT`，避免截图→复制→又记一条。
   - `pages.rs`：剪贴板分栏给图片条目画 16×16 缩略图（`App.clip_thumbs` 按文件名缓存纹理），文字区从 x=68 右移到 88；新增 `App::copy_clip()` 统一文字/图片的复制入口；空态文案改为「文字和图片」。
   - 兼容：旧 `clipboard.json` 无 `image` 字段照常读取；JSON 里带 `..` / 斜杠的文件名被拒（路径穿越防护）。
-- **验证**：`cargo check --locked --lib --tests` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1409 passed / 0 failed / 131 ignored**（新增 4 个 clipboard 单测 + 1 个 UI 测试）；release exe sha `3f62fe69a679ecf5`（`dz-phone/target/release/daozai.exe`）。改动 4 文件：`app.rs +3`、`clipboard.rs +294/-29`、`pages.rs +45/-17`、`ui_tests.rs +23`；换行符与 HEAD 一致（前三 LF、`ui_tests.rs` CRLF）。**Cargo.toml / Cargo.lock 未改**。
+- **验证**：`cargo check --locked --lib --tests` 通过；全量 `cargo test --locked --release --lib -- --test-threads=1`（隔离 `DAOZAI_DATA_DIR`）= **1409 passed / 0 failed / 131 ignored**（新增 4 个 clipboard 单测 + 1 个 UI 测试）；release exe sha `3f62fe69a679ecf5`（`dz-custom/target/release/daozai.exe`）。改动 4 文件：`app.rs +3`、`clipboard.rs +294/-29`、`pages.rs +45/-17`、`ui_tests.rs +23`；换行符与 HEAD 一致（前三 LF、`ui_tests.rs` CRLF）。**Cargo.toml / Cargo.lock 未改**。
 - **状态**：提交 `eb0b215` 在 main 本地，**未 push、未打包、未部署、未实机验证**——部署时用户正在运行预览版（PID 16700，`%LOCALAPPDATA%\Programs\Daozai\daozai.exe`），为避免打断使用未停进程。**待实机验证**：真正复制一张截图 → 置物架→剪贴板分栏出现缩略图 → 点条目把图粘到画图/微信能还原。工作日志在 `C:\Users\cay\WorkBuddy\2026-11-24-14-23-45\.workbuddy\memory\2026-11-24.md`（**不在项目仓库**）。
 
 ### 7.0zzf 剪贴板图片「不生效」真因 + hover 预览（2026-11-24 15:10–15:45，提交 `52b7c70`，本地未 push）
 
-- **现象**：用户跑 `dz-phone/target/release/daozai.exe` 后复制图片，历史里没出现。诊断日志（`DAOZAI_CLIPBOARD_DEBUG=1`，写 `diagnostics/clipboard.log`，只记格式/尺寸不记内容）显示：`formats text=false dib=true dibv5=true bitmap=true` → `dib=OK 1569x909` → `content=Image` → 落盘成功。说明用户当时跑的是修复前的 exe；真因是上一版只认 `BI_RGB` 压缩的 DIB，而截图工具给的是 `BI_BITFIELDS`（compression=3），被 `compression != 0` 直接拒绝。
+- **现象**：用户跑 `dz-custom/target/release/daozai.exe` 后复制图片，历史里没出现。诊断日志（`DAOZAI_CLIPBOARD_DEBUG=1`，写 `diagnostics/clipboard.log`，只记格式/尺寸不记内容）显示：`formats text=false dib=true dibv5=true bitmap=true` → `dib=OK 1569x909` → `content=Image` → 落盘成功。说明用户当时跑的是修复前的 exe；真因是上一版只认 `BI_RGB` 压缩的 DIB，而截图工具给的是 `BI_BITFIELDS`（compression=3），被 `compression != 0` 直接拒绝。
 - **修复**（`clipboard.rs`）：`read_dib_locked` 支持 `BI_BITFIELDS=3`（跳过 12B 掩码）/`BI_ALPHABITFIELDS=6`（16B）；其他压缩（RLE/JPEG/PNG）仍跳过并写诊断。新增 `read_bitmap_locked`：只提供 `CF_BITMAP`（HBITMAP）时用 `GetObjectW`+`GetDIBits` 取 32bpp BGRA 兜底，全透明 alpha 当不透明。诊断日志改为环境变量 `DAOZAI_CLIPBOARD_DEBUG=1` 才写，默认零开销。
 - **hover 预览**（`pages.rs`）：剪贴板条目从 `on_hover_text`（400 字截断）改为 `on_hover_ui`——图片条目显示等比放大预览（最大 340×240，用已缓存的 `clip_thumbs` 纹理）+ 尺寸/点击提示；文字条目用 `ScrollArea(max_height=200)` 显示全文可滚动，不再截断。`TextureHandle::size_vec2` 改 `resolution_vec2`（0.37 已 rename）。
 - **验证**：grep 编译 `cargo check --locked --lib` 通过；剪贴板相关 14 个测试全过（含之前的 1409 全量基线，本轮未再跑全量）；release exe `fb7693cade1388b5`（诊断版）/ 最终源码待重建。构建踩坑：用户正在跑的 exe 占用导致 `failed to remove file ... 拒绝访问 (os error 5)`，停掉 PID 后重建成功。
@@ -1792,9 +1792,9 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 ### 7.0zzj 重打 1.3.0 安装包（含剪贴板图片功能 + 用户微调 tooltip）（2026-11-24 16:18–16:22）
 
 - 用户自己把图片预览尺寸从 220×120 改成 180×100（`pages.rs` 一行），提交 `50f9a5a`；随后要求重新打包。
-- 打包前：停掉运行中的 daozai（PID 22704）；删 `dz-phone/dist/` 里旧 v1.3.0 产物（staging 目录 + setup + zip + SHA256SUMS.txt）——脚本明确要求 staging 目录不存在，否则报 "Package directory already exists"。
-- 打包：`dz-phone/scripts/package.ps1`（默认从当前工作区全量构建 + check-runtime + NSIS + ZIP + sha），约 2m59s 完成，运行库检查通过（无外部 C/C++ 运行库依赖）。
-- **产物**（`dz-phone/dist/`，gitignored）：
+- 打包前：停掉运行中的 daozai（PID 22704）；删 `dz-custom/dist/` 里旧 v1.3.0 产物（staging 目录 + setup + zip + SHA256SUMS.txt）——脚本明确要求 staging 目录不存在，否则报 "Package directory already exists"。
+- 打包：`dz-custom/scripts/package.ps1`（默认从当前工作区全量构建 + check-runtime + NSIS + ZIP + sha），约 2m59s 完成，运行库检查通过（无外部 C/C++ 运行库依赖）。
+- **产物**（`dz-custom/dist/`，gitignored）：
   - `Daozai-Setup-v1.3.0-x64.exe` 9,222,840 B，sha `09b3e3e9bfa1ef48`（完整 `09b3e3e9bfa1ef48ab4e3e67f8a37652e7fe8c15756908f8ac455c68cfa2b710`）
   - `Daozai-v1.3.0-windows-x64.zip` 11,556,201 B，sha `ab2a50b919b165a1`（完整 `ab2a50b919b165a1e7a38ab9bb286f27bdb06b337b4406eefa07eb6df0441cab`）
   - 包内 exe sha `e9c7e724282e363c`，FileVersion=1.3.0（安装包本身也是 1.3.0）。
@@ -1858,8 +1858,8 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 
 - **背景**：用户反馈「试了没区别」，且 dist 里的 v1.3.0 安装包被清空（只剩旧 `SHA256SUMS.txt`，setup/zip 都不在）。查明：之前几轮我一直直接更新**安装目录** `AppData\Local\Programs\Daozai\daozai.exe`，而 dist 安装包自 16:21 起未重打，用户若装旧包自然没修复。
 - **确认**：`setup.nsi` 的 `InstallDir="$LOCALAPPDATA\Programs\${APP_ID}"`，即安装目标 = 我一直部署的目录，两者一致。无 Program Files 下的残留安装。
-- **重打**：`dz-phone/scripts/package.ps1` 约 3m17s 成功，MSVC 目标正式构建，运行库检查通过。
-- **新产物**（`D:\code\daozai-custom\dz-phone\dist\`，19:10）：
+- **重打**：`dz-custom/scripts/package.ps1` 约 3m17s 成功，MSVC 目标正式构建，运行库检查通过。
+- **新产物**（`D:\code\daozai-custom\dz-custom\dist\`，19:10）：
   - `Daozai-Setup-v1.3.0-x64.exe` 9,222,554 B，sha `568082cf093a8a52`（完整 `568082cf093a8a52a155481f39d30a629e694a5d00981fe6174ad0f25264ca58`）
   - `Daozai-v1.3.0-windows-x64.zip` 11,556,248 B，sha `112443ac78f296f0`（完整 `112443ac78f296f09a12faded3e202397c14b9fa71db48a04b348b0f7235fd14`）
   - 包内 exe sha `6aee44290bf0ea945`（= `target/x86_64-pc-windows-msvc/release/daozai.exe`）
@@ -1911,7 +1911,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 - **用户问题**：原项目 Renly1994/xiaotang-daozai 没有文字黑线，定制版有，为什么？用户要求单开分支用原项目方法实验。
 - **根因对比（已查证，非推测）**：
   - 原项目 `src/paint.rs`：`Card::font() = font(size * s)`，galley 按**最终字号**栅格化，直接 `self.pos()` 绘制，**不 transform mesh** → 无 UV 越界。
-  - 定制版 `dz-phone/src/paint/mod.rs`：`galley()` 用基准字号 `font(size)`，`galley_shape()` 用 `TSTransform` 缩放 mesh + `inset_text_uv` 补丁。放大时顶点被拉开、UV 不变 → 线性采样采到图集相邻黑色像素 = 文字上方黑线（`inset_text_uv` 注释原文）。
+  - 定制版 `dz-custom/src/paint/mod.rs`：`galley()` 用基准字号 `font(size)`，`galley_shape()` 用 `TSTransform` 缩放 mesh + `inset_text_uv` 补丁。放大时顶点被拉开、UV 不变 → 线性采样采到图集相邻黑色像素 = 文字上方黑线（`inset_text_uv` 注释原文）。
   - 黑线是**定制版文字缩放死区/弹簧隔离机制**（`TEXT_SCALE_DEADZONE`、`7a579d2`、`ba7fa43`）的副产品，原项目无此机制自然无此问题。
 - **实验改动**：`galley_shape` 去掉 transform/inset，改为从 `g.job` 重建 LayoutJob、font size 乘 s 后重排，直接画在 `self.pos(p)`。死区/弹簧隔离本分支暂不生效（预期代价：弹簧时文字每帧重排，可能重现高低不齐/抖动）。构建通过（4 个 unused 警告为预期），未跑全量（研究分支）。
 - **产物**：exe `785b1e966f38705e`，桌面 `daozai-text-rescale-test\daozai.exe` 供实机对比。ui_probe 冻结背景截图未捕到岛仔（透明/DComp 窗口抓屏限制），交由用户实机验证。
@@ -1921,7 +1921,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 
 - **用户要求**：把 egui 升到最新提交 `90431d979ab1faae2de6d9f736e9d33ca0d31956`（emilk/egui HEAD，workspace 版本仍 0.37.0）。
 - **上游差异**：旧 pin `56f3a0e` → 新 pin 只多 3 个提交：①`eframe::try_get_value`（纯新增，容错读取持久化数据）；②web canvas Ctrl+A 阻止原生拖拽（不涉及桌面）；③`Fix CJK glyphs sitting too high and getting clipped (#8804)`（`epaint/src/text/text_layout.rs`：回退字体字形统一按主字体 `font_ascent` 落基线，修中英/emoji 混排时 CJK 被顶高裁切）。**无公开 API 破坏，应用源码零改动。**
-- **改动**：`dz-phone/Cargo.toml` 6 处 rev（含 Linux eframe / Windows egui-winit）+ 注释；`Cargo.lock` 11 个 egui 系 crate 的 source 换 rev，版本均 0.37.0，**无其他依赖版本漂移**。
+- **改动**：`dz-custom/Cargo.toml` 6 处 rev（含 Linux eframe / Windows egui-winit）+ 注释；`Cargo.lock` 11 个 egui 系 crate 的 source 换 rev，版本均 0.37.0，**无其他依赖版本漂移**。
 - **验证**：`cargo build --locked --release --bin daozai --bin daozai-bridge` 通过；release lib 全量 **1412 passed / 0 failed / 131 ignored**（5m56s，串行隔离数据目录）；release bin **11 passed / 0 failed**；`cargo check --locked --release --examples` 通过。exe sha256 前16：`b4ac9366954efeed`（daozai）、`543c598181b8a33b5`（daozai-bridge）。
 - **状态**：提交 `ec19bd1` 在本地 main，**未 push、未打包、未部署**；构建前停掉运行中的 daozai.exe（PID 19872），未重启；dist 的 v1.3.0 安装包不含此升级。新 CJK 基线是否改善文字观感/是否影响布局像素需用户实机确认。
 
@@ -2018,7 +2018,7 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 ### 7.0zzzn 上游对齐收尾三项 + 打包（2026-11-27 00:15–01:22，分支 `merge-upstream-v0670`）
 
 - **三项收尾**（用户要求）：
-  1. **删除 ZCode 本地凭据路径**：删 `zcode_quota.rs`，`quota.rs`/`quota_ui.rs` 改回上游（`ZCODE_RECONNECT`，ZCode 旧账号用 GLM Key 重连），`dz-phone/README.md` 文案同步；配额测试 `quota_acceptance_grouped_connections_preserve_saved_sources` 按上游预期修正（ZCode→Glm、source=cn、提示文案"请填写 Coding Plan 套餐 Key"）。
+  1. **删除 ZCode 本地凭据路径**：删 `zcode_quota.rs`，`quota.rs`/`quota_ui.rs` 改回上游（`ZCODE_RECONNECT`，ZCode 旧账号用 GLM Key 重连），`dz-custom/README.md` 文案同步；配额测试 `quota_acceptance_grouped_connections_preserve_saved_sources` 按上游预期修正（ZCode→Glm、source=cn、提示文案"请填写 Coding Plan 套餐 Key"）。
   2. **恢复官方集市测试索引夹具**：`spike/market_state.rs` 的 `test_index`/`set_official_test_index`/test 索引注入改回 `#[cfg(test)]`；调用方 spike 集市测试模块仍整批关闭，当前无启用测试使用。
   3. **设置侧栏可滚动**（对齐用户截图的上游形态）：`extras.rs` 新增 `SETTINGS_BOTTOM_ROWS`、`settings_sidebar_builtin`，功能列表进 `ScrollArea`，插件/关于/自定义与集成固定底部 + 分隔线；新回归测试 `settings_sidebar_scrolls_main_and_keeps_bottom_items_fixed`。
 - **验证**：最终全量 **1545 passed / 0 failed / 138 ignored**（release 串行，日志 `merge-work/full-test-20261127-final.log`）。中间 1 个失败是 ZCode 删除后配额测试文案未同步，已修。
@@ -2191,11 +2191,22 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 
 ### 7.0zzzz 删除已退役的 src/material/ 死代码（2026-11-27 13:02）
 
-**背景**：上游 v0.6.70 合并带入 `dz-phone/src/material/`（`mod.rs`/`backdrop.rs`/`controls.rs`/`pipeline.rs`/`prelude.wgsl`/`debug.wgsl`，共约 2598 行）。全仓库无 `mod material;`、无 `#[path="material/..."]`、无 `material::` 引用；`Cargo.toml:57` 明确写「legacy wgpu/D3D12/WGSL stack is gone; rendering is D3D11 + winit only」，`sdk-material` 不在 default features。该目录从未接入编译，属纯死代码。真正的底片/抓屏在 `src/backdrop.rs` 与 `src/d3d11/wgc_capture.rs`。
+**背景**：上游 v0.6.70 合并带入 `dz-custom/src/material/`（`mod.rs`/`backdrop.rs`/`controls.rs`/`pipeline.rs`/`prelude.wgsl`/`debug.wgsl`，共约 2598 行）。全仓库无 `mod material;`、无 `#[path="material/..."]`、无 `material::` 引用；`Cargo.toml:57` 明确写「legacy wgpu/D3D12/WGSL stack is gone; rendering is D3D11 + winit only」，`sdk-material` 不在 default features。该目录从未接入编译，属纯死代码。真正的底片/抓屏在 `src/backdrop.rs` 与 `src/d3d11/wgc_capture.rs`。
 
-**改动**：`git rm -r dz-phone/src/material/`（6 文件删除）。同步修正 6 份文档：`merge-comparison-v0670.md`（不再声称 material/ 保留）、`plugins/gpu-material.md` 与 `plugins/gpu-material-tasks.md`（顶部标注已退役、历史设计保留）、`plugins/local-install.md`、`plugins/sdk-v1-design.md`、`plugins/sdk-open-tasks/5-settings-and-inputs.md`（材质相关条目标注定制版不支持）。`docs/HANDOFF.md` 与桌面 `HANDOFF.md` 追加本节。`dz-phone/CHANGELOG.md` 加一条面向用户的说明。
+**改动**：`git rm -r dz-custom/src/material/`（6 文件删除）。同步修正 6 份文档：`merge-comparison-v0670.md`（不再声称 material/ 保留）、`plugins/gpu-material.md` 与 `plugins/gpu-material-tasks.md`（顶部标注已退役、历史设计保留）、`plugins/local-install.md`、`plugins/sdk-v1-design.md`、`plugins/sdk-open-tasks/5-settings-and-inputs.md`（材质相关条目标注定制版不支持）。`docs/HANDOFF.md` 与桌面 `HANDOFF.md` 追加本节。`dz-custom/CHANGELOG.md` 加一条面向用户的说明。
 
 **验证**：全量 lib **1553 passed / 0 failed / 138 ignored**（`--profile dev-release --lib -- --test-threads=1`，隔离 `DAOZAI_DATA_DIR`）；`cargo check --locked --lib --bins --tests` 通过。release 双 bin 构建在用户打断时中止，**未打包、未部署**（用户明确要求先不打包）。
 
 **状态**：仅提交，未 push、未部署。git 可随时恢复被删文件。
+
+
+
+### 7.0zzza 源码目录改名：dz-phone → dz-custom（2026-11-27 13:11）
+
+**改动**：`git mv dz-phone dz-custom`，把仓库内所有 `dz-phone` 文本引用机械替换为 `dz-custom`（含 `.gitignore`、`README.md`、`ATTRIBUTION.md`、`browser-bridge/README.md`、`installer/daozai.iss`、`installer/build-innosetup.ps1`、`docs/HANDOFF.md`、`docs/PATCHES.md`、`docs/WGC-GPU-SHARE-SPIKE.md`、`merge-work/*.py`、`main.diff`），共 132 处。桌面 `HANDOFF.md` 与 skill `daozai-custom-build` 的文档/脚本也同步替换。
+
+**注意**：历史 HANDOFF/PATCHES 里的 git subtree 命令和旧归档名也按用户要求改成了新目录名；要核对那时候的真实提交，请以 git 历史为准。Rust 包名与产物名不变（`daozai` / `daozai-bridge`），只是目录与路径改名。skill 的 `locate_project.py` 仍按旧规则要求 `daozai-patches/apply.py`（补丁链已退役），这是改名之前就存在的问题，本次未扩大范围修复。
+
+**验证**：`cargo check --manifest-path dz-custom/Cargo.toml --locked --lib --bins --tests` 通过；全量 lib **1553 passed / 0 failed / 138 ignored**（dev-release，1m49s）。未打包、未部署。
+
 

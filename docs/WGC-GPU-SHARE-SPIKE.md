@@ -35,8 +35,8 @@ WGC 帧(D3D11) → CopyResource 到共享 D3D11 纹理(NT handle)
 
 | 文件                        | 改动                                                                                                                                                                                                                                           |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dz-phone/src/wgc.rs`       | `SharedFrame`(producer COM资源) + `SharedHandle`(consumer句柄)；`adapter_by_luid` 按 wgpu 同卡建 D3D11 设备；`shared_texture` 建 `SHARED_NTHANDLE\|KEYEDMUTEX` 纹理；`grab_shared` 用 keyed mutex + `D3D11_QUERY_EVENT` spin 替代 Map          |
-| `dz-phone/src/gpu_glass.rs` | `import_shared_handle`：`as_hal::<Dx12>` → `raw_d3d12_device().OpenSharedHandle` → `texture_from_raw` → `create_texture_from_hal`（wgpu 24 是 2 参数版）；`make_gpu_inner` 写 adapter LUID；`prepare()` 开头分流，成功则跳过整条 CPU 合成/上传 |
+| `dz-custom/src/wgc.rs`       | `SharedFrame`(producer COM资源) + `SharedHandle`(consumer句柄)；`adapter_by_luid` 按 wgpu 同卡建 D3D11 设备；`shared_texture` 建 `SHARED_NTHANDLE\|KEYEDMUTEX` 纹理；`grab_shared` 用 keyed mutex + `D3D11_QUERY_EVENT` spin 替代 Map          |
+| `dz-custom/src/gpu_glass.rs` | `import_shared_handle`：`as_hal::<Dx12>` → `raw_d3d12_device().OpenSharedHandle` → `texture_from_raw` → `create_texture_from_hal`（wgpu 24 是 2 参数版）；`make_gpu_inner` 写 adapter LUID；`prepare()` 开头分流，成功则跳过整条 CPU 合成/上传 |
 
 ### 同步契约（来自 scrying 实证）
 
