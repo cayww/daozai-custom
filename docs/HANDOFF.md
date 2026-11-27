@@ -2136,3 +2136,17 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 **验证**：全量 lib **1553 passed / 0 failed / 138 ignored**（新增 1 个测试）；release 双 bin 构建通过。包 sha256 前16 `6cd7686ff38529be`、exe `9fdce4e3792feece`、bridge `d99e6ebbae853d38`。提交 `c85669e`，未 push、未部署。
 
 **待用户实机确认**：底部停靠贴屏幕下沿（含自动隐藏任务栏热区），展开向上。
+
+
+
+### 7.0zzzw 换边到 / 设置选底部时岛仔闪一下就消失（2026-11-27 11:16，提交 `e3ad0d1`）
+
+**现象**：拖到底部松手后岛仔跑出屏幕；在设置里选底部停靠，岛仔只在屏幕中间闪一下就消失。
+
+**根因**：§7.0zzzm 收尾时我把放置 scale 的跨屏判断写成 `self.placement_key.0!=placement_key.0 || self.placed_bounds!=bounds`。换停靠边（Top→Bottom）会改变 `dock_bounds`，于是被误判成"跨屏"，走 `d.scale(island_scale*zoom)`（= dpi/96 × 倍率，125% 屏为 1.25）；而窗口实际是按 `ctx.pixels_per_point()`（= window.scale_factor × 倍率，本机 1.4）栅格化的。两者不一致 → 窗口按错误缩放放置到屏幕外，看起来就是"闪一下消失"。
+
+**修复**：`cross_screen` 只认 `display_id` 变化（真正的跨屏）；换边等非跨屏情况一律用 `ctx.pixels_per_point()`。另在 `place_on_display` 的 origin 计算失败分支加 warn 日志（含 dock/bounds/scale），便于下次定位。
+
+**验证**：全量 lib **1553 passed / 0 failed / 138 ignored**；release 双 bin 构建通过。包 sha256 前16 `38cb720a1ca2b2e0`、exe `44dbac5ef0431e32`、bridge `24eb2d3f02225845`。提交 `e3ad0d1`，未 push、未部署。
+
+**待用户实机确认**：拖到底部松手后岛仔稳定贴底；设置里选底部直接到位不消失。
