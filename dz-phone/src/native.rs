@@ -761,7 +761,8 @@ impl Window {
                 )
             };
             let Some((x, y)) = origin else {
-                log::warn!("[place] no origin dock={:?} bounds={:?} scale={}", dock, bounds, scale);
+                crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),"place.log",
+                    &format!("NO ORIGIN dock={:?} bounds={:?} scale={}", dock, bounds, scale));
                 return false;
             };
             // OLED 像素偏移：只沿不贴边的一轴让开，并按展开面板的余量收窄——位置拉满或屏幕太窄时少挪、不挪，
