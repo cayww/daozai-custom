@@ -216,6 +216,18 @@ impl DaozaiApp {
         let params = build_glass_params(ppp, liquid, dock);
         let mut input = { let w = self.window.as_ref().unwrap(); self.runtime.as_mut().unwrap().take_input(w) };
         scale_root_input(&mut input, scale, w.scale_factor() as f32);
+        // 按上游 raw_input_hook：把 ROOT 的 screen_rect 固定成完整画布尺寸。
+        // scale_root_input 把 egui-winit 算出的 screen_rect 又除以 island_scale，
+        // 逻辑画布高度会不足（如 321 < WIN_H 402）；底部停靠时岛体画在 win 底部
+        // y≈354 超出画布被裁掉 → "闪一下消失"。这里覆盖回完整画布。
+        if input.viewport_id==egui::ViewportId::ROOT {
+            let size=if dock.is_side() {
+                egui::vec2(daozai::side_dock::SIDE_W, daozai::side_dock::SIDE_H)
+            } else {
+                egui::vec2(daozai::app::CANVAS_W, daozai::app::WIN_H)
+            };
+            input.screen_rect=Some(egui::Rect::from_min_size(egui::Pos2::ZERO,size));
+        }
         // 收集子窗口输入（含鼠标/键盘事件）供 immediate 回调使用。
         for sub in self.subs.values_mut() {
             let sin = sub.renderer.egui_winit.take_egui_input(&sub.window);
