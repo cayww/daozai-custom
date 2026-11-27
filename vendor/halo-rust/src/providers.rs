@@ -78,6 +78,7 @@ impl Engine {
     pub fn poll(&mut self, receivers: &[ReceiverWire], providers: &[Box<dyn Provider>]) -> Vec<Reading> {
         let now = Instant::now();
         let mut out = Vec::new();
+        let mut sources: Vec<&'static str> = Vec::new();
         let mut seen = HashSet::new();
         let deadline = Instant::now() + Duration::from_secs(20);
 
@@ -88,7 +89,13 @@ impl Engine {
             for provider in providers {
                 for status in provider.poll(&receiver.usb_instance, &collections) {
                     if out.len() >= 256 { return out; }
-                    let key = sha256_hex(&format!("{}\0{}\0{}", provider.name(), receiver.usb_instance, status.key));
+                    // Logitech 的 unit id 是跨接收器/线缆的稳定身份，Python 侧
+                    // 用它做 device key；其余协议仍按 USB instance 隔离。
+                    let key = if provider.name() == "logitech" {
+                        sha256_hex(&format!("{}\0{}\0", provider.name(), status.key))
+                    } else {
+                        sha256_hex(&format!("{}\0{}\0{}", provider.name(), receiver.usb_instance, status.key))
+                    };
                     if !seen.insert(key.clone()) { continue; }
                     let coarse = status.approximate;
                     let level = status.level.filter(|v| *v <= 100 && (!status.approximate || coarse));
@@ -105,10 +112,13 @@ impl Engine {
                         vid: receiver.vid, pid: receiver.pid,
                         usb_instance: receiver.usb_instance.clone(),
                     });
+                    sources.push(provider.name());
                 }
             }
             let _ = deadline;
         }
+
+        dedup_offline_razer_siblings(&mut out, &sources);
 
         let mut next = HashMap::new();
         for d in &out {
@@ -119,6 +129,33 @@ impl Engine {
         self.observed = next;
         out
     }
+}
+
+/// Python RazerProvider.poll()：同一型号的另一个 PID 在本轮有实时读数时，
+/// 丢掉本轮灰显（offline）的旧 PID，避免插线/接收器双链路出现两个图标。
+fn dedup_offline_razer_siblings(out: &mut Vec<Reading>, sources: &[&'static str]) {
+    let mut live: HashMap<String, HashSet<u16>> = HashMap::new();
+    for (reading, source) in out.iter().zip(sources) {
+        if *source == "razer" && reading.online {
+            live.entry(reading.name.clone()).or_default().insert(reading.pid);
+        }
+    }
+    if live.is_empty() {
+        return;
+    }
+    let mut kept = Vec::with_capacity(out.len());
+    for (index, reading) in out.iter().enumerate() {
+        if sources.get(index) == Some(&"razer") && !reading.online {
+            let another_pid = live
+                .get(&reading.name)
+                .is_some_and(|pids| pids.iter().any(|pid| *pid != reading.pid));
+            if another_pid {
+                continue;
+            }
+        }
+        kept.push(reading.clone());
+    }
+    *out = kept;
 }
 
 /// 稳定设备 key：64 位十六进制（FNV-1a 双轮）。key 不用于安全用途。
@@ -139,4 +176,46 @@ pub fn query(collection: &Collection, request: &[u8], timeout: Duration) -> Opti
     let deadline = Instant::now() + timeout;
     if !handle.write(request, deadline) { return None; }
     handle.read(deadline)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::Reading;
+
+    fn sample(name: &str, pid: u16, online: bool) -> Reading {
+        Reading {
+            key: format!("{name}:{pid:04x}"), name: name.into(), kind: String::new(),
+            level: Some(50), charging: Some(false), online, approximate: false,
+            fresh: true, age_ms: None, vid: 0x1532, pid, usb_instance: String::new(),
+        }
+    }
+
+    #[test]
+    fn razer_greyed_sibling_is_dropped_when_another_pid_answers() {
+        let mut out = vec![
+            sample("Razer Viper V3 Pro", 0x00C0, false),
+            sample("Razer Viper V3 Pro", 0x00C1, true),
+        ];
+        let sources = ["razer", "razer"];
+        dedup_offline_razer_siblings(&mut out, &sources);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].pid, 0x00C1);
+
+        // 同一个 PID 同时有灰显和实时读数时保留（Python 的 key 集合减法）。
+        let mut out = vec![
+            sample("Razer Viper V3 Pro", 0x00C0, false),
+            sample("Razer Viper V3 Pro", 0x00C0, true),
+        ];
+        dedup_offline_razer_siblings(&mut out, &sources);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn non_razer_offline_readings_survive() {
+        let mut out = vec![sample("Other Mouse", 0x1234, false)];
+        let sources = ["other"];
+        dedup_offline_razer_siblings(&mut out, &sources);
+        assert_eq!(out.len(), 1);
+    }
 }

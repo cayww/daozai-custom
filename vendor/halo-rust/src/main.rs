@@ -1,7 +1,9 @@
 //! 岛仔无线电量组件（Rust 版）—— stdin/stdout JSON 协议兼容 Python 组件。
+mod activity;
 mod hid;
 mod protocol;
 mod providers;
+mod winusb;
 
 use protocol::{Poll, Ready, Reply, Reading, VERSION, UPSTREAM, MAX_LINE};
 use std::io::{self, BufRead, Read as _, Write};

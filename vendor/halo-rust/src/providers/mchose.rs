@@ -6,11 +6,12 @@
 //!
 //! 已移植的 Python 侧状态机：G7 的 `_smooth_g7` 中值滤波 + 80% 启动/低电量确认。
 //! 仍受架构限制的部分（见文件末尾说明）：
-//! - K99 的 `KeyboardActivity` / A7 V3 的 `MouseActivity` 输入唤醒门控：Rust worker
-//!   是 stdin/stdout JSON 子进程，没有 Python 的 Raw Input 监听线程与输入源。
+//! - K99 的 `KeyboardActivity` / A7 V3 的 `MouseActivity` 输入唤醒门控：已由
+//!   `crate::activity` 的 Raw Input 监听实现（仅取设备路径与类型，不保留按键内容）。
 //! - `_last` 休眠保持：主程序 `bt/state.rs` 保留最后一次有效读数；worker 的
 //!   `online=false` 会被 `bt/receivers.rs` 过滤，故这里不重复产出离线 Status。
 
+use crate::activity::{self, Kind};
 use crate::hid::Collection;
 use crate::protocol::parse_instance_vid_pid;
 use crate::providers::{Provider, Status};
@@ -973,6 +974,8 @@ struct State {
     g7: G7Smoother,
     /// `_last` 休眠保持：按 (USB instance, Status.key) 缓存最后一次有效读数。
     last: HashMap<(String, String), (Status, Instant)>,
+    /// 输入唤醒门控的上次查询时间，对应 Python 的 REFRESH_INTERVAL。
+    requested: HashMap<(String, u16), Instant>,
 }
 
 pub struct Mchose {
@@ -1003,7 +1006,33 @@ impl Provider for Mchose {
         let variant = classify(vid, pid);
         let mut state = self.state.lock().unwrap();
         let mut found: Option<Status> = None;
+        // Python 只在真实输入后短时间查询，避免请求把睡眠中的键盘/鼠标唤醒；
+        // 同时保留 REFRESH 周期兜底，长期不操作时仍能刷新一次。
+        let gate = match variant {
+            Some(Variant::K99) => Some((Kind::Keyboard, Duration::from_secs(10), 300)),
+            Some(Variant::Mc) => Some((Kind::Mouse, Duration::from_millis(250), 60)),
+            _ => None,
+        };
+        let mut gated = false;
+        if let Some((kind, window, refresh)) = gate {
+            let paths: Vec<String> = collections
+                .iter()
+                .map(|c| String::from_utf16_lossy(c.path()))
+                .collect();
+            let now = Instant::now();
+            let due = state
+                .requested
+                .get(&(instance.to_string(), pid))
+                .is_some_and(|at| now.saturating_duration_since(*at) >= Duration::from_secs(refresh))
+                || !state.requested.contains_key(&(instance.to_string(), pid));
+            if !due && !activity::recently_active(kind, &paths, window) {
+                gated = true;
+            } else {
+                state.requested.insert((instance.to_string(), pid), now);
+            }
+        }
         if let Some(variant) = variant {
+        if !gated {
         for col in pick(variant, collections) {
             let status = match variant {
                 Variant::Legacy5253 | Variant::LegacyNew => {
@@ -1159,6 +1188,7 @@ impl Provider for Mchose {
                 found = status;
                 break;
             }
+        }
         }
         }
 
@@ -1462,11 +1492,12 @@ mod tests {
 // 功能级偏差处理说明（按团队要求明确列出，不猜测字节格式）：
 // 1. `_smooth_g7`：已精确移植（中值滤波 + 5 次间隔 80% 启动兜底 + 20% 骤降双次确认 +
 //    600s 重启窗口 + 充电时重置）。`now` 用 Instant 注入以便单测；实机抖动表现需确认。
-// 2. `KeyboardActivity` / `MouseActivity`：未移植。K99 与 A7 V3 Ultra+ 的“仅在真实
-//    输入后查询”门控依赖 Python 的 Raw Input 监听线程（RegisterRawInputDevices +
-//    消息循环）与 `wake_on_input`/`polling_paused` 字段。Rust worker 是 stdin/stdout
-//    子进程，既不拥有输入监听线程，Status/Reading wire format 也没有对应字段。
-//    若后续要补：需在 worker 内起 Raw Input 线程，并扩展协议加 paused 标志。
+// 2. `KeyboardActivity` / `MouseActivity`：已由 `crate::activity` 补齐 Raw Input
+//    监听（RegisterRawInputDevices + RIDEV_INPUTSINK + 消息循环，只解析 header 与
+//    设备路径，不保留按键内容）。K99 用 10s 活动窗 / 300s 刷新，A7 V3 Ultra+
+//    （Variant::Mc）用 250ms 活动窗 / 60s 刷新。Status/Reading wire format 没有
+//    `polling_paused` 标志，门控期间继续输出缓存的最后读数（online=false），
+//    表现与主程序现有的灰显过滤一致；若要显示“暂停探测”文案需扩展协议。
 // 3. `_last` 休眠保持：已在 provider 内实现（ASLEEP_KEEP=300s，无回复时产出
 //    online=false 的最后读数）。主程序 `bt/receivers.rs` 会过滤 online=false，
 //    但保留 Engine.observed 的热度；设备唤醒后同值读数仍会被判为 fresh。

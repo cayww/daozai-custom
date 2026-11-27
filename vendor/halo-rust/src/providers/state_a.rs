@@ -1765,8 +1765,9 @@ mod audeze {
 // DJI：VID 0x2CA3 PID 0x4011，状态在 interface 6 的 WinUSB 批量端点 0x86 上，
 // 不在 HID 集合上。下面完整移植 DUML 分帧 / CRC-16 X-25 / dialect / 记录解析 /
 // 位掩码 + GRACE_PUSHES + STALE 状态机，并给出可测试的 absorb/snapshot 逻辑。
-// 阻塞点：Rust Provider 只能拿到 hid::Collection（HID 报告），无法打开 WinUSB
-// interface 6 做 bulk IN；在不改 hid.rs / providers.rs 的前提下 poll() 不产出读数。
+// 2026-11-28 已接通 `crate::winusb`：按 USB instance 找到 MI_06 的 WinUSB
+// 接口并开后台只读线程持续收 bulk IN，分帧后喂给下面的 absorb()；poll() 直接
+// 从状态机出读数。没有真实设备时仍只能靠注入帧的单测验证解析逻辑。
 // ===========================================================================
 mod dji {
     #![allow(dead_code)] // VID/PID/端点常量供接入 WinUSB 读取器时使用
@@ -2089,18 +2090,38 @@ mod dji {
         out
     }
 
+    use crate::winusb;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
+    /// 一个接收器实例对应一个只读后台线程。Python 侧 `_leases` 防止同一实例
+    /// 被两个 reader 抢占；这里用 readers map 达到同样效果。
+    struct Reader {
+        done: AtomicBool,
+        settled: AtomicBool,
+    }
+
+    impl Drop for Reader {
+        fn drop(&mut self) {
+            self.done.store(true, Ordering::Relaxed);
+        }
+    }
+
     pub struct Dji {
-        state: Mutex<RxState>,
+        state: Arc<Mutex<RxState>>,
+        readers: Arc<Mutex<HashMap<String, Arc<Reader>>>>,
     }
 
     impl Dji {
         pub fn new() -> Self {
             Self {
-                state: Mutex::new(RxState::default()),
+                state: Arc::new(Mutex::new(RxState::default())),
+                readers: Arc::new(Mutex::new(HashMap::new())),
             }
         }
 
-        /// 供未来接入 WinUSB 批量读取器（或测试注入抓包帧）使用。
+        /// 供测试注入抓包帧使用；运行时帧由 WinUSB reader 喂入。
         #[allow(dead_code)]
         pub fn inject_frame(&self, frame: &[u8]) {
             absorb(&mut self.state.lock().unwrap(), frame, Instant::now());
@@ -2110,6 +2131,59 @@ mod dji {
         pub fn snapshot(&self) -> Vec<Status> {
             let state = self.state.lock().unwrap();
             readings(&state, Instant::now())
+        }
+
+        fn clear_receivings(state: &Arc<Mutex<RxState>>) {
+            let mut state = state.lock().unwrap();
+            state.entries.clear();
+            state.info.clear();
+        }
+
+        fn listen(
+            instance: String,
+            state: Arc<Mutex<RxState>>,
+            reader: Arc<Reader>,
+            readers: Arc<Mutex<HashMap<String, Arc<Reader>>>>,
+        ) {
+            let mut pending = Vec::new();
+            while !reader.done.load(Ordering::Relaxed) {
+                if !winusb::device_present(&instance) {
+                    Self::clear_receivings(&state);
+                    break;
+                }
+                let Some(path) = winusb::find_path(&instance) else {
+                    Self::clear_receivings(&state);
+                    reader.settled.store(true, Ordering::Relaxed);
+                    sleep(Duration::from_secs(5));
+                    continue;
+                };
+                let Some(mut pipe) = winusb::BulkIn::open(&path) else {
+                    Self::clear_receivings(&state);
+                    reader.settled.store(true, Ordering::Relaxed);
+                    sleep(Duration::from_secs(5));
+                    continue;
+                };
+                while !reader.done.load(Ordering::Relaxed) {
+                    let Some(chunk) = pipe.read() else { break };
+                    if chunk.is_empty() {
+                        continue; // WinUSB 读超时，下一轮继续
+                    }
+                    pending.extend_from_slice(&chunk);
+                    let (frames, tail) = split_frames(&pending);
+                    pending = tail;
+                    if pending.len() > 1024 {
+                        pending.clear(); // 无 0x55 前缀的噪声不能无限累积
+                    }
+                    for frame in frames {
+                        absorb(&mut state.lock().unwrap(), &frame, Instant::now());
+                    }
+                    reader.settled.store(true, Ordering::Relaxed);
+                }
+                Self::clear_receivings(&state);
+                reader.settled.store(true, Ordering::Relaxed);
+                sleep(Duration::from_secs(5));
+            }
+            readers.lock().unwrap().remove(&instance);
         }
     }
 
@@ -2124,13 +2198,42 @@ mod dji {
             "dji"
         }
 
-        fn poll(&self, _instance: &str, _collections: &[Collection]) -> Vec<Status> {
+        fn poll(&self, instance: &str, _collections: &[Collection]) -> Vec<Status> {
             // Python 的接收器在 USB interface 6（class ff/subclass f0）上用 bulk
-            // IN 0x86 / OUT 0x06 推送 DUML 帧；HID 上的 ff90/ff82 集合是静默的。
-            // Provider 只能拿到 hid::Collection，无法按 USB instance 打开 interface 6
-            // 并绑定 WinUSB，因此在两个接口签名不变的前提下这里无法产出读数。
-            // 解析与状态机已完整实现并由下面的单测覆盖，注入帧后 snapshot() 可用。
-            Vec::new()
+            // IN 0x86 推送 DUML 帧；HID 上的 ff90/ff82 集合是静默的。首次 poll
+            // 启动只读线程并等最多 1.5s 让第一帧落地，之后直接读状态机。
+            if !winusb::is_receiver_instance(instance) {
+                return Vec::new();
+            }
+            let reader = {
+                let mut readers = self.readers.lock().unwrap();
+                if let Some(existing) = readers.get(instance) {
+                    existing.clone()
+                } else {
+                    let reader = Arc::new(Reader {
+                        done: AtomicBool::new(false),
+                        settled: AtomicBool::new(false),
+                    });
+                    readers.insert(instance.to_string(), reader.clone());
+                    let state = self.state.clone();
+                    let readers_for_thread = self.readers.clone();
+                    let instance_owned = instance.to_string();
+                    let thread_reader = reader.clone();
+                    thread::spawn(move || {
+                        Dji::listen(instance_owned, state, thread_reader, readers_for_thread)
+                    });
+                    reader
+                }
+            };
+            let deadline = Instant::now() + Duration::from_millis(1500);
+            while !reader.settled.load(Ordering::Relaxed)
+                && !reader.done.load(Ordering::Relaxed)
+                && Instant::now() < deadline
+            {
+                sleep(Duration::from_millis(25));
+            }
+            let state = self.state.lock().unwrap();
+            readings(&state, Instant::now())
         }
     }
 

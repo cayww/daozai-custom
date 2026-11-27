@@ -11,9 +11,9 @@
 >   `product_string.rs`（7 个产品字符串 / 特殊集合协议）、`longtail.rs`（26 个长尾 + 2 个 Logitech 子协议），
 >   `razer.rs` 补齐 8 个专用帧；`hid.rs` 新增 `Collection.product` 并谨慎放行低 usage page 集合，
 >   `instance_guard.rs` 实现单实例保护并接入 worker 主循环。
-> - `vendor/halo-rust` 单测 **163 passed**；主程序 release 全量 **1624 passed / 0 failed**；
->   `daozai-halo.exe` 最终包指纹见 MIGRATION.md（sha 前16 `54c43321e73dc81a`）；
->   测试安装包 `installer\daozai-setup-custom-isolated.exe`（包 sha 前16 `1c93e996075c3ff2`，exe `2b4569b0fc7266ef`）。
+> - `vendor/halo-rust` 单测 **168 passed**；主程序 release 全量 **1624 passed / 0 failed**；
+>   `daozai-halo.exe` 最终包指纹见 MIGRATION.md（sha 前16 `3a97b072d9e97ab0`）；
+>   测试安装包 `installer\daozai-setup-custom-isolated.exe`（包 sha 前16 `065babf6e011d920`，exe `47cfea52ab8236c5`）。
 > - **尚需处理的真实残留**：DJI 解析已实现但读数走 interface 6 的 WinUSB bulk，现有 `Provider` 只拿 HID 集合，
 >   `poll()` 暂返空，需后续接 bulk 通道；mchose 输入唤醒门控、razer 跨 PID 去重、Logitech unit id 去重 /
 >   `ui_message`、Corsair `--probe` 未复刻；所有协议均未在真机验证。
@@ -23,7 +23,10 @@
 > - **05:26 追加修复**：用户反馈雷蛇 Viper V3 Pro 迁移后不显示电量，根因是接收器目录上一轮抽取错误
 >   （88 条错误名字、漏 00C0/00C1）和 `hid.rs` 不放行雷蛇鼠标 `0001:0002` 集合；均已修复，
 >   详见 `MIGRATION.md` 的「2026-11-28 05:26 修复」章节与桌面 `HANDOFF.md` §7.0zzzzz-k。
-> - 最新状态与验证记录以 `vendor/halo-rust/MIGRATION.md` 和桌面 `HANDOFF.md` §7.0zzzzz-k 为准。
+> - **05:49 再补齐**：DJI WinUSB bulk 通道、mchose K99/A7 Raw Input 唤醒门控、Razer 跨 PID 灰显去重、
+>   Logitech unit id 跨接收器 key 均已实现；halo 168 passed，主程序 1624 passed，重打包指纹见 MIGRATION.md。
+>   仅剩 Corsair `--probe` 与 Logitech `ui_message` 字面文案（wire format 无字段）未做。
+> - 最新状态与验证记录以 `vendor/halo-rust/MIGRATION.md` 和桌面 `HANDOFF.md` §7.0zzzzz-l 为准。
 
 ---
 

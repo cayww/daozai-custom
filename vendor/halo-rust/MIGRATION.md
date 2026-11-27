@@ -63,12 +63,13 @@
 
 ## 残留风险与已知偏差（必须如实交付）
 
-- **DJI**：解析与状态机已实现，但真实读数走 interface 6 的 WinUSB bulk；当前 `Provider` 只接收 HID 集合，
-  `poll()` 在缺数据时返回空，需后续给 worker 增加 bulk 通道才能真正生效。
-- **mchose**：K99/A7 的 `KeyboardActivity` / `MouseActivity` 输入唤醒门控依赖主程序输入状态，
-  worker 侧未监听键盘鼠标；跨进程一致性待实机确认。
-- **razer**：跨 PID 同型号灰显去重需要全局视图，单次 poll 拿不到，未实现。
-- **Logitech**：unit id 跨接收器去重、`ui_message` 文案未复刻；G535 的 `000C:0001` 集合仍受 HID 放行规则限制。
+- **DJI**：WinUSB bulk 通道已接（`winusb.rs`，按 USB instance 找 MI_06 的 WinUSB 接口，后台线程只读 EP 0x86
+  并喂给已实现的 DUML 分帧/CRC/状态机）；无真机，需在用户设备上确认帧推送与读数。
+- **mchose**：K99（10s 活动窗 / 300s 刷新）与 A7 V3 Ultra+（250ms / 60s）的输入唤醒门控已由 `activity.rs`
+  的 Raw Input 监听实现；Status/Reading wire format 没有 `polling_paused` 字段，门控期间输出缓存的最后读数。
+- **razer**：跨 PID 同型号灰显去重已在 Engine 汇总后实现（另一 PID 本轮在线时丢弃灰显副本）。
+- **Logitech**：unit id 跨接收器去重已在 Engine 按 `status.key` 生成稳定 key；`ui_message` 字面文案未接线，
+  但其语义由 `approximate` / `charging_known` 字段表达；G535 的 `000C:0001` 集合仍受 HID 放行规则限制。
 - **HyperX**：Kingston `get_input_report(0x06, 62)` 预读在 Python 侧结果被忽略，Rust 用短 deadline 轮询代替，字节协议等价。
 - **Corsair**：Bragi SABRE v3「线缆出现即充电」用跨轮询 `sabre_v3_cable_seen` 近似；`--probe` 诊断路径未移植（主程序不发）。
 - **Asus**：Harpe II 接收器路径子串判断改为 (pid, interface=2, FF01:0001) 匹配。
@@ -77,21 +78,32 @@
 - **无真机验证**：所有协议均为静态移植，只保证与 Python 逻辑/字节格式一致，读数正确性必须逐设备实机确认；
   Python 侧复杂异步调度在 Rust 侧用同步调用 + deadline，实机需确认不卡住。
 
-## 验证状态（2026-11-28 05:01，Python 组件删除后重验）
+## 2026-11-28 05:49 补齐剩余项
 
-- `vendor/halo-rust`：`cargo test --offline` — **163 passed / 0 failed**（新增 2 个回归测试：Razer 鼠标集合放行、未知 PID 无线名门控）。
-- 协议握手：`{"version":1,"id":42,"command":"poll","receivers":[]}` → `ready` + `poll` 回复正确（05:02 单实例保护验证见 HANDOFF）。
+- **DJI bulk**：新增 `src/winusb.rs`，按 Python `_CfgMgr.find` 的顺序找 MI_06 的 WinUSB 设备接口
+  （`CM_Get_DevNode_Registry_PropertyW` 验驱动 = winusb、读 `DeviceInterfaceGUID(s)`、枚举接口路径），
+  用 `WinUsb_Initialize/QueryPipe/SetPipePolicy/ReadPipe` 只读 EP 0x86；`state_a.rs` 的 `Dji` 首次 poll
+  起后台线程，分帧后喂 `absorb()`，拔插自动清理状态。协议来源：
+  https://github.com/ShadowBitBasher/DJI-Mic-Control/blob/main/PROTOCOL.md （Unlicense）。
+- **输入唤醒门控**：新增 `src/activity.rs`，用 `RegisterRawInputDevices(RIDEV_INPUTSINK)` + 消息专用窗口，
+  只读 RAWINPUTHEADER 与设备路径（不保留按键内容），K99/A7 按 Python 的活动窗与刷新周期门控探测。
+  Raw Input 不可用时退化为「不门控」，不会比迁移前更差。
+- **Razer 去重 / Logitech key**：`Engine::poll` 汇总后丢掉「同型号另一 PID 已在线」的 Razer 灰显副本；
+  Logitech 的最终 key 只由 provider + `status.key` 生成，实现跨接收器 unit id 合并。
+- 单测新增 5 个（GUID 解析、接收器实例门控、Raw Input 路径归一化、Razer 灰显去重 ×2）。
+
+## 验证状态（2026-11-28 05:49）
+
+- `vendor/halo-rust`：`cargo test --offline` — **168 passed / 0 failed**。
 - 主程序：`cargo test --locked --release --lib -- --test-threads=1` — **1624 passed / 0 failed / 141 ignored**。
-- release 构建：主程序双 bin（独立 target 目录，避开运行中的 exe）+ `daozai-halo.exe` 均成功；
-  `daozai-halo.exe` sha256 前16 `54c43321e73dc81a`。
-- 安装包：`installer\daozai-setup-custom-isolated.exe`（12,652,307 B，包 sha256 前16 `1c93e996075c3ff2`，
-  exe `2b4569b0fc7266ef`，bridge `0119b3c1fd0f0d58`，halo `54c43321e73dc81a`），版本 1.4.1；未部署、未推 origin。
+- release 构建：主程序双 bin（独立 target 目录，避开运行中的 exe）+ `daozai-halo.exe` 均成功。
+- 安装包：`installer\daozai-setup-custom-isolated.exe`（12,678,778 B，包 sha256 前16 `065babf6e011d920`，
+  exe `47cfea52ab8236c5`，bridge `e47f3872be09cc8e`，halo `3a97b072d9e97ab0`），版本 1.4.1；未部署、未推 origin。
 - 内置接线：`daozai.iss` 把 `vendor\halo-rust\target\{profile}\daozai-halo.exe` 复制到 `{app}\daozai-halo.exe`，
   卸载时清理；无需 Gitee 下载。
 
 ## 后续待办
 
-1. 实机逐设备验证读数与充电状态（尤其新移植 56 个协议）。
-2. 给 DJI 接 WinUSB bulk 通道，使 `state_a.rs` 中已实现的解析真正生效。
-3. 视用户设备反馈补 mchose 输入唤醒门控、razer 跨 PID 去重、Corsair `--probe` 等边角行为。
-4. 发布前确认是否需要升版本号 / 发 GitHub Release / 部署（当前仅为本地测试包）。
+1. 实机逐设备验证读数与充电状态（尤其 DJI WinUSB、Viper V3 Pro、mchose 输入门控）。
+2. Corsair `--probe` 诊断路径未移植（主程序不发送，优先级低）；Logitech `ui_message` 字面文案需扩展 wire format 才能显示。
+3. 发布前确认是否需要升版本号 / 发 GitHub Release / 部署（当前仅为本地测试包）。

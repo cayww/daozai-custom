@@ -319,6 +319,11 @@ impl Collection {
         }
     }
 
+    /// Raw Input 设备名与 HID 接口路径同源，供输入唤醒门控比对。
+    pub fn path(&self) -> &[u16] {
+        &self.path
+    }
+
     pub fn supports_feature(&self, id: u8) -> bool {
         self.has_report(HidP_Feature, id, self.feature_len)
     }

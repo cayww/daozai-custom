@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-28 05:26
+> **最后更新**：2026-11-28 05:49
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -11,7 +11,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| **HaloBattery Rust 全量迁移 + Viper V3 Pro 修复（2026-11-28 05:26）** | 剩余 56 个协议已全部静态移植并注册（`state_a/state_b/product_string/longtail` + Razer 8 专用帧），`hid.rs` 新增 product string 与低 usage page 放行，`instance_guard.rs` 接进 worker；主程序 MAA 只认 `TaskChainError`、USB 接收器内置目录扩到 112 条。halo 单测 **161 passed**、主程序 release 全量 **1624 passed / 0 failed / 141 ignored**、双 bin + halo release 构建通过。新测试包 `installer\daozai-setup-custom-isolated.exe`（12,652,307 B，包 sha `1c93e996075c3ff2`，exe `2b4569b0fc7266ef`，bridge `0119b3c1fd0f0d58`，halo `54c43321e73dc81a`），版本 1.4.1；**未部署 / 未推 origin / 未真机验证**。DJI bulk 通道等残留见 §7.0zzzzz-j。 |
+| **HaloBattery Rust 全量迁移 + 剩余项补齐（2026-11-28 05:49）** | 剩余 56 个协议已全部静态移植并注册（`state_a/state_b/product_string/longtail` + Razer 8 专用帧），`hid.rs` 新增 product string 与低 usage page 放行，`instance_guard.rs` 接进 worker；主程序 MAA 只认 `TaskChainError`、USB 接收器内置目录重建到 445 条。halo 单测 **168 passed**、主程序 release 全量 **1624 passed / 0 failed / 141 ignored**、双 bin + halo release 构建通过。新测试包 `installer\daozai-setup-custom-isolated.exe`（12,678,778 B，包 sha `065babf6e011d920`，exe `47cfea52ab8236c5`，bridge `e47f3872be09cc8e`，halo `3a97b072d9e97ab0`），版本 1.4.1；**未部署 / 未推 origin / 未真机验证**。DJI bulk / 输入唤醒 / 去重等剩余项补齐见 §7.0zzzzz-l。 |
 | **上游合并（2026-11-25 20:30）** | **新分支 `merge-upstream-v0670` HEAD=`9dad7c8`**（双亲：`017108d` + 上游 `0615f19`=v0.6.70），已合入上游 418 提交（v0.6.66–v0.6.70）。141 处冲突按「定制优先」解决：保留 egui 0.37 pin / D3D11＋液态玻璃 / 版本 1.3.0 / ZCode / 定制通知与邮件行为；新增插件集市/SDK、性能与无线设备页、Antigravity、rtl_text、蓝牙设备图标等未冲突模块已纳入。Cargo.toml 增加 sdk-js/sdk-material/sdk-wasm 特性（material 去掉 eframe/direct-composition，改走自绘栈），Cargo.lock 已由 Cargo 重算。release 构建通过，**全量 1456 passed / 0 failed / 138 ignored**。未部署、未推 origin。详见 §7.0zze。 |
 | **上游合并 v0.6.71（2026-11-27 21:00）** | **新分支 `merge-upstream-v0671` HEAD=`a240b36`**（双亲：`8012cd0` + 上游 `1c0c633`=v0.6.71），合入上游 53 提交（v0.6.70→v0.6.71）。38 处冲突按「定制优先」解决：egui 0.37 pin / 版本 1.4.0 / D3D11 液态玻璃 / ZCode 删除路径保留。**按用户要求剔除 DX12/WGSL**：删 `dx12_surface_memory.rs` 测试、`egui-wgpu` surface-test 依赖、`surface_recovery_test.rs`、GPU 材质集市白名单改动；`sdk-material` 未启用。纳入插件邮箱视图/SDK v1、页面管理与排序、HaloBattery 无线电量、微信托盘唤起、CalDAV Digest、Antigravity 登录修复、通知唤醒与内存积压修复、额度环间距。egui 0.31→0.37 API 适配；14 个依赖未移植布局的上游测试标记 `__upstream_tests_off__`。dev-release 串行全量 **1619 passed / 0 failed / 141 ignored**。已打 release 包 `installer\daozai-setup-custom-isolated.exe`（包 sha `c392da4e0c2003e2`，exe `5e5e3974096b9fc3`），版本 1.4.1；提交 `f57151e`，tag `v1.4.1`。未部署。详见 §7.0zzzzz-f。 |
 | **egui pin（2026-11-25）** | `90431d979ab1faae2de6d9f736e9d33ca0d31956`（提交 `ec19bd1`，0.37.0，1412 passed；未打包部署） |
@@ -2394,8 +2394,8 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **验证（2026-11-28 04:24–04:29）**：
 - `vendor/halo-rust`：`cargo test --offline` **161 passed / 0 failed / 0 ignored**（3 条非阻断告警）；`printf ... | daozai-halo.exe --stdio` 握手输出 `ready` + `devices:[]`（05:02 用户已启动岛仔，再跑一次被单实例保护按设计拒绝，说明 guard 生效）。
 - 主程序：`cargo test --locked --release --lib -- --test-threads=1` **1624 passed / 0 failed / 141 ignored**。
-- release：`cargo build --offline --release --manifest-path vendor/halo-rust/Cargo.toml` 与 `cargo build --locked --release --bin daozai --bin daozai-bridge` 均成功；`daozai.exe` sha `2b4569b0fc7266ef`、`daozai-bridge.exe` `0119b3c1fd0f0d58`、`daozai-halo.exe` `54c43321e73dc81a`（952,320 B）。
-- 打包（04:30 首轮；05:01 因删除 Python 组件、调整 `--licenses` 路径重打）：Inno Setup 7 成功，`installer\daozai-setup-custom-isolated.exe`（12,652,307 B；包 sha `1c93e996075c3ff275bacc69b7e99992cbd31cc7174dce74a8d7d88448058e18`）；旧包 `c97f7f547cd95bd8` 已被覆盖。ISCC 有已知 `PrivilegesRequired=admin` + HKCU 警告，按既有惯例忽略。
+- release：`cargo build --offline --release --manifest-path vendor/halo-rust/Cargo.toml` 与 `cargo build --locked --release --bin daozai --bin daozai-bridge` 均成功；`daozai.exe` sha `47cfea52ab8236c5`、`daozai-bridge.exe` `e47f3872be09cc8e`、`daozai-halo.exe` `3a97b072d9e97ab0`（952,320 B）。
+- 打包（04:30 首轮；05:01 因删除 Python 组件、调整 `--licenses` 路径重打）：Inno Setup 7 成功，`installer\daozai-setup-custom-isolated.exe`（12,678,778 B；包 sha `065babf6e011d920f6f6284fd954b7dd2e401669b8ed6b649c231ef739c05804`）；旧包 `c97f7f547cd95bd8` 已被覆盖。ISCC 有已知 `PrivilegesRequired=admin` + HKCU 警告，按既有惯例忽略。
 
 **残留 / 待实机确认**：
 1. **DJI**：interface 6 的 WinUSB bulk 通道未接，解析与状态机已写好但 `poll()` 暂时返回空。
@@ -2426,6 +2426,34 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 
 **验证**：halo 单测 **163 passed**（新增 2 个回归）；主程序 release 全量 **1624 passed / 0 failed / 141 ignored**。用户仍在运行岛仔，为不打断进程，主程序双 bin 在独立 `CARGO_TARGET_DIR` 构建，Inno 用临时 .iss 指向独立产物目录打包；项目 `target/release/daozai.exe` 仍是旧目录版本，下次构建会刷新。
 
-**新包**：`installer\daozai-setup-custom-isolated.exe`（12,652,307 B；包 sha `1c93e996075c3ff275bacc69b7e99992cbd31cc7174dce74a8d7d88448058e18`，exe `2b4569b0fc7266ef`，bridge `0119b3c1fd0f0d58`，halo `54c43321e73dc81a`）。上一版 `9ea481ed2efa1172` 已被覆盖。未部署 / 未推 origin；**请用户装包后实机确认 Viper V3 Pro 电量**。
+**新包**：`installer\daozai-setup-custom-isolated.exe`（12,678,778 B；包 sha `065babf6e011d920f6f6284fd954b7dd2e401669b8ed6b649c231ef739c05804`，exe `47cfea52ab8236c5`，bridge `e47f3872be09cc8e`，halo `3a97b072d9e97ab0`）。上一版 `9ea481ed2efa1172` 已被覆盖。未部署 / 未推 origin；**请用户装包后实机确认 Viper V3 Pro 电量**。
 
 **仍未复刻（与本次修复无关）**：DJI interface 6 WinUSB bulk 通道未接（解析已实现但 `poll()` 返空）；mchose 输入唤醒门控、razer 跨 PID 灰显去重、Logitech `ui_message` 文案 / 跨进程 unit id 合并、Corsair `--probe` 未做；HyperX 预读与 Asus Harpe II 路径为语义近似。
+
+### 7.0zzzzz-l 剩余项补齐：DJI bulk / 输入唤醒 / 去重（2026-11-28 05:49）
+
+按用户「继续完成剩下的，不会就搜社区怎么做」的要求，把 §7.0zzzzz-j/k 列出但未做的项继续落地：
+
+1. **DJI WinUSB bulk**：新增 `vendor/halo-rust/src/winusb.rs`。按 Python `_CfgMgr.find` 的顺序用 cfgmgr32 找
+   `VID_2CA3&PID_4011&MI_06` 子节点、校验驱动 = winusb、读 `DeviceInterfaceGUID(s)` 并枚举唯一设备接口路径；
+   用 `WinUsb_Initialize` / `QueryInterfaceSettings` / `QueryPipe` / `SetPipePolicy` / `ReadPipe` 只读 EP 0x86。
+   `state_a.rs` 的 `Dji` 首次 poll 起后台线程，DUML 分帧 + CRC 后喂给已实现的 `absorb()`；拔插自动清状态。
+   协议来源：`ShadowBitBasher/DJI-Mic-Control/PROTOCOL.md`（Unlicense），未复制其代码。
+2. **mchose 输入唤醒门控**：新增 `vendor/halo-rust/src/activity.rs`，用 `RegisterRawInputDevices`
+   （RIDEV_INPUTSINK）+ 消息专用窗口，只解析 RAWINPUTHEADER 与设备路径（不保留按键内容）；
+   K99 用 10s 活动窗 / 300s 刷新，A7 V3 Ultra+（`Variant::Mc`）用 250ms / 60s。Raw Input 不可用时
+   退化为不门控，不会比迁移前更差。`hid.rs` 新增 `Collection::path()` 供路径比对。
+3. **Razer 跨 PID 去重**：`Engine::poll` 汇总后，同型号另一个 PID 本轮在线时丢掉灰显副本（Python `RazerProvider.poll` 语义）。
+4. **Logitech unit id 去重**：Logitech 的最终 key 只由 provider + `status.key` 生成，不再带 usb_instance，
+   实现跨接收器/线缆合并。
+
+**验证**：halo 单测 **168 passed / 0 failed**（新增 5 个：GUID 解析、接收器实例门控、Raw Input 路径归一化、
+Razer 去重 ×2）；主程序 release 全量 **1624 passed / 0 failed / 141 ignored**。主程序仍在运行，双 bin 继续用
+独立 target 目录构建 + 临时 .iss 打包，未杀用户进程。
+
+**新包**：`installer\daozai-setup-custom-isolated.exe`（12,678,778 B；包 sha `065babf6e011d920`，exe `47cfea52ab8236c5`，
+bridge `e47f3872be09cc8e`，halo `3a97b072d9e97ab0`）。上一版 `1c93e996075c3ff2` 已被覆盖。未部署 / 未推 origin。
+
+**仍未做**：Corsair `--probe` 诊断路径（主程序不发，优先级低）；Logitech `ui_message` 字面文案
+（wire format 无字段，语义已由 `approximate` / `charging_known` 表达）；HyperX 预读与 Asus Harpe II 路径
+仍为语义近似。**所有新通道均未在真机验证**，尤其 DJI WinUSB 与 Raw Input 门控需用户实机确认。
