@@ -10,6 +10,7 @@ pub mod simple;
 pub mod compx;
 pub mod razer;
 pub mod hyperx;
+pub mod steelseries;
 
 /// 统一注册入口：所有协议族在这里汇总。
 pub fn all_providers() -> Vec<Box<dyn Provider>> {
@@ -18,6 +19,7 @@ pub fn all_providers() -> Vec<Box<dyn Provider>> {
     all.extend(razer::all_providers());
     all.extend(hyperx::all_providers());
     all.extend(mchose::all_providers());
+    all.extend(steelseries::all_providers());
     all
 }
 
