@@ -2072,3 +2072,17 @@ exclude: 冻结模式预热完成，已取消排除（截图可见）
 **产物**：`installer/daozai-setup-custom-isolated.exe`（release + LTO），包 sha256 前16 `0e5878ba212c9588`、exe `9c12be1f4f020737`、bridge `8d6c2b3d3b67f850`。提交 `76ae63f` 在本地分支，**未 push、未部署**。
 
 **待用户实机确认**：跨屏拖动（越过共享边 16 点后换屏、底部停靠不压任务栏、Esc 回滚）；两屏不同缩放比时岛体是否按目标屏 DPI 正确缩放。
+
+
+
+### 7.0zzzs 【已修】跨屏改动引入启动窗口缩成 0.8 倍、岛体不可见（2026-11-27 09:46，提交 `dac124d`）
+
+**现象**：用户装上 §7.0zzzr 的包后，桌面看不到岛仔，但后台有进程。诊断：窗口存在且 `IsWindowVisible=true`，但矩形是 (179,179)-(947,501)、尺寸 **768×322**——正好是画布 960×402 的 **0.8 倍**（= 1/1.25，屏幕 125% 缩放的倒数）。`last-startup.log` 未更新（停在 03:26 旧记录），说明新逻辑没走到 `diagnostics::startup` 也侧面印证定位异常。`last-error.log` 是 11-26 的旧异常（phone_battery.rs），与本次无关。
+
+**根因**：§7.0zzzr 我把主放置逻辑的 scale 从 `ctx.pixels_per_point()` 改成 `self.placement_scale`。后者初值是 **0.0**，首帧 egui ppp 尚未稳定时被写成 0.8 并缓存；此后非跨屏情况一直复用这个 0.8，导致 `place_on_display` 把窗口缩成 0.8 倍并定位到屏幕中间，岛体内容落在可见区域外。
+
+**修复**：非跨屏时恢复用 `ctx.pixels_per_point()`（原版行为）；仅 `cross_screen`（已放置且目标屏/边界变了）时用目标屏 `d.scale(island_scale*zoom)`，并 `.filter(|s| s.is_finite() && *s>0.0)` 兜底到 `ctx.pixels_per_point()`。`placement_scale` 只作为记录，不再当定位输入。
+
+**验证**：全量 lib **1551 passed / 0 failed / 138 ignored**；release 双 bin 构建通过。包 sha256 前16 `f54fb0beab83b6ec`、exe `27162248cde0e417`、bridge `d62fd0453d4233e0`。提交 `dac124d`，未 push、未部署。
+
+**教训**：缓存值（尤其初值 0 的）不能直接当渲染/定位输入；改动放置逻辑必须实机确认窗口矩形（本次靠 Win32 `GetWindowRect` 一眼看出 0.8 倍）。
