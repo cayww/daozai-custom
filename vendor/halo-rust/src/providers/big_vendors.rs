@@ -2304,18 +2304,20 @@ mod logitech {
             }
             // 休眠/关机：保留最后的读数一段时间（灰显由 online=false 表达）。
             let keys: HashSet<String> = found.iter().map(|s| s.key.clone()).collect();
-            let stale: Vec<String> = state
+            let stale: Vec<(String, (Status, Instant))> = state
                 .last
                 .iter()
                 .filter(|(key, _)| !keys.contains(*key))
-                .filter(|(_, (_, t))| now.duration_since(*t).as_secs() < ASLEEP_KEEP_S)
-                .map(|(key, _)| key.clone())
+                .map(|(key, v)| (key.clone(), v.clone()))
                 .collect();
-            for key in stale {
-                let (st, _) = state.last.get(&key).unwrap().clone();
-                let mut offline = st;
-                offline.online = false;
-                found.push(offline);
+            for (key, (st, t)) in stale {
+                if now.duration_since(t).as_secs() < ASLEEP_KEEP_S {
+                    let mut offline = st;
+                    offline.online = false;
+                    found.push(offline);
+                } else {
+                    state.last.remove(&key);
+                }
             }
             found
         }
