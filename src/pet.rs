@@ -249,12 +249,24 @@ impl Pet {
 
     pub fn step(&mut self, state: PetState, t: f64, dt: f32, gaze: [f32; 2], visible: bool) {
         if self.state==PetState::Music && matches!(state,PetState::Awake|PetState::Curious) {self.expressions.clear();}
-        self.expressions.step(state,dt,visible);
+        // 音乐表情的时间由 music_age 经 play_at 驱动。若这里走常规 step，它会
+        // time+=dt 越过 duration 就 clear + sheet=None，紧接着 play_at 又设回来，
+        // 下一帧 draw 重新解码 texture.set —— 音乐表情切换时反复「首次加载」而闪乱。
+        if state==PetState::Music { self.expressions.step_music(dt,visible); }
+        else { self.expressions.step(state,dt,visible); }
         if state != self.state { self.state = state; self.age = 0.0; }
         if visible { self.age += dt; }
         if state==PetState::Music && visible {
             self.music_age+=dt;
-            if let Some((expression,time))=music_segment_at(self.music_age).expression {self.expressions.play_at(expression,time);}
+            let segment=music_segment_at(self.music_age);
+            if let Some((expression,time))=segment.expression {
+                // 换表情时才重建纹理；同一表情内 play_at 每帧覆盖 time，sheet 保持不变。
+                self.expressions.play_at(expression,time);
+            } else {
+                // 16 秒间隙没有表情：清掉 clip 与 sheet，回到矢量画的哼音符/唱歌姿态。
+                // 只在刚进入间隙时清一次，避免每帧 clear 重建。
+                if self.expressions.current().is_some() { self.expressions.clear(); }
+            }
         }
         let age = self.age;
         let mut eyes = [Eye::open(4.4); 2];

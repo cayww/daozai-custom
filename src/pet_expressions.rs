@@ -101,6 +101,16 @@ impl Expressions {
         };
         self.play(expression);expression.duration()
     }
+    /// 音乐模式专用：表情时间完全由外部 music_age 通过 play_at 驱动，
+    /// 这里只更新冷却/悬停，绝不推进 clip 或释放 sheet。
+    /// 否则每帧 step 把 time+=dt 越过 duration 就 clear+sheet=None，紧接着
+    /// play_at 又设回来，下一帧 draw 重新解码并 texture.set —— 音乐表情切换时
+    /// 反复「首次加载」，表现为哼音符首次出现闪乱。
+    pub fn step_music(&mut self, dt: f32, visible: bool) {
+        if !visible { return; }
+        self.cooldown = (self.cooldown - dt).max(0.0);
+    }
+
     pub fn step(&mut self,state:PetState,dt:f32,visible:bool) {
         use Expression::*;
         if !visible {return;}
