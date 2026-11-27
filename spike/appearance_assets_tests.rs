@@ -156,7 +156,7 @@ fn save_font_preview(host: &LocalPlugins, dir: &Path) -> Result<()> {
                 crate::theme::font(15.0, crate::theme::W::Semibold), egui::Color32::WHITE);
             plugin_canvas_ui::draw(&card, "font-preview", &canvas, card.rect(16.0, 42.0, 387.0, 172.0),
                 plugin_canvas_ui::CanvasTheme { palette: None, accent: None, background: egui::Color32::BLACK },
-                |_| None);
+                |_, _, _| None);
         });
     });
     let mut raster = crate::preview_raster::Raster::new(width, height);

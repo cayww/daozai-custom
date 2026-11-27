@@ -32,6 +32,7 @@ function refresh({ settings, today }) {
 | 周期刷新 · 已实现 | 两个样例在清单声明 `"refreshSeconds":60` 和 timer 能力。到期由岛仔调用 refresh | 卡片按期更新 |
 | 岛上常驻位 · 实验 | 声明 `island.pinned`，通过 `refresh` 返回 `pinned:{text:"今日金价",value:"850 元/克",icon:"coin"}` | 收起时各插件一起显示，用户可调整顺序 |
 | 结构化状态卡和独立详情页 · 测试版 | 清单使用 `"owner":"status"` 和 `"capabilities":["status.page","timer"]`，`refresh` 返回 `status`。可用 `statusLayout` 选择组件、排序和样式。 | 在岛上翻页查看，在「设置 → 页面管理 → 状态详情」单独启停 |
+| [邮箱视图扩展](mail-view.md) · 测试版 | 声明无脚本、无权限的 mail.view 资源包，扩展原生邮箱的多账号视图。 | 启用后在原生邮箱页使用，不注册独立状态页 |
 | 状态页组件与主题令牌 · 实验 | 在状态页布局中添加列表、迷你折线、多行说明和标签，可设强调色、强调程度及岛仔内置图标 | 在状态详情页查看 |
 | 自绘画布 · 实验 | 同时声明 `status.page` 和 `status.canvas`，脚本返回画布的图元与样式 | 可填满状态详情页或与标准组件混排 |
 | 实时状态组件与敏感值 · 实验 | 布局选择 `counter`、`clock`、`countdown`，由岛仔计算实时读数。金额等数据须标记 `sensitive:true`。 | 在状态详情页查看，点击暂时显示敏感值 |
@@ -459,7 +460,15 @@ function refresh({settings}) {
 
 本地测试集市接受合规的 QuickJS 插件、外观资源包、快捷切换插件、无线设备兼容包（上游历史设计中还接受 GPU 材质，定制版不支持）。申请本地数据源的 JS 插件仍需用户安装后单独授权。索引及 ZIP 应来自用户信任的本机目录。SHA-256 核对包是否与索引一致。
 
-官方无线设备兼容包通过插件集市分发，在「已安装」管理。ZIP 包含 `plugin.json`、`wireless-receivers.json` 和 `cover.png`，只为本体补充核实过的 2.4G USB 接收器型号。
+官方无线设备兼容包通过插件集市分发，在「已安装」管理。ZIP 包含 `plugin.json`、`wireless-receivers.json` 和 `cover.png`。接收器表补充已核实的 2.4G USB 接收器型号。
+
+接收器表的 `api_version: 1` 接受 `vid`、`pid` 和 `name`。`api_version: 2` 的每条记录还可声明 `battery_protocol`，取值为[本体已注册的电量读取器](../../src/bt/compat.rs)。支持版本 2 的宿主遇到尚未内置的协议时仍识别接收器，电量显示为未知。旧格式仍可安装。插件清单的 `api` 和 `dataVersion` 均为 `1`。
+
+「设备兼容 → 电量增强」可单独安装 HaloBattery 采集组件。开启后由岛仔校验并启动，关闭后停止采集。兼容包继续独立分发接收器识别表。
+
+索尼 INZONE H9 使用接收器的 COM 接口。大疆 Mic Mini 2 需要接收器的 USB 接口 6 已绑定 WinUSB。采集组件按 Windows USB 物理实例绑定两个接口，和 HID 使用同一套岛仔通信格式。
+
+采集组件从 [vendor/halo-battery/build.ps1](../../vendor/halo-battery/build.ps1) 构建，产物为 Windows x64 的 `daozai-halo.exe`。在 Gitee 插件镜像仓库创建 `wireless-battery-vX.Y.Z` 发行版并上传同名附件，验证匿名下载的文件一致后更新 `master` 上的 `wireless-battery/component.json`，写入 `version`、`size`（字节数）和 `sha256`。岛仔按这份清单校验组件后安装。桌面测试版可从程序旁的 `wireless-battery-test.json` 加载本地验收源，其中包含组件绝对路径 `artifact` 及 `package.size` 和 `package.hash`。
 
 ### 正式分发
 

@@ -16,9 +16,9 @@ impl DeviceKind {
 }
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub enum BatterySource {Windows,Gatt}
+pub enum BatterySource {Windows,Gatt,UsbReceiver}
 impl BatterySource {
-    pub fn label(self)->&'static str {match self {Self::Windows=>"Windows 设备电量",Self::Gatt=>"蓝牙电池服务"}}
+    pub fn label(self)->&'static str {match self {Self::Windows=>"Windows 设备电量",Self::Gatt=>"蓝牙电池服务",Self::UsbReceiver=>"2.4G 接收器"}}
 }
 
 #[derive(Clone,Debug,PartialEq,Eq)]
@@ -31,10 +31,11 @@ pub struct BatteryReading {
     pub value_since:Instant,
     /// None 表示来源没有上报充电状态。
     pub charging:Option<bool>,
+    pub approximate:bool,
 }
 impl BatteryReading {
     pub(crate) fn new(percent:u8,source:BatterySource,observed:Instant,charging:Option<bool>)->Self {
-        Self{percent,source,observed,value_since:observed,charging}
+        Self{percent,source,observed,value_since:observed,charging,approximate:false}
     }
 }
 
@@ -45,10 +46,11 @@ pub struct Device {
     pub battery:Option<u8>,
     pub kind:DeviceKind,
     pub reading:Option<BatteryReading>,
+    pub charging_only:Option<(bool,Instant)>,
     pub connected:bool,
 }
 impl Default for Device {
-    fn default()->Self {Self{id:String::new(),name:String::new(),battery:None,kind:DeviceKind::Other,reading:None,connected:true}}
+    fn default()->Self {Self{id:String::new(),name:String::new(),battery:None,kind:DeviceKind::Other,reading:None,charging_only:None,connected:true}}
 }
 impl Device {
     pub fn stale_at(&self,now:Instant)->bool {!self.connected||self.reading.as_ref().is_some_and(|r|now.saturating_duration_since(r.observed)>FRESH_FOR)}
@@ -130,7 +132,7 @@ impl State {
                 let fresh=now.saturating_duration_since(r.observed)<=FRESH_FOR;
                 (fresh,fresh&&r.source==BatterySource::Gatt,r.observed)
             }).cloned();
-            Device{id:e.key.clone(),name:e.name.clone(),kind:e.kind,battery:reading.as_ref().map(|r|r.percent),reading,connected:e.connected}
+            Device{id:e.key.clone(),name:e.name.clone(),kind:e.kind,battery:reading.as_ref().map(|r|r.percent),reading,charging_only:None,connected:e.connected}
         }).collect();
         devices.sort_by(|a,b|b.connected.cmp(&a.connected).then_with(||a.id.cmp(&b.id)));devices
     }

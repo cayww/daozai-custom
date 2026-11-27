@@ -8,10 +8,11 @@ use windows::{core::{w, PCWSTR}, Win32::{
 
 use crate::messenger::{OpenError,Unread};
 use crate::messenger::windows::*;
+use crate::model::WechatWakeShortcut;
 
 pub(crate) const ADAPTER:NativeAdapter=NativeAdapter{
     paths:installed_paths,main_frame:wechat_main_frame,accounts:None,ready:|_|true,strict_window:false,
-    open:|target,paths,allow_tray|open_wechat(target.unread,paths,allow_tray).map(|_|target),taskbar:Some(start_taskbar),
+    open:|target,paths,allow_tray|open_wechat(target.unread,paths,allow_tray,None).map(|_|target),taskbar:Some(start_taskbar),
 };
 fn wechat_main_frame(class:&str,style:u32,extended:u32)->bool{
     (class=="WeChatMainWndForPC" || class.starts_with("Qt") && class.ends_with("QWindowIcon")) && frame_style(class,style,extended)
@@ -22,24 +23,85 @@ impl TaskbarSource for Listener {
     fn take(&self)->Vec<TaskbarNotice>{Listener::take(self)}
     fn forget(&self,pid:u32){Listener::forget(self,pid);}
 }
-fn open_wechat(unread:Unread,paths:&[String],allow_tray:bool)->Result<(),OpenError>{
+unsafe fn visible_wechat_window(unread:Unread,paths:&[String],check_owner:bool)->Option<HWND>{
+    if unread.pid==0{return None;}
     let window=HWND(unread.window as *mut _);
+    if usable_main_frame(window,unread.source) && matches(window,paths){
+        let pid=window_pid(window);
+        // 快捷键会切换显隐，通知窗口和托盘宿主分属不同进程时仍须确认它当前是否可见。
+        if pid==unread.pid || check_owner && account_pid(pid,paths)==unread.pid{return Some(window);}
+    }
+    account_main_window(unread.pid,unread.source,paths)
+}
+
+pub(crate) fn open_wechat(unread:Unread,paths:&[String],allow_tray:bool,shortcut:Option<WechatWakeShortcut>)->Result<(),OpenError>{
     unsafe{
-        let target=if unread.pid==0{None}
-            else if window_pid(window)==unread.pid && usable_main_frame(window,unread.source) && matches(window,paths){Some(window)}
-            else{account_main_window(unread.pid,unread.source,paths)};
-        if let Some(target)=target{
+        if let Some(target)=visible_wechat_window(unread,paths,shortcut.is_some()){
             wake_step(format!("切前台 {}",describe_window(target)));
             if IsIconic(target).as_bool(){ShowWindowAsync(target,SW_RESTORE).ok().map_err(|_|{wake_step("还原最小化窗口失败");OpenError::Failed("请从任务栏打开微信".into())})?;}
             if SetForegroundWindow(target).as_bool(){wake_step("系统已接受");return Ok(());}
             wake_step("系统拒绝切前台");
         }else{wake_step("没有该账号可见的微信主窗口");}
     }
+    let shortcut_sent=shortcut.is_some_and(|shortcut|unsafe{send_wechat_shortcut(unread,paths,shortcut)});
+    if shortcut_sent{
+        if wait_for_wechat_foreground(unread,paths,Duration::from_millis(400)){
+            wake_step("快捷键已将目标账号唤到前台");return Ok(());
+        }
+        wake_step("快捷键未在等待期间唤到前台");
+    }
     if !allow_tray{wake_step("未开启从托盘唤起");return Err(OpenError::Failed("请从任务栏或托盘打开微信".into()));}
     // 托盘唤起的每一步记在 wechat-tray.log（失败时写入，失败代码 T0–T5 同时出现在唤起结果里）。
     wake_step("改从托盘唤起");
+    if shortcut_sent{return open_wechat_from_tray_impl(unread,true).map_err(OpenError::Failed);}
     wechat_in_tray(unread).map_err(OpenError::Failed)?;
     open_wechat_from_tray(unread).map_err(OpenError::Failed)
+}
+
+fn single_shortcut_account(unread:Unread,hosts:&[(u32,HWND)])->bool{
+    unread.source==crate::app::Messenger::Wechat && unread.pid!=0
+        && matches!(hosts,[(pid,_)] if *pid==unread.pid)
+}
+
+unsafe fn send_wechat_shortcut(unread:Unread,paths:&[String],shortcut:WechatWakeShortcut)->bool{
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    if !single_shortcut_account(unread,&tray_hosts(paths)) || visible_wechat_window(unread,paths,true).is_some(){
+        wake_step("未发送快捷键：无法确认唯一的隐藏微信账号");return false;
+    }
+    let key=VIRTUAL_KEY(shortcut.key);
+    if [VK_CONTROL,VK_MENU,VK_SHIFT,VK_LWIN,VK_RWIN,key].into_iter().any(|key|GetAsyncKeyState(i32::from(key.0))<0){
+        wake_step("未发送快捷键：组合键或修饰键正在按下");return false;
+    }
+    let events=shortcut_inputs(shortcut);
+    let size=std::mem::size_of::<INPUT>() as i32;
+    let sent=SendInput(&events,size) as usize;
+    if sent==events.len(){wake_step("已发送微信唤起快捷键");return true;}
+    wake_step(format!("快捷键输入未完整送达：{sent}/{}",events.len()));
+    // 若只送入一部分，释放已经按下且尚未释放的键。主键已按下时仍要等待微信处理。
+    let presses=events.len()/2;
+    let held=sent.min(events.len().saturating_sub(sent));
+    if held!=0{let _=SendInput(&events[events.len()-held..],size);}
+    sent>=presses
+}
+
+fn shortcut_inputs(shortcut:WechatWakeShortcut)->Vec<windows::Win32::UI::Input::KeyboardAndMouse::INPUT>{
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    let modifiers=[(WechatWakeShortcut::CTRL,VK_CONTROL),(WechatWakeShortcut::ALT,VK_MENU),(WechatWakeShortcut::SHIFT,VK_SHIFT)];
+    let keys:Vec<_>=modifiers.into_iter().filter_map(|(mask,key)|(shortcut.modifiers&mask!=0).then_some(key))
+        .chain(std::iter::once(VIRTUAL_KEY(shortcut.key))).collect();
+    let keyboard=|key,flags|INPUT{r#type:INPUT_KEYBOARD,Anonymous:INPUT_0{ki:KEYBDINPUT{wVk:key,dwFlags:flags,..Default::default()}}};
+    keys.iter().map(|&key|keyboard(key,KEYBD_EVENT_FLAGS(0)))
+        .chain(keys.iter().rev().map(|&key|keyboard(key,KEYEVENTF_KEYUP))).collect()
+}
+
+fn wait_for_wechat_foreground(unread:Unread,paths:&[String],timeout:Duration)->bool{
+    let deadline=Instant::now()+timeout;
+    loop{
+        if unsafe{foreground_main_pid(unread.source,paths)}==Some(unread.pid){return true;}
+        let remaining=deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero(){return false;}
+        std::thread::sleep(remaining.min(Duration::from_millis(80)));
+    }
 }
 
 const SUBCLASS_ID: usize = 0x5745_4348;
@@ -259,11 +321,32 @@ unsafe fn tray_overflow_button(ui:&windows::Win32::UI::Accessibility::IUIAutomat
 /// 不移动鼠标、不向微信发送内部消息、不注入、不读取内容；定位不到唯一按钮就放弃。
 /// 兼容新版 Win11 托盘与 Windows 10 / 早期 Win11 的旧式托盘。会阻塞几百毫秒，必须在后台线程调用。
 pub fn open_wechat_from_tray(unread:crate::app::Unread)->Result<(),String>{
+    open_wechat_from_tray_impl(unread,false)
+}
+
+fn open_wechat_from_tray_impl(unread:Unread,shortcut_sent:bool)->Result<(),String>{
     use windows::{core::Interface,Win32::{Foundation::RECT,System::Com::*,UI::{Accessibility::*,HiDpi::*}}};
     let mut log=TrayLog::new(unread);
     if unread.source!=crate::app::Messenger::Wechat {return Err(log.fail("T1","不是微信提醒"));}
     let paths=client_paths(unread.source);
     unsafe {
+        let confirmed=|pid:u32,log:&mut TrayLog|{
+            let account_unread=Unread{pid,..unread};
+            if wait_for_wechat_foreground(account_unread,&paths,Duration::from_secs(2)){return Ok(());}
+            Err(log.fail("T5","未确认目标账号的主窗口已到前台"))
+        };
+        // 超时后快捷键仍可能生效。提前接管已经显示的主窗，避免再按一次微信托盘按钮。
+        let finish_shortcut=|log:&mut TrayLog|{
+            if !shortcut_sent{return None;}
+            if foreground_main_pid(unread.source,&paths)!=Some(unread.pid){
+                let window=visible_wechat_window(unread,&paths,true)?;
+                if IsIconic(window).as_bool(){let _=ShowWindowAsync(window,SW_RESTORE);}
+                let _=SetForegroundWindow(window);
+            }
+            wake_step("托盘回退期间发现目标账号的主窗口已显示");
+            Some(confirmed(unread.pid,log))
+        };
+        if let Some(result)=finish_shortcut(&mut log){return result;}
         let _=SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let _=CoInitializeEx(None,COINIT_MULTITHREADED);
         let Some(account)=tray_account(unread.pid,&paths,&mut log) else {return Err(log.fail("T1","未找到该账号的微信托盘窗口"));};
@@ -325,13 +408,6 @@ pub fn open_wechat_from_tray(unread:crate::app::Unread)->Result<(),String>{
         };
         let still_over_icon=|button:&IUIAutomationElement,host:HWND,id:u32|
             tray_rect(host,id).zip(button.CurrentBoundingRectangle().ok()).is_some_and(|(r,b)|button_sized(r,b));
-        let confirmed=|pid:u32,log:&mut TrayLog|{
-            for _ in 0..25{
-                if foreground_main_pid(unread.source,&paths)==Some(pid){return Ok(());}
-                std::thread::sleep(Duration::from_millis(80));
-            }
-            Err(log.fail("T5","未确认目标账号的主窗口已到前台"))
-        };
         // 新版 Win11 与旧式（Windows 10 / 早期 Win11）的折叠区窗口。
         let overflow_open=||[w!("TopLevelWindowForOverflowXamlIsland"),w!("NotifyIconOverflowWindow")].into_iter()
             .find_map(|class|FindWindowW(class,PCWSTR::null()).ok().filter(|h|IsWindowVisible(*h).as_bool()));
@@ -339,6 +415,7 @@ pub fn open_wechat_from_tray(unread:crate::app::Unread)->Result<(),String>{
         // 任务栏自动隐藏时缩在屏幕外，无障碍树里没有托盘按钮：先让它弹出来（与鼠标移到屏幕边缘相同），
         // 微信切到前台后任务栏会自己缩回去。
         if taskbar_autohide() {
+            if let Some(result)=finish_shortcut(&mut log){return result;}
             let before=window_rect(taskbar);
             let shown=reveal_taskbar(&ui,taskbar);
             log.step(format!("任务栏自动隐藏：弹出前 {} → 弹出后 {}（{}）",show_rect(before),show_rect(window_rect(taskbar)),if shown{"已完整显示"}else{"未能完整显示"}));
@@ -379,6 +456,7 @@ pub fn open_wechat_from_tray(unread:crate::app::Unread)->Result<(),String>{
             let mut opened=None;
             if target.is_none() && overflow_open().is_none(){
                 let chevron=tray_overflow_button(&ui,taskbar);
+                if let Some(result)=finish_shortcut(&mut log){return result;}
                 if let Some(button)=chevron.filter(|b|invoke(b)){
                     opened=Some(button);
                     for _ in 0..12{
@@ -393,6 +471,10 @@ pub fn open_wechat_from_tray(unread:crate::app::Unread)->Result<(),String>{
                     }
                 }
             }
+            if let Some(result)=finish_shortcut(&mut log){
+                if overflow_open().is_some(){if let Some(button)=opened{let _=invoke(&button);}}
+                return result;
+            }
             let pressed=target.as_ref().is_some_and(invoke);
             if !pressed{
                 if overflow_open().is_some(){if let Some(button)=opened{let _=invoke(&button);}}
@@ -405,14 +487,18 @@ pub fn open_wechat_from_tray(unread:crate::app::Unread)->Result<(),String>{
         let was_open=overflow_open().is_some();
         if let Some(overflow)=overflow_open(){
             if let Some(button)=button_at(overflow,icon,&mut log){
-                if !still_over_icon(&button,host,id) || !invoke(&button){return Err(log.fail("T5","折叠区图标已变化，请重试"));}
+                if !still_over_icon(&button,host,id){return Err(log.fail("T5","折叠区图标已变化，请重试"));}
+                if let Some(result)=finish_shortcut(&mut log){return result;}
+                if !invoke(&button){return Err(log.fail("T5","折叠区图标已变化，请重试"));}
                 return confirmed(account.pid,&mut log);
             }
         }
         let chevron:IUIAutomationElement;
         let from_chevron:bool;
         if let Some(button)=button_on_shell(taskbar,icon,&mut log) {
-            if !still_over_icon(&button,host,id) || !invoke(&button){return Err(log.fail("T5","任务栏按钮已变化或无法按下"));}
+            if !still_over_icon(&button,host,id){return Err(log.fail("T5","任务栏按钮已变化或无法按下"));}
+            if let Some(result)=finish_shortcut(&mut log){return result;}
+            if !invoke(&button){return Err(log.fail("T5","任务栏按钮已变化或无法按下"));}
             std::thread::sleep(Duration::from_millis(250));
             // 按下后折叠区展开了：说明图标收在折叠区，命中的是「显示隐藏的图标」（新版 Win11 会报告这个位置）。
             if overflow_open().is_none() {return confirmed(account.pid,&mut log);}
@@ -422,6 +508,7 @@ pub fn open_wechat_from_tray(unread:crate::app::Unread)->Result<(),String>{
             // 图标可能仍报告收起时的位置；两种识别路径都通过系统折叠按钮展开后重新定位。
             let Some(element)=tray_overflow_button(&ui,taskbar) else {return Err(log.fail("T3","任务栏上找不到微信托盘按钮或隐藏图标按钮"));};
             log.step(format!("任务栏上未命中；折叠按钮：{}",describe_element(&element)));
+            if let Some(result)=finish_shortcut(&mut log){return result;}
             if !was_open && !invoke(&element){return Err(log.fail("T5","折叠按钮无法按下"));}
             chevron=element;from_chevron=false;
         }
@@ -434,12 +521,19 @@ pub fn open_wechat_from_tray(unread:crate::app::Unread)->Result<(),String>{
             let Some(inside)=tray_rect(host,id).filter(|r|!from_chevron || !rect_center_inside(*r,icon)) else {continue};
             if let Some(button)=button_at(overflow,inside,&mut log){
                 log.step(format!("折叠区 {} 图标位置：{}",class_name(overflow),show_rect(inside)));
-                if still_over_icon(&button,host,id) && invoke(&button){pressed=true;break;}
+                if still_over_icon(&button,host,id){
+                    if let Some(result)=finish_shortcut(&mut log){
+                        if !was_open && overflow_open().is_some(){let _=invoke(&chevron);}
+                        return result;
+                    }
+                    if invoke(&button){pressed=true;break;}
+                }
             }
         }
         if pressed {return confirmed(account.pid,&mut log);}
         // 没按成：把展开的折叠区收回去，不留在屏幕上。
         if !was_open && overflow_open().is_some(){let _=invoke(&chevron);}
+        if let Some(result)=finish_shortcut(&mut log){return result;}
         Err(log.fail(if started.elapsed()>=Duration::from_millis(1500){"T4"}else{"T5"},"折叠区里找不到或按不下微信托盘按钮"))
     }
 }
@@ -662,6 +756,30 @@ mod tests {
         }
     }}
     use crate::messenger::windows::open_unread_with_paths;
+    #[test]
+    fn wechat_shortcut_requires_one_tray_window_owned_by_the_notified_account(){
+        use crate::app::Messenger;
+        let unread=Unread{source:Messenger::Wechat,pid:10,window:0};
+        let host=(10,HWND::default());
+        let other=(20,HWND::default());
+        assert!(single_shortcut_account(unread,&[host]));
+        assert!(!single_shortcut_account(unread,&[]));
+        assert!(!single_shortcut_account(unread,&[other]));
+        assert!(!single_shortcut_account(unread,&[host,other]));
+        assert!(!single_shortcut_account(unread,&[host,host]));
+        assert!(!single_shortcut_account(Unread::of(Messenger::Wechat),&[host]));
+        assert!(!single_shortcut_account(Unread{source:Messenger::Qq,..unread},&[host]));
+    }
+    #[test]
+    fn wechat_shortcut_presses_the_combination_and_releases_it_in_reverse(){
+        use windows::Win32::UI::Input::KeyboardAndMouse::*;
+        let key=VIRTUAL_KEY(u16::from(b'W'));
+        let events=shortcut_inputs(WechatWakeShortcut{modifiers:WechatWakeShortcut::CTRL|WechatWakeShortcut::ALT,key:key.0});
+        let events:Vec<_>=events.iter().map(|event|unsafe{(event.Anonymous.ki.wVk,event.Anonymous.ki.dwFlags)}).collect();
+        let down=KEYBD_EVENT_FLAGS(0);
+        let up=KEYEVENTF_KEYUP;
+        assert_eq!(events,[(VK_CONTROL,down),(VK_MENU,down),(key,down),(key,up),(VK_MENU,up),(VK_CONTROL,up)]);
+    }
     #[test]
     fn clicking_wechat_flash_never_shows_hidden_helper(){let _windows=crate::test_locks::native_windows();unsafe{
         let window=CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!(""),WS_POPUP,0,0,0,0,None,None,None,None).unwrap();

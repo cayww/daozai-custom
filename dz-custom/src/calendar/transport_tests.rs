@@ -114,7 +114,8 @@ mod tls {
         for (kind, expected) in [("valid", None), ("expired", Some("certificate_validity")), ("hostname", Some("certificate_name"))] {
             let (base, worker) = server(kind);
             let cfg = Config { provider: Provider::Custom, username: "synthetic".into(), href: None, server: Some(base.clone()) };
-            let result = discover_calendars(&trusted_client(), &cfg, "synthetic-password");
+            let agent = trusted_client();
+            let result = discover_calendars(&mut DavClient::new(&agent, &cfg, "synthetic-password").unwrap());
             let received = worker.join().unwrap();
             if let Some(expected) = expected {
                 let failure = result.unwrap_err();

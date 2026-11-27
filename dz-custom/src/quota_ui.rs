@@ -184,24 +184,29 @@ fn deepseek_badge(c:&Card,skin:crate::model::Skin,x:f32,y:f32,size:f32){
         c.painter.image(texture.id(),egui::Rect::from_min_size(min,egui::Vec2::splat(pixels as f32/ppp)),egui::Rect::from_min_max(egui::Pos2::ZERO,egui::pos2(1.0,1.0)),Color32::WHITE);
     }
 }
-fn ring(c:&Card,a:&Account,snapshot:Option<&Snapshot>,x:f32,y:f32,size:f32,colors:[Color32;2]){
-    let windows=snapshot.map(Snapshot::rings).unwrap_or_default();let dual=windows.len()>1;
+fn quota_rings(c:&Card,x:f32,y:f32,size:f32,colors:[Color32;2],remaining:impl ExactSizeIterator<Item=f32>){
+    let dual=remaining.len()>1;
     let stroke=if dual{if size<35.0{2.2}else{6.5}}else{(size*0.102).clamp(3.0,6.5)};
     let radius=size/2.0-stroke/2.0-1.0;
     let gap=if size<35.0{1.5}else{3.0};
     let start=-std::f32::consts::FRAC_PI_2;
-    for i in 0..if dual{2}else{1}{
+    for (i,value) in remaining.take(2).enumerate(){
         let r=radius-i as f32*(stroke+gap);
-        if let Some(w)=windows.get(i){
-            let col=colors[i];let dark=crate::paint::mix(col,Color32::BLACK,0.8);
-            if w.remaining>=100.0{c.ring(x,y,r,stroke,col);}else if w.remaining<=0.0{c.ring(x,y,r,stroke,dark);}else{
-                let end=start+std::f32::consts::TAU*w.remaining/100.0;
-                c.arc(x,y,r,end,start+std::f32::consts::TAU,stroke,dark);
-                c.arc(x,y,r,start,end,stroke,col);
-                for angle in [start,end]{c.circle(x+r*angle.cos(),y+r*angle.sin(),stroke/2.0,col);}
-            }
+        let col=colors[i];let dark=crate::paint::mix(col,Color32::BLACK,0.8);
+        if value>=100.0||value<=0.0{
+            let color=if value>=100.0{col}else{dark};
+            if dual{c.ring_centered(x,y,r,stroke,color);}else{c.ring(x,y,r,stroke,color);}
+        }else{
+            let end=start+std::f32::consts::TAU*value/100.0;
+            c.arc(x,y,r,end,start+std::f32::consts::TAU,stroke,dark);
+            c.arc(x,y,r,start,end,stroke,col);
+            for angle in [start,end]{c.circle(x+r*angle.cos(),y+r*angle.sin(),stroke/2.0,col);}
         }
     }
+}
+fn ring(c:&Card,a:&Account,snapshot:Option<&Snapshot>,x:f32,y:f32,size:f32,colors:[Color32;2]){
+    let windows=snapshot.map(Snapshot::rings).unwrap_or_default();let dual=windows.len()>1;
+    quota_rings(c,x,y,size,colors,windows.iter().map(|w|w.remaining));
     if a.provider==Provider::Kiro{logo(c,a.provider,x,y,if size<35.0{if dual{10.0}else{12.0}}else if dual{24.0}else{34.0});}
     else if a.provider==Provider::ZCode && windows.is_empty(){logo(c,a.provider,x,y,if size<35.0{size-3.0}else{size*0.72});}
     else if size<35.0 {logo(c,a.provider,x,y,if dual{10.0}else{12.0});}else if dual {logo(c,a.provider,x,y,24.0);}else if let Some(w)=windows.first(){
@@ -941,6 +946,43 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quota_double_ring_gap_stays_constant_when_one_ring_is_full_or_empty() {
+        let ctx = egui::Context::default();
+        ctx.tessellation_options_mut(|options| options.feathering = false);
+        let center = egui::pos2(50.0, 50.0);
+        let colors = [Color32::RED, Color32::GREEN];
+        for (size, expected) in [(27.0, 1.5), (70.0, 3.0)] {
+            for remaining in [[0.0, 50.0], [100.0, 50.0], [50.0, 0.0], [50.0, 100.0]] {
+                let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let card = Card::new(ui, egui::Pos2::ZERO, ui.max_rect());
+                    quota_rings(&card, center.x, center.y, size, colors, remaining.into_iter());
+                });
+                let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+                let bounds = |index: usize| {
+                    let color = colors[index];
+                    let color = if remaining[index] == 0.0 {
+                        crate::paint::mix(color, Color32::BLACK, 0.8)
+                    } else {
+                        color
+                    };
+                    primitives.iter().filter_map(|part| match &part.primitive {
+                        egui::epaint::Primitive::Mesh(mesh) => Some(&mesh.vertices),
+                        _ => None,
+                    }).flatten().filter(|vertex| {
+                        vertex.color == color && vertex.pos.x > center.x && (vertex.pos.y - center.y).abs() < 0.001
+                    }).map(|vertex| vertex.pos.x).fold(
+                        (f32::INFINITY, f32::NEG_INFINITY),
+                        |(min, max), x| (min.min(x), max.max(x)),
+                    )
+                };
+                let gap = bounds(0).0 - bounds(1).1;
+                assert!((gap - expected).abs() < 0.01, "环大小 {size}，剩余 {remaining:?}，间距 {gap}，应为 {expected}");
+            }
+        }
+    }
+
     #[test]
     fn kiro_pool_details_include_monthly_reset_and_overage_once(){
         let s=quota::parse(Provider::Kiro,&serde_json::json!({"userInfo":{"userId":"details-user"},"usageBreakdownList":[{"resourceType":"CREDIT","usageLimitWithPrecision":1000,"currentUsageWithPrecision":1080,"currentOveragesWithPrecision":80,"overageCapWithPrecision":200,"nextDateReset":1796083200_i64}],"overageConfiguration":{"overageStatus":"ENABLED"}})).unwrap();

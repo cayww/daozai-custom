@@ -8,6 +8,16 @@ pub mod compat;
 mod windows;
 #[cfg(windows)]
 mod receivers;
+#[cfg(windows)]
+pub(crate) mod halo_component;
+#[cfg(windows)]
+mod halo_worker;
+#[cfg(windows)]
+mod usb_battery;
+#[cfg(windows)]
+mod usb_battery_protocols;
+#[cfg(windows)]
+mod usb_hid;
 
 /// 识别顺序：具体型号词 → 通用名称词 → 蓝牙类别码 → 兜底名称词。
 /// 短词（pen、mic、band…）按整词匹配，避免 OpenRun 里的 pen 被认成触控笔。

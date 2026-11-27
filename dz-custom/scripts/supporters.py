@@ -170,11 +170,12 @@ def main() -> None:
         output.mkdir(parents=True, exist_ok=True)
         atomic_write(output / manifest["recent"], recent)
         atomic_write(output / manifest["wall"], wall)
+        atomic_write(output / "wall.webp", wall)
         # 最后替换清单，客户端读取旧清单时仍能访问旧图片。
         atomic_write(output / "supporters.json", (json.dumps(manifest, indent=2) + "\n").encode("utf-8"))
     except (ValueError, OSError, Image.DecompressionBombError) as error:
         parser.exit(1, f"生成失败：{error}\n")
-    print(f"已生成 {count} 位支持者的感谢墙，版本 {version}")
+    print(f"已生成 {count} 位支持者的感谢墙，版本 {version}。发布时一并提交 README 使用的 wall.webp。")
 
 
 if __name__ == "__main__":

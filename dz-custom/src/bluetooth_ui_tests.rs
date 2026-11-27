@@ -9,6 +9,15 @@ fn fixture()->Vec<Device> {
 fn receiver_fixture()->Device {
     Device{id:"usb:test".into(),name:"罗技 Bolt 接收器".into(),kind:DeviceKind::Receiver24G,..Default::default()}
 }
+
+fn powered_receiver_fixture()->Device {
+    Device{
+        name:"VXE R1 系列无线接收器".into(),
+        battery:Some(72),
+        reading:Some(BatteryReading::new(72,BatterySource::UsbReceiver,std::time::Instant::now(),Some(true))),
+        ..receiver_fixture()
+    }
+}
 fn texts(h:&H)->Vec<String> {h.shapes.iter().filter_map(|s|if let egui::Shape::Text(t)=&s.shape{Some(t.galley.text().to_string())}else{None}).collect()}
 fn open_page(h:&mut H) {h.app.show_page(BLUETOOTH_PAGE);h.hover(H::local(200.0,100.0),1.0);}
 fn set_level(d:&mut Device,level:u8) {d.battery=Some(level);d.reading.as_mut().unwrap().percent=level;}
@@ -144,7 +153,7 @@ fn wireless_receiver_shows_presence_and_stays_out_of_resident_controls() {
     h.frame(vec![]);
     assert_eq!(h.app.wireless_focus.as_deref(),Some("usb:test"));
     let labels=texts(&h);
-    for label in ["罗技 Bolt 接收器","已连接","2.4G","2.4G 接收器 · 这类接收器不提供电量"] {
+    for label in ["罗技 Bolt 接收器","已连接","2.4G","2.4G 接收器 · 电量未知"] {
         assert!(labels.iter().any(|s|s==label),"缺少 {label}");
     }
     assert!(!labels.iter().any(|s|matches!(s.as_str(),"常驻显示"|"充电状态未知"|"正在读取电量")));
@@ -162,6 +171,26 @@ fn wireless_receiver_shows_presence_and_stays_out_of_resident_controls() {
     h.frame(vec![]);
     assert!(h.app.wireless_focus.is_none());
     assert!(!texts(&h).iter().any(|s|s=="2.4G"));
+}
+
+#[test]
+fn wireless_receiver_shows_valid_battery_and_falls_back_to_unknown() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.receivers=vec![powered_receiver_fixture()];
+    open_page(&mut h);
+    assert!(texts(&h).iter().any(|s|s=="72%"));
+    h.app.wireless_focus=Some("usb:test".into());
+    h.frame(vec![]);
+    let labels=texts(&h);
+    for label in ["72%","充电中","2.4G 接收器"] {
+        assert!(labels.iter().any(|s|s==label),"缺少 {label}");
+    }
+    h.receivers[0]=receiver_fixture();
+    h.frame(vec![]);
+    let labels=texts(&h);
+    assert!(labels.iter().any(|s|s=="2.4G 接收器 · 电量未知"));
+    assert!(!labels.iter().any(|s|s=="0%"||s=="72%"));
 }
 
 #[test]
@@ -287,7 +316,8 @@ fn wireless_native_preview(){
     let Some(dest)=std::env::var_os("DAOZAI_BLUETOOTH_PREVIEW_DIR") else{return;};
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());let dest=std::path::PathBuf::from(dest);std::fs::create_dir_all(&dest).unwrap();
     for (name,skin) in [("native-dark.png",crate::model::Skin::Classic),("native-cream.png",crate::model::Skin::Cream),("native-resident.png",crate::model::Skin::Classic),("native-detail.png",crate::model::Skin::Classic),("native-detail-unknown.png",crate::model::Skin::Classic),
-            ("native-receiver-overview.png",crate::model::Skin::Classic),("native-receiver-detail.png",crate::model::Skin::Classic)]{
+            ("native-receiver-overview.png",crate::model::Skin::Classic),("native-receiver-detail.png",crate::model::Skin::Classic),
+            ("native-receiver-battery.png",crate::model::Skin::Classic)]{
         let mut h=H::new();h.app.settings.skin=skin;h.app.settings.bluetooth_notifications=false;h.bt=fixture();h.bt[2].reading.as_mut().unwrap().charging=Some(true);
         h.bt[0].kind=DeviceKind::EarbudsStemTips;h.bt[0].name="AirPods Pro".into();
         let resident=name=="native-resident.png";
@@ -295,8 +325,10 @@ fn wireless_native_preview(){
         if !resident {h.app.show_page(BLUETOOTH_PAGE);}
         if name.starts_with("native-detail") {h.app.wireless_focus=Some(h.bt[2].id.clone());}
         if name=="native-detail-unknown.png" {h.bt[2].reading.as_mut().unwrap().charging=None;}
-        if name.starts_with("native-receiver") {h.receivers.push(receiver_fixture());}
-        if name=="native-receiver-detail.png" {h.app.wireless_focus=Some(h.receivers[0].id.clone());}
+        if name.starts_with("native-receiver") {
+            h.receivers.push(if name=="native-receiver-battery.png" {powered_receiver_fixture()} else {receiver_fixture()});
+        }
+        if matches!(name,"native-receiver-detail.png"|"native-receiver-battery.png") {h.app.wireless_focus=Some(h.receivers[0].id.clone());}
         let height=if resident{50}else{210};
         let mut raster=crate::preview_raster::Raster::new(640,height);
         for frame in 0..65 {
@@ -448,6 +480,11 @@ fn wireless_compat_settings_follow_install_and_switch() {
     let events=std::sync::Arc::new(Mutex::new(Vec::new()));
     let input=events.clone();
     let switch_id=egui::Id::new(("settings-plugin-switch","daozai.wireless-receivers"));
+    let preview=std::env::var_os("DAOZAI_BLUETOOTH_PREVIEW_DIR").map(|dest|{
+        let dest=std::path::PathBuf::from(dest);
+        std::fs::create_dir_all(&dest).unwrap();
+        (dest,std::cell::RefCell::new(crate::preview_raster::Raster::new(690,920)))
+    });
     egui::Context::set_immediate_viewport_renderer(move|ctx,mut viewport|{
         let id=viewport.ids.this;
         let raw=egui::RawInput{
@@ -468,15 +505,20 @@ fn wireless_compat_settings_follow_install_and_switch() {
         h.app.settings_tab=tab;
         let _=h.ctx.run(Default::default(),|ctx|h.app.settings_ui(ctx,false));
         let (frame,switch)=output.lock().unwrap().take().unwrap();
+        if let Some((_,raster))=&preview {raster.borrow_mut().update_textures(&frame.textures_delta);}
         h.shapes=frame.shapes;
         switch
     };
-    let check=|h:&mut H,tab,expected|{
+    let check=|h:&mut H,tab,version:Option<&str>|{
         for _ in 0..3 {frame(h,tab);}
         let labels=texts(h);
-        for label in ["设备兼容","启用兼容包","无线设备兼容包 v1.0.0","反馈设备适配"] {
+        let expected=version.is_some();
+        for label in ["设备兼容","启用兼容包","反馈设备适配"] {
             assert_eq!(labels.iter().any(|s|s==label),expected,"设置页 {tab} 的 {label}");
         }
+        assert_eq!(labels.iter().find(|s|s.starts_with("无线设备兼容包 v")).map(String::as_str),
+            version,"设置页 {tab} 显示的兼容包版本");
+        assert_eq!(labels.iter().any(|s|s.starts_with("兼容接收器")),expected,"设置页 {tab} 的名单入口");
         assert!(!labels.iter().any(|s|matches!(s.as_str(),"本地插件"|"安装兼容包…"|"卸载")));
         let title=h.shapes.iter().find_map(|shape|match &shape.shape {
             egui::Shape::Text(text) if text.galley.text()=="启用兼容包"=>Some(text.visual_bounding_rect()),
@@ -489,8 +531,7 @@ fn wireless_compat_settings_follow_install_and_switch() {
         }));
         assert_eq!(has_plugin_tag,expected,"设置页 {tab} 的兼容包标题旁应有插件小标");
     };
-    let click=|h:&mut H|{
-        let pos=frame(h,wireless).expect("已安装兼容包应显示启停开关");
+    let click=|h:&mut H,pos:Pos2|{
         for pressed in [true,false] {
             *events.lock().unwrap()=vec![
                 egui::Event::PointerMoved(pos),
@@ -499,25 +540,75 @@ fn wireless_compat_settings_follow_install_and_switch() {
             frame(h,wireless);
         }
     };
-    check(&mut h,wireless,false);
+    let switch=|h:&mut H|{
+        let pos=frame(h,wireless).expect("已安装兼容包应显示启停开关");
+        click(h,pos);
+    };
+    let toggle_receivers=|h:&mut H|{
+        frame(h,wireless);
+        let pos=h.shapes.iter().find_map(|shape|match &shape.shape {
+            egui::Shape::Text(text) if text.galley.text().starts_with("兼容接收器")=>{
+                Some(text.visual_bounding_rect().center())
+            }
+            _=>None,
+        }).expect("已安装兼容包应显示名单入口");
+        click(h,pos);
+        for _ in 0..16 {frame(h,wireless);}
+    };
+    let check_receiver=|h:&H,name:&str,id:&str,visible:bool|{
+        let labels=texts(h);
+        for label in [name,id] {
+            assert_eq!(labels.iter().any(|s|s==label),visible,"接收器名单的 {label}");
+        }
+    };
+    let save_preview=|h:&H,name:&str|{
+        if let Some((dest,raster))=&preview {
+            let mut raster=raster.borrow_mut();
+            raster.buf.fill([0.10,0.10,0.11,1.0]);
+            raster.draw(&h.ctx.tessellate(h.shapes.clone(),1.0),1.0);
+            let mut bytes=vec![];
+            raster.to_rgba8(&mut bytes);
+            image::save_buffer(dest.join(name),&bytes,690,920,image::ColorType::Rgba8).unwrap();
+        }
+    };
+    check(&mut h,wireless,None);
     h.app.plugins.test_market_install_wireless_compat().unwrap();
     let store=h.app.wireless_compat_store();
     assert!(store.package().is_none(),"安装后的插件默认停用");
-    check(&mut h,wireless,true);
-    check(&mut h,0,false);
-    frame(&mut h,wireless);
-    click(&mut h);
+    check(&mut h,wireless,Some("无线设备兼容包 v1.0.0"));
+    check_receiver(&h,"罗技 Nano 接收器","046D:C542",false);
+    save_preview(&h,"wireless-compat-collapsed.png");
+    check(&mut h,0,None);
+    toggle_receivers(&mut h);
+    check_receiver(&h,"罗技 Nano 接收器","046D:C542",true);
+    assert!(texts(&h).iter().any(|s|s.contains("1 个 2.4G USB 接收器")));
+    toggle_receivers(&mut h);
+    check_receiver(&h,"罗技 Nano 接收器","046D:C542",false);
+    toggle_receivers(&mut h);
+    switch(&mut h);
     assert_eq!(store.package().unwrap().version(),"1.0.0");
     for _ in 0..16 {frame(&mut h,wireless);}
     let pos=frame(&mut h,wireless).expect("开关应仍可见");
     assert!(h.shapes.iter().any(|shape|matches!(&shape.shape,egui::Shape::Rect(rect)
         if rect.fill==egui::Color32::from_rgb(140,127,208) && rect.rect.center().distance(pos)<0.1)),
         "已启用的兼容包开关应为紫色");
-    click(&mut h);
+    switch(&mut h);
     assert!(store.package().is_none(),"停用后收回兼容数据");
-    check(&mut h,wireless,true);
+    check(&mut h,wireless,Some("无线设备兼容包 v1.0.0"));
+    check_receiver(&h,"罗技 Nano 接收器","046D:C542",true);
+    check_receiver(&h,"VXE 蜻蜓 R1 无线接收器","373B:10C9",false);
+
+    h.app.plugins.test_market_update_wireless_compat().unwrap();
+    assert!(store.package().is_none(),"更新后保留停用状态");
+    check(&mut h,wireless,Some("无线设备兼容包 v1.0.1"));
+    check_receiver(&h,"罗技 Nano 接收器","046D:C542",true);
+    check_receiver(&h,"VXE 蜻蜓 R1 无线接收器","373B:10C9",true);
+    assert!(texts(&h).iter().any(|s|s.contains("2 个 2.4G USB 接收器")));
+    save_preview(&h,"wireless-compat-expanded.png");
     h.app.plugins.test_uninstall_wireless_compat().unwrap();
-    check(&mut h,wireless,false);
+    check(&mut h,wireless,None);
+    check_receiver(&h,"罗技 Nano 接收器","046D:C542",false);
+    check_receiver(&h,"VXE 蜻蜓 R1 无线接收器","373B:10C9",false);
 }
 
 #[test]

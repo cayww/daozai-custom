@@ -790,9 +790,19 @@ pub(crate) mod net {
         // 3) 把问候交回 imap，再正常登录
         let mut client = imap::Client::new(Prefixed::new(greeting, stream));
         client.read_greeting().map_err(|e| format!("服务器问候异常：{e}"))?;
-        let session = client
+        login_session(client, &username, password)
+    }
+
+    fn login_session<S: Read + Write>(
+        client: imap::Client<S>,
+        username: &str,
+        password: &str,
+    ) -> Result<imap::Session<S>, String> {
+        let mut session = client
             .login(username, password)
             .map_err(|(e, _)| login_error(e))?;
+        // 收信以 UID 查询结果为准，IDLE 仅唤醒检查，无需保留命令附带的服务器通知。
+        session.ignore_unsolicited_responses();
         Ok(session)
     }
 
@@ -810,6 +820,55 @@ pub(crate) mod net {
         session.select("INBOX").map_err(|e| format!("无法打开收件箱：{e}"))?;
         let _ = session.logout();
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::io::{self, Cursor};
+
+        struct Wire(Cursor<Vec<u8>>);
+
+        impl Read for Wire {
+            fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+                self.0.read(output)
+            }
+        }
+
+        impl Write for Wire {
+            fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+                Ok(input.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        #[test]
+        fn repeated_imap_commands_do_not_queue_unused_server_updates() {
+            let rounds = 512;
+            let mut replies = b"a1 OK login\r\n".to_vec();
+            for round in 0..rounds {
+                let tag = 2 + round * 2;
+                write!(replies, "* 7 EXISTS\r\n* SEARCH 42\r\na{tag} OK search\r\n").unwrap();
+                let tag = tag + 1;
+                write!(replies, "* 8 EXISTS\r\n* 1 FETCH (UID 42 FLAGS (\\Seen))\r\na{tag} OK fetch\r\n").unwrap();
+            }
+
+            let client = || imap::Client::new(Wire(Cursor::new(replies.clone())));
+            let mut mail = login_session(client(), "test", "test").unwrap();
+            let mut ordinary = client().login("test", "test").ok().unwrap();
+            for session in [&mut mail, &mut ordinary] {
+                for _ in 0..rounds {
+                    assert!(session.uid_search("ALL").unwrap().contains(&42));
+                    assert_eq!(session.uid_fetch("42", "(UID FLAGS)").unwrap()[0].uid, Some(42));
+                }
+            }
+
+            assert_eq!(ordinary.unsolicited_responses.try_iter().count(), 2 * rounds);
+            assert_eq!(mail.unsolicited_responses.try_iter().count(), 0);
+        }
     }
 }
 

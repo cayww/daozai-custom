@@ -60,6 +60,17 @@ pub(crate) struct Counter {
     pub until: Option<i64>,
 }
 
+impl Counter {
+    pub(crate) fn sample(&self, second: i64) -> (f64, Option<i64>) {
+        let stop = self.until.unwrap_or(i64::MAX);
+        let elapsed = (second.clamp(self.start_at, stop) - self.start_at) as f64;
+        let value = self.per_second.mul_add(elapsed, self.start_value);
+        let next = (self.per_second != 0.0 && self.start_at < stop && second < stop)
+            .then_some(second.max(self.start_at) + 1);
+        (value, next)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Countdown {

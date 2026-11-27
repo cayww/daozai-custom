@@ -16,7 +16,7 @@ const INSTALL_PREPARE_TIMEOUT: Duration = Duration::from_secs(60);
 #[derive(Clone, Debug)]
 struct Release { version: String, notes: String, page: String, package: Option<Package> }
 #[derive(Clone, Debug)]
-struct Package { url: String, size: u64, hash: String }
+pub(crate) struct Package { pub(crate) url: String, pub(crate) size: u64, pub(crate) hash: String }
 enum Event { Checked(Result<Option<Release>, String>), Progress(f32), Ready(PathBuf), Installed, Failed(String) }
 
 #[derive(Default)]
@@ -351,21 +351,21 @@ unsafe fn update_window_region(rect: egui::Rect, scale: f32) -> windows::Win32::
     )
 }
 
-fn update_agent(proxy: Option<&str>, timeout: Duration) -> Result<ureq::Agent, String> {
+fn update_agent_builder(proxy: Option<&str>, timeout: Duration) -> Result<ureq::AgentBuilder, String> {
     // 整体 timeout 会覆盖读取超时，分别限制连接和无数据等待。
     let mut builder = ureq::AgentBuilder::new().try_proxy_from_env(false)
         .timeout_connect(Duration::from_secs(20)).timeout_read(timeout).timeout_write(timeout);
     if let Some(proxy) = proxy {
         builder = builder.proxy(ureq::Proxy::new(proxy).map_err(|_| "代理地址无效，请检查代理设置后重试")?);
     }
-    Ok(builder.build())
+    Ok(builder)
 }
 
-fn http_agent() -> Result<ureq::Agent, String> {
+pub(crate) fn http_agent_builder() -> Result<ureq::AgentBuilder, String> {
     let proxy = ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"]
         .iter().find_map(|key| std::env::var(key).ok().filter(|value| !value.trim().is_empty()))
         .or_else(crate::quota::system_proxy);
-    update_agent(proxy.as_deref(), Duration::from_secs(15))
+    update_agent_builder(proxy.as_deref(), Duration::from_secs(15))
 }
 
 fn check_error(error: ureq::Error) -> String {
@@ -384,7 +384,7 @@ fn check_error(error: ureq::Error) -> String {
 }
 
 fn check() -> Result<Option<Release>, String> {
-    let response = http_agent()?
+    let response = http_agent_builder()?.build()
         .get(API).set("User-Agent", concat!("Daozai/", env!("CARGO_PKG_VERSION")))
         .set("Accept", "application/vnd.github+json").call().map_err(check_error)?;
     let value: serde_json::Value = serde_json::from_reader(response.into_reader())
@@ -414,7 +414,7 @@ fn download(release: &Release, tx: &mpsc::Sender<Event>, cancel: &AtomicBool) ->
     let work = root.join(format!("{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
     std::fs::create_dir_all(&work).map_err(|_| "无法创建更新缓存")?;
     let result = (|| {
-        let response = http_agent()?
+        let response = http_agent_builder()?.build()
             .get(&package.url).call().map_err(|_| "连接下载服务器失败，请检查网络或代理，或使用网盘下载")?;
         if !response.get_url().starts_with("https://") { return Err("更新下载未使用安全连接".into()); }
         let mut input = response.into_reader();
@@ -430,7 +430,7 @@ fn download(release: &Release, tx: &mpsc::Sender<Event>, cancel: &AtomicBool) ->
     result
 }
 
-fn transfer(input: &mut impl Read, output: &mut impl Write, package: &Package, cancel: &AtomicBool, mut progress: impl FnMut(f32)) -> Result<(), String> {
+pub(crate) fn transfer(input: &mut impl Read, output: &mut impl Write, package: &Package, cancel: &AtomicBool, mut progress: impl FnMut(f32)) -> Result<(), String> {
     let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buffer = [0u8; 65536]; let mut total = 0u64;
     loop {
@@ -670,7 +670,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         });
-        let result = update_agent(Some(&proxy), Duration::from_millis(200)).unwrap()
+        let result = update_agent_builder(Some(&proxy), Duration::from_millis(200)).unwrap().build()
             .get("http://127.0.0.1:1/update.zip").call();
         worker.join().unwrap();
         assert_eq!(result.unwrap().into_string().unwrap(), "ok");
@@ -691,7 +691,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1200));
         });
         let start = std::time::Instant::now();
-        let result = update_agent(None, Duration::from_millis(100)).unwrap().get(&url).call();
+        let result = update_agent_builder(None, Duration::from_millis(100)).unwrap().build().get(&url).call();
         if body { assert!(result.unwrap().into_string().is_err()); }
         else { assert!(result.is_err()); }
         let elapsed = start.elapsed();

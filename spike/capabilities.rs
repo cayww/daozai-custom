@@ -64,6 +64,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         runtime: "assets",
         role: Role::Exclusive { owner: "pages" },
     },
+    Capability { name: "mail.view", runtime: "assets", role: Role::Exclusive { owner: "mail" } },
     Capability {
         name: "wireless.receivers",
         runtime: "assets",

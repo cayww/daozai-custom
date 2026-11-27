@@ -27,7 +27,7 @@ use windows::{
             Threading::{
                 CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
                 InitializeProcThreadAttributeList, UpdateProcThreadAttribute, WaitForSingleObject,
-                CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+                CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT,
                 LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
                 PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST,
                 STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
@@ -336,7 +336,8 @@ fn start(
             None,
             None,
             true,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+            // 隐藏的控制台仍可打开 CONIN$，CLI 会据此发起交互登录。
+            EXTENDED_STARTUPINFO_PRESENT | DETACHED_PROCESS | CREATE_UNICODE_ENVIRONMENT,
             Some(environment.as_ptr().cast()),
             PCWSTR(directory.as_ptr()),
             &startup.StartupInfo,
@@ -422,6 +423,49 @@ fn run(exe: &Path, arguments: &str, dir: &Path, timeout: Duration) -> Result<Out
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quota_process_has_no_console() {
+        let exe = env::current_exe().unwrap();
+        let module = module_path!().split_once("::").unwrap().1;
+        let args = format!("--exact {module}::quota_no_console_fixture --ignored");
+        let output = run(&exe, &args, exe.parent().unwrap(), Duration::from_secs(5))
+            .ok()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.code, 0, "{stdout}");
+        assert!(stdout.contains("1 passed"), "{stdout}");
+    }
+
+    #[test]
+    #[ignore = "供额度子进程测试启动"]
+    fn quota_no_console_fixture() {
+        use windows::{
+            core::w,
+            Win32::{
+                Foundation::{GENERIC_READ, GENERIC_WRITE},
+                Storage::FileSystem::{
+                    CreateFileW, GetFileType, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ,
+                    FILE_SHARE_WRITE, FILE_TYPE_PIPE, OPEN_EXISTING,
+                },
+            },
+        };
+
+        let stdin = HANDLE(io::stdin().as_raw_handle());
+        assert_eq!(unsafe { GetFileType(stdin) }, FILE_TYPE_PIPE);
+        let console_input = unsafe {
+            CreateFileW(
+                w!("CONIN$"),
+                (GENERIC_READ | GENERIC_WRITE).0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAGS_AND_ATTRIBUTES(0),
+                None,
+            )
+        };
+        assert!(console_input.is_err(), "后台额度查询不应获得控制台输入");
+    }
 
     #[test]
     fn version_must_support_read_only_slash_commands() {

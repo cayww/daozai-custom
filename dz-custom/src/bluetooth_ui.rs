@@ -26,7 +26,7 @@ const FLOW:f64=1.8;
 const ENTER:f32=0.9;
 const STAGGER:f32=0.07;
 const LINKED:&str="已连接";
-const RECEIVER_NOTE:&str="2.4G 接收器 · 这类接收器不提供电量";
+const RECEIVER_NOTE:&str="2.4G 接收器 · 电量未知";
 const NO_BATTERY_NOTE:&str="设备没有提供电量";
 /// 连上后这么久还没有电量读数，就当作设备不提供电量。新连接会立即读一次，读数通常几秒内到。
 const READ_GRACE:f64=15.0;
@@ -35,6 +35,9 @@ fn charge_state(device:&Device,fx:Option<&WirelessFx>)->Option<bool> {
     let now=Instant::now();
     if device.stale_at(now) {return None;}
     device.reading.as_ref().and_then(|r|r.charging).or_else(|| {
+        let (charging, observed)=device.charging_only?;
+        (now.saturating_duration_since(observed)<=crate::bt::FRESH_FOR).then_some(charging)
+    }).or_else(|| {
         let report=fx?.last_charge?;
         (now.saturating_duration_since(report.at)<=crate::bt::FRESH_FOR).then_some(report.charging)
     })
@@ -168,8 +171,9 @@ fn ring(c:&Card,cx:f32,cy:f32,spec:&RingSpec,device:&Device,fx:Option<&WirelessF
 /// 百分比（充电时前面带闪电）。centered 时整组以 x 居中，否则从 x 左对齐。返回总宽。
 fn reading(c:&Card,x:f32,cy:f32,size:f32,device:&Device,fx:Option<&WirelessFx>,t:f64,live:bool,enter:f32,centered:bool,linked:bool)->f32 {
     if linked&&device.battery.is_none() {
-        let size=size*0.87;let tw=c.text_w(LINKED,size,W::Semibold);
-        c.centered_text(if centered {x-tw/2.0} else {x},cy,LINKED,size,W::Semibold,theme::LINK_SOFT,H::Left);
+        let label=if charging(device,fx) {"充电中"} else {LINKED};
+        let size=size*0.87;let tw=c.text_w(label,size,W::Semibold);
+        c.centered_text(if centered {x-tw/2.0} else {x},cy,label,size,W::Semibold,theme::LINK_SOFT,H::Left);
         return tw;
     }
     let col=color(device,fx);
@@ -180,7 +184,9 @@ fn reading(c:&Card,x:f32,cy:f32,size:f32,device:&Device,fx:Option<&WirelessFx>,t
             if let Some((from,at))=fx.filter(|_|live).and_then(|fx|fx.morph) {
                 let k=anim::clamp01(((t-at)/0.8) as f32);shown=from as f32+(level as f32-from as f32)*anim::ease_out_cubic(k);
             }
-            format!("{}%",(shown*anim::ease_out_cubic(enter)).round() as u8)
+            let progress=if device.kind==DeviceKind::Receiver24G {1.0} else {anim::ease_out_cubic(enter)};
+            let marker=if device.reading.as_ref().is_some_and(|reading| reading.approximate) {"≈"} else {""};
+            format!("{marker}{}%",(shown*progress).round() as u8)
         }
     };
     let weight=if device.battery.is_some()&&!stale(device) {W::Bold} else {W::Semibold};
@@ -205,13 +211,13 @@ fn reading_age(device:&Device)->Option<String> {
     let reading=device.reading.as_ref()?;
     let secs=match reading.source {
         BatterySource::Windows=>reading.observed.saturating_duration_since(reading.value_since).as_secs(),
-        BatterySource::Gatt=>reading.observed.elapsed().as_secs(),
+        BatterySource::Gatt|BatterySource::UsbReceiver=>reading.observed.elapsed().as_secs(),
     };
     let age=duration_text(secs);
     Some(match reading.source {
         BatterySource::Windows if secs==0=>"刚读到".into(),
         BatterySource::Windows=>format!("读数已保持 {age}"),
-        BatterySource::Gatt=>format!("{age}前读取"),
+        BatterySource::Gatt|BatterySource::UsbReceiver=>format!("{age}前读取"),
     })
 }
 
@@ -369,7 +375,7 @@ impl App {
         for (index,device) in shown.iter().enumerate() {
             let x=start+index as f32*(col_w+gap);let cx=x+col_w/2.0;
             let linked=self.wireless_linked(device);
-            let details=if device.kind==DeviceKind::Receiver24G {format!("{}\n{RECEIVER_NOTE}",device.name)}
+            let details=if device.kind==DeviceKind::Receiver24G&&device.reading.is_none() {format!("{}\n{RECEIVER_NOTE}",device.name)}
                 else if linked {format!("{}\n{LINKED} · {NO_BATTERY_NOTE}",device.name)} else {
                 device.reading.as_ref().map(|r|format!("{}\n{} · {}",device.name,r.source.label(),reading_age(device).unwrap_or_default())).unwrap_or_else(||format!("{}\n正在读取电量",device.name))
             };
@@ -410,7 +416,7 @@ impl App {
         ring(c,112.0,100.0,&RingSpec{r:50.0,w:6.0,icon:38.0,live:true,enter,hover:false,linked},device,fx.as_ref(),self.t);
         let x=190.0;
         c.centered_text(x,66.0,&c.fit(&device.name,15.0,W::Bold,190.0),15.0,W::Bold,theme::WHITE,H::Left);
-        if device.kind==DeviceKind::Receiver24G {
+        if device.kind==DeviceKind::Receiver24G&&device.reading.is_none() {
             reading(c,x,101.0,26.0,device,None,self.t,true,1.0,false,true);
             c.text(x,140.0,RECEIVER_NOTE,10.5,W::Regular,theme::DIM,H::Left);
             return;
@@ -427,6 +433,7 @@ impl App {
         let source=device.reading.as_ref().map_or(if linked {NO_BATTERY_NOTE} else {"正在读取电量"},|r|r.source.label());
         mx+=c.text(mx,140.0,source,10.5,W::Regular,theme::DIM,H::Left)+10.0;
         if let Some(ago)=reading_age(device) {c.text(mx,140.0,&ago,10.5,W::Regular,theme::DIM,H::Left);}
+        if device.kind==DeviceKind::Receiver24G {return;}
         let automatic=(!self.settings.bluetooth_resident_custom).then(||self.wireless_resident());
         let selected=automatic.as_ref().map_or_else(
             ||self.settings.bluetooth_pinned.contains(&device.id),

@@ -60,16 +60,11 @@ impl Binding {
         let second = now.timestamp();
         match self {
             Self::Counter { counter } => {
-                let stop = counter.until.unwrap_or(i64::MAX);
-                let elapsed = (second.clamp(counter.start_at, stop) - counter.start_at) as f64;
-                let value = counter.per_second.mul_add(elapsed, counter.start_value);
+                let (value, next_second) = counter.sample(second);
                 Sample {
                     numeric: Some(value),
                     text: format!("{value:.prec$}", prec = counter.decimals),
-                    next_second: (counter.per_second != 0.0
-                        && counter.start_at < stop
-                        && second < stop)
-                        .then_some(second.max(counter.start_at) + 1),
+                    next_second,
                 }
             }
             Self::Countdown { countdown } => {

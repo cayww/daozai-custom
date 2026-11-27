@@ -335,8 +335,8 @@ impl LocalPlugins {
                 allow_action: enabled,
                 interactive: card.live,
             };
-            live = crate::plugin_canvas_ui::draw_live_with_pet(card, id, canvas, area, theme, options, pet_sheets.clone(), |name| {
-                package.canvas_images.get(name)?.texture(ctx, name)
+            live = crate::plugin_canvas_ui::draw_live_with_pet(card, id, canvas, area, theme, options, pet_sheets.clone(), |name, pixels, fit| {
+                package.canvas_images.get(name)?.texture(ctx, name, pixels, fit)
             });
             if live.timed_out && !record.from_market {
                 let key = egui::Id::new(("plugin-canvas-budget-log", id));

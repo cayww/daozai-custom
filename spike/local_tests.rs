@@ -1266,3 +1266,68 @@ mod material_tests {
         Ok(())
     }
 }
+
+#[test]
+fn mail_view_is_code_free_scoped_and_follows_activation() -> Result<()> {
+    let root = std::env::temp_dir().join(format!("daozai-mail-view-{}-{}",
+        std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos()));
+    fs::create_dir_all(&root)?;
+    let mut host = LocalPlugins::open(root.join("installed"));
+    let make = |id: &str| -> Result<PathBuf> {
+        let dir = root.join(id);
+        fs::create_dir(&dir)?;
+        fs::write(dir.join(COVER_FILE), include_bytes!("examples/payday/cover.png"))?;
+        fs::write(dir.join("mail-view.json"), r#"{"version":1,"showUnread":true,"startDateSetting":"since"}"#)?;
+        let path = dir.join("plugin.json");
+        fs::write(&path, json!({
+            "id":id, "name":"邮箱视图", "author":"测试", "version":"1.0.0",
+            "api":1, "runtime":"assets", "entry":"mail-view.json", "cover":COVER_FILE,
+            "owner":"mail", "capabilities":["mail.view","settings"], "dataVersion":1,
+            "permissions":{}, "settings":[{
+                "key":"since","label":"日期","type":"date","default":"0001-01-01"
+            }]
+        }).to_string())?;
+        Ok(path)
+    };
+    let first = make("example.mail-first")?;
+    let second = make("example.mail-second")?;
+    let manifest: Value = serde_json::from_slice(&fs::read(&first)?)?;
+    for (key, val) in [
+        ("permissions", json!({"source.read":"https"})),
+        ("owner", json!("status")),
+        ("capabilities", json!(["mail.view","action"])),
+        ("runtime", json!("js")),
+    ] {
+        let mut test = manifest.clone();
+        test[key] = val;
+        assert!(Manifest::decode(&test.to_string()).is_err());
+    }
+    let pkg = Package::read(&first)?;
+    assert!(pkg.mail_view(&Values::new())?.start_date.is_none());
+    let view = pkg.mail_view(&Values::from([("since".into(), "2026-11-28".into())]))?;
+    assert_eq!(view.start_date, chrono::NaiveDate::from_ymd_opt(2026, 11, 28));
+    let entry = first.with_file_name("mail-view.json");
+    let original = fs::read(&entry)?;
+    for raw in [
+        r#"{"version":1,"showUnread":true,"command":"readAll"}"#,
+        r#"{"version":1,"showUnread":true,"startDateSetting":"not-declared"}"#,
+        r#"{"version":2,"showUnread":true}"#,
+    ] {
+        fs::write(&entry, raw)?;
+        assert!(Package::read(&first).is_err());
+    }
+    fs::write(&entry, original)?;
+    host.install(&first)?;
+    host.install(&second)?;
+    host.enable("example.mail-first", true)?;
+    assert_eq!(host.active_mail_view().unwrap().0, "example.mail-first");
+    assert!(host.enable("example.mail-second", true).is_err());
+    host.enable("example.mail-first", false)?;
+    assert!(host.active_mail_view().is_none());
+    host.enable("example.mail-second", true)?;
+    assert_eq!(host.active_mail_view().unwrap().0, "example.mail-second");
+    host.uninstall("example.mail-second", false)?;
+    assert!(host.active_mail_view().is_none());
+    fs::remove_dir_all(root)?;
+    Ok(())
+}

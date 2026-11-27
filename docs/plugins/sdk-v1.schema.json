@@ -82,6 +82,7 @@
         "status",
         "notifications",
         "weather",
+        "mail",
         "wireless"
       ]
     },
@@ -102,6 +103,7 @@
           "appearance.skin",
           "appearance.material",
           "navigation.shortcuts",
+          "mail.view",
           "wireless.receivers",
           "storage",
           "timer",
@@ -952,7 +954,7 @@
     {
       "if": {"properties": {"runtime": {"const": "assets"}}},
       "then": {"properties": {"capabilities": {"contains": {
-        "enum": ["appearance.skin", "appearance.pet", "appearance.icon", "appearance.font", "navigation.shortcuts", "wireless.receivers"]
+        "enum": ["appearance.skin", "appearance.pet", "appearance.icon", "appearance.font", "navigation.shortcuts", "mail.view", "wireless.receivers"]
       }}}}
     },
     {
@@ -974,6 +976,24 @@
           "settings": {"maxItems": 0}
         },
         "not": {"anyOf": [{"required": ["assets"]}, {"required": ["actions"]}]}
+      }
+    },
+    {
+      "if": {"anyOf": [
+        {"properties": {"owner": {"const": "mail"}}},
+        {"properties": {"capabilities": {"contains": {"const": "mail.view"}}}}
+      ]},
+      "then": {
+        "required": ["entry", "settings"],
+        "properties": {
+          "runtime": {"const": "assets"},
+          "owner": {"const": "mail"},
+          "entry": {"const": "mail-view.json"},
+          "capabilities": {"contains": {"const": "mail.view"}, "items": {"enum": ["mail.view", "settings"]}},
+          "dataVersion": {"const": 1},
+          "refreshSeconds": {"const": 60},
+          "permissions": {"maxProperties": 0}
+        }
       }
     },
     {

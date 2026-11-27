@@ -70,6 +70,29 @@ fn text_y(h: &H, label: &str) -> f32 {
         .unwrap_or_else(|| panic!("未绘制：{label}"))
 }
 
+fn render_settings(h: &mut H, size: egui::Vec2, events: Vec<egui::Event>) -> egui::FullOutput {
+    h.ctx.set_embed_viewports(false);
+    h.t += 1.0 / 60.0;
+    let time = Some(h.t);
+    let output = std::sync::Arc::new(Mutex::new(None));
+    let capture = output.clone();
+    egui::Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+        let id = viewport.ids.this;
+        let raw = egui::RawInput {
+            viewport_id: id,
+            time,
+            events: events.clone(),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+            viewports: [(id, egui::ViewportInfo { native_pixels_per_point: Some(1.0), ..Default::default() })].into_iter().collect(),
+            ..Default::default()
+        };
+        *capture.lock().unwrap() = Some(ctx.run(raw, |ctx| (viewport.viewport_ui_cb)(ctx)));
+    });
+    let _ = h.ctx.run(egui::RawInput { time, ..Default::default() }, |ctx| h.app.settings_ui(ctx, false));
+    let result = output.lock().unwrap().take().unwrap();
+    result
+}
+
 #[test]
 fn plugin_settings_pages_gear_routes_by_id_and_sidebar_fits() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
@@ -117,26 +140,20 @@ fn plugin_settings_pages_gear_routes_by_id_and_sidebar_fits() {
     assert_eq!(h.app.settings_plugin.as_deref(), Some(standalone[1].0));
     assert_eq!(h.app.settings_tab, crate::extras::SETTINGS_TAB_PLUGIN_DETAIL);
 
-    let render_settings = |h: &mut H, size: egui::Vec2| {
-        h.ctx.set_embed_viewports(false);
-        h.t += 1.0 / 60.0;
-        let time = Some(h.t);
-        let output = std::sync::Arc::new(Mutex::new(None));
-        let capture = output.clone();
-        egui::Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
-            let id = viewport.ids.this;
-            let raw = egui::RawInput {
-                viewport_id: id,
-                time,
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
-                viewports: [(id, egui::ViewportInfo { native_pixels_per_point: Some(1.0), ..Default::default() })].into_iter().collect(),
-                ..Default::default()
-            };
-            *capture.lock().unwrap() = Some(ctx.run(raw, |ctx| (viewport.viewport_ui_cb)(ctx)));
-        });
-        let _ = h.ctx.run(egui::RawInput { time, ..Default::default() }, |ctx| h.app.settings_ui(ctx, false));
-        let result = output.lock().unwrap().take().unwrap();
-        result
+    let render_settings = |h: &mut H, size| {
+        let _ = render_settings(h, size, vec![
+            egui::Event::PointerMoved(egui::pos2(80.0, 220.0)),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -800.0),
+                modifiers: Default::default(),
+            },
+        ]);
+        // 插件可以排在侧栏末尾，窄窗口中应能滚动到所有入口。
+        for _ in 0..12 {
+            let _ = render_settings(h, size, vec![]);
+        }
+        render_settings(h, size, vec![])
     };
     let visible_rows = |output: &egui::FullOutput, label: &str, sidebar: bool| {
         let mut rows: Vec<_> = output.shapes.iter().filter_map(|clipped| match &clipped.shape {
@@ -180,6 +197,15 @@ fn plugin_settings_pages_gear_routes_by_id_and_sidebar_fits() {
     assert!(visible(&output, standalone[1].1, true));
     assert!(visible(&output, "金价测试专用参数", false));
 
+    h.app.plugins.set_status_page_display(standalone[1].0, false, true).unwrap();
+    h.app.set_page_settings_hidden(crate::app::MUSIC_PAGE, true);
+    let hidden = render_settings(&mut h, size);
+    assert!(!visible(&hidden, standalone[1].1, true));
+    assert!(visible(&hidden, name, true), "隐藏音乐后，其他插件入口仍应显示");
+    assert!(visible(&hidden, "金价测试专用参数", false), "从插件管理仍可直达插件设置");
+    h.app.plugins.set_status_page_enabled(standalone[1].0, true).unwrap();
+    assert!(visible(&render_settings(&mut h, size), standalone[1].1, true));
+
     h.app.show_status_page(id);
     assert!(h.app.page >= crate::app::PAGE_NAMES.len());
     h.app.open_plugin_settings(id);
@@ -203,6 +229,157 @@ fn plugin_settings_pages_gear_routes_by_id_and_sidebar_fits() {
     open_from_island(&mut h, task.0);
     assert!(h.app.settings_plugin.is_none());
     assert_eq!(h.app.settings_tab, crate::app::PAGE_SETTINGS_TABS[crate::app::TODO_PAGE]);
+}
+
+#[test]
+fn plugin_page_order_drag_persists_across_restart_and_visibility() {
+    use crate::app::{FOCUS_PAGE, MUSIC_PAGE, PAGE_NAMES};
+
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let mut h = H::new();
+    let profile = crate::model::config_dir();
+    let (id, name) = ("test.page-order", "排序插件");
+    install(&mut h, &profile, id, name, &json!({"state":"idle","label":name}));
+    h.app.plugins = crate::sdk_spike::local::LocalPlugins::open(profile.join("local-plugins"));
+    h.app.plugins.enable(id, true).unwrap();
+    h.app.settings_tab = crate::extras::SETTINGS_TAB_PAGES;
+    h.app.open_settings();
+
+    let size = egui::vec2(690.0, 1500.0);
+    for _ in 0..2 {
+        render_settings(&mut h, size, vec![]);
+    }
+    let position = |output: &egui::FullOutput, label: &str| {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => {
+                let point = text.visual_bounding_rect().left_center();
+                (text.galley.text() == label && point.x > 180.0
+                    && shape.clip_rect.contains(point)).then_some(point)
+            }
+            _ => None,
+        }).unwrap_or_else(|| panic!("未显示页面管理条目：{label}"))
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let sidebar_y = |output: &egui::FullOutput, label: &str| {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => {
+                let rect = text.visual_bounding_rect();
+                (text.galley.text() == label && rect.right() < 180.0
+                    && shape.clip_rect.contains_rect(rect)).then_some(rect.center().y)
+            }
+            _ => None,
+        })
+    };
+    let assert_sidebar_sorted = |output: &egui::FullOutput| {
+        let music = sidebar_y(output, "音乐").expect("左栏应显示音乐");
+        let plugin = sidebar_y(output, name).expect("左栏应显示已启用的插件");
+        let focus = sidebar_y(output, "专注与健康").expect("左栏应显示专注与健康");
+        assert!(music < plugin && plugin < focus, "左栏应与页面管理使用同一顺序");
+    };
+    let original = render_settings(&mut h, size, vec![]);
+    let music = position(&original, "播放控制与同步歌词");
+    let focus = position(&original, "番茄钟与休息计时");
+    let plugin = position(&original, name);
+    assert!(focus.y < plugin.y, "新插件默认排在内置页之后");
+    assert!(sidebar_y(&original, "无线设备").unwrap() < sidebar_y(&original, name).unwrap(),
+        "新插件的设置入口默认排在内置功能之后");
+    let from = egui::pos2(music.x - 18.0, plugin.y + 6.0);
+    render_settings(&mut h, size, vec![egui::Event::PointerMoved(from), button(from, true)]);
+    render_settings(&mut h, size, vec![egui::Event::PointerMoved(from - egui::vec2(0.0, 10.0))]);
+    render_settings(&mut h, size, vec![egui::Event::PointerMoved(focus)]);
+    let dragging = render_settings(&mut h, size, vec![]);
+    assert!(position(&dragging, name).y > focus.y, "松手前保持原顺序");
+    render_settings(&mut h, size, vec![button(focus, false)]);
+    let sorted = render_settings(&mut h, size, vec![]);
+    let plugin = position(&sorted, name);
+    assert!(position(&sorted, "播放控制与同步歌词").y < plugin.y);
+    assert!(plugin.y < position(&sorted, "番茄钟与休息计时").y);
+    assert_sidebar_sorted(&sorted);
+
+    h.app = App::new(&h.ctx, Options { fetch_lyrics: false, pet_idle: 1e9 });
+    let cursor = H::local(225.0, 80.0);
+    let next = H::local(398.0, 68.0);
+    h.app.show_page(MUSIC_PAGE);
+    h.hover(cursor, 0.75);
+    h.click(next);
+    assert_eq!(h.app.page(), PAGE_NAMES.len(), "重启后仍先切到插件页");
+    h.hover(cursor, 0.75);
+    h.click(next);
+    assert_eq!(h.app.page(), FOCUS_PAGE);
+
+    for (enabled, expected) in [(false, FOCUS_PAGE), (true, PAGE_NAMES.len())] {
+        h.app.plugins.set_status_page_enabled(id, enabled).unwrap();
+        h.app.show_page(MUSIC_PAGE);
+        h.hover(cursor, 0.75);
+        h.click(next);
+        assert_eq!(h.app.page(), expected, "插件页开关应保留其排序");
+    }
+    h.app.open_settings();
+    assert_sidebar_sorted(&render_settings(&mut h, size, vec![]));
+    h.app.plugins.set_status_page_enabled(id, false).unwrap();
+    assert_sidebar_sorted(&render_settings(&mut h, size, vec![]));
+    h.app.plugins.enable(id, false).unwrap();
+    assert!(sidebar_y(&render_settings(&mut h, size, vec![]), name).is_none());
+    h.app.plugins.enable(id, true).unwrap();
+    h.app.plugins.set_status_page_enabled(id, true).unwrap();
+    assert_sidebar_sorted(&render_settings(&mut h, size, vec![]));
+}
+
+#[test]
+fn plugin_page_management_controls_fit_one_row_at_minimum_width() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let mut h = H::new();
+    let profile = crate::model::config_dir();
+    let (id, name) = ("test.page-row", "排版");
+    install(&mut h, &profile, id, name, &json!({"state":"idle","label":name}));
+    h.app.plugins = crate::sdk_spike::local::LocalPlugins::open(profile.join("local-plugins"));
+    h.app.plugins.enable(id, true).unwrap();
+    h.app.settings.plugin_page_order.push((id.into(), 0));
+    h.app.settings_tab = crate::extras::SETTINGS_TAB_PAGES;
+    h.app.open_settings();
+
+    let size = egui::vec2(600.0, 900.0);
+    render_settings(&mut h, size, vec![]);
+    let output = render_settings(&mut h, size, vec![]);
+    let text_rect = |labels: &[&str], near_y: Option<f32>| {
+        output.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => {
+                let rect = text.visual_bounding_rect();
+                (labels.contains(&text.galley.text()) && rect.left() > 180.0
+                    && shape.clip_rect.contains_rect(rect)
+                    && near_y.is_none_or(|y| (rect.center().y - y).abs() < 26.0))
+                    .then_some(rect)
+            }
+            _ => None,
+        }).unwrap_or_else(|| panic!("页面管理没有完整显示 {labels:?}"))
+    };
+    let title = text_rect(&[name], None);
+    let open = text_rect(&["打开"], Some(title.center().y));
+    let settings = text_rect(&["设置 ›", "设置"], Some(open.center().y));
+    let switch = output.shapes.iter().find_map(|shape| match &shape.shape {
+        egui::Shape::Rect(fill) => {
+            let rect = fill.rect;
+            ((rect.size() - egui::vec2(crate::extras::SETTINGS_SWITCH_W, 20.0)).length() < 0.2 && rect.left() > title.right()
+                && (rect.center().y - open.center().y).abs() < 5.0
+                && shape.clip_rect.contains_rect(rect)).then_some(rect)
+        }
+        _ => None,
+    }).expect("插件开关应与按钮同行且完整可见");
+    assert!((settings.center().y - open.center().y).abs() < 5.0, "打开和设置应同行");
+    assert!(title.right() < open.left() && open.right() < switch.left() && switch.right() < settings.left());
+    assert!(settings.right() < size.x - 22.0, "操作控件应位于页面管理内容区内");
+    if let Some(hide) = output.shapes.iter().find_map(|shape| match &shape.shape {
+        egui::Shape::Text(text) if text.galley.text() == "关闭并隐藏" => Some(text.visual_bounding_rect()),
+        _ => None,
+    }) {
+        assert!((hide.center().y - open.center().y).abs() < 5.0, "隐藏按钮应与开关同行");
+        assert!(switch.right() < hide.left() && hide.right() < settings.left());
+    }
 }
 
 #[test]

@@ -11,6 +11,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "pinned_payroll.rs"]
+mod payroll;
+
 const ORDER_LIMIT: u64 = 64 * 1024;
 const ROTATION: Duration = Duration::from_secs(8);
 const MASKED_VALUE: &str = "••••";
@@ -220,7 +223,10 @@ pub(crate) struct PinnedDisplay {
 
 impl PinnedDisplay {
     pub(crate) fn measure_width(&mut self, ui: &eframe::egui::Ui) {
-        if let Some(slide) = &self.slide {
+        let now = chrono::Utc::now();
+        if let Some(counter) = self.payroll_counter(now) {
+            self.slide_width = Some(payroll::width(ui, counter, now));
+        } else if let Some(slide) = &self.slide {
             if slide.fit_width {
                 self.slide_width = Some(plugin_canvas_ui::pinned_content_width(ui, &slide.canvas, slide.width));
             }
@@ -244,6 +250,22 @@ impl PinnedDisplay {
         )
     }
 
+    fn payroll_counter(&self, now: chrono::DateTime<chrono::Utc>) -> Option<&crate::plugin_canvas::live::Counter> {
+        use crate::plugin_canvas::{live::Binding, Kind};
+        if self.plugin != "daozai.live-pay" {
+            return None;
+        }
+        let canvas = &self.slide.as_ref()?.canvas;
+        let Binding::Counter { counter } = canvas.binds.get("cash")? else {
+            return None;
+        };
+        (counter.decimals == 2
+            && (0.0..=10_000_000.0).contains(&counter.sample(now.timestamp()).0)
+            && canvas.nodes.iter().any(|node| {
+                node.roll && matches!(&node.kind, Kind::Text { text, .. } if text == "{cash}")
+            })).then_some(counter)
+    }
+
     pub(crate) fn draw(
         &self,
         card: &crate::paint::Card,
@@ -252,25 +274,45 @@ impl PinnedDisplay {
         width: f32,
         vertical: bool,
         theme: CanvasTheme,
-    ) -> bool {
+    ) -> (bool, Option<Duration>, bool) {
+        self.draw_at(card, x, y, width, vertical, theme, chrono::Utc::now())
+    }
+
+    fn draw_at(
+        &self,
+        card: &crate::paint::Card,
+        x: f32,
+        y: f32,
+        width: f32,
+        vertical: bool,
+        theme: CanvasTheme,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> (bool, Option<Duration>, bool) {
         use crate::{
             app,
             paint::{self, H},
             theme::{self, W},
         };
-        if width <= 0.0 { return false; }
-        let click = card.hit(x - width / 2.0, y - 11.0, width, 22.0,
+        if width <= 0.0 { return (false, None, false); }
+        let payroll = self.payroll_counter(now);
+        let height = if vertical && payroll.is_some() { 42.0 } else { 22.0 };
+        let click = card.hit(x - width / 2.0, y - height / 2.0, width, height,
             ("plugin-pinned", self.plugin.as_str())).clicked();
+        if let Some(counter) = payroll {
+            let (repaint, animating) = payroll::draw(card, x, y, width, vertical, theme, counter, now);
+            return (click, repaint, animating);
+        }
         if let Some(slide) = &self.slide {
             let natural = if slide.fit_width { self.slide_width.unwrap_or(slide.width) } else { slide.width };
             let scrolling = slide.fit_width && plugin_canvas_ui::has_pinned_text_flow(&slide.canvas.nodes);
             let canvas_width = if !vertical || scrolling { natural.min(width) } else { natural };
             let card = if vertical { card.scaled(x, y, (width / canvas_width).min(1.0)) } else { card.clone() };
             let area = card.rect(x - canvas_width / 2.0, y - 11.0, canvas_width, 22.0);
-            plugin_canvas_ui::draw_pinned(&card, &format!("{}:pinned", self.plugin), &slide.canvas, area, theme, self.elapsed, |name| {
-                self.images.get(name)?.texture(card.ui.ctx(), name)
-            });
-            return click;
+            let (repaint, animating) =
+                plugin_canvas_ui::draw_pinned(&card, &format!("{}:pinned", self.plugin), &slide.canvas, area, theme, self.elapsed, |name, pixels, fit| {
+                    self.images.get(name)?.texture(card.ui.ctx(), name, pixels, fit)
+                });
+            return (click, repaint, animating);
         }
         let icon = self.icon.map(|icon| match icon {
             PinnedIcon::Clock => app::FOCUS_PAGE,
@@ -341,7 +383,7 @@ impl PinnedDisplay {
                 H::Left,
             );
         }
-        click
+        (click, None, false)
     }
 }
 
@@ -1080,4 +1122,6 @@ mod tests {
         assert!(!has_pinned(frame(&mut app, 3.0)));
         Ok(())
     }
+
+    include!("pinned_payroll_tests.rs");
 }

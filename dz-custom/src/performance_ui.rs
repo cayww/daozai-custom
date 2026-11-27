@@ -11,7 +11,9 @@ use crate::{
     theme::W,
 };
 use eframe::egui::{self, Color32, Pos2};
+use std::collections::VecDeque;
 use std::f32::consts::{FRAC_PI_2, TAU};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 // ---------- 配色：每类硬件一种主色，次级读数（上传、写入）取主色的浅色 ----------
@@ -464,19 +466,59 @@ pub(crate) fn list_area() -> egui::Rect {
     egui::Rect::from_min_size(Pos2::new(COL_X - 6., LIST_Y + 7.), egui::vec2(RIGHT - COL_X + 18., LIST_ROWS as f32 * ROW))
 }
 
+const PROGRAM_ICON_CACHE_LIMIT: usize = 64;
+
+#[derive(Default)]
+struct ProgramIconCache {
+    recent: VecDeque<(String, egui::TextureHandle, u64)>,
+    drawn: Vec<egui::TextureHandle>,
+}
+
+fn program_icon_texture(ctx: &egui::Context, name: &str, image: &egui::ColorImage) -> egui::TextureId {
+    let mut first = false;
+    let cache = ctx.data_mut(|data| {
+        data.get_temp_mut_or_insert_with(egui::Id::new("performance-icon-cache"), || {
+            first = true;
+            Arc::new(Mutex::new(ProgramIconCache::default()))
+        }).clone()
+    });
+    if first {
+        let cache = Arc::downgrade(&cache);
+        ctx.on_begin_pass("performance-icon-cache", Arc::new(move |ctx| {
+            if ctx.viewport_id() == egui::ViewportId::ROOT {
+                if let Some(cache) = cache.upgrade() {
+                    cache.lock().unwrap().drawn.clear();
+                }
+            }
+        }));
+    }
+
+    let key = name.to_lowercase();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    let mut cache = cache.lock().unwrap();
+    let texture = if let Some(index) = cache.recent.iter().position(|(name, _, _)| name == &key) {
+        cache.recent.remove(index).unwrap().1
+    } else {
+        if cache.recent.len() == PROGRAM_ICON_CACHE_LIMIT {
+            let (_, oldest, last_pass) = cache.recent.pop_front().unwrap();
+            if last_pass == pass {
+                // 这一帧前面画过的图标仍在绘制列表里，等下一次主窗口绘制再释放。
+                cache.drawn.push(oldest);
+            }
+        }
+        ctx.load_texture(format!("performance-icon-{key}"), image.clone(), egui::TextureOptions::LINEAR)
+    };
+    let id = texture.id();
+    cache.recent.push_back((key, texture, pass));
+    id
+}
+
 /// 程序图标：有系统图标就画图标，没有就画一个带首字母的小方块。
 fn program_icon(c: &Card, x: f32, y: f32, size: f32, program: &Process, color: Color32) {
-    let ctx = c.ui.ctx();
     if let Some(image) = &program.icon {
-        let key = program.name.to_lowercase();
-        let id = egui::Id::new(("performance-icon", &key));
-        let texture = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)).unwrap_or_else(|| {
-            let texture = ctx.load_texture(format!("performance-icon-{key}"), (**image).clone(), egui::TextureOptions::LINEAR);
-            ctx.data_mut(|d| d.insert_temp(id, texture.clone()));
-            texture
-        });
+        let texture = program_icon_texture(c.ui.ctx(), &program.name, image);
         let uv = egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1., 1.));
-        c.painter.image(texture.id(), c.rect(x, y, size, size), uv, Color32::WHITE);
+        c.painter.image(texture, c.rect(x, y, size, size), uv, Color32::WHITE);
         return;
     }
     c.fill(x, y, size, size, 3., alpha(color, 0.22));
@@ -1543,6 +1585,59 @@ fn metric_chip(ui: &mut egui::Ui, label: &str, color: Color32, on: bool) -> egui
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn draw_program_icons(ctx: &egui::Context, names: &[usize]) -> egui::FullOutput {
+        let image = std::sync::Arc::new(egui::ColorImage::new([1, 1], vec![Color32::WHITE]));
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let card = Card::new(ui, Pos2::ZERO, ui.max_rect());
+            for name in names {
+                let process = Process {
+                    name: format!("App-{name}"),
+                    icon: Some(image.clone()),
+                    ..Default::default()
+                };
+                program_icon(&card, 0., 0., 13., &process, INK);
+            }
+        })
+    }
+
+    fn program_icon_textures(ctx: &egui::Context) -> std::collections::HashMap<String, egui::TextureId> {
+        ctx.tex_manager()
+            .read()
+            .allocated()
+            .filter_map(|(&id, meta)| meta.name.strip_prefix("performance-icon-").map(|name| (name.to_owned(), id)))
+            .collect()
+    }
+
+    #[test]
+    fn performance_program_icons_evict_least_recently_used_textures() {
+        let ctx = egui::Context::default();
+        for index in 0..64 {
+            draw_program_icons(&ctx, &[index]);
+        }
+        let original = program_icon_textures(&ctx);
+        assert_eq!(original.len(), 64);
+        let output = draw_program_icons(&ctx, &[0, 64]);
+        let current = program_icon_textures(&ctx);
+        assert_eq!(current.len(), 64);
+        assert_eq!(current["app-0"], original["app-0"]);
+        assert!(!current.contains_key("app-1"));
+        assert!(output.textures_delta.free.contains(&original["app-1"]));
+        assert!(current.contains_key("app-64"));
+    }
+
+    #[test]
+    fn performance_program_icons_hold_evicted_drawn_textures_until_next_pass() {
+        let ctx = egui::Context::default();
+        let names: Vec<_> = (0..65).collect();
+        let first = draw_program_icons(&ctx, &names);
+        let used = program_icon_textures(&ctx);
+        assert_eq!(used.len(), names.len());
+        assert!(!first.textures_delta.free.contains(&used["app-0"]));
+        let second = draw_program_icons(&ctx, &[]);
+        assert!(second.textures_delta.free.contains(&used["app-0"]));
+        assert_eq!(program_icon_textures(&ctx).len(), 64);
+    }
 
     /// 可用 = 缓存 + 空闲，悬停、图例和左栏三处用的是同一组数，任何读数下都对得上。
     #[test]

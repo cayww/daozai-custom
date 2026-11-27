@@ -202,6 +202,15 @@ struct Manifest {
     #[serde(default, skip_serializing_if = "is_false")]
     timezones: bool,
 }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MailViewEntry {
+    version: u32,
+    show_unread: bool,
+    start_date_setting: Option<String>,
+    aliases_setting: Option<String>,
+}
+
 fn default_refresh() -> u32 {
     60
 }
@@ -249,6 +258,8 @@ struct Record {
     market_revoked: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     status_page_disabled: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    status_page_settings_hidden: bool,
     #[serde(default, skip_serializing_if = "NoticeHistory::is_empty")]
     notice_history: NoticeHistory,
 }
@@ -313,6 +324,7 @@ impl Record {
                 && package_data::valid_snapshot(&manifest.data, &package.data)
                 && (package.canvas_images.is_empty()
                     || manifest.has_capability("status.canvas") && canvas_images::valid_snapshot(&package.canvas_images))
+                && package.validate_mail_view().is_ok()
                 && package.validate_page_shortcut_colors().is_ok()
                 && package.validate_appearance().is_ok()
                 && package.valid_font_assets()
@@ -467,6 +479,10 @@ impl Manifest {
         self.runtime == "assets" && self.id == WIRELESS_PLUGIN_ID
     }
 
+    fn is_mail_view(&self) -> bool {
+        self.runtime == "assets" && self.has_capability("mail.view")
+    }
+
     fn is_page_shortcuts(&self) -> bool {
         self.runtime == "assets" && self.capabilities.as_slice() == ["navigation.shortcuts"]
     }
@@ -513,6 +529,8 @@ impl Manifest {
     fn source_limit(&self) -> u64 {
         if self.is_material() {
             MATERIAL_SOURCE_LIMIT
+        } else if self.is_mail_view() {
+            4096
         } else if self.is_page_shortcuts() {
             PAGE_SHORTCUT_SOURCE_LIMIT
         } else if let Some(kind) = self.appearance_kind() {
@@ -625,6 +643,12 @@ impl Manifest {
                 || m.material.is_some()
             {
                 return Err(fail("外观资源包只接受一项资源能力和无权限的指定入口"));
+            }
+        } else if m.is_mail_view() {
+            if m.entry != "mail-view.json" || m.refresh_seconds != default_refresh()
+                || !m.permissions.is_empty() || m.material.is_some()
+            {
+                return Err(fail("邮箱视图只支持无权限的 mail-view.json 资源入口"));
             }
         } else if m.runtime == "assets" {
             if !m.is_page_shortcuts()
@@ -803,6 +827,7 @@ impl Package {
             page_shortcut_colors: OnceLock::new(),
             appearance: OnceLock::new(),
         };
+        package.validate_mail_view()?;
         package.validate_page_shortcut_colors()?;
         package.validate_appearance()?;
         #[cfg(windows)]
@@ -836,6 +861,55 @@ impl Package {
                 .is_ok_and(|used| font_assets::valid_snapshot(entry, &self.font_assets, used)),
             None => self.font_assets.is_empty(),
         }
+    }
+
+    fn validate_mail_view(&self) -> Result<()> {
+        if self.manifest.is_mail_view() {
+            self.mail_view(&Values::new())?;
+        }
+        Ok(())
+    }
+
+    fn mail_view(&self, values: &Values) -> Result<crate::mail_manage_ui::MailView> {
+        let layout: MailViewEntry = serde_json::from_str(&self.source)
+            .map_err(|_| fail("无效的邮箱视图入口"))?;
+        if layout.version != 1 {
+            return Err(fail("不支持的邮箱视图版本"));
+        }
+        let mut view = crate::mail_manage_ui::MailView { show_unread: layout.show_unread, ..Default::default() };
+        for (key, field_type) in [(layout.start_date_setting.as_deref(), "date"), (layout.aliases_setting.as_deref(), "list")] {
+            let Some(key) = key else { continue; };
+            let Some(field) = self.manifest.settings.iter().find(|field| field.key == key && field.kind == field_type) else {
+                return Err(fail("邮箱视图引用了不存在或类型不符的设置"));
+            };
+            let value = values.get(key).unwrap_or(&field.default);
+            if !valid_field(field, value) {
+                return Err(fail("邮箱视图设置值无效"));
+            }
+            if field_type == "date" {
+                if field.default != "0001-01-01" {
+                    return Err(fail("邮箱视图起始日期默认必须为 0001-01-01（不限日期）"));
+                }
+                view.start_date = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").ok()
+                    .filter(|date| *date > chrono::NaiveDate::from_ymd_opt(1, 1, 1).unwrap());
+            } else {
+                let valid = field.default == "[]" && field.item.as_ref().is_some_and(|items| {
+                    items.len() == 2 && ["address", "alias"].iter().all(|key| items.iter().any(|f| f.key == *key && f.kind == "text"))
+                });
+                if !valid {
+                    return Err(fail("邮箱别名必须是 address、alias 两个文本字段，且默认空列表"));
+                }
+                let rows = serde_json::from_str::<Vec<Values>>(value)?;
+                for mut row in rows {
+                    let address = row.remove("address").unwrap_or_default().trim().to_ascii_lowercase();
+                    let alias = row.remove("alias").unwrap_or_default().trim().to_owned();
+                    if !address.is_empty() && !alias.is_empty() && alias.chars().all(|c| !c.is_control()) {
+                        view.aliases.entry(address).or_insert(alias);
+                    }
+                }
+            }
+        }
+        Ok(view)
     }
 
     fn validate_page_shortcut_colors(&self) -> Result<()> {
@@ -1219,6 +1293,12 @@ impl LocalPlugins {
         self.dir.join(format!("local-{id}.json"))
     }
     fn put(&mut self, id: &str, r: Record) -> Result<()> {
+        if r.enabled && r.package.as_ref().is_some_and(|p| p.manifest.is_mail_view())
+            && self.records.iter().any(|(other, record)| other != id && record.enabled
+                && record.package.as_ref().is_some_and(|p| p.manifest.is_mail_view()))
+        {
+            return Err(fail("只能启用一个邮箱视图，请先停用当前使用的插件"));
+        }
         let shortcuts_changed = r.is_page_shortcuts()
             || self.records.get(id).is_some_and(Record::is_page_shortcuts);
         if r.enabled
@@ -1252,6 +1332,12 @@ impl LocalPlugins {
             .iter()
             .find(|(_, record)| record.enabled && record.is_page_shortcuts())
             .map(|(id, _)| id.clone());
+    }
+
+    pub(crate) fn active_mail_view(&self) -> Option<(&str, crate::mail_manage_ui::MailView)> {
+        let (id, record) = self.records.iter().find(|(_, record)| record.enabled
+            && record.package.as_ref().is_some_and(|package| package.manifest.is_mail_view()))?;
+        Some((id.as_str(), record.package.as_ref()?.mail_view(&record.values).ok()?))
     }
 
     pub(crate) fn active_page_shortcut_colors(&self) -> Option<&BTreeMap<String, [u8; 3]>> {
@@ -1417,6 +1503,7 @@ impl LocalPlugins {
             #[cfg(windows)]
             market_revoked: false,
             status_page_disabled: false,
+            status_page_settings_hidden: false,
             notice_history: NoticeHistory::default(),
         };
         if let Some(old) = self.records.get(&id) {
@@ -1468,17 +1555,32 @@ impl LocalPlugins {
     }
 
     pub(crate) fn set_status_page_enabled(&mut self, id: &str, on: bool) -> Result<()> {
+        self.set_status_page_display(id, on, false)
+    }
+
+    pub(crate) fn set_status_page_display(&mut self, id: &str, on: bool, hide_settings: bool) -> Result<()> {
         let mut record = self.installed(id)?;
         if !record.package.as_ref().unwrap().manifest.is_status_page() {
             return Err(fail("此插件没有独立状态页"));
         }
         let disabled = !on;
-        if record.status_page_disabled != disabled {
+        let settings_hidden = disabled && hide_settings;
+        let runtime_changed = record.status_page_disabled != disabled;
+        if runtime_changed || record.status_page_settings_hidden != settings_hidden {
             record.status_page_disabled = disabled;
+            record.status_page_settings_hidden = settings_hidden;
             self.put(id, record)?;
-            self.forget_view(id);
+            if runtime_changed {
+                self.forget_view(id);
+            }
         }
         Ok(())
+    }
+
+    pub(crate) fn status_page_settings_hidden(&self, id: &str) -> bool {
+        self.records.get(id).is_some_and(|record| {
+            record.status_page_disabled && record.status_page_settings_hidden
+        })
     }
 
     #[cfg(windows)]
@@ -1587,6 +1689,7 @@ impl LocalPlugins {
             r.material_granted = false;
             r.source_grant = None;
             r.status_page_disabled = false;
+            r.status_page_settings_hidden = false;
             self.put(id, r)?
         } else {
             self.forget_appearance(id)?;

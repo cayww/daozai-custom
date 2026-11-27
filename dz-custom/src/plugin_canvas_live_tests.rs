@@ -65,7 +65,7 @@ fn frame(
                             allow_action: true,
                             interactive: true,
                         },
-                        |_| None,
+                        |_, _, _| None,
                     );
                 });
         },
@@ -276,7 +276,7 @@ fn plugin_canvas_host_pet_uses_installed_sheet_and_sleep_stays_idle() {
                                 interactive: false,
                             },
                             Some(Arc::clone(&sheets)),
-                            |_| None,
+                            |_, _, _| None,
                         );
                     });
             },

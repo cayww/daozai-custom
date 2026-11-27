@@ -15,7 +15,7 @@ try {
     $env:CARGO_ENCODED_RUSTFLAGS = @('-C', 'target-feature=+crt-static', "--remap-path-prefix=$cargoHome=cargo", "--remap-path-prefix=$rustupHome=rustup", "--remap-path-prefix=$projectRoot=daozai", '-C', 'link-arg=/PDBALTPATH:%_PDB%') -join [char]0x1f
     if ($env:CARGO_TARGET_DIR) { $env:CARGO_ENCODED_RUSTFLAGS += [string][char]0x1f + "--remap-path-prefix=$targetDirectory=target" }
     if (-not $SkipBuild) {
-        $env:CARGO_BUILD_JOBS = '1'
+        if (-not $env:CARGO_BUILD_JOBS) { $env:CARGO_BUILD_JOBS = '2' }
         # QuickJS 的 C 断言使用宽字符源文件名，MSVC 要单独去掉构建目录前缀。
         $originalCL = $env:CL
         $originalTestBuild = $env:DAOZAI_TEST_BUILD

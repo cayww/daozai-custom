@@ -190,6 +190,7 @@ mod archive {
                 _ => false,
             };
             let valid_feature = match key {
+                "wechat_wake_method" => matches!(value, "tray" | "shortcut"),
                 "notifications"
                 | "wechat_notifications"
                 | "wechat_tray_open"

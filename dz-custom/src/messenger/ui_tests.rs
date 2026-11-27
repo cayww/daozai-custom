@@ -38,6 +38,99 @@ fn office_settings_are_independent_default_off_and_survive_restart(){
     for client in Messenger::OFFICE{h.app.receive_messenger_reminder(Unread::of(client));}
     assert!(h.app.pending_messengers.is_empty());
 }
+#[cfg(feature = "__upstream_tests_off__")]
+#[test]
+fn wechat_wake_settings_switch_modes_and_validate_the_shortcut() {
+    use crate::model::{Settings, WechatWakeMethod};
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut h = H::new();
+    h.app.settings.wechat_notifications = true;
+    h.app.open_settings();
+    h.app.settings_tab = 6;
+    h.ctx.set_embed_viewports(false);
+    let draw = |h: &mut H, events: Vec<egui::Event>| {
+        h.t += 0.1;
+        let time = h.t;
+        let output = std::sync::Arc::new(Mutex::new(None));
+        let capture = output.clone();
+        egui::Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            let id = viewport.ids.this;
+            let input = egui::RawInput {
+                viewport_id: id, time: Some(time), focused: true, events: events.clone(),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 1200.0))),
+                viewports: std::iter::once((id, egui::ViewportInfo{native_pixels_per_point: Some(1.0), ..Default::default()})).collect(),
+                ..Default::default()
+            };
+            *capture.lock().unwrap() = Some(ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui)));
+        });
+        let _ = h.ctx.run_ui(Default::default(), |ui| h.app.settings_ui(ui.ctx(), false));
+        h.shapes = output.lock().unwrap().take().unwrap().shapes;
+    };
+    let text_position = |h: &H, label: &str| h.shapes.iter().find_map(|shape| match &shape.shape {
+        egui::Shape::Text(text) if text.galley.text() == label && shape.clip_rect.contains_rect(text.visual_bounding_rect()) =>
+            Some(text.visual_bounding_rect().center()),
+        _ => None,
+    });
+    let click_at = |h: &mut H, pos| {
+        for pressed in [true, false] {
+            draw(h, vec![egui::Event::PointerMoved(pos), egui::Event::PointerButton{
+                pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default(),
+            }]);
+        }
+        draw(h, vec![]);
+    };
+
+    let click = |h: &mut H, label: &str| {
+        let pos = text_position(h, label).unwrap_or_else(|| panic!("控件缺失或被裁切：{label}"));
+        click_at(h, pos);
+    };
+    let toggle_tray = |h: &mut H| {
+        let title = text_position(h, "托盘一键唤起").expect("原托盘开关应当保留");
+        let pos = h.shapes.iter().find_map(|shape| match &shape.shape {
+            egui::Shape::Rect(rect) if rect.rect.size() == egui::vec2(34.0, 20.0)
+                && (rect.rect.center().y - title.y).abs() < 15.0 => Some(rect.rect.center()),
+            _ => None,
+        }).expect("托盘开关应与标题在同一行");
+        click_at(h, pos);
+    };
+
+    for _ in 0..3 { draw(&mut h, vec![]); }
+    assert!(!h.app.settings.wechat_tray_open);
+    assert_eq!(h.app.settings.wechat_wake_method, WechatWakeMethod::Tray);
+    assert!(text_position(&h, "系统托盘").is_none());
+    assert!(text_position(&h, "快捷键优先").is_none());
+    toggle_tray(&mut h);
+    assert!(h.app.settings.wechat_tray_open);
+    assert!(text_position(&h, "系统托盘").is_some());
+    assert!(text_position(&h, "例如 Ctrl+Alt+W").is_none());
+    click(&mut h, "快捷键优先");
+    assert_eq!(h.app.settings.wechat_wake_method, WechatWakeMethod::Shortcut);
+    assert!(text_position(&h, "适合微信单开且缩进托盘。点击提醒时模拟一次按键，未能唤起时改用系统托盘。").is_some());
+    click(&mut h, "例如 Ctrl+Alt+W");
+    let invalid_hint = "当前使用系统托盘。组合键需用 Ctrl、Alt 或 Shift 搭配字母、数字或 F1–F12。";
+    draw(&mut h, vec![egui::Event::Text("Ctrl+".into())]);
+    assert!(text_position(&h, invalid_hint).is_some());
+    draw(&mut h, vec![egui::Event::Text("Alt+W".into())]);
+    assert!(text_position(&h, invalid_hint).is_none());
+    let saved = Settings::load();
+    assert!(saved.wechat_tray_open);
+    assert_eq!(saved.wechat_wake_method, WechatWakeMethod::Shortcut);
+    assert_eq!(saved.wechat_wake_shortcut, "Ctrl+Alt+W");
+    click(&mut h, "系统托盘");
+    assert_eq!(h.app.settings.wechat_wake_method, WechatWakeMethod::Tray);
+    click(&mut h, "快捷键优先");
+    assert!(text_position(&h, "Ctrl+Alt+W").is_some());
+
+    toggle_tray(&mut h);
+    assert!(!h.app.settings.wechat_tray_open);
+    assert!(text_position(&h, "快捷键优先").is_none());
+    assert!(text_position(&h, "Ctrl+Alt+W").is_none());
+    toggle_tray(&mut h);
+    assert!(text_position(&h, "Ctrl+Alt+W").is_some());
+    assert_eq!(h.app.settings.wechat_wake_method, WechatWakeMethod::Shortcut);
+}
+
+
 #[test]
 fn office_reminders_keep_instances_separate_and_unknown_accounts_require_explicit_dismissal(){
     let _guard=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());

@@ -190,9 +190,15 @@ pub(crate) fn draw(
     canvas: &Arc<Canvas>,
     area: Rect,
     theme: CanvasTheme,
-    image: impl FnMut(&str) -> Option<(egui::TextureId, Vec2)>,
+    image: impl FnMut(&str, Vec2, Fit) -> Option<(egui::TextureId, Vec2)>,
 ) -> bool {
-    draw_canvas(c, id, canvas, area, theme, None, image)
+    let result = draw_canvas(c, id, canvas, area, theme, None, image);
+    if let Some(delay) = result.repaint_after {
+        let dt = c.ui.input(|input| input.predicted_dt).max(0.0);
+        c.ui.ctx()
+            .request_repaint_after(delay + Duration::from_secs_f32(dt));
+    }
+    result.timed_out
 }
 
 /// 常驻内容沿用画布原字号，点击由常驻位处理。
@@ -203,9 +209,10 @@ pub(crate) fn draw_pinned(
     area: Rect,
     theme: CanvasTheme,
     elapsed: Duration,
-    image: impl FnMut(&str) -> Option<(egui::TextureId, Vec2)>,
-) -> bool {
-    draw_canvas(c, id, canvas, area, theme, Some(elapsed), image)
+    image: impl FnMut(&str, Vec2, Fit) -> Option<(egui::TextureId, Vec2)>,
+) -> (Option<Duration>, bool) {
+    let result = draw_canvas(c, id, canvas, area, theme, Some(elapsed), image);
+    (result.repaint_after, result.animating)
 }
 
 fn draw_canvas(
@@ -215,21 +222,15 @@ fn draw_canvas(
     area: Rect,
     theme: CanvasTheme,
     pinned_elapsed: Option<Duration>,
-    image: impl FnMut(&str) -> Option<(egui::TextureId, Vec2)>,
-) -> bool {
+    image: impl FnMut(&str, Vec2, Fit) -> Option<(egui::TextureId, Vec2)>,
+) -> LiveResult {
     let options = LiveOptions {
         now: chrono::Utc::now(),
         revision: 0,
         allow_action: false,
         interactive: false,
     };
-    let result = motion::draw_live_frame(c, id, canvas, area, theme, options, None, pinned_elapsed, image);
-    if let Some(delay) = result.repaint_after {
-        let dt = c.ui.input(|input| input.predicted_dt).max(0.0);
-        c.ui.ctx()
-            .request_repaint_after(delay + Duration::from_secs_f32(dt));
-    }
-    result.timed_out
+    motion::draw_live_frame(c, id, canvas, area, theme, options, None, pinned_elapsed, image)
 }
 
 pub(crate) fn has_pinned_text_flow(nodes: &[Node]) -> bool {
@@ -258,7 +259,7 @@ fn draw_static(
     area: Rect,
     theme: CanvasTheme,
     pets: &mut pet::DrawPets<'_>,
-    mut image: impl FnMut(&str) -> Option<(egui::TextureId, Vec2)>,
+    mut image: impl FnMut(&str, Vec2, Fit) -> Option<(egui::TextureId, Vec2)>,
 ) -> bool {
     let ctx = c.ui.ctx();
     let pixels = ctx.pixels_per_point();
@@ -362,13 +363,14 @@ impl Scene {
         deadline: Option<Instant>,
         theme: CanvasTheme,
         pets: &mut pet::DrawPets<'_>,
-        mut image: impl FnMut(&str) -> Option<(egui::TextureId, Vec2)>,
+        mut image: impl FnMut(&str, Vec2, Fit) -> Option<(egui::TextureId, Vec2)>,
     ) -> bool {
         enum PaintItem<'a> {
             Shape(Shape),
             Pet(&'a pet::Placement),
         }
         let mut shapes = Vec::with_capacity(self.items.len());
+        let pixels_per_point = c.ui.ctx().pixels_per_point();
         for (local_clip, item) in &self.items {
             let clip = local_clip.translate(offset).intersect(area);
             if !clip.is_positive() {
@@ -406,7 +408,14 @@ impl Scene {
                     color,
                     clip: group_clip,
                 } => {
-                    if let Some((id, size)) = image(name) {
+                    let bounds = rect.rotate_bb(egui::emath::Rot2::from_angle(transform.angle))
+                        * transform.scale;
+                    let bounds = bounds.translate(transform.pos(Pos2::ZERO).to_vec2() + offset);
+                    if !bounds.intersect(clip).is_positive() {
+                        continue;
+                    }
+                    let pixels = rect.size() * (transform.scale * pixels_per_point);
+                    if let Some((id, size)) = image(name, pixels, *fit) {
                         let mut mesh = image_mesh(id, size, *rect, *transform, fit, *color);
                         if group_clip.mesh(&mut mesh, |point| point, deadline).is_none() {
                             return false;
@@ -948,7 +957,7 @@ mod tests {
                 |ctx| {
                     egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
                         let card = Card::new(ui, Pos2::ZERO, area);
-                        assert_eq!(draw(&card, "first-frame", &canvas, area, fallback, |_| {
+                        assert_eq!(draw(&card, "first-frame", &canvas, area, fallback, |_, _, _| {
                             std::thread::sleep(FRAME_BUDGET + Duration::from_millis(1));
                             Some((texture.id(), texture.size_vec2()))
                         }), expected);
@@ -1031,7 +1040,7 @@ mod tests {
                         &canvas,
                         card.rect(16.0, 42.0, 387.0, canvas.height),
                         theme,
-                        |name| (name == "badge.svg").then(|| (texture.id(), texture.size_vec2())),
+                        |name, _, _| (name == "badge.svg").then(|| (texture.id(), texture.size_vec2())),
                     )
                 };
                 let mut found = false;

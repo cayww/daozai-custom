@@ -2,7 +2,10 @@
 use super::market_state::MarketStatus;
 use super::*;
 use crate::{
-    extras::{settings_apply_style, settings_card, settings_control_row, settings_hint, settings_label},
+    extras::{
+        page_visibility_action, settings_apply_style, settings_card, settings_control_row,
+        settings_hint, settings_label, PAGE_VISIBILITY_ACTION_WIDTH, SETTINGS_SWITCH_W,
+    },
     paint::{self, Card, H},
     settings_theme::color,
     theme::{self, W},
@@ -408,7 +411,12 @@ const PLUGIN_SWITCH_WIDTH: f32 = 38.0;
 
 /// 插件开关统一用紫色表示开启、灰色表示关闭。
 fn plugin_switch(ui: &mut egui::Ui, id: &str, on: bool, label: &str) -> bool {
-    let (_, rect) = ui.allocate_space(egui::vec2(PLUGIN_SWITCH_WIDTH, 22.0));
+    plugin_switch_sized(ui, id, on, label, egui::vec2(PLUGIN_SWITCH_WIDTH, 22.0))
+}
+
+fn plugin_switch_sized(ui: &mut egui::Ui, id: &str, on: bool, label: &str, size: egui::Vec2) -> bool {
+    let (_, rect) = ui.allocate_space(size);
+    let radius = size.y / 2.0;
     let response = ui.interact(
         rect,
         egui::Id::new(("settings-plugin-switch", id)),
@@ -425,18 +433,18 @@ fn plugin_switch(ui: &mut egui::Ui, id: &str, on: bool, label: &str) -> bool {
         Color32::from_rgb(203, 207, 214),
     );
     ui.painter()
-        .rect_filled(rect, 11.0, paint::mix(off, plugin_accent(ui), t));
+        .rect_filled(rect, radius, paint::mix(off, plugin_accent(ui), t));
     if response.has_focus() {
         ui.painter().rect_stroke(
             rect.expand(2.0),
-            13.0,
+            radius + 2.0,
             egui::Stroke::new(1.0, plugin_accent(ui)),
             egui::StrokeKind::Outside,
         );
     }
-    let x = egui::lerp((rect.left() + 11.0)..=(rect.right() - 11.0), t);
+    let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
     ui.painter()
-        .circle_filled(egui::pos2(x, rect.center().y), 8.0, Color32::WHITE);
+        .circle_filled(egui::pos2(x, rect.center().y), radius - 3.0, Color32::WHITE);
     response.on_hover_text(label).clicked()
 }
 
@@ -592,7 +600,7 @@ fn developer_link(ui: &mut egui::Ui) -> bool {
 }
 
 /// 设置归属在界面上的名字，顺序与设置侧栏一致。
-const OWNERS: [(&str, &str); 7] = [
+const OWNERS: [(&str, &str); 8] = [
     ("appearance", "外观"),
     ("pages", "页面管理"),
     ("status", "独立功能"),
@@ -600,6 +608,7 @@ const OWNERS: [(&str, &str); 7] = [
     ("tasks", "待办与置物"),
     ("quota", "AI 额度"),
     ("wireless", "无线设备"),
+    ("mail", "邮箱"),
 ];
 
 fn owner_label(owner: &str) -> Option<&'static str> {
@@ -613,6 +622,7 @@ fn owner_settings_tab(owner: &str) -> usize {
     match owner {
         "calendar" => crate::app::PAGE_SETTINGS_TABS[crate::app::CALENDAR_PAGE],
         "quota" => crate::app::PAGE_SETTINGS_TABS[crate::app::QUOTA_PAGE],
+        "mail" => crate::app::PAGE_SETTINGS_TABS[crate::app::MAIL_PAGE],
         "pages" | "status" => crate::extras::SETTINGS_TAB_PAGES,
         "wireless" => crate::extras::SETTINGS_TAB_WIRELESS,
         "appearance" => crate::extras::SETTINGS_TAB_APPEARANCE,
@@ -747,26 +757,46 @@ fn material_error(ui: &mut egui::Ui) {
 }
 
 impl LocalPlugins {
-    pub(crate) fn page_shortcut_settings(&self, ui: &mut egui::Ui, show: &mut bool) -> bool {
+    pub(crate) fn page_shortcut_settings(&self, ui: &mut egui::Ui, show: &mut bool, hide_arrows: &mut bool) -> bool {
         if self.active_page_shortcut_colors().is_none() {
             return false;
         }
-        if plugin_setting_switch_row(
+        let display_changed = plugin_setting_switch_row(
             ui,
             "page-shortcuts-display",
             "快捷切换图标",
             "在岛仔展开后的底部与页码点同排显示",
             *show,
             true,
-        ) {
+        );
+        if display_changed {
             *show = !*show;
+        }
+        ui.separator();
+        let arrows_changed = plugin_setting_switch_row(
+            ui,
+            "page-shortcuts-hide-arrows",
+            "隐藏左右翻页箭头",
+            "显示快捷切换图标时生效",
+            *hide_arrows,
+            true,
+        );
+        if arrows_changed {
+            *hide_arrows = !*hide_arrows;
+        }
+        if display_changed || arrows_changed {
             ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
         }
         true
     }
 
     #[cfg(windows)]
-    pub(crate) fn wireless_settings(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn wireless_settings(
+        &mut self,
+        ui: &mut egui::Ui,
+        enhancement: &crate::bt::halo_component::Component,
+        wireless_on: bool,
+    ) {
         let Some(record) = self
             .records
             .get(WIRELESS_PLUGIN_ID)
@@ -780,24 +810,87 @@ impl LocalPlugins {
         let enabled = record.enabled;
         let version = format!("{} v{}", package.manifest.name, package.manifest.version);
         let error_id = ui.id().with("wireless-compat-enable-error");
+        let mut toggle = false;
+        let mut enhancement_toggle = false;
+        let mut enhancement_update = false;
+        let component = enhancement.status();
+        let can_start = enabled && wireless_on;
 
         crate::extras::settings_label(ui, "设备兼容");
         settings_card(ui, |ui| {
-            if plugin_setting_switch_row(ui, WIRELESS_PLUGIN_ID, "启用兼容包", &version, enabled, true) {
-                let error = self
-                    .enable(WIRELESS_PLUGIN_ID, !enabled)
-                    .err()
-                    .map(|error| error.to_string());
-                if error.is_none() {
-                    ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
-                }
-                ui.data_mut(|data| data.insert_temp(error_id, error));
+            toggle = plugin_setting_switch_row(
+                ui, WIRELESS_PLUGIN_ID, "启用兼容包", &version, enabled, true,
+            );
+            ui.add_enabled_ui(can_start || component.enabled, |ui| {
+                enhancement_toggle = plugin_setting_switch_row(
+                    ui, "wireless-battery-component", "电量增强",
+                    if component.busy { "正在准备 HaloBattery 采集组件…" }
+                    else if component.installed { "HaloBattery 采集组件已就绪" }
+                    else { "首次开启时单独下载 HaloBattery 采集组件" },
+                    component.enabled, true,
+                );
+            });
+            if let Some(error) = &component.error {
+                settings_hint(ui, error);
             }
+            if can_start && component.enabled && !component.busy {
+                enhancement_update = ui.small_button(
+                    if component.installed { "检查组件更新" } else { "重试下载" }
+                ).clicked();
+            }
+            egui::CollapsingHeader::new(egui::RichText::new("兼容接收器").size(12.5))
+                .id_salt("wireless-compat-receivers")
+                .show(ui, |ui| {
+                    let Ok(table) = package.wireless_table() else {
+                        settings_hint(ui, "无法读取兼容接收器名单");
+                        return;
+                    };
+                    let receivers = table.receivers();
+                    settings_hint(
+                        ui,
+                        &format!("此包补充识别 {} 个 2.4G USB 接收器，可按 USB ID 核对。", receivers.len()),
+                    );
+                    egui::Grid::new("wireless-compat-receiver-list")
+                        .num_columns(2)
+                        .min_row_height(18.0)
+                        .max_col_width((ui.available_width() - 90.0).max(100.0))
+                        .spacing([16.0, 6.0])
+                        .show(ui, |ui| {
+                            for ((vid, pid), name) in receivers {
+                                ui.add(egui::Label::new(egui::RichText::new(name).size(12.5)).wrap());
+                                settings_hint(ui, &format!("{vid:04X}:{pid:04X}"));
+                                ui.end_row();
+                            }
+                        });
+                });
             ui.hyperlink_to("反馈设备适配", WIRELESS_FEEDBACK_URL);
             if let Some(error) = ui.data(|data| data.get_temp::<Option<String>>(error_id).flatten()) {
                 settings_hint(ui, &error);
             }
         });
+        if toggle {
+            let error = self
+                .enable(WIRELESS_PLUGIN_ID, !enabled)
+                .err()
+                .map(|error| error.to_string());
+            if error.is_none() {
+                ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
+            }
+            ui.data_mut(|data| data.insert_temp(error_id, error));
+            ui.ctx().request_repaint();
+        }
+        if enhancement_toggle || enhancement_update {
+            let ctx = ui.ctx().clone();
+            let wake = move || ctx.request_repaint();
+            if enhancement_toggle {
+                if let Err(error) = enhancement.set_enabled(!component.enabled, wake) {
+                    ui.data_mut(|data| data.insert_temp(error_id, Some(error)));
+                }
+            } else {
+                enhancement.check_update(wake);
+            }
+            ui.ctx().request_repaint();
+        }
     }
 
     pub fn card(&mut self, c: &Card) -> bool {
@@ -1137,7 +1230,7 @@ impl LocalPlugins {
             "calendar" => calendar_on,
             "quota" => quota_on,
             "status" => !r.status_page_disabled,
-            "pages" | "wireless" | "appearance" => true,
+            "pages" | "wireless" | "appearance" | "mail" => true,
             _ => tasks_on,
         };
         let has_settings = manifest.has_settings() || manifest.has_surface(Surface::IslandPinned);
@@ -1998,77 +2091,79 @@ impl LocalPlugins {
         self.source_dialog(ui);
     }
 
-    pub(crate) fn status_page_settings(&mut self, ui: &mut egui::Ui) -> Option<SettingsNavigation> {
-        let mut preferences = self.status_page_preferences()
-            .filter(|(_, _, enabled, _)| *enabled)
-            .peekable();
-        preferences.peek()?;
-
-        ui.add_space(12.0);
-        group_header(ui, "插件页面", "");
-        let mut change = None;
-        let mut navigation = None;
-        plugin_list(ui, |ui| {
-            for (index, (id, name, _, page_on)) in preferences.enumerate() {
-                if index > 0 {
-                    row_separator(ui);
-                }
-                let manifest = &self.records[id].package.as_ref().unwrap().manifest;
-                let status_only = manifest.owner == "status";
-                let configurable = standalone_settings_page(manifest) || (!status_only
-                    && (manifest.has_settings() || manifest.has_surface(Surface::IslandPinned)));
-                let description = if status_only {
-                    "关闭后暂停这个插件的数据读取"
-                } else {
-                    "控制这个功能页在岛上显示"
+    pub(crate) fn status_page_settings(&mut self, ui: &mut egui::Ui, id: &str) -> Option<SettingsNavigation> {
+        let (_, name, _, page_on) = self.status_page_preferences()
+            .find(|(plugin, _, enabled, _)| *plugin == id && *enabled)?;
+        let name = name.to_owned();
+        let manifest = &self.records[id].package.as_ref().unwrap().manifest;
+        let status_only = manifest.owner == "status";
+        let standalone = standalone_settings_page(manifest);
+        let configurable = standalone || (!status_only
+            && (manifest.has_settings() || manifest.has_surface(Surface::IslandPinned)));
+        let hidden = self.status_page_settings_hidden(id);
+        let description = if status_only {
+            "关闭后隐藏功能页并暂停后台"
+        } else {
+            "控制这个功能页在岛上显示"
+        };
+        ui.vertical(|ui| {
+            let (switched, visibility_changed, jumped, settings) = ui.horizontal(|ui| {
+                let open_width = 42.0;
+                let settings_width = 58.0;
+                let text_width = ui.available_width() - open_width - SETTINGS_SWITCH_W - PAGE_VISIBILITY_ACTION_WIDTH - settings_width
+                    - 4.0 * ui.spacing().item_spacing.x;
+                let action = |ui: &mut egui::Ui, label: &str, width: f32, shown: bool| {
+                    if !shown {
+                        ui.allocate_space(egui::vec2(width, 26.0));
+                        return false;
+                    }
+                    ui.add_sized([width, 26.0], egui::Button::new(egui::RichText::new(label).size(12.0)).frame(false)).clicked()
                 };
-                let row = ui.push_id(("status-page-preference", id), |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(text_width.max(0.0));
+                    ui.spacing_mut().item_spacing.y = 2.0;
                     ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.set_max_width((ui.available_width() - 144.0).max(70.0));
-                            ui.horizontal(|ui| {
-                                ui.scope(|ui| {
-                                    ui.set_max_width((ui.available_width() - 44.0).max(20.0));
-                                    ui.add(egui::Label::new(name).truncate()).on_hover_text(name);
-                                });
-                                plugin_tag(ui);
-                            });
-                            settings_hint(ui, description);
+                        ui.scope(|ui| {
+                            let badge_width = if standalone { 0.0 } else { 44.0 };
+                            ui.set_max_width((ui.available_width() - badge_width).max(0.0));
+                            let title = egui::RichText::new(name.as_str()).size(13.0)
+                                .color(color(ui.ctx(), Color32::WHITE, Color32::from_rgb(30, 34, 41)));
+                            ui.add(egui::Label::new(title).truncate()).on_hover_text(name.as_str());
                         });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let switched = plugin_switch(ui, id, page_on, name);
-                            let settings = configurable && ui.button("设置").clicked();
-                            let jumped = page_on && ui.button("打开").clicked();
-                            (switched, jumped, settings)
-                        })
-                        .inner
-                    })
-                    .inner
+                        if !standalone { plugin_tag(ui); }
+                    });
+                    let hint = egui::RichText::new(description).size(11.5)
+                        .color(color(ui.ctx(), Color32::from_gray(185), Color32::from_gray(82)));
+                    ui.add(egui::Label::new(hint).truncate()).on_hover_text(description);
                 });
-                if row.inner.0 {
-                    change = Some((id.to_owned(), !page_on));
-                }
-                if row.inner.1 {
-                    navigation = Some(SettingsNavigation::OpenStatus(id.to_owned()));
-                }
-                if row.inner.2 {
-                    navigation = Some(SettingsNavigation::Plugin(id.to_owned()));
-                }
+                let jumped = action(ui, "打开", open_width, page_on);
+                let switched = plugin_switch_sized(ui, id, page_on, &name, egui::vec2(SETTINGS_SWITCH_W, 20.0));
+                let visibility_changed = if standalone {
+                    page_visibility_action(ui, page_on, hidden, true)
+                } else {
+                    ui.allocate_space(egui::vec2(PAGE_VISIBILITY_ACTION_WIDTH, 26.0));
+                    false
+                };
+                let settings = action(ui, "设置 ›", settings_width, configurable);
+                (switched, visibility_changed, jumped, settings)
+            }).inner;
+            let change = if switched { Some((!page_on, false)) }
+                else if visibility_changed { Some((false, !hidden)) }
+                else { None };
+            let error_id = ui.make_persistent_id(("status-page-preference-error", id));
+            if let Some((on, hidden)) = change {
+                let error = self.set_status_page_display(id, on, hidden)
+                    .err().map(|e| e.to_string()).unwrap_or_default();
+                ui.data_mut(|data| data.insert_temp(error_id, error));
+                ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
             }
-        });
-        let error_id = ui.make_persistent_id("status-page-preference-error");
-        if let Some((id, on)) = change {
-            let error = self.set_status_page_enabled(&id, on)
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_default();
-            ui.data_mut(|data| data.insert_temp(error_id, error));
-            ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
-        }
-        if let Some(error) = ui.data(|data| data.get_temp::<String>(error_id)).filter(|s| !s.is_empty()) {
-            settings_hint(ui, &error);
-        }
-        navigation
+            if let Some(error) = ui.data(|data| data.get_temp::<String>(error_id)).filter(|s| !s.is_empty()) {
+                settings_hint(ui, &error);
+            }
+            if settings { Some(SettingsNavigation::Plugin(id.to_owned())) }
+            else if jumped { Some(SettingsNavigation::OpenStatus(id.to_owned())) }
+            else { None }
+        }).inner
     }
 
     /// 插件设置显示在所属设置页，标题旁带「插件」小标。从「已安装」点路径过来时，

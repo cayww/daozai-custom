@@ -26,6 +26,8 @@ pub(crate) const TOAST_SECS: f32 = 6.0;
 const WORKSET_IDLE: f64 = 20.0;
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(feature="sdk-js")]
+use std::time::Duration;
 
 // ---------- 几何（逻辑点；原版 125% 截图 ÷ 1.25） ----------
 pub const PW: f32 = 419.0; // 展开面板宽
@@ -664,6 +666,8 @@ pub struct FrameOut {
     pub hit: Rect,
     /// 切到较矮页面时旧页边缘临时保留的续滚范围，不参与绘制/点击命中。
     /// 极简细条只感应悬停，点击交给下层窗口（命中区清零由 main.rs 消费）。
+    /// 光标停在原触发区的岛外部分时，由原生监视线程检测移动。
+    pub watch_outside_hover: bool,
     pub click_through: bool,
     /// 极简收起态细条的精确矩形，供原生层在深休眠下按细条范围唤醒（不用覆盖整窗的 GetWindowRgnBox）。
     pub strip_rect: Option<Rect>,
@@ -1013,7 +1017,33 @@ const CENTER_SWEEP: f64 = 0.55;
 /// 已居中的提示色（绿）：岛体描边、外发光和扫光统一用它，颜色本身就是「对准了」。
 const CENTER_TINT: (f32, f32, f32) = (88.0, 222.0, 140.0);
 
+#[cfg(feature="sdk-js")]
+#[derive(Default)]
+pub(crate) struct PinnedFrame {
+    repaint_after: Option<Duration>,
+    animating: bool,
+}
+
+#[cfg(feature="sdk-js")]
+impl PinnedFrame {
+    pub(crate) fn include(&mut self, repaint_after: Option<Duration>, animating: bool) {
+        let repaint_after = if animating {
+            repaint_after.map(|delay| delay.max(Duration::from_nanos(33_333_334)))
+        } else {
+            repaint_after
+        };
+        self.repaint_after = self.repaint_after.into_iter().chain(repaint_after).min();
+        self.animating |= animating;
+    }
+}
+
 pub struct App {
+    #[cfg(windows)]
+    pub(crate) wireless_enhancement: crate::bt::halo_component::Component,
+    #[cfg(feature="sdk-js")]
+    pub(crate) pinned_frame: PinnedFrame,
+    #[cfg(feature="sdk-js")]
+    pinned_was_animating: bool,
     pub opts: Options,
     pub settings: model::Settings,
     /// 本次运行实际使用兼容渲染（Direct3D 12）；设置里的开关与它不同时提示重启。
@@ -1028,6 +1058,8 @@ pub struct App {
     pub(crate) open: bool,
     hover_since: Option<f64>,
     leave_since: Option<f64>,
+    /// 本次展开前的悬停范围，以画布中心为原点。
+    hover_open_area: Option<Rect>,
     /// 前台切换导致的强制收起：光标离开前不再自动展开。
     pub hover_lock: bool,
     pub(crate) reveal: f32,
@@ -1085,6 +1117,7 @@ pub struct App {
 
     // 拖入
     pub(crate) drag_hot: bool,
+    pub(crate) drag_departing: bool,
     pub(crate) drag_a: f32,
     drag_saved: Option<usize>,
 
@@ -1445,11 +1478,23 @@ impl App {
         let (bw, bh) = if settings.minimal { (BAR_W_MIN, BAR_H_MIN) } else { (BAR_W, BAR_H) };
         let focus_seconds=settings.focus_minutes as f32*60.0;
         let initial_lyrics=settings.lyrics_enabled;
-        let initial_page=settings.page_order.iter().copied().find(|page|settings.visible_pages[*page]).unwrap_or(0);
+        #[cfg(feature="sdk-js")]
+        let plugins = crate::local_plugins::LocalPlugins::open(model::config_dir().join("local-plugins"));
+        #[cfg(feature="sdk-js")]
+        let status_pages: Vec<_> = plugins.status_pages().map(|(id, name)| (id.to_owned(), name.to_owned())).collect();
+        #[cfg(not(feature="sdk-js"))]
+        let status_pages = [];
+        let initial_page = Self::visible_navigation_pages(&settings, &status_pages).next().unwrap_or(MUSIC_PAGE);
         let weather_source=crate::weather_source_ui::State::load();
         let mut weather=crate::weather::State::load(&settings.weather_city,settings.weather_position.as_ref());
         if weather_source.displayed==crate::weather_source_ui::Provider::Qweather {weather.snapshot=weather_source.runtime.snapshot();}
         Self {
+            #[cfg(windows)]
+            wireless_enhancement: crate::bt::halo_component::Component::load(model::config_dir().join("wireless-battery")),
+            #[cfg(feature="sdk-js")]
+            pinned_frame: PinnedFrame::default(),
+            #[cfg(feature="sdk-js")]
+            pinned_was_animating: false,
             opts,
             render_compat_running: settings.render_compat,
             settings,
@@ -1464,6 +1509,7 @@ impl App {
             open: false,
             hover_since: None,
             leave_since: None,
+            hover_open_area: None,
             hover_lock: false,
             reveal: 0.0,
             position_drag: None,
@@ -1482,7 +1528,7 @@ impl App {
             page_from_offset: 0.0,
             page_from_elapsed: PAGE_TURN_DURATION,
             #[cfg(feature="sdk-js")]
-            status_pages: Vec::new(),
+            status_pages,
             #[cfg(feature="sdk-js")]
             plugin_canvas_frame: None,
             #[cfg(feature="sdk-js")]
@@ -1504,6 +1550,7 @@ impl App {
             wheel_at: -1.0,
             wheel_page_at: -1.0,
             drag_hot: false,
+            drag_departing: false,
             drag_a: 0.0,
             drag_saved: None,
             shelf_scroll: Spring::new(0.0, 300.0, 0.9),
@@ -2258,9 +2305,10 @@ impl App {
     #[cfg(windows)]
     pub fn wireless_compat_store(&self) -> crate::bt::compat::Store {
         #[cfg(feature="sdk-js")]
-        { self.plugins.wireless_store() }
+        let store = self.plugins.wireless_store();
         #[cfg(not(feature="sdk-js"))]
-        { crate::bt::compat::Store::default() }
+        let store = crate::bt::compat::Store::default();
+        store.with_component(self.wireless_enhancement.clone())
     }
 
     /// 当前激活的 D3D11 材质包（方案 B；不依赖已退役的 sdk-material/wgpu 栈）。
@@ -2372,6 +2420,27 @@ impl App {
     }
     /// 当前是否为插件状态页（页码排在内置页之后）。
     pub(crate) fn is_plugin_status_page(&self) -> bool { self.page >= PAGE_NAMES.len() }
+    /// 旧版设置页里「新邮件提醒」「开启 AI 额度」与页面管理的模块开关是两层开关。
+    /// 合并后只保留模块开关：旧的内部开关关着时，迁移为模块关闭，内部开关恢复为开。
+    /// 只剩这一个页面、模块关不掉时保持原样，不改变已有行为。
+    pub fn migrate_merged_switches(&mut self){
+        let mut settings_changed=false;
+        if !self.settings.mail_enabled {
+            self.set_page_visible(MAIL_PAGE,false);
+            if !self.settings.visible_pages[MAIL_PAGE] {self.settings.mail_enabled=true;settings_changed=true;}
+        }
+        if !self.quota.config.enabled {
+            self.set_page_visible(QUOTA_PAGE,false);
+            if !self.settings.visible_pages[QUOTA_PAGE] {self.quota.config.enabled=true;self.quota.config.save();settings_changed=true;}
+        }
+        if settings_changed {self.settings.save();}
+    }
+
+
+    pub(crate) fn set_page_settings_hidden(&mut self,page:usize,hidden:bool) {
+        if hidden && self.module_on(page) {self.set_page_visible(page,false);}
+        self.settings.hidden_settings_pages[page]=hidden && !self.module_on(page);
+    }
 
     fn status_page_count(&self) -> usize {
         #[cfg(feature="sdk-js")]
@@ -2382,9 +2451,24 @@ impl App {
 
     /// 可导航的页：内置可见页 + 插件状态页。
     fn navigation_pages(&self) -> impl Iterator<Item=usize> + '_ {
-        self.settings.page_order.iter().copied()
-            .filter(|page| self.settings.visible_pages.get(*page).copied().unwrap_or(false))
-            .chain(PAGE_NAMES.len()..PAGE_NAMES.len()+self.status_page_count())
+        #[cfg(feature="sdk-js")]
+        let status_pages = self.status_pages.as_slice();
+        #[cfg(not(feature="sdk-js"))]
+        let status_pages = &[];
+        Self::visible_navigation_pages(&self.settings, status_pages)
+    }
+
+    fn visible_navigation_pages<'a>(
+        settings: &'a model::Settings,
+        status_pages: &'a [(String, String)],
+    ) -> impl Iterator<Item=usize> + 'a {
+        use model::OrderedPage;
+        model::ordered_pages(&settings.page_order, &settings.plugin_page_order, status_pages.iter().map(|(id, _)| id.as_str()))
+            .filter_map(move |page| match page {
+                OrderedPage::Builtin(page) => settings.visible_pages[page].then_some(page),
+                OrderedPage::Plugin(id) => status_pages.iter().position(|(source, _)| source == id)
+                    .map(|index| PAGE_NAMES.len() + index),
+            })
     }
 
     fn navigation_page_name(&self, page: usize) -> &str {
@@ -2966,6 +3050,7 @@ impl App {
             self.hover_lock=!self.hold_open;
             self.hover_since=None;
             self.leave_since=None;
+            self.hover_open_area=None;
             self.forced_open_until=0.0;
         }
         self.browser_minimal_active=browser_minimal;
@@ -3041,11 +3126,10 @@ impl App {
         // 两个电量环并排：电池槽加宽 20px，其余槽位自动让开。
         #[cfg(feature="sdk-js")]
         {
-            // 插件停靠内容：同步数据、测量宽度，并入常驻布局。
-            let suppress=self.effective_minimal()||self.notice.is_some()||self.hud_alpha>0.003
-                ||plugin_notice_detail||self.island_lyrics_active()||env.fullscreen_hidden||env.screen_locked;
-            let (mut displays,repaint)=self.plugins.pinned_displays(self.open||suppress);
-            if let Some(delay)=repaint { ctx.request_repaint_after(delay); }
+            let suppress = self.effective_minimal() || self.notice.is_some() || self.hud_alpha > 0.003
+                || plugin_notice_detail || self.island_lyrics_active() || env.fullscreen_hidden || env.screen_locked;
+            let (mut displays, repaint) = self.plugins.pinned_displays(self.open || suppress);
+            self.pinned_frame = PinnedFrame { repaint_after: repaint, animating: false };
             for display in &mut displays { display.measure_width(ui); }
             self.pinned_horizontal_width=WIN_W;
             if !self.side() {
@@ -3147,6 +3231,7 @@ impl App {
             self.show_page(3);
         } else if hovering_files && !self.drag_hot {
             self.drag_hot = true;
+            self.drag_departing = false;
             if self.page != 3 {
                 self.drag_saved = Some(self.page);
                 self.go(3, if self.page < 3 { 1.0 } else { -1.0 });
@@ -3154,6 +3239,7 @@ impl App {
         } else if !hovering_files && self.drag_hot {
             // 拖到外面松手 / 取消：安静地退回原页
             self.drag_hot = false;
+            self.drag_departing = true;
             if let Some(p) = self.drag_saved.take() {
                 self.go(p, if p < 3 { -1.0 } else { 1.0 });
             }
@@ -3170,7 +3256,13 @@ impl App {
         let page_before=self.page;
         let previous_menu=self.shelf_menu_rect.take();
         let inside = env.cursor.is_some_and(|c| hit.contains(c) || previous_menu.is_some_and(|r|r.contains(c)));
-        // 续滚带只在展开、未锁定、鼠标仍在带内、且没有点击/Esc 时保留。
+        let can_keep_hover = !env.fullscreen_hidden && !env.screen_locked && self.position_drag.is_none();
+        if !can_keep_hover || !self.open && !self.hover_lock {
+            self.hover_open_area = None;
+        }
+        let cursor_from_center = env.cursor.map(|c| c - win.center().to_vec2());
+        let opening_area_hovered = self.hover_open_area.zip(cursor_from_center)
+            .is_some_and(|(area, cursor)| area.contains(cursor));
         self.page_scroll_area=self.page_scroll_area.filter(|area|self.open && !self.hover_lock
             && !env.fullscreen_hidden && !env.screen_locked && env.cursor.is_some_and(|c|area.contains(c))
             && !ctx.input(|i|i.pointer.any_pressed() || i.key_pressed(egui::Key::Escape)));
@@ -3183,7 +3275,7 @@ impl App {
             }
             r.contains(c)
         }) || self.notice_details_rect(notice).is_some_and(|r|r.contains(c)));
-        if !inside {
+        if !inside && !opening_area_hovered {
             self.hover_lock = false;
         }
         if env.cursor != self.last_cursor || ctx.input(|i| !i.events.is_empty()) {
@@ -3277,8 +3369,33 @@ impl App {
             }
         } else {self.wheel_delta=0.0;}
         let volume_dragging=self.music_volume_open && ctx.is_being_dragged(egui::Id::unique(("card-drag",true,"m-volume-track")));
-        let want = plugin_notice_detail || self.hold_open || (page_hover && !self.hover_lock && (self.compact_notices()||self.notice.is_none()||self.open)) || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (self.is_editing() && self.open);
+        if opening_area_hovered && !page_hover && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.hover_lock = true;
+        }
+        let hover_wants_open = (page_hover || self.open && opening_area_hovered) && !self.hover_lock
+            && (self.compact_notices() || self.notice.is_none() || self.open);
+        let want = plugin_notice_detail || self.hold_open || hover_wants_open || self.open && on_notice || (self.open && self.t<self.forced_open_until) || self.drag_hot || volume_dragging || (self.is_editing() && self.open);
+        let was_open = self.open;
         self.morph(want, inside, env.t, dt);
+        // 长条收窄后仍认原来的悬停位置，实际点击和滚轮继续按展开面板命中。
+        if can_keep_hover && !was_open && self.open && hover_wants_open && !self.drag_hot {
+            self.hover_open_area = Some(hit.translate(-win.center().to_vec2()));
+        }
+        let staying_open = self.open && want;
+        if !self.drag_departing || staying_open {
+            self.drag_a = anim::approach(self.drag_a, if self.drag_hot { 1.0 } else { 0.0 }, 16.0, dt);
+        }
+        if self.drag_departing && (staying_open && self.drag_a <= 0.004
+            || !self.open && self.w.settled(PW) && self.h.settled(self.expanded_height())) {
+            // 先收完外形再静默恢复页面；保持展开时则等放置框淡出。
+            self.drag_departing = false;
+            self.drag_a = 0.0;
+            if let Some(page) = self.drag_saved.take() {
+                self.go(page, if page < SHELF_PAGE { -1.0 } else { 1.0 });
+                self.page_from = self.page;
+                self.page_t0 = self.t - 1.0;
+            }
+        }
         self.hold_slot=ctx.animate_bool_with_time(egui::Id::new("hold-open-slot"),self.shows_hold_open(),0.18);
         // 收起判定靠「离开延迟到了」/「强制停留到点了」，两者都发生在未来某一帧；
         // 而窗口没有输入事件时会睡死，鼠标移开后再没有事件，岛仔就一直停在展开态。
@@ -3620,10 +3737,26 @@ impl App {
         let pet_visible=self.pet_a>0.01 && !self.open && !minimal_pill;
         let ambient=self.settings.skin==model::Skin::Fluid && self.fluid.animating() || self.pomo.running && (self.open && self.page==1 || !self.open && !minimal_pill && self.notice.is_none() && bar::animations_enabled())
             || self.media.playing && (self.open && self.page==0 || !self.open && !minimal_pill && self.notice.is_none() && self.media.is_island_media())
-            || self.notice.as_ref().is_some_and(|notice|notice.meeting.is_some());
+            || self.notice.as_ref().is_some_and(|notice|notice.meeting.is_some())
+            || self.wireless_animating();
         // 长歌词滚动时必须持续重绘；暂停时也要——人正是这时候才想读完一整句。
         let lyric_scrolling=self.island_lyric_scroll.is_some();
-        let animating=transitioning || ambient || lyric_scrolling || pet_visible && self.pet.state!=PetState::Sleeping;
+        #[cfg(feature="sdk-js")]
+        let (canvas_animating, canvas_scroll, canvas_repaint) = self.plugin_canvas_frame.as_ref().map_or(
+            (false,None,None),
+            |(_, frame)| (frame.canvas_animating,frame.canvas_scroll,frame.canvas_repaint),
+        );
+        #[cfg(not(feature="sdk-js"))]
+        let (canvas_animating, canvas_scroll, canvas_repaint) = (false,None,None);
+        #[cfg(feature="sdk-js")]
+        let (pinned_repaint, pinned_animating, pinned_animation_ended) = {
+            let active = self.pinned_frame.animating;
+            let ended = std::mem::replace(&mut self.pinned_was_animating, active) && !active;
+            (self.pinned_frame.repaint_after, active, ended)
+        };
+        #[cfg(not(feature="sdk-js"))]
+        let (pinned_repaint, pinned_animating, pinned_animation_ended) = (None,false,false);
+        let animating=transitioning || ambient || canvas_animating || pinned_animating || lyric_scrolling || pet_visible && self.pet.state!=PetState::Sleeping;
         // 交互形变保持 60 帧，媒体/歌词滚动 30 帧；小表情 20 帧，睡眠 10 帧，静态界面每秒核对提醒。
         // 液态玻璃有自己的档位：1=60fps（动画/悬停/拖动，玻璃要跟手）、2=30fps（静止）。
         // 它必须有别于其它皮肤的「静止 1 秒」——玻璃背景靠持续抓屏刷新，停 1 秒会冻住。
@@ -3676,7 +3809,12 @@ impl App {
             // 静止档帧率来自设置项（默认 15，30 = 静止不降档）。
             3 => 1.0/(self.settings.liquid_idle_fps.max(1) as f64),
             _ => if transitioning{1.0/60.0}else if ambient||lyric_scrolling{1.0/30.0}else if pet_visible{if self.pet.state==PetState::Sleeping{0.1}else{0.05}}else{1.0},
-        });
+        }).min(canvas_repaint.unwrap_or(std::time::Duration::MAX)).min(pinned_repaint.unwrap_or(std::time::Duration::MAX));
+        #[cfg(feature="sdk-js")]
+        if page_before!=self.page || !self.open || self.page<PAGE_NAMES.len()
+            || self.status_values_blocked(env) {
+            crate::plugin_status_ui::clear_sensitive_reveal(&ctx);
+        }
         cmds.append(&mut self.pending);
         // 翻到较矮页面时，把旧页命中区沿缩短一侧保留一条续滚带（与新页重叠 8px 防抖），
         // 这样鼠标停在旧页区域仍能继续滚轮翻页，也不会因命中区缩小而误收起。
@@ -3698,9 +3836,10 @@ impl App {
             glass: glass_region,
             hit: rel(next_hit),
             // 极简收起且无通知时点击穿透；strip_rect 就是细条本身的精确矩形。
+            watch_outside_hover:opening_area_hovered && !inside,
             click_through: minimal_strip && !self.open && self.position_drag.is_none(),
             strip_rect: (minimal_strip && !self.open && self.position_drag.is_none()).then(|| rel(next_hit)),
-            page_scroll_area:self.page_scroll_area.map(rel),
+            page_scroll_area:self.page_scroll_area.or(canvas_scroll).map(rel),
             notice_hit:notice_shape.into_iter().chain(notice_details).chain(messenger_rect).chain(self.shelf_menu_rect).reduce(|a,b|a.union(b)).map(rel),
             top_bar_notice:top_bar_notice.into_iter().chain(notice_details.map(|r|r.intersect(ui.max_rect()))).filter(|r|r.is_positive()).reduce(|a,b|a.union(b)).map(rel),
             file_drop_zone:self.settings.visible_pages[3].then(||rel(if side {self.island_rect(win,PW,self.page_height.pos).translate(offset)} else {orient(Rect::from_min_size(Pos2::new(cx-PW/2.0,top),Vec2::new(PW,96.0)))})),
@@ -5200,14 +5339,15 @@ impl App {
             if let Some(x)=layout.x[bar::WEATHER] { self.draw_pill_weather(&c,local_cx+x,&layout); }
             #[cfg(feature="sdk-js")]
             {
-                let theme=crate::plugin_canvas_ui::CanvasTheme{
-                    palette:self.island_palette(),accent:None,background:self.island_overlay_fill(),
-                };
-                let mut clicked=None;
-                for (slot,display) in layout.pinned_slots().zip(&self.pinned_displays) {
-                    if let Some(x)=layout.x[slot] {
-                        if display.draw(&c,local_cx+x,15.0,layout.widths[slot],false,theme) {
-                            clicked=Some(display.plugin.clone());
+                let theme = self.pinned_canvas_theme();
+                let mut clicked = None;
+                for (slot, display) in layout.pinned_slots().zip(&self.pinned_displays) {
+                    if let Some(x) = layout.x[slot] {
+                        let (click, repaint_after, animating) =
+                            display.draw(&c, local_cx + x, 15.0, layout.widths[slot], false, theme);
+                        self.pinned_frame.include(repaint_after, animating);
+                        if click {
+                            clicked = Some(display.plugin.clone());
                         }
                     }
                 }
@@ -5445,6 +5585,8 @@ impl App {
     fn nav(&mut self, c: &Card) {
         let all_pages: Vec<_>=self.navigation_pages().collect();
         if all_pages.len()<2 { return; }
+        let shortcuts = self.page_shortcuts_enabled();
+        if !shortcuts || !self.settings.hide_page_arrows {
         let arrow_y=self.nav_arrow_y();
         let l = c.hit(8.0, arrow_y-13.0, 26.0, 26.0, "nav-l");
         let r = c.hit(385.0, arrow_y-13.0, 26.0, 26.0, "nav-r");
@@ -5459,8 +5601,7 @@ impl App {
         paint::chevron(c, 398.0, arrow_y, 1.0, rh, sr, glass, gr);
         if l.clicked() { self.navigate_page(false); }
         if r.clicked() { self.navigate_page(true); }
-        // 页码豆与插件快捷切换图标共用一行；有资源包时图标占据页码左侧一整段。
-        let shortcuts = self.page_shortcuts_enabled();
+        }
         let gap = if shortcuts { 3.0 } else { 4.0 };
         let dot_scale = if shortcuts { 0.75 } else { 1.0 };
         let dot_size = 4.0 * dot_scale;
@@ -5562,6 +5703,12 @@ impl App {
             let dir = if position(i) > position(self.page) { 1.0 } else { -1.0 };
             self.go(i, dir);
         }
+    }
+
+    #[cfg(feature="sdk-js")]
+    fn status_values_blocked(&self, env: &Env) -> bool {
+        let exclude=self.settings.exclude_from_capture;
+        crate::plugin_status_ui::sensitive_values_blocked(exclude,env)
     }
 
     fn render_page(&mut self, page: usize, c: &Card, header: &Card, env: &Env, cmds: &mut Vec<Cmd>) {

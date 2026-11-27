@@ -51,7 +51,7 @@ git worktree add -b feat/plugin-actions "D:\A-TangHao\REA\Windows小工具\01-�
 ## 共同规则
 
 - 所有回复用中文。
-- 本机 Cargo 命令一律通过 `spike/cargo-serial.ps1` 运行，它会持有互斥锁 `Local\Daozai.Cargo`，并行度为 1。
+- 本机 Cargo 命令遵守工作区根目录 `AGENTS.md` 的编译规则，任务示例可复用其中的 Cargo 参数。
 - 每个工作树只用自己目录下的 `target`，不设 `CARGO_TARGET_DIR`。新工作树第一次编译大约需要 12 分钟。
 - 这些任务**只提交到自己的分支**：
   - 不合进 `test/acceptance` 或 `main`；

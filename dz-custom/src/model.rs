@@ -1,4 +1,4 @@
-﻿//! 持久化与状态模型。
+//! 持久化与状态模型。
 //!
 //! 文件布局与原工具同名同结构（原工具字符串中可见的路径与键名），但默认目录
 //! 用独立的 `%APPDATA%\DaozaiCustom`，避免与原工具的 `%APPDATA%\Nusa` 互相覆盖：
@@ -12,6 +12,63 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WechatWakeMethod {
+    #[default]
+    Tray,
+    Shortcut,
+}
+
+impl WechatWakeMethod {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Tray => "tray",
+            Self::Shortcut => "shortcut",
+        }
+    }
+
+    fn parse(value: &str) -> Self {
+        if value == "shortcut" { Self::Shortcut } else { Self::Tray }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WechatWakeShortcut {
+    pub(crate) modifiers: u8,
+    pub(crate) key: u16,
+}
+
+impl WechatWakeShortcut {
+    pub(crate) const ALT: u8 = 1;
+    pub(crate) const CTRL: u8 = 2;
+    pub(crate) const SHIFT: u8 = 4;
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        let mut parts = value.split(['+', '＋']).map(str::trim);
+        let key = parts.next_back()?.to_ascii_uppercase();
+        let key = match key.as_bytes() {
+            [key @ (b'A'..=b'Z' | b'0'..=b'9')] => u16::from(*key),
+            _ => 0x6f + key.strip_prefix('F')?.parse::<u16>().ok().filter(|key| (1..=12).contains(key))?,
+        };
+        let mut modifiers = 0;
+        for part in parts {
+            let modifier = match part.to_ascii_lowercase().as_str() {
+                "alt" => Self::ALT,
+                "ctrl" | "control" => Self::CTRL,
+                "shift" => Self::SHIFT,
+                _ => return None,
+            };
+            if modifiers & modifier != 0 {
+                return None;
+            }
+            modifiers |= modifier;
+        }
+        // Alt+F4 由 Windows 用来关闭当前窗口。
+        (modifiers != 0 && !(modifiers & Self::ALT != 0 && key == 0x73))
+            .then_some(Self { modifiers, key })
+    }
+}
 
 fn env_dir(key: &str) -> PathBuf {
     PathBuf::from(std::env::var(key).unwrap_or_else(|_| ".".into()))
@@ -91,6 +148,20 @@ pub(crate) fn replace_file_pub(tmp:&Path,path:&Path)->std::io::Result<()> {
         use windows::core::PCWSTR;
         use windows::Win32::Storage::FileSystem::{MoveFileExW,MOVEFILE_COPY_ALLOWED,MOVEFILE_REPLACE_EXISTING,MOVEFILE_WRITE_THROUGH};
         // Windows 目录映射可能将同目录替换报告为跨卷，交给系统复制并替换。
+        let source:Vec<u16>=tmp.as_os_str().encode_wide().chain(Some(0)).collect();
+        let target:Vec<u16>=path.as_os_str().encode_wide().chain(Some(0)).collect();
+        return unsafe{MoveFileExW(PCWSTR(source.as_ptr()),PCWSTR(target.as_ptr()),MOVEFILE_REPLACE_EXISTING|MOVEFILE_COPY_ALLOWED|MOVEFILE_WRITE_THROUGH)}.map_err(std::io::Error::other);
+    }
+    result
+}
+
+pub(crate) fn replace_file(tmp:&Path,path:&Path)->std::io::Result<()> {
+    let result=fs::rename(tmp,path);
+    #[cfg(windows)]
+    if result.as_ref().is_err_and(|e|e.kind()==std::io::ErrorKind::CrossesDevices) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::{MoveFileExW,MOVEFILE_COPY_ALLOWED,MOVEFILE_REPLACE_EXISTING,MOVEFILE_WRITE_THROUGH};
         let source:Vec<u16>=tmp.as_os_str().encode_wide().chain(Some(0)).collect();
         let target:Vec<u16>=path.as_os_str().encode_wide().chain(Some(0)).collect();
         return unsafe{MoveFileExW(PCWSTR(source.as_ptr()),PCWSTR(target.as_ptr()),MOVEFILE_REPLACE_EXISTING|MOVEFILE_COPY_ALLOWED|MOVEFILE_WRITE_THROUGH)}.map_err(std::io::Error::other);
@@ -247,6 +318,26 @@ impl LiquidTheme {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum OrderedPage<'a> {
+    Builtin(usize),
+    Plugin(&'a str),
+}
+
+pub(crate) fn ordered_pages<'a>(
+    builtin: &'a [usize],
+    plugins: &'a [(String, usize)],
+    discovered: impl Iterator<Item = &'a str> + 'a,
+) -> impl Iterator<Item = OrderedPage<'a>> + 'a {
+    (0..=builtin.len()).flat_map(move |slot| {
+        plugins.iter().filter_map(move |(id, position)| (*position == slot).then_some(OrderedPage::Plugin(id)))
+            .chain(builtin.get(slot).copied().map(OrderedPage::Builtin))
+    }).chain(
+        discovered.filter(move |id| !plugins.iter().any(|(saved, _)| saved == id))
+            .map(OrderedPage::Plugin),
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub display_id: String,
@@ -313,9 +404,13 @@ pub struct Settings {
     pub avoid_browsers: bool,
     pub avoid_apps: Vec<(String,String)>,
     pub visible_pages: [bool; 11],
+    pub hidden_settings_pages: [bool; 11],
     pub page_order: [usize; 11],
     /// 快捷切换图标（页面管理插件提供）。
+    // 以插件 ID 保存位置。数字表示该插件前面的内置页面数量。
+    pub(crate) plugin_page_order: Vec<(String, usize)>,
     pub show_page_shortcuts: bool,
+    pub hide_page_arrows: bool,
     pub show_clock: bool,
     pub show_battery: bool,
     pub show_weather: bool,
@@ -343,8 +438,10 @@ pub struct Settings {
     pub wecom_notifications:bool,
     pub feishu_notifications:bool,
     pub dingtalk_notifications:bool,
-    /// 微信缩在托盘时，点提醒通过系统托盘按钮唤起微信（默认关闭）。
+    /// 微信缩在托盘时，点提醒可唤起微信（默认关闭）。
     pub wechat_tray_open:bool,
+    pub wechat_wake_method: WechatWakeMethod,
+    pub wechat_wake_shortcut: String,
     pub qq_only:bool,
     pub notification_preview:bool,
     pub notifications: bool,
@@ -356,6 +453,7 @@ pub struct Settings {
     pub island_lyrics:bool,
     pub lyric_delay_ms:i32,
     pub hide_fullscreen: bool,
+    pub exclude_from_capture: bool,
     /// 启用顶栏适配，按显示方式避让顶栏或保持岛体在顶栏上方。
     pub avoid_top_bar: bool,
     pub top_bar_on_top: bool,
@@ -488,8 +586,8 @@ impl OpenAnim {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_theme: LiquidTheme::Auto, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true,true,true,true,true,true,true,true,true,false,false], page_order: [0,1,2,3,4,5,6,7,8,9,10], show_page_shortcuts: true, show_clock: true, show_battery: true, show_weather: true, performance_bar: Default::default(), performance_metrics: 7, show_performance: true, performance_view: Default::default(), resident_date: ResidentDate::Off, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, show_bluetooth: true, bluetooth_pinned: Vec::new(), bluetooth_resident_style: 0, bluetooth_resident_custom: false, bluetooth_battery_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code_only_notifications: false, mail_code: true, mail_code_popup: false, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: false, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
-    }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_theme: LiquidTheme::Auto, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true,true,true,true,true,true,true,true,true,false,false], hidden_settings_pages: [false; 11], page_order: [0,1,2,3,4,5,6,7,8,9,10], plugin_page_order: Vec::new(), show_page_shortcuts: true, hide_page_arrows: false, show_clock: true, show_battery: true, show_weather: true, performance_bar: Default::default(), performance_metrics: 7, show_performance: true, performance_view: Default::default(), resident_date: ResidentDate::Off, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, show_bluetooth: true, bluetooth_pinned: Vec::new(), bluetooth_resident_style: 0, bluetooth_resident_custom: false, bluetooth_battery_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, wechat_wake_method:Default::default(), wechat_wake_shortcut:String::new(), qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, exclude_from_capture: false, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code_only_notifications: false, mail_code: true, mail_code_popup: false, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: false, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+}
 }
 
 impl Settings {
@@ -586,6 +684,7 @@ impl Settings {
                     if order.len()==7 && !order.contains(&crate::bar_layout::PERFORMANCE) {order.push(crate::bar_layout::PERFORMANCE);}
                     if crate::bar_layout::valid_order(&order){s.resident_order=order;}
                 }
+                "hide_page_arrows" => s.hide_page_arrows = v == "1",
                 "page_order" => {
                     if let Ok(order)=v.split(',').map(str::parse::<usize>).collect::<Result<Vec<_>,_>>() {
                         if order.len()==11 && (0..11).all(|page|order.contains(&page)) {
@@ -596,6 +695,12 @@ impl Settings {
                             s.page_order[8]=8;
                         }
                     }
+                }
+                "plugin_page_order" => {
+                    let mut order: Vec<(String, usize)> = serde_json::from_str(&v).unwrap_or_default();
+                    let mut seen = std::collections::HashSet::new();
+                    order.retain(|(id, slot)| !id.is_empty() && *slot <= s.page_order.len() && seen.insert(id.clone()));
+                    s.plugin_page_order = order;
                 }
                 "clock_period" => s.clock_period = v.parse::<u8>().ok().filter(|v|*v<=2).unwrap_or(0),
                 "clock_12h" => s.clock_12h = v == "1",
@@ -618,12 +723,17 @@ impl Settings {
                     for (enabled,value) in s.visible_pages.iter_mut().zip(v.bytes()) { *enabled=value==b'1'; }
                     for (i,enabled) in s.visible_pages[v.len()..].iter_mut().enumerate(){*enabled=v.len()+i<9 && v.bytes().any(|b|b==b'1');}
                 }
+                "hidden_settings_pages" if v.len()<=s.hidden_settings_pages.len() && v.bytes().all(|b| b==b'0' || b==b'1') => {
+                    for (hidden,value) in s.hidden_settings_pages.iter_mut().zip(v.bytes()) { *hidden=value==b'1'; }
+                }
                 "read_notifications" => s.read_notifications=v=="1",
                 "wechat_notifications" => s.wechat_notifications=v=="1",
                 "wecom_notifications" => s.wecom_notifications=v=="1",
                 "feishu_notifications" => s.feishu_notifications=v=="1",
                 "dingtalk_notifications" => s.dingtalk_notifications=v=="1",
                 "wechat_tray_open" => s.wechat_tray_open=v=="1",
+                "wechat_wake_method" => s.wechat_wake_method = WechatWakeMethod::parse(&v),
+                "wechat_wake_shortcut" => s.wechat_wake_shortcut = v,
                 "qq_only" => s.qq_only=v=="1",
                 "notification_preview" => s.notification_preview=v=="1",
                 "system_hud" => s.system_hud = v != "0",
@@ -669,6 +779,9 @@ impl Settings {
             }
         }
         if !s.visible_pages.contains(&true) { s.visible_pages[0]=true; }
+        for (hidden,enabled) in s.hidden_settings_pages.iter_mut().zip(s.visible_pages) {
+            *hidden &= !enabled;
+        }
         // 旧版只有一个指定城市：迁移进已保存列表，升级后下拉框里能直接看到它。
         if let Some(position)=s.weather_position.clone().filter(|p|p.label==s.weather_city) {
             if !s.weather_saved.contains(&position) {s.weather_saved.insert(0,position);}
@@ -711,7 +824,10 @@ impl Settings {
                 ("avoid_browsers".into(), (self.avoid_browsers as u8).to_string()),
                 ("avoid_apps".into(), serde_json::to_string(&self.avoid_apps).unwrap_or_default()),
                 ("visible_pages".into(), self.visible_pages.iter().map(|enabled|if *enabled {'1'}else{'0'}).collect()),
+                ("hidden_settings_pages".into(), self.hidden_settings_pages.iter().map(|hidden|if *hidden {'1'}else{'0'}).collect()),
                 ("page_order".into(),self.page_order.iter().map(usize::to_string).collect::<Vec<_>>().join(",")),
+                ("plugin_page_order".into(),serde_json::to_string(&self.plugin_page_order).unwrap_or_default()),
+                ("hide_page_arrows".into(), (self.hide_page_arrows as u8).to_string()),
                 ("resident_order".into(),self.resident_order.iter().map(usize::to_string).collect::<Vec<_>>().join(",")),
                 ("clock_period".into(), self.clock_period.to_string()),
                 ("clock_12h".into(), (self.clock_12h as u8).to_string()),
@@ -736,6 +852,8 @@ impl Settings {
                 ("feishu_notifications".into(),(self.feishu_notifications as u8).to_string()),
                 ("dingtalk_notifications".into(),(self.dingtalk_notifications as u8).to_string()),
                 ("wechat_tray_open".into(),(self.wechat_tray_open as u8).to_string()),
+                ("wechat_wake_method".into(),self.wechat_wake_method.key().into()),
+                ("wechat_wake_shortcut".into(),self.wechat_wake_shortcut.chars().filter(|c| !c.is_control()).collect()),
                 ("qq_only".into(),(self.qq_only as u8).to_string()),
                 ("notification_preview".into(),(self.notification_preview as u8).to_string()),
                 ("system_hud".into(), (self.system_hud as u8).to_string()),
@@ -1442,6 +1560,84 @@ mod tests {
         assert_eq!(OpenAnim::parse(""), OpenAnim::Elastic);
         assert_eq!(OpenAnim::parse("whatever"), OpenAnim::Elastic);
         assert_eq!(OpenAnim::default(), OpenAnim::Elastic, "旧配置文件没有这个键时保持官方手感");
+    }
+
+    #[test]
+    fn wechat_wake_shortcut_validates_the_whole_combination() {
+        let shortcut = WechatWakeShortcut::parse(" ctrl ＋ Alt + w ").unwrap();
+        assert_eq!(shortcut.modifiers, WechatWakeShortcut::CTRL | WechatWakeShortcut::ALT);
+        assert_eq!(shortcut.key, u16::from(b'W'));
+        assert_eq!(WechatWakeShortcut::parse("Shift+F1").unwrap().key, 0x70);
+        for invalid in ["", "W", "Ctrl+Ctrl+W", "Ctrl++W", "Alt+F4", "Win+W", "Alt+F13"] {
+            assert!(WechatWakeShortcut::parse(invalid).is_none(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn wechat_wake_method_preserves_existing_tray_preference() {
+        let _guard = crate::ui_tests::ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let dir = std::env::temp_dir().join(format!("daozai-wechat-wake-settings-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.txt");
+        let previous = std::env::var_os("DAOZAI_DATA_DIR");
+        std::env::set_var("DAOZAI_DATA_DIR", &dir);
+
+        fs::write(&path, "wechat_tray_open=0\n").unwrap();
+        let legacy_off = Settings::load();
+        fs::write(&path, "wechat_tray_open=1\n").unwrap();
+        let mut settings = Settings::load();
+        let legacy_on = settings.wechat_tray_open && settings.wechat_wake_method == WechatWakeMethod::Tray;
+        settings.wechat_wake_method = WechatWakeMethod::Shortcut;
+        settings.wechat_wake_shortcut = "Ctrl+Alt+W".into();
+        settings.save();
+        let reloaded = Settings::load();
+
+        if let Some(previous) = previous {
+            std::env::set_var("DAOZAI_DATA_DIR", previous);
+        } else {
+            std::env::remove_var("DAOZAI_DATA_DIR");
+        }
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+
+        assert!(!legacy_off.wechat_tray_open);
+        assert_eq!(legacy_off.wechat_wake_method, WechatWakeMethod::Tray);
+        assert!(legacy_on && reloaded.wechat_tray_open);
+        assert_eq!(reloaded.wechat_wake_method, WechatWakeMethod::Shortcut);
+        assert_eq!(reloaded.wechat_wake_shortcut, "Ctrl+Alt+W");
+    }
+
+#[cfg(feature = "__upstream_tests_off__")]
+    #[test]
+    fn capture_exclusion_defaults_to_disabled_and_round_trips() {
+        let _guard = crate::ui_tests::ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("daozai-capture-settings-{}-{nonce}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("settings.txt");
+        fs::write(&path, b"hide_fullscreen=0\n").unwrap();
+
+        let previous = std::env::var_os("DAOZAI_DATA_DIR");
+        std::env::set_var("DAOZAI_DATA_DIR", &dir);
+        let mut settings = Settings::load();
+        let legacy_disabled = !settings.exclude_from_capture && !settings.hide_fullscreen;
+        settings.exclude_from_capture = true;
+        settings.save();
+        let enabled = Settings::load();
+        settings.exclude_from_capture = false;
+        settings.save();
+        let disabled = Settings::load();
+        match previous {
+            Some(previous) => std::env::set_var("DAOZAI_DATA_DIR", previous),
+            None => std::env::remove_var("DAOZAI_DATA_DIR"),
+        }
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+
+        assert!(!Settings::default().exclude_from_capture);
+        assert!(legacy_disabled);
+        assert!(enabled.exclude_from_capture && !enabled.hide_fullscreen);
+        assert!(!disabled.exclude_from_capture && !disabled.hide_fullscreen);
     }
 
     #[test]

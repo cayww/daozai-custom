@@ -1,4 +1,4 @@
-//! 宿主内置的接收器识别表与插件集市提供的扩展数据。
+//! 宿主内置的接收器表与插件集市提供的扩展数据。
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
@@ -6,9 +6,24 @@ use std::{
 };
 
 const PACKAGE_ID: &str = "daozai.wireless-receivers";
-const API_VERSION: u32 = 1;
 #[cfg(windows)]
 const BUILTIN: &[u8] = include_bytes!("../../assets/builtin-usb-receivers.json");
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum BatteryProtocol {
+    CompX,
+    LogitechHidpp20,
+    EndgameXm2we,
+    HyperXCloudIiCore,
+    HyperXCloudIiiS,
+    HyperXCloudAlpha2,
+    SteelSeriesNova7,
+    SteelSeriesNovaElite,
+    MouseFeature83,
+    Vaxee4k,
+    MchoseM7Ultra,
+    MchoseA5ProMax,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +40,14 @@ struct Receiver {
     vid: String,
     pid: String,
     name: String,
+    #[serde(default, deserialize_with = "present_protocol")]
+    battery_protocol: Option<String>,
+}
+
+fn present_protocol<'de, D: serde::Deserializer<'de>>(
+    value: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(value).map(Some)
 }
 
 pub(crate) struct Package {
@@ -38,8 +61,16 @@ impl Package {
         if manifest.id != PACKAGE_ID {
             return Err("此文件不是岛仔无线设备兼容包");
         }
-        if manifest.api_version != API_VERSION {
+        if !matches!(manifest.api_version, 1 | 2) {
             return Err("当前岛仔版本不支持此兼容包接口");
+        }
+        if manifest.api_version == 1
+            && manifest
+                .receivers
+                .iter()
+                .any(|receiver| receiver.battery_protocol.is_some())
+        {
+            return Err("兼容包接口版本 1 不支持电量协议");
         }
         if !valid_text(&manifest.version, 32) {
             return Err("兼容包版本无效");
@@ -55,12 +86,29 @@ impl Package {
         &self.version
     }
 
+    #[cfg(all(windows, feature = "sdk-js"))]
+    pub(crate) fn receivers(&self) -> impl ExactSizeIterator<Item = ((u16, u16), &str)> {
+        self.table
+            .0
+            .iter()
+            .map(|(&id, info)| (id, info.name.as_str()))
+    }
+
     pub(super) fn receiver_name(&self, hardware: &str) -> Option<&str> {
         self.table.receiver_name(hardware)
     }
+
+    pub(super) fn battery_protocol(&self, hardware: &str) -> Option<BatteryProtocol> {
+        self.table.battery_protocol(hardware)
+    }
 }
 
-pub(super) struct ReceiverTable(BTreeMap<(u16, u16), String>);
+struct ReceiverInfo {
+    name: String,
+    battery_protocol: Option<BatteryProtocol>,
+}
+
+pub(super) struct ReceiverTable(BTreeMap<(u16, u16), ReceiverInfo>);
 
 impl ReceiverTable {
     fn new(rows: Vec<Receiver>) -> Result<Self, &'static str> {
@@ -73,7 +121,35 @@ impl ReceiverTable {
             if !valid_text(&receiver.name, 64) {
                 return Err("接收器名称无效");
             }
-            if receivers.insert((vid, pid), receiver.name).is_some() {
+            let battery_protocol = match receiver.battery_protocol.as_deref() {
+                Some("compx") => Some(BatteryProtocol::CompX),
+                Some("logitech-hidpp-2") => Some(BatteryProtocol::LogitechHidpp20),
+                Some("endgame-xm2we") => Some(BatteryProtocol::EndgameXm2we),
+                Some("hyperx-cloud-ii-core") => Some(BatteryProtocol::HyperXCloudIiCore),
+                Some("hyperx-cloud-iii-s") => Some(BatteryProtocol::HyperXCloudIiiS),
+                Some("hyperx-cloud-alpha-2") => Some(BatteryProtocol::HyperXCloudAlpha2),
+                Some("steelseries-nova-7") => Some(BatteryProtocol::SteelSeriesNova7),
+                Some("steelseries-nova-elite") => Some(BatteryProtocol::SteelSeriesNovaElite),
+                Some("mouse-feature-83") => Some(BatteryProtocol::MouseFeature83),
+                Some("vaxee-4k") => Some(BatteryProtocol::Vaxee4k),
+                Some("mchose-m7-ultra") => Some(BatteryProtocol::MchoseM7Ultra),
+                Some("mchose-a5-pro-max") => Some(BatteryProtocol::MchoseA5ProMax),
+                Some(id)
+                    if id.is_empty()
+                        || id.len() > 32
+                        || !id.bytes().all(|byte| {
+                            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                        }) =>
+                {
+                    return Err("接收器电量协议名称无效");
+                }
+                _ => None,
+            };
+            let info = ReceiverInfo {
+                name: receiver.name,
+                battery_protocol,
+            };
+            if receivers.insert((vid, pid), info).is_some() {
                 return Err("兼容包有重复的接收器 VID/PID");
             }
         }
@@ -81,10 +157,17 @@ impl ReceiverTable {
     }
 
     pub(super) fn receiver_name(&self, hardware: &str) -> Option<&str> {
+        self.receiver(hardware)
+            .map(|receiver| receiver.name.as_str())
+    }
+
+    pub(super) fn battery_protocol(&self, hardware: &str) -> Option<BatteryProtocol> {
+        self.receiver(hardware)?.battery_protocol
+    }
+
+    fn receiver(&self, hardware: &str) -> Option<&ReceiverInfo> {
         let (vid, pid) = hardware.strip_prefix("VID_")?.split_once("&PID_")?;
-        self.0
-            .get(&(usb_id(vid)?, usb_id(pid)?))
-            .map(String::as_str)
+        self.0.get(&(usb_id(vid)?, usb_id(pid)?))
     }
 }
 
@@ -113,9 +196,23 @@ fn valid_text(text: &str, max: usize) -> bool {
 
 /// 供 USB 枚举线程读取当前启用的插件数据。安装状态由集市保存。
 #[derive(Clone, Default)]
-pub struct Store(Arc<Mutex<Option<Arc<Package>>>>);
+pub struct Store(
+    Arc<Mutex<Option<Arc<Package>>>>,
+    #[cfg(windows)] Option<super::halo_component::Component>,
+);
 
 impl Store {
+    #[cfg(windows)]
+    pub(crate) fn with_component(mut self, component: super::halo_component::Component) -> Self {
+        self.1 = Some(component);
+        self
+    }
+
+    #[cfg(windows)]
+    pub(super) fn component(&self) -> Option<&super::halo_component::Component> {
+        self.1.as_ref()
+    }
+
     #[cfg(any(test, all(windows, feature = "sdk-js")))]
     pub(crate) fn set(&self, package: Option<Package>) {
         *self.0.lock().unwrap_or_else(|error| error.into_inner()) = package.map(Arc::new);
@@ -143,21 +240,22 @@ mod tests {
     fn validates_receiver_extension_data() {
         let valid = json!({
             "id": PACKAGE_ID,
-            "api_version": API_VERSION,
-            "version": "1.1.0",
+            "api_version": 1,
+            "version": "1.0.3",
             "receivers": [{"vid": "046D", "pid": "c542", "name": "罗技 Nano 接收器"}]
         });
         let package = Package::parse(&serde_json::to_vec(&valid).unwrap()).unwrap();
-        assert_eq!(package.version(), "1.1.0");
+        assert_eq!(package.version(), "1.0.3");
         assert_eq!(
             package.receiver_name("VID_046D&PID_C542"),
             Some("罗技 Nano 接收器")
         );
         assert_eq!(package.receiver_name("VID_046D&PID_C542&MI_00"), None);
+        assert_eq!(package.battery_protocol("VID_046D&PID_C542"), None);
 
         for (field, value) in [
             ("id", json!("example.receiver")),
-            ("api_version", json!(2)),
+            ("api_version", json!(3)),
             ("version", json!(" ")),
             ("cover_png", json!("封面由插件包提供")),
             (
@@ -187,5 +285,89 @@ mod tests {
                 "{field}"
             );
         }
+    }
+
+    #[test]
+    fn validates_receiver_battery_protocols() {
+        let data = json!({
+            "id": PACKAGE_ID,
+            "api_version": 2,
+            "version": "1.1.0",
+            "receivers": [
+                {"vid": "3554", "pid": "f58a", "name": "VXE 接收器", "battery_protocol": "compx"},
+                {"vid": "046D", "pid": "C539", "name": "罗技接收器", "battery_protocol": "logitech-hidpp-2"},
+                {"vid": "046D", "pid": "C542", "name": "罗技 Nano 接收器"}
+            ]
+        });
+        let parse = |data: &serde_json::Value| Package::parse(&serde_json::to_vec(data).unwrap());
+        let package = parse(&data).unwrap();
+        assert_eq!(
+            package.receiver_name("VID_3554&PID_F58A"),
+            Some("VXE 接收器")
+        );
+        assert_eq!(
+            package.battery_protocol("VID_3554&PID_F58A"),
+            Some(BatteryProtocol::CompX)
+        );
+        assert_eq!(
+            package.battery_protocol("VID_046D&PID_C539"),
+            Some(BatteryProtocol::LogitechHidpp20)
+        );
+        assert_eq!(package.battery_protocol("VID_046D&PID_C542"), None);
+        assert_eq!(package.battery_protocol("VID_3554&PID_F58A&MI_00"), None);
+
+        for (name, protocol) in [
+            ("endgame-xm2we", BatteryProtocol::EndgameXm2we),
+            ("hyperx-cloud-ii-core", BatteryProtocol::HyperXCloudIiCore),
+            ("hyperx-cloud-iii-s", BatteryProtocol::HyperXCloudIiiS),
+            ("hyperx-cloud-alpha-2", BatteryProtocol::HyperXCloudAlpha2),
+            ("steelseries-nova-7", BatteryProtocol::SteelSeriesNova7),
+            (
+                "steelseries-nova-elite",
+                BatteryProtocol::SteelSeriesNovaElite,
+            ),
+            ("mouse-feature-83", BatteryProtocol::MouseFeature83),
+            ("vaxee-4k", BatteryProtocol::Vaxee4k),
+            ("mchose-m7-ultra", BatteryProtocol::MchoseM7Ultra),
+            ("mchose-a5-pro-max", BatteryProtocol::MchoseA5ProMax),
+        ] {
+            let mut receiver = data.clone();
+            receiver["receivers"][0]["battery_protocol"] = json!(name);
+            assert_eq!(
+                parse(&receiver)
+                    .unwrap()
+                    .battery_protocol("VID_3554&PID_F58A"),
+                Some(protocol),
+                "{name}"
+            );
+        }
+
+        let mut invalid = data.clone();
+        invalid["api_version"] = json!(1);
+        assert!(parse(&invalid).is_err());
+
+        let mut future = data.clone();
+        future["receivers"][0]["battery_protocol"] = json!("future-reader");
+        let future = parse(&future).unwrap();
+        assert_eq!(
+            future.receiver_name("VID_3554&PID_F58A"),
+            Some("VXE 接收器")
+        );
+        assert_eq!(future.battery_protocol("VID_3554&PID_F58A"), None);
+        assert_eq!(
+            future.battery_protocol("VID_046D&PID_C539"),
+            Some(BatteryProtocol::LogitechHidpp20)
+        );
+
+        for value in [json!(""), json!("send raw hex!"), serde_json::Value::Null] {
+            let mut invalid = data.clone();
+            invalid["receivers"][0]["battery_protocol"] = value;
+            assert!(parse(&invalid).is_err());
+        }
+
+        let mut duplicate = data;
+        duplicate["receivers"][2]["vid"] = json!("3554");
+        duplicate["receivers"][2]["pid"] = json!("F58A");
+        assert!(parse(&duplicate).is_err());
     }
 }

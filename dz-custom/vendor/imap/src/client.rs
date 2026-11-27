@@ -110,7 +110,7 @@ fn validate_sequence_set(value: &str) -> Result<&str> {
 #[derive(Debug)]
 pub struct Session<T: Read + Write> {
     conn: Connection<T>,
-    unsolicited_responses_tx: mpsc::Sender<UnsolicitedResponse>,
+    unsolicited_responses_tx: UnsolicitedSender,
 
     /// Server responses that are not related to the current command. See also the note on
     /// [unilateral server responses in RFC 3501](https://tools.ietf.org/html/rfc3501#section-7).
@@ -503,8 +503,16 @@ impl<T: Read + Write> Session<T> {
         Session {
             conn,
             unsolicited_responses: rx,
-            unsolicited_responses_tx: tx,
+            unsolicited_responses_tx: UnsolicitedSender { channel: Some(tx) },
         }
+    }
+
+    /// 停止收集服务器主动通知，并清空为此会话排队的通知。
+    ///
+    /// 适用于通过命令查询邮箱状态、无需读取 `unsolicited_responses` 的客户端。
+    pub fn ignore_unsolicited_responses(&mut self) {
+        self.unsolicited_responses_tx.channel = None;
+        self.unsolicited_responses.try_iter().for_each(drop);
     }
 
     /// Selects a mailbox

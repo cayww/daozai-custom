@@ -18,7 +18,7 @@ use crate::{
     pet_expressions::ExpressionSheets,
     plugin_canvas::{
         live::{Burst, Hit, LoopKind},
-        Align, Canvas, Color, Kind, Node, Num, Paint, Style,
+        Align, Canvas, Color, Fit, Kind, Node, Num, Paint, Style,
     },
 };
 use chrono::{DateTime, Utc};
@@ -82,7 +82,7 @@ pub(crate) fn draw_live(
     area: Rect,
     theme: CanvasTheme,
     options: LiveOptions,
-    image: impl FnMut(&str) -> Option<(egui::TextureId, Vec2)>,
+    image: impl FnMut(&str, Vec2, Fit) -> Option<(egui::TextureId, Vec2)>,
 ) -> LiveResult {
     draw_live_with_pet(c, id, canvas, area, theme, options, None, image)
 }
@@ -95,7 +95,7 @@ pub(crate) fn draw_live_with_pet(
     theme: CanvasTheme,
     options: LiveOptions,
     sheets: Option<Arc<ExpressionSheets>>,
-    image: impl FnMut(&str) -> Option<(egui::TextureId, Vec2)>,
+    image: impl FnMut(&str, Vec2, Fit) -> Option<(egui::TextureId, Vec2)>,
 ) -> LiveResult {
     draw_live_frame(c, id, canvas, area, theme, options, sheets, None, image)
 }
@@ -110,7 +110,7 @@ pub(super) fn draw_live_frame(
     options: LiveOptions,
     sheets: Option<Arc<ExpressionSheets>>,
     pinned_elapsed: Option<Duration>,
-    image: impl FnMut(&str) -> Option<(egui::TextureId, Vec2)>,
+    image: impl FnMut(&str, Vec2, Fit) -> Option<(egui::TextureId, Vec2)>,
 ) -> LiveResult {
     let input = Input {
         c,

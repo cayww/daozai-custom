@@ -254,7 +254,18 @@ fn status_page_management_opens_and_switches_independently() -> Result<()> {
     let ctx = egui::Context::default();
     crate::theme::load_fonts(&ctx);
     let draw = |ui: &mut egui::Ui, host: &mut LocalPlugins| {
-        let _ = host.status_page_settings(ui);
+        let _ = host.status_page_settings(ui, ID);
+    };
+    let toggle_page = |host: &mut LocalPlugins| {
+        for _ in 0..2 {
+            frame(&ctx, vec![], |ui| draw(ui, host));
+        }
+        let switch = ctx
+            .read_response(egui::Id::new(("settings-plugin-switch", ID)))
+            .expect("页面管理中的插件开关")
+            .rect
+            .center();
+        click_at(&ctx, switch, |ui| draw(ui, host));
     };
     let installed = |ui: &mut egui::Ui, host: &mut LocalPlugins| {
         host.manage(
@@ -329,12 +340,12 @@ fn status_page_management_opens_and_switches_independently() -> Result<()> {
     assert!(has_text(&standalone, &format!("启用{NAME}")));
     let mut opened = None;
     click(&ctx, "打开", |ui| {
-        opened = host.status_page_settings(ui).or(opened.take());
+        opened = host.status_page_settings(ui, ID).or(opened.take());
     });
     assert_eq!(opened, Some(SettingsNavigation::OpenStatus(ID.into())));
     let mut settings = None;
-    click(&ctx, "设置", |ui| {
-        settings = host.status_page_settings(ui).or(settings.take());
+    click(&ctx, "设置 ›", |ui| {
+        settings = host.status_page_settings(ui, ID).or(settings.take());
     });
     assert_eq!(settings, Some(SettingsNavigation::Plugin(ID.into())));
     frame(&ctx, vec![], |ui| host.standalone_settings(ui, ID));
@@ -347,10 +358,29 @@ fn status_page_management_opens_and_switches_independently() -> Result<()> {
     click_at(&ctx, switch, |ui| host.standalone_settings(ui, ID));
     assert!(host.records[ID].enabled);
     assert!(host.status_pages().next().is_none());
+    assert!(!host.status_page_settings_hidden(ID), "普通关闭应保留左栏入口");
     assert_eq!(host.drafts[ID]["title"], "未保存的设置");
     assert!(!has_text(&frame(&ctx, vec![], |ui| draw(ui, &mut host)), "打开"));
     assert_eq!(host.standalone_settings_pages().next(), Some((ID, NAME)));
     assert!(has_text(&frame(&ctx, vec![], |ui| draw(ui, &mut host)), NAME));
+
+    click(&ctx, "隐藏入口", |ui| draw(ui, &mut host));
+    assert!(host.status_pages().next().is_none());
+    assert!(host.status_page_settings_hidden(ID));
+    click(&ctx, "显示入口", |ui| draw(ui, &mut host));
+    assert!(host.status_pages().next().is_none());
+    assert!(!host.status_page_settings_hidden(ID));
+    toggle_page(&mut host);
+    assert_eq!(host.status_pages().next(), Some((ID, NAME)));
+    click(&ctx, "关闭并隐藏", |ui| draw(ui, &mut host));
+    assert!(host.status_pages().next().is_none());
+    assert!(host.status_page_settings_hidden(ID));
+    assert_eq!(host.standalone_settings_pages().next(), Some((ID, NAME)));
+    let mut hidden_route = None;
+    click(&ctx, "设置 ›", |ui| {
+        hidden_route = host.status_page_settings(ui, ID).or(hidden_route.take());
+    });
+    assert_eq!(hidden_route, Some(SettingsNavigation::Plugin(ID.into())));
 
     toggle_installed(&mut host);
     assert!(!host.records[ID].enabled);
@@ -364,6 +394,10 @@ fn status_page_management_opens_and_switches_independently() -> Result<()> {
     assert!(host.standalone_settings_pages().next().is_none());
     host.enable(ID, true)?;
     assert_eq!(host.status_page_preferences().next(), Some((ID, NAME, true, false)));
+    assert!(host.status_page_settings_hidden(ID), "左栏隐藏偏好应持久化");
+    toggle_page(&mut host);
+    assert_eq!(host.status_pages().next(), Some((ID, NAME)));
+    assert!(!host.status_page_settings_hidden(ID), "开启页面时应恢复左栏入口");
     let mut record = host.records[ID].clone();
     record.package.as_mut().unwrap().manifest.name = "独立功能模块".repeat(13);
     host.put(ID, record)?;
@@ -1203,6 +1237,38 @@ fn guide_opens_from_the_market_copies_a_prompt_and_stacks_the_template_form() {
     let form = frame_in(&ctx, WINDOW, vec![], |ui| draw(&mut host, ui));
     assert!(has_text(&form, "选择位置并创建…"));
     assert!(has_text(&form, "做一个岛仔插件"));
+    let id_format = "用英文句点分隔，每段以小写英文字母开头，只能用小写字母、数字和连字符，最多 64 个字符。";
+    let uppercase_hint = "请将插件 ID 中的大写字母改成小写。";
+    assert!(has_text(&form, id_format));
+    assert!(!has_text(&form, uppercase_hint));
+
+    click_in(&ctx, WINDOW, "例如 xiaoming.payday", |ui| draw(&mut host, ui));
+    let uppercase = frame_in(
+        &ctx,
+        WINDOW,
+        vec![egui::Event::Text("Walalala.TraePoints".into())],
+        |ui| draw(&mut host, ui),
+    );
+    assert!(has_text(&uppercase, uppercase_hint));
+    let corrected = frame_in(
+        &ctx,
+        WINDOW,
+        vec![
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            },
+            egui::Event::Text("walalala.trae-points".into()),
+        ],
+        |ui| draw(&mut host, ui),
+    );
+    assert!(has_text(&corrected, "walalala.trae-points"));
+    assert!(has_text(&corrected, id_format));
+    assert!(!has_text(&corrected, uppercase_hint));
+
     let escape = || {
         vec![egui::Event::Key {
             key: egui::Key::Escape,

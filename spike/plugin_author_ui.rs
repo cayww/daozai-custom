@@ -32,6 +32,14 @@ pub(super) enum Action {
     Validate,
 }
 
+fn template_id_error(id: &str) -> Option<&'static str> {
+    if id.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Some("请将插件 ID 中的大写字母改成小写。")
+    } else {
+        (!super::super::valid_id(id)).then_some("请按上方格式填写插件 ID。")
+    }
+}
+
 impl AuthorTools {
     /// 直接进入「从模板创建」表单，教程里的按钮用。
     pub(super) fn template() -> Self {
@@ -103,11 +111,7 @@ impl AuthorTools {
 
     pub(super) fn form(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let draft = self.draft.as_mut()?;
-        for (label, value, hint, limit) in [
-            ("插件 ID", &mut draft.id, "例如 xiaoming.payday", 64),
-            ("插件名称", &mut draft.name, "例如 我的发薪倒计时", 80),
-            ("作者名称", &mut draft.author, "你的名字或昵称", 80),
-        ] {
+        let input = |ui: &mut egui::Ui, label: &str, value: &mut String, hint: &str, limit| {
             settings_control_row(ui, label, 90.0, |ui| {
                 ui.add_sized(
                     [ui.available_width(), 26.0],
@@ -116,10 +120,21 @@ impl AuthorTools {
                         .char_limit(limit),
                 )
             });
+        };
+        input(ui, "插件 ID", &mut draft.id, "例如 xiaoming.payday", 64);
+        settings_hint(
+            ui,
+            "用英文句点分隔，每段以小写英文字母开头，只能用小写字母、数字和连字符，最多 64 个字符。",
+        );
+        let id = draft.id.trim();
+        let id_error = template_id_error(id);
+        if let Some(message) = id_error.filter(|_| !id.is_empty()) {
+            ui.colored_label(ui.visuals().error_fg_color, message);
         }
-        let ready = [&draft.id, &draft.name, &draft.author]
-            .iter()
-            .all(|value| !value.trim().is_empty());
+        input(ui, "插件名称", &mut draft.name, "例如 我的发薪倒计时", 80);
+        input(ui, "作者名称", &mut draft.author, "你的名字或昵称", 80);
+        let ready =
+            id_error.is_none() && !draft.name.trim().is_empty() && !draft.author.trim().is_empty();
         self.show_notice(ui);
         let (back, create) = ui
             .horizontal_wrapped(|ui| {
@@ -144,10 +159,8 @@ impl AuthorTools {
                 let Some(draft) = self.draft.as_ref() else {
                     return;
                 };
-                if !super::super::valid_id(draft.id.trim()) {
-                    self.notice = Some(Notice::Error(
-                        "请输入有效的插件 ID，例如 xiaoming.payday".into(),
-                    ));
+                if let Some(message) = template_id_error(draft.id.trim()) {
+                    self.notice = Some(Notice::Error(message.into()));
                     return;
                 }
                 match crate::system::pick_folder_for("选择插件模板的保存位置") {

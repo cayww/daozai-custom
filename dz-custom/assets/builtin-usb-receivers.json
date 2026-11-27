@@ -11,7 +11,7 @@
   { "vid": "046D", "pid": "C541", "name": "罗技 LIGHTSPEED 接收器" },
   { "vid": "046D", "pid": "C543", "name": "罗技 LIGHTSPEED 接收器" },
   { "vid": "046D", "pid": "C545", "name": "罗技 LIGHTSPEED 接收器" },
-  { "vid": "046D", "pid": "C547", "name": "罗技 LIGHTSPEED 接收器" },
+  { "vid": "046D", "pid": "C547", "name": "罗技 LIGHTSPEED 接收器", "battery_protocol": "logitech-hidpp-2" },
   { "vid": "046D", "pid": "C54D", "name": "罗技 LIGHTSPEED 接收器" },
   { "vid": "046D", "pid": "C53A", "name": "罗技 POWERPLAY 接收器" },
   { "vid": "046D", "pid": "C52F", "name": "罗技 Nano 接收器" },

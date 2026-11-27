@@ -376,6 +376,7 @@ pub(super) fn capability_report(manifest: &Value) -> String {
                     | "storage"
                     | "timer"
                     | "appearance.material"
+                    | "mail.view"
                     | "navigation.shortcuts"
                     | "wireless.receivers" => "可用",
                     _ => "实验",

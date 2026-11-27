@@ -1,13 +1,15 @@
 //! 日历：飞书 / 钉钉 / iCloud / 自定义 CalDAV 与企业微信 Exchange ActiveSync 只读接入。
 //!
 //! `PROPFIND` 找日历（uuid），`REPORT calendar-query` 分别查询提醒窗口与所选月份，
-//! 企业微信使用 FolderSync / Sync；复用 VEVENT 解析与重复日程展开。认证使用 Basic Auth，
-//! 没有 OAuth、没有回调，用户在客户端自己生成账号密码即可。
+//! CalDAV 支持 Basic 和 Digest 认证。企业微信使用 FolderSync / Sync，并复用 VEVENT 解析。
 //!
 //! 硬约束：只读；凭据只进 Windows 凭据管理器（`keyring`，和邮件同一套库），
 //! 配置文件里只有平台、用户名、日历地址；不落盘正文、不进日志。
 
+mod digest;
 mod exchange;
+#[cfg(test)]
+mod digest_tests;
 #[cfg(test)]
 #[path="calendar/compatibility_tests.rs"]
 pub(crate) mod compatibility_tests;
@@ -428,8 +430,22 @@ impl Failure {
     }
 
     fn at_stage(mut self, stage: &str) -> Self {
-        if self.status != Some(401) { self.message = format!("{stage}失败，{}", self.message); }
+        if self.status != Some(401) || self.kind != "http" {
+            self.message = format!("{stage}失败，{}", self.message);
+        }
         self
+    }
+
+    fn dav_resource(provider: Provider, code: u16) -> Self {
+        if matches!(code, 401 | 403) {
+            Self {
+                status: Some(code),
+                kind: "resource_permission",
+                ..Self::text(format!("没有这个日历的读取权限（{code}），请检查日历共享授权"))
+            }
+        } else {
+            Self::status(provider, code)
+        }
     }
 
     fn transport(error: &(dyn std::error::Error + 'static)) -> Self {
@@ -550,53 +566,117 @@ pub fn basic_auth(user: &str, password: &str) -> String {
     format!("Basic {}",base64::engine::general_purpose::STANDARD.encode(format!("{user}:{password}")))
 }
 
-fn dav(
-    agent: &ureq::Agent,
-    method: &str,
-    url: &str,
-    depth: &str,
-    body: &str,
-    cfg: &Config,
-    password: &str,
-) -> Result<String, Failure> {
-    let (xml, _) = dav_response(agent, method, url, depth, body, cfg, password)?;
-    if !roxmltree::Document::parse(&xml).is_ok_and(|doc| doc.root_element().has_tag_name(("DAV:", "multistatus"))) {
-        return Err(Failure::text("服务器未返回有效的 CalDAV 响应，请核对日历同步地址和登录方式"));
-    }
-    Ok(xml)
+struct DavClient<'a> {
+    agent: &'a ureq::Agent,
+    cfg: &'a Config,
+    password: &'a str,
+    base: url::Url,
+    digest_origins: std::collections::HashSet<url::Origin>,
 }
 
-/// 返回最终地址，让发现流程按重定向后的地址解析相对路径。
-fn dav_response(
-    agent: &ureq::Agent, method: &str, url: &str, depth: &str,
-    body: &str, cfg: &Config, password: &str,
-) -> Result<(String,String), Failure> {
-    let base=url::Url::parse(&cfg.base()).map_err(|_|Failure::text("日历服务器地址无效"))?;
-    let mut target=url::Url::parse(url).map_err(|_|Failure::text("日历地址无效"))?;
-    for attempt in 0..4 {
-        let local=base.host_str().is_some_and(|host|host.parse::<std::net::IpAddr>().is_ok_and(|ip|ip.is_loopback()));
-        if !same_service(cfg.provider,&target,&base) || !target.username().is_empty() || target.password().is_some()
-            || !(target.scheme()=="https" || target.scheme()=="http" && local) {
-            return Err(Failure::text("日历返回了不可信地址，请重新连接"));
-        }
-        let res = agent
-        .request(method, target.as_str())
-        .set("Authorization", &basic_auth(&cfg.username, password))
-        .set("Depth", depth)
-        .set("Content-Type", "application/xml; charset=utf-8")
-        .send_string(body);
-        match res {
-            Ok(r) if matches!(r.status(),301|302|303|307|308) && attempt<3 => {
-                target=target.join(r.header("Location").ok_or_else(||Failure::text("日历重定向缺少地址"))?)
-                    .map_err(|_|Failure::text("日历重定向地址无效"))?;
-            }
-            Ok(r) if r.status()>=300=>return Err(Failure::status(cfg.provider,r.status()).at_url(&target)),
-            Ok(r)=>return r.into_string().map(|xml|(xml,target.to_string())).map_err(|e|Failure::transport(&e)),
-            Err(ureq::Error::Status(code,_))=>return Err(Failure::status(cfg.provider,code).at_url(&target)),
-            Err(e)=>return Err(Failure::transport(&e)),
-        }
+impl<'a> DavClient<'a> {
+    fn new(agent: &'a ureq::Agent, cfg: &'a Config, password: &'a str) -> Result<Self, Failure> {
+        let mut base = url::Url::parse(cfg.base().trim()).map_err(|_| Failure::text("日历服务器地址无效"))?;
+        base.set_fragment(None);
+        Ok(Self { agent, cfg, password, base, digest_origins: Default::default() })
     }
-    Err(Failure::text("日历重定向次数过多"))
+
+    fn read(&mut self, method: &str, url: &str, depth: &str, body: &str) -> Result<(String, String), Failure> {
+        let (xml, final_url) = self.response(method, url, depth, body)?;
+        if !roxmltree::Document::parse(&xml).is_ok_and(|doc| doc.root_element().has_tag_name(("DAV:", "multistatus"))) {
+            return Err(Failure::text("服务器未返回有效的 CalDAV 响应，请核对日历同步地址和登录方式"));
+        }
+        Ok((xml, final_url))
+    }
+
+    /// 返回最终地址，让发现流程按重定向后的地址解析相对路径。
+    fn response(&mut self, method: &str, url: &str, depth: &str, body: &str) -> Result<(String, String), Failure> {
+        let mut target = url::Url::parse(url).map_err(|_| Failure::text("日历地址无效"))?;
+        let local = self.base.host_str().is_some_and(|host| host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()));
+        for attempt in 0..4 {
+            target.set_fragment(None);
+            if !same_service(self.cfg.provider, &target, &self.base)
+                || !target.username().is_empty() || target.password().is_some()
+                || !(target.scheme() == "https" || target.scheme() == "http" && local)
+            {
+                return Err(Failure::text("日历返回了不可信地址，请重新连接"));
+            }
+            let response = self.request(method, &target, depth, body)?;
+            let status = response.status();
+            if matches!(status, 301 | 302 | 303 | 307 | 308) && attempt < 3 {
+                target = target.join(response.header("Location").ok_or_else(|| Failure::text("日历重定向缺少地址"))?)
+                    .map_err(|_| Failure::text("日历重定向地址无效"))?;
+            } else if status >= 300 {
+                return Err(Failure::status(self.cfg.provider, status).at_url(&target));
+            } else {
+                return response.into_string().map(|xml| (xml, target.to_string())).map_err(|e| Failure::transport(&e));
+            }
+        }
+        Err(Failure::text("日历重定向次数过多"))
+    }
+
+    fn request(&mut self, method: &str, target: &url::Url, depth: &str, body: &str) -> Result<ureq::Response, Failure> {
+        let agent = self.agent;
+        let send = |authorization: Option<&str>| {
+            let mut request = agent.request_url(method, target)
+                .set("Depth", depth).set("Content-Type", "application/xml; charset=utf-8");
+            if let Some(value) = authorization {
+                request = request.set_sensitive("Authorization", value);
+            }
+            request.send_string(body)
+        };
+        let provider = self.cfg.provider;
+        let finish = |result: Result<ureq::Response, ureq::Error>| result.map_err(|error| match error {
+            ureq::Error::Status(status, _) => Failure::status(provider, status).at_url(target),
+            other => Failure::transport(&other),
+        });
+        let origin = target.origin();
+        // 保留原有 Basic 直连行为。服务已声明 Digest 后，每次先获取新挑战，
+        // 兼容每个请求都更换 nonce 且未标注 stale 的服务器。
+        let known_digest = self.digest_origins.contains(&origin);
+        let basic = || basic_auth(&self.cfg.username, self.password);
+        let initial = send((!known_digest).then(basic).as_deref());
+        let Err(ureq::Error::Status(401, unauthorized)) = initial else { return finish(initial); };
+        let headers = unauthorized.all("WWW-Authenticate");
+        let challenge_failure = |error| {
+            let (kind, message) = match error {
+                digest::ChallengeError::Malformed => ("auth_invalid", "日历服务器返回的 Digest 认证信息无效（401）"),
+                digest::ChallengeError::Unsupported => ("auth_unsupported", "日历服务器要求的认证方式暂不支持（401）"),
+            };
+            Failure { status: Some(401), kind, ..Failure::text(message) }.at_url(target)
+        };
+        let Some(mut challenge) = digest::challenge(&headers).map_err(challenge_failure)? else {
+            if digest::offers_basic(&headers) {
+                return if known_digest { finish(send(Some(&basic()))) }
+                    else { Err(Failure::status(provider, 401).at_url(target)) };
+            }
+            if headers.iter().any(|value| !value.trim().is_empty()) {
+                return Err(challenge_failure(digest::ChallengeError::Unsupported));
+            }
+            return Err(Failure::status(provider, 401).at_url(target));
+        };
+        self.digest_origins.insert(origin);
+        let request_target = match target.query() {
+            Some(query) if !query.is_empty() => format!("{}?{query}", target.path()),
+            _ => target.path().to_owned(),
+        };
+        let authorize = |challenge: &mut digest::Challenge| {
+            challenge.authorization(&self.cfg.username, self.password, method, &request_target, body)
+                .map_err(challenge_failure)
+        };
+        let mut result = send(Some(&authorize(&mut challenge)?));
+        if let Err(ureq::Error::Status(401, response)) = &result {
+            if let Some(mut next) = digest::challenge(&response.all("WWW-Authenticate")).map_err(challenge_failure)? {
+                if next.is_stale() && next.nonce() != challenge.nonce() {
+                    result = send(Some(&authorize(&mut next)?));
+                }
+            }
+        }
+        finish(result).map_err(|mut error| {
+            if error.status == Some(401) { error.kind = "auth_digest_rejected"; }
+            error
+        })
+    }
 }
 
 /// iCloud 的日历实际放在 `pNN-caldav.icloud.com` 上，发现过程会从入口跳过去；
@@ -717,15 +797,16 @@ pub fn fetch_month(cfg: &Config, password: &str, month: NaiveDate) -> Result<Fet
 fn fetch_range(cfg: &Config, password: &str, lo: chrono::DateTime<chrono::Utc>, hi: chrono::DateTime<chrono::Utc>) -> Result<Fetched, Failure> {
     if cfg.provider.exchange() { return exchange::fetch(cfg, password, lo, hi); }
     let agent = agent()?;
+    let mut client = DavClient::new(&agent, cfg, password)?;
     // 每次都发现全部日历：已保存的地址可能指向空日历，会遮蔽同一账号下的其他日历。
     // 逐个查询，单个日历失败不影响其他日历，全部失败才报错。
-    let (calendars,mut report)=discover_calendars(&agent,cfg,password).map_err(|e|e.at_stage("查找日历"))?;
+    let (calendars,mut report)=discover_calendars(&mut client).map_err(|e|e.at_stage("查找日历"))?;
     let href=calendars.first().cloned().ok_or_else(||Failure::text("没有找到可读取的日历"))?;
     let mut events=Vec::new();
     let mut first_error=None;
     let mut ok=false;
     for collection in &calendars {
-        match fetch_collection(&agent,cfg,password,collection,lo,hi) {
+        match fetch_collection(&mut client,collection,lo,hi) {
             Ok(found)=>{ok=true;events.extend(found.events);report.merge(found.report);}
             Err(error)=>{report.failed+=1;report.status=report.status.or(error.status);let error=error.at_stage("读取日程");report.problem(error.message.clone());first_error.get_or_insert(error);}
         }
@@ -736,28 +817,30 @@ fn fetch_range(cfg: &Config, password: &str, lo: chrono::DateTime<chrono::Utc>, 
     Ok(Fetched{href,events,report})
 }
 
-fn fetch_collection(agent:&ureq::Agent,cfg:&Config,password:&str,href:&str,lo:chrono::DateTime<chrono::Utc>,hi:chrono::DateTime<chrono::Utc>)->Result<Fetched,Failure>{
+fn fetch_collection(client:&mut DavClient<'_>,href:&str,lo:chrono::DateTime<chrono::Utc>,hi:chrono::DateTime<chrono::Utc>)->Result<Fetched,Failure>{
+    let provider = client.cfg.provider;
     let href=href.to_owned();
     let start = lo.format("%Y%m%dT%H%M%SZ").to_string();
     let end = hi.format("%Y%m%dT%H%M%SZ").to_string();
-    let mut xml = dav(&agent, "REPORT", &href, "1", &report_body(cfg.provider, &start, &end), cfg, password)?;
+    let (mut xml, mut collection_url) = client.read("REPORT", &href, "1", &report_body(provider, &start, &end))?;
     let mut has_data=calendar_data(&xml).iter().any(|data|!data.trim().is_empty());
     if !has_data && (report_status_error(&xml).is_some() || !responses(&xml).is_empty()) {
         // 有的服务只列资源，或在查询结果中附带集合本身；集合不能当成日程读取。
-        if let Some(code @ (401|403))=report_status_error(&xml){return Err(Failure::status(cfg.provider,code));}
-        let mut refs=report_resource_refs(&xml,&href)?;
+        if let Some(code @ (401|403))=report_status_error(&xml){return Err(Failure::dav_resource(provider,code));}
+        let mut refs=report_resource_refs(&xml,&collection_url)?;
         if refs.is_empty() {
-            let listing=dav(&agent,"PROPFIND",&href,"1",PROPFIND_BODY,cfg,password)?;
-            if let Some(code @ (401|403))=report_status_error(&listing){return Err(Failure::status(cfg.provider,code));}
-            refs=report_resource_refs(&listing,&href)?;
+            let (listing, listing_url)=client.read("PROPFIND",&collection_url,"1",PROPFIND_BODY)?;
+            if let Some(code @ (401|403))=report_status_error(&listing){return Err(Failure::dav_resource(provider,code));}
+            refs=report_resource_refs(&listing,&listing_url)?;
+            collection_url=listing_url;
             if refs.is_empty() {
-                if let Some(code)=report_status_error(&xml){return Err(Failure::status(cfg.provider,code));}
+                if let Some(code)=report_status_error(&xml){return Err(Failure::dav_resource(provider,code));}
                 return Ok(Fetched{href,events:vec![],report:ReadReport::default()});
             }
         }
-        let data=calendar_data_request(cfg.provider,&start,&end);
+        let data=calendar_data_request(provider,&start,&end);
         let body=format!(r#"<c:calendar-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><d:getetag/>{data}</d:prop>{refs}</c:calendar-multiget>"#);
-        xml=dav(&agent,"REPORT",&href,"1",&body,cfg,password)?;
+        xml=client.read("REPORT",&collection_url,"1",&body)?.0;
         has_data=calendar_data(&xml).iter().any(|data|!data.trim().is_empty());
         if !has_data && report_status_error(&xml).is_none() {
             return Err(Failure::text("服务器未返回日程内容，请检查日历读取权限"));
@@ -765,8 +848,9 @@ fn fetch_collection(agent:&ureq::Agent,cfg:&Config,password:&str,href:&str,lo:ch
     }
     let ParsedEvents{events,mut report}=parse_events_in_range(&xml,lo,hi);
     if let Some(code)=report_status_error(&xml){
-        if !has_data{return Err(Failure::status(cfg.provider,code));}
-        report.failed+=1;report.status=Some(code);report.problem(Failure::status(cfg.provider,code).message);
+        let error = Failure::dav_resource(provider, code);
+        if !has_data{return Err(error);}
+        report.failed+=1;report.status=Some(code);report.problem(error.message);
     }
     Ok(Fetched { href, events, report })
 }
@@ -786,32 +870,53 @@ fn report_resource_refs(xml:&str,href:&str)->Result<String,Failure> {
     Ok(refs)
 }
 
-fn discover_calendars(agent: &ureq::Agent, cfg: &Config, password: &str) -> Result<(Vec<String>,ReadReport), Failure> {
-    let base = ensure_slash(cfg.base().trim());
-    let root=path_of(&base)=="/";
-    if let Some(calendar)=discover_at(agent,cfg,password,&base,"1")? {
-        return Ok(calendar);
+fn discover_calendars(client: &mut DavClient<'_>) -> Result<(Vec<String>,ReadReport), Failure> {
+    let base = client.base.clone();
+    let root = base.path() == "/" && base.query().is_none();
+    let add_slash = base.query().is_none() && !base.path().ends_with('/');
+    let fallback_error = match discover_at(client, base.as_str(), "1") {
+        Ok(Some(calendar)) => return Ok(calendar),
+        Ok(None) => None,
+        Err(error) => {
+            let initial = error.request_url.as_deref() == Some(base.as_str());
+            let root_auth = root && matches!(error.kind, "auth_digest_rejected" | "auth_unsupported" | "auth_invalid");
+            if initial && (root_auth || add_slash && matches!(error.status, Some(400 | 401 | 403 | 404 | 405))) {
+                Some(error)
+            } else {
+                return Err(error);
+            }
+        }
+    };
+    if add_slash {
+        // 兼容此前为用户填写的集合地址补斜杠的行为。
+        let mut collection = base.clone();
+        collection.path_segments_mut().map_err(|_| Failure::text("日历地址无效"))?.push("");
+        if let Some(calendar) = discover_at(client, collection.as_str(), "1")? {
+            return Ok(calendar);
+        }
     }
     if root {
-        let well_known=join_url(&base,".well-known/caldav");
-        if let Some(calendar)=discover_at(agent,cfg,password,&well_known,"0")? {
+        let well_known=join_url(base.as_str(),".well-known/caldav");
+        if let Some(calendar)=discover_at(client,&well_known,"0")? {
             return Ok(calendar);
         }
-        if let Some(calendar)=discover_at(agent,cfg,password,&join_url(&base,"calendars/"),"1")? {
-            return Ok(calendar);
+        if fallback_error.is_none() {
+            if let Some(calendar)=discover_at(client,&join_url(base.as_str(),"calendars/"),"1")? {
+                return Ok(calendar);
+            }
         }
     }
-    Err(Failure::text("没有找到日历，请确认这个账号能在客户端里同步日程"))
+    Err(fallback_error.unwrap_or_else(|| Failure::text("没有找到日历，请确认这个账号能在客户端里同步日程")))
 }
 
-fn discover_at(agent:&ureq::Agent,cfg:&Config,password:&str,start:&str,depth:&str)->Result<Option<(Vec<String>,ReadReport)>,Failure>{
+fn discover_at(client:&mut DavClient<'_>,start:&str,depth:&str)->Result<Option<(Vec<String>,ReadReport)>,Failure>{
     let mut queue=std::collections::VecDeque::from([(start.to_owned(),depth.to_owned())]);
     let mut visited=std::collections::HashSet::new();
     let mut found=Vec::new();let mut report=ReadReport::default();let mut first_error=None;
     for _ in 0..8 {
         let Some((next,depth))=queue.pop_front()else{break;};
         if !visited.insert(next.clone()){continue;}
-        let (xml,base)=match dav_response(agent,"PROPFIND",&next,&depth,PROPFIND_BODY,cfg,password) {
+        let (xml,base)=match client.response("PROPFIND",&next,&depth,PROPFIND_BODY) {
             Ok(response)=>response,
             Err(error)=>{
                 // 仅跳过初始入口自身的错误，重定向或属性发现后的服务错误原样返回。
@@ -919,7 +1024,7 @@ fn calendar_collections(xml:&str,base:&str)->Vec<String>{
 
 #[cfg(test)]
 fn discover(agent:&ureq::Agent,cfg:&Config,password:&str)->Result<String,Failure>{
-    discover_calendars(agent,cfg,password)?.0.into_iter().next().ok_or_else(||Failure::text("没有找到日历"))
+    discover_calendars(&mut DavClient::new(agent,cfg,password)?)?.0.into_iter().next().ok_or_else(||Failure::text("没有找到日历"))
 }
 
 /// 只选择日历集合或已有的 UUID 兼容路径，不能把主目录/收件箱当成日历。
@@ -1566,7 +1671,7 @@ mod tests {
         let url=format!("http://{}/calendar/",server.local_addr().unwrap());
         let cfg=Config{provider:Provider::Feishu,username:"synthetic".into(),href:Some(url.clone()),server:None};
         let client=ureq::AgentBuilder::new().timeout(Duration::from_millis(100)).build();
-        assert!(dav(&client,"REPORT",&url,"1","",&cfg,"synthetic-secret").is_err());
+        assert!(DavClient::new(&client,&cfg,"synthetic-secret").unwrap().read("REPORT",&url,"1","").is_err());
         server.set_nonblocking(true).unwrap();
         assert!(server.accept().is_err(),"不可信地址不能收到携带凭据的请求");
     }
@@ -1590,8 +1695,10 @@ mod tests {
             }
         });
         let cfg=Config{provider:Provider::Feishu,username:"synthetic".into(),href:None,server:Some(base.clone())};
-        assert!(dav(&agent().unwrap(),"REPORT",&base,"1","",&cfg,"secret").is_ok());
-        assert!(dav(&agent().unwrap(),"REPORT",&base,"1","",&cfg,"secret").is_err());
+        let agent = agent().unwrap();
+        let mut client = DavClient::new(&agent,&cfg,"secret").unwrap();
+        assert!(client.read("REPORT",&base,"1","").is_ok());
+        assert!(client.read("REPORT",&base,"1","").is_err());
         worker.join().unwrap();foreign.set_nonblocking(true).unwrap();assert!(foreign.accept().is_err());
     }
 

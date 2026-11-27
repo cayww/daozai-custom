@@ -1,6 +1,6 @@
 //! Windows 消息客户端的通用生命周期、窗口检查和后台唤起。
 use super::{AccountHistory,Capture,Messenger,OpenError,Target,Unread};
-use crate::model::Settings;
+use crate::model::{Settings,WechatWakeMethod,WechatWakeShortcut};
 use std::{collections::HashMap,sync::mpsc,time::{Duration,Instant}};
 use windows::{core::{w,PCWSTR,PWSTR},Win32::{
     Foundation::{CloseHandle,HWND,LPARAM},
@@ -380,7 +380,13 @@ impl Runtime {
         self.track(Target{unread,started})
     }
     pub fn request(&self,unread:Unread,settings:&Settings)->OpenRequest{
-        OpenRequest{unread,target:self.targets.get(&unread).copied(),allow_tray:(unread.source.adapter().tray_enabled)(settings)}
+        let allow_tray = (unread.source.adapter().tray_enabled)(settings);
+        let shortcut = if allow_tray && unread.source == Messenger::Wechat && settings.wechat_wake_method == WechatWakeMethod::Shortcut {
+            WechatWakeShortcut::parse(&settings.wechat_wake_shortcut)
+        } else {
+            None
+        };
+        OpenRequest{unread,target:self.targets.get(&unread).copied(),allow_tray,shortcut}
     }
     pub fn exited(&mut self,unreads:&[Unread])->Vec<Unread>{
         let exited=self.exited_with(unreads,client_processes);
@@ -434,7 +440,7 @@ fn resolve_open_target(target:Target,paths:&[String])->Result<Target,OpenError>{
 }
 
 #[derive(Clone,Copy)]
-pub struct OpenRequest {unread:Unread,target:Option<Target>,allow_tray:bool}
+pub struct OpenRequest {unread:Unread,target:Option<Target>,allow_tray:bool,shortcut:Option<WechatWakeShortcut>}
 static OPEN:crate::resources::Lane=crate::resources::Lane::new("daozai-messenger-open",1);
 impl OpenRequest {
     pub fn start(self,ctx:eframe::egui::Context)->Result<mpsc::Receiver<Result<Target,OpenError>>,OpenError>{
@@ -471,7 +477,11 @@ impl OpenRequest {
         let target=resolve_open_target(target,paths)?;
         let adapter=self.unread.source.adapter().native;
         if !(adapter.ready)(target){wake_step("客户端尚未就绪");return Err(OpenError::Unavailable);}
-        let result=(adapter.open)(target,paths,self.allow_tray);
+        let result=if let Some(shortcut)=self.shortcut {
+            crate::wechat::open_wechat(target.unread,paths,self.allow_tray,Some(shortcut)).map(|_|target)
+        } else {
+            (adapter.open)(target,paths,self.allow_tray)
+        };
         if unsafe{WaitForSingleObject(*process,0)==WAIT_OBJECT_0}{wake_step("唤起过程中账号进程已退出");Err(OpenError::Exited)}else{result}
     }
 }
@@ -555,12 +565,34 @@ mod tests {
         assert_eq!(*seen.borrow(),[(Messenger::Wechat,100),(Messenger::DingTalk,200)]);
     }
     #[test]
+    fn wechat_wake_method_only_sends_a_configured_wechat_shortcut() {
+        let runtime = Runtime::default();
+        let mut settings = Settings::default();
+        let wechat = Unread::of(Messenger::Wechat);
+        assert!(!runtime.request(wechat,&settings).allow_tray);
+        settings.wechat_tray_open = true;
+        settings.wechat_wake_shortcut = "Ctrl+Alt+W".into();
+        assert!(runtime.request(wechat,&settings).allow_tray);
+        assert!(runtime.request(wechat,&settings).shortcut.is_none());
+        settings.wechat_wake_method = WechatWakeMethod::Shortcut;
+        assert!(runtime.request(wechat,&settings).shortcut.is_some());
+        assert!(runtime.request(Unread::of(Messenger::Qq),&settings).shortcut.is_none());
+        settings.wechat_tray_open = false;
+        assert!(runtime.request(wechat,&settings).shortcut.is_none());
+        settings.wechat_tray_open = true;
+        settings.wechat_wake_shortcut = "unknown".into();
+        let request = runtime.request(wechat,&settings);
+        assert!(request.shortcut.is_none());
+        assert!(request.allow_tray);
+    }
+
+    #[test]
     fn opening_clients_share_one_worker_slot_until_the_worker_finishes(){
         let (release,wait)=mpsc::channel();let (started,ready)=mpsc::channel();
         let lease=OPEN.acquire().unwrap();let worker=lease.spawn(move||{started.send(()).unwrap();let _=wait.recv();}).unwrap();
         ready.recv_timeout(Duration::from_secs(2)).unwrap();
         for source in Messenger::ALL{
-            let result=OpenRequest{unread:Unread::of(source),target:None,allow_tray:true}.start(eframe::egui::Context::default());
+            let result=OpenRequest{unread:Unread::of(source),target:None,allow_tray:true,shortcut:None}.start(eframe::egui::Context::default());
             assert!(matches!(result,Err(OpenError::Busy)),"各客户端必须共用上限");
         }
         release.send(()).unwrap();worker.join().unwrap();assert_eq!(OPEN.active(),0);
@@ -574,7 +606,7 @@ mod tests {
         runtime.track(wx).unwrap();runtime.track(qq).unwrap();
         assert_eq!(runtime.request(wx.unread,&Settings::default()).target,Some(wx));
         assert_eq!(runtime.request(qq.unread,&Settings::default()).target,Some(qq));
-        let wrong=OpenRequest{unread:wx.unread,target:Some(qq),allow_tray:true}.run_with_paths(&[]);
+        let wrong=OpenRequest{unread:wx.unread,target:Some(qq),allow_tray:true,shortcut:None}.run_with_paths(&[]);
         runtime.exited_with(&[wx.unread],|_|None);DestroyWindow(window).unwrap();
         assert_eq!(wrong,Err(OpenError::Unavailable));assert_eq!(runtime.targets.len(),1);assert!(runtime.targets.contains_key(&wx.unread));
     }}
@@ -656,7 +688,7 @@ mod tests {
         }
     }}
     fn open_qq_target(target:Target)->Result<(),String>{
-        OpenRequest{unread:target.unread,target:Some(target),allow_tray:true}.run().map(|_|()).map_err(|error|error.message(target.unread.source))
+        OpenRequest{unread:target.unread,target:Some(target),allow_tray:true,shortcut:None}.run().map(|_|()).map_err(|error|error.message(target.unread.source))
     }
     struct ClientProcess(std::process::Child);
     impl ClientProcess {

@@ -180,7 +180,10 @@ impl App {
                 SideItem::Quota(index, h) => self.draw_quota_side(c, cx, mid, h, index),
                 #[cfg(feature="sdk-js")]
                 SideItem::Pinned(index) => if let Some(display) = self.pinned_displays.get(index) {
-                    if display.draw(c, cx, mid, display.width(width), true, self.pinned_canvas_theme()) {
+                    let (click, repaint_after, animating) =
+                        display.draw(c, cx, mid, display.width(width), true, self.pinned_canvas_theme());
+                    self.pinned_frame.include(repaint_after, animating);
+                    if click {
                         let id=display.plugin.clone();
                         self.show_status_page(&id);
                     }
