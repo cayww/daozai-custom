@@ -660,9 +660,9 @@ fn read_k99(col: &Collection) -> Option<(u8, bool)> {
         if !handle.write(&request, Instant::now() + IO_TIMEOUT) {
             continue;
         }
-        let deadline = Instant::now() + Duration::from_millis(150);
-        while Instant::now() < deadline {
-            if let Some(resp) = handle.read(deadline) {
+        let until = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < until {
+            if let Some(resp) = handle.read(Instant::now() + Duration::from_millis(150)) {
                 if let Some((level, charging, _)) = parse_k99_reply(&resp) {
                     return Some((level, charging));
                 }
@@ -680,9 +680,9 @@ fn read_kb(col: &Collection) -> Option<(u8, bool, bool)> {
         if !handle.write(&request, Instant::now() + IO_TIMEOUT) {
             return None;
         }
-        let deadline = Instant::now() + Duration::from_millis(100);
-        while Instant::now() < deadline {
-            if let Some(resp) = handle.read(deadline) {
+        let until = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < until {
+            if let Some(resp) = handle.read(Instant::now() + Duration::from_millis(100)) {
                 if let Some((level, flags)) = parse_kb_reply(&resp) {
                     let charging = parse_kb_charging(flags);
                     return Some((level, charging.unwrap_or(false), charging.is_some()));
@@ -839,8 +839,7 @@ fn pick<'a>(variant: Variant, collections: &'a [Collection]) -> Vec<&'a Collecti
             .filter(|c| c.usage_page == CONFIG_PAGE && c.usage == 0x0010)
             .collect(),
     };
-    // 同一协议只用第一个应答的集合；重复尝试会向设备多写请求。
-    picked.truncate(1);
+    // 与 Python 一致：逐个集合尝试，首个给出有效读数即返回（由 poll 负责提前返回）。
     picked
 }
 
