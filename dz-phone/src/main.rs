@@ -467,9 +467,12 @@ impl Shell {
                 self.placement_at=PollClock::now();
                 self.app.displays=daozai::display_layout::connected();
             }
-            // 跨屏拖动换到另一块屏时按目标屏 DPI 放置；其余情况沿用 egui 的 ppp。
-            // 注意 placement_scale 初值为 0，绝不能直接拿来当 scale 用（会把窗口缩成 0）。
-            let cross_screen=self.placed && (self.placement_key.0!=placement_key.0 || self.placed_bounds!=bounds);
+            // 只有真正换了显示器（display_id 变化）才按目标屏 DPI 放置。
+            // 换停靠边（Top→Bottom）也会改 bounds，但那不是跨屏——若据此切 scale，
+            // d.scale()（dpi/96）与 ctx.ppp（window.scale_factor）在非整数缩放下不一致，
+            // 窗口会按错误缩放被放到屏幕外（设置里选底部只闪一下就消失）。
+            // placement_scale 初值 0，绝不能直接当定位输入。
+            let cross_screen=self.placed && self.placement_key.0!=placement_key.0;
             let scale=if cross_screen {
                 daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id)
                     .map(|d|d.scale(self.app.settings.island_scale()*ctx.zoom_factor()))
