@@ -187,7 +187,9 @@ pub(crate) fn device_icon(c: &Card, kind: crate::bt::DeviceKind, x: f32, y: f32,
             egui::include_image!("../assets/device-icons/bluetooth-linear.svg")
         }
     };
-    let rect = c.rect(x, y, size, size);
+    // 图像用连续矩形，不 snap 到物理像素：动画期 snap 会让宽高在 N/N+1 像素
+    // 间跳变，图标看起来忽大忽小地闪。
+    let rect = c.rect_unsnapped(x, y, size, size);
     let egui::ImageSource::Bytes { uri, bytes } = icon else {
         return;
     };

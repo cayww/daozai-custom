@@ -111,6 +111,13 @@ impl<'a> Card<'a> {
         let r = Rect::from_min_size(self.pos(x, y), Vec2::new(w, h) * self.s);
         self.snap_rect(r, w > 0.0, h > 0.0)
     }
+    /// 逻辑矩形 → 屏幕矩形，但**不做物理像素对齐**。
+    /// 纹理/图像（SVG 图标、宠物表情序列图）必须用这个：展开/收起动画里位置
+    /// 连续变化，若 snap 到整像素，宽高会在 N 和 N+1 像素间跳变，GPU 采样出来的
+    /// 图像就忽大忽小，表现为图标一闪一闪。填充块/描边才需要 snap_rect 防边缘闪烁。
+    pub fn rect_unsnapped(&self, x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect::from_min_size(self.pos(x, y), Vec2::new(w, h) * self.s)
+    }
     /// 屏幕坐标 → 最近的像素边界（整像素对齐，用于填充/裁剪）。
     pub fn snap(&self, v: f32) -> f32 {
         (v * self.ppp).round() / self.ppp

@@ -147,7 +147,8 @@ impl Expressions {
             egui::pos2(inset_u, frame as f32/16.0 + inset_v),
             egui::pos2(1.0 - inset_u, (frame+1) as f32/16.0 - inset_v),
         );
-        c.painter.image(self.sheet.as_ref().unwrap().2.id(),c.rect(cx-24.0,0.0,48.0,30.0),uv,Color32::WHITE);
+        // 序列图用连续矩形，避免动画期 snap 到整像素导致宽高 N/N+1 跳变而闪烁。
+        c.painter.image(self.sheet.as_ref().unwrap().2.id(),c.rect_unsnapped(cx-24.0,0.0,48.0,30.0),uv,Color32::WHITE);
         true
     }
 }
