@@ -191,11 +191,15 @@ pub(crate) fn device_icon(c: &Card, kind: crate::bt::DeviceKind, x: f32, y: f32,
     let egui::ImageSource::Bytes { uri, bytes } = icon else {
         return;
     };
-    let pixels = (rect.width() * c.ui.ctx().pixels_per_point()).ceil() as u32;
-    let icon = egui::Image::from_bytes(format!("{uri}/{pixels}.svg"), bytes);
+    // 纹理 URI 必须固定：展开/收起动画里 rect.width() 逐帧微变，若把它拼进 URI
+    // （原来用 {uri}/{pixels}.svg），egui 每帧当成新图片重新光栅化，加载间隙
+    // load_for_size 返回 Pending 就不画这一帧 —— 表现为环内白色图标一闪一闪。
+    // 固定按 32px 光栅化一次并缓存，显示尺寸交给 fit_to_exact_size 让 GPU 缩放。
+    const RASTER_PX: u32 = 32;
+    let icon = egui::Image::from_bytes(format!("{uri}/{RASTER_PX}.svg"), bytes);
     if let Ok(egui::load::TexturePoll::Ready { texture }) = icon
         .fit_to_exact_size(rect.size())
-        .load_for_size(c.ui.ctx(), rect.size())
+        .load_for_size(c.ui.ctx(), egui::vec2(RASTER_PX as f32, RASTER_PX as f32))
     {
         c.painter.image(
             texture.id,
