@@ -4044,8 +4044,29 @@ fn switch(ui: &mut egui::Ui, value: &mut bool) -> bool {
 }
 /// 设置页版式常量。
 pub(crate) const SETTINGS_LABEL_W: f32 = 80.0;
-const SETTINGS_SWITCH_W: f32 = 34.0;
+pub(crate) const SETTINGS_SWITCH_W: f32 = 34.0;
 const SETTINGS_ROW_GAP: f32 = 16.0;
+
+fn setting_row_text(ui:&mut egui::Ui,title:&str,description:&str,width:f32){
+    let ctx=&ui.ctx().clone();
+    ui.vertical(|ui|{
+        ui.set_width(width);
+        ui.spacing_mut().item_spacing.y=2.0;
+        ui.add(egui::Label::new(egui::RichText::new(title).size(13.0).color(settings_color(ctx,Color32::WHITE,Color32::from_rgb(30,34,41)))).wrap());
+        if !description.is_empty(){ui.add(egui::Label::new(egui::RichText::new(description).size(11.5).color(settings_color(ctx,Color32::from_gray(185),Color32::from_gray(82)))).wrap());}
+    });
+}
+
+pub(crate) const PAGE_VISIBILITY_ACTION_WIDTH: f32 = 92.0;
+
+pub(crate) fn page_visibility_action(ui:&mut egui::Ui,on:bool,hidden:bool,can_disable:bool)->bool{
+    let label=if hidden {"显示入口"} else if on {"关闭并隐藏"} else {"隐藏入口"};
+    let response=ui.add_enabled_ui(can_disable,|ui|{
+        ui.add_sized([PAGE_VISIBILITY_ACTION_WIDTH,26.0],egui::Button::new(egui::RichText::new(label).size(12.0)).frame(false))
+    }).inner.on_disabled_hover_text("至少保留一个页面");
+    if response.clicked() {ui.ctx().request_repaint();}
+    response.clicked()
+}
 
 /// 开关行：左侧标题 + 说明（宽度固定、自动换行），右侧开关，长说明也不会把开关挤出卡片。
 pub(crate) fn setting_row(ui: &mut egui::Ui, title: &str, description: &str, value: &mut bool) {
@@ -5389,7 +5410,7 @@ impl App {
                     SETTINGS_TAB_WIRELESS=>{
                         let on=self.settings_feature_header(ui,crate::app::BLUETOOTH_PAGE,"查看蓝牙电量和 2.4G 接收器状态",|_,_|{});
                         #[cfg(feature="sdk-js")]
-                        self.plugins.wireless_settings(ui);
+                        self.plugins.wireless_settings(ui, &self.wireless_enhancement, on);
                         ui.add_enabled_ui(on,|ui|{
                             settings_label(ui,"岛上常驻");
                             settings_card(ui,|ui|{
@@ -5452,7 +5473,7 @@ impl App {
                         settings_label(ui,"功能页面");
                         settings_card(ui,|ui|{
                             #[cfg(feature="sdk-js")]
-                            if self.plugins.page_shortcut_settings(ui,&mut self.settings.show_page_shortcuts) { ui.separator(); }
+                            if self.plugins.page_shortcut_settings(ui,&mut self.settings.show_page_shortcuts,&mut self.settings.hide_page_arrows) { ui.separator(); }
                             let descriptions=["播放控制与同步歌词","番茄钟与休息计时","喝水与久坐提醒","临时收纳文件位置","任务清单与到期提醒","邮件摘要与验证码","Agent 剩余额度和账号切换","月历、邮件邀请与工作日程","当地天气与七日预报","CPU、GPU、内存等实时指标","蓝牙设备与接收器"];
                             ui.label(egui::RichText::new("拖动左侧手柄调整顺序；关闭的功能不在后台运行，不同步也不提醒，已有数据保留。").size(11.5).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             #[derive(Clone)]
@@ -5500,7 +5521,13 @@ impl App {
                             }
                         });
                         #[cfg(feature="sdk-js")]
-                        if let Some(route)=self.plugins.status_page_settings(ui) {self.apply_plugin_navigation(route);}
+                        {
+                            let plugin_ids:Vec<String>=self.plugins.status_page_preferences()
+                                .map(|(id,_,_,_)|id.to_owned()).collect();
+                            for id in plugin_ids {
+                                if let Some(route)=self.plugins.status_page_settings(ui,&id) {self.apply_plugin_navigation(route);}
+                            }
+                        }
                     }
                     0=>{
                         settings_label(ui,"设置页外观");

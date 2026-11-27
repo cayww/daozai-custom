@@ -8,7 +8,7 @@ mod components;
 #[path = "plugin_status_private.rs"]
 mod private;
 
-pub(crate) use private::MASKED_VALUE;
+pub(crate) use private::{clear_sensitive_reveal, sensitive_values_blocked, MASKED_VALUE};
 use private::SensitiveValues;
 
 #[cfg(all(test, feature="__plugin_tests_disabled__"))]
