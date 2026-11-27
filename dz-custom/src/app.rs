@@ -4160,6 +4160,9 @@ impl App {
         // 日程编辑器/任务弹窗整页替换 panel_body，齿轮与翻页箭头都不画 ——
         // 几何也要跟着消失，否则 GPU 会画出一颗没有图标的空透镜。
         let chrome_gone=self.calendar.draft.is_some() || self.task_dialog.is_some();
+        // 日程编辑器整页替换 panel_body：日期/时间选择器打开时表单提前 return 不画，
+        // 若这里仍发布 Cal* 几何，HLSL 只剩一圈白边，落在日历网格/时间滚轮上成空心胶囊。
+        let editor=self.calendar.draft.as_ref().filter(|d|d.picker.is_none());
         Some(match ctl {
             Ctl::Gear=>{if chrome_gone {return None;} disc(394.0,18.0,13.0)}
             Ctl::Lyric=>{if !media||!has {return None;} disc(74.0,118.0,MEDIA_CTL_R)}
@@ -4208,11 +4211,11 @@ impl App {
             // 日程编辑器（calendar_editor.rs 同一套坐标）。编辑器替换了 panel_body，
             // 齿轮/箭头本就不画，所以这里没有 chrome 控件，槽位很宽裕。
             Ctl::CalAllDay=>{
-                if self.calendar.draft.is_none() {return None;}
+                if editor.is_none() {return None;}
                 (Rect::from_min_size(Pos2::new(294.0,72.0),Vec2::new(76.0,21.0)),10.5)
             }
             Ctl::CalRem0|Ctl::CalRem1|Ctl::CalRem2|Ctl::CalRem3|Ctl::CalRem4=>{
-                let Some(d)=self.calendar.draft.as_ref() else {return None;};
+                let Some(d)=editor else {return None;};
                 let i=ctl.rem_index();
                 // 分段数量与宽度随「全天」变：全天 2 个 126 宽，否则 5 个 54 宽。
                 let (count,width)=if d.all_day {(2usize,126.0)}else{(5usize,54.0)};
@@ -4221,15 +4224,15 @@ impl App {
                 (Rect::from_min_size(Pos2::new(x,136.0),Vec2::new(width,21.0)),10.5)
             }
             Ctl::CalDelete=>{
-                if self.calendar.draft.as_ref().is_none_or(|d|d.uid.is_none()) {return None;}
+                if editor.is_none_or(|d|d.uid.is_none()) {return None;}
                 (Rect::from_min_size(Pos2::new(43.0,188.0),Vec2::new(82.0,22.0)),11.0)
             }
             Ctl::CalCancel=>{
-                if self.calendar.draft.is_none() {return None;}
+                if editor.is_none() {return None;}
                 (Rect::from_min_size(Pos2::new(224.0,188.0),Vec2::new(64.0,22.0)),11.0)
             }
             Ctl::CalSave=>{
-                if self.calendar.draft.is_none() {return None;}
+                if editor.is_none() {return None;}
                 (Rect::from_min_size(Pos2::new(298.0,188.0),Vec2::new(72.0,22.0)),11.0)
             }
             // 邮件页「全部/未读」滑动指示器（Pack-v2 demo 的 tab）：单个透镜随弹簧

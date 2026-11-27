@@ -9729,6 +9729,26 @@ fn control_glass_covers_small_buttons_and_drops_the_lyric_card(){
 }
 
 #[test]
+fn calendar_picker_drops_editor_glass_geometry(){
+    // 日期/时间选择器整页替换日程表单；若仍发布 Cal* 透镜几何，shader 只剩白边，
+    // 在日历网格/时间滚轮上留下新建日程页按钮的空心胶囊轮廓（用户实测）。
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.skin=crate::model::Skin::Liquid;
+    h.app.open_calendar_editor(None);
+    let editor_ctls=[crate::app::Ctl::CalAllDay,crate::app::Ctl::CalRem0,crate::app::Ctl::CalRem1,
+        crate::app::Ctl::CalRem2,crate::app::Ctl::CalRem3,crate::app::Ctl::CalRem4,
+        crate::app::Ctl::CalCancel,crate::app::Ctl::CalSave];
+    assert!(editor_ctls.iter().all(|&c|h.app.ctl_geom(c).is_some()),"编辑器页按钮该有透镜几何");
+    let date=chrono::NaiveDate::from_ymd_opt(2026,11,27).unwrap();
+    h.app.calendar.draft.as_mut().unwrap().picker=Some(crate::calendar_editor::Picker::Date {
+        end:false,month:crate::calendar::month_start(date) });
+    assert!(editor_ctls.iter().all(|&c|h.app.ctl_geom(c).is_none()),"选择器页不该再发布编辑器透镜几何");
+    h.app.calendar.draft.as_mut().unwrap().picker=None;
+    assert!(editor_ctls.iter().all(|&c|h.app.ctl_geom(c).is_some()),"关掉选择器后透镜几何要恢复");
+}
+
+#[test]
 fn control_scale_follows_spring_for_appear_and_press(){
     let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
     let mut h=H::new();
