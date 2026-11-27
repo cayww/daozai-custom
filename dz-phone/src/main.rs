@@ -467,12 +467,15 @@ impl Shell {
                 self.placement_at=PollClock::now();
                 self.app.displays=daozai::display_layout::connected();
             }
-            // 跨屏拖动或切换屏幕时按目标屏 DPI 放置，停靠跟随屏幕物理范围。
-            let moving=self.placed && (self.app.dragging_position() || self.placement_key.0!=placement_key.0 || self.placed_bounds!=bounds);
-            let scale=if moving {bounds.map(|_|{
+            // 跨屏拖动换到另一块屏时按目标屏 DPI 放置；其余情况沿用 egui 的 ppp。
+            // 注意 placement_scale 初值为 0，绝不能直接拿来当 scale 用（会把窗口缩成 0）。
+            let cross_screen=self.placed && (self.placement_key.0!=placement_key.0 || self.placed_bounds!=bounds);
+            let scale=if cross_screen {
                 daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id)
-                    .map(|d|d.scale(self.app.settings.island_scale()*ctx.zoom_factor())).unwrap_or(self.placement_scale)
-            }).unwrap_or(self.placement_scale)}else{self.placement_scale};
+                    .map(|d|d.scale(self.app.settings.island_scale()*ctx.zoom_factor()))
+                    .filter(|s|s.is_finite() && *s>0.0)
+                    .unwrap_or_else(||ctx.pixels_per_point())
+            }else{ctx.pixels_per_point()};
             self.placement_scale=scale;
             self.placement_key=placement_key;
             let display=daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id);
