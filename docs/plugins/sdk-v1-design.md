@@ -1,5 +1,7 @@
 # 岛仔插件 SDK v1
 
+> **定制版状态（2026-11-27）**：文中标注「GPU 材质」「材质插件」「`screen.backdrop`」「`appearance.material`」的条目属于上游已退役的 wgpu/WGSL 栈，定制版不支持；`src/material/` 已删除。下文保留为历史设计说明，实际渲染以 D3D11 液态玻璃为准。
+
 ## 1. 插件如何工作
 
 SDK 是岛仔提供给插件作者的一组公开约定。宿主指运行插件的岛仔。你提供一份清单和几段函数，岛仔负责调用、画界面和保存结果。
@@ -22,7 +24,7 @@ function refresh({ settings, today }) {
 | 能力与进度 | 作者怎么写 | 用户在哪里用 |
 | --- | --- | --- |
 | 文本、日期设置 · 已实现 | 清单的 settings 列出字段，在上例读取 settings.title 和 settings.target | 归属模块的插件设置 |
-| 材质数字参数 · 已实现 | 清单声明 `type: "number"`、`min`、`max`、`step` 和字符串形式的 `default`，可选 `unit` 和 `precision`。着色器按清单顺序用 `param(index)` 取值，最多 32 项 | 「设置 → 外观 → 材质」，拖动滑块实时应用 |
+| 材质数字参数 · 上游历史（定制版不支持） | 清单声明 `type: "number"`、`min`、`max`、`step` 和字符串形式的 `default`，可选 `unit` 和 `precision`。着色器按清单顺序用 `param(index)` 取值，最多 32 项 | 「设置 → 外观 → 材质」，拖动滑块实时应用 |
 | 脚本插件设置 · 实验 | text、date、switch、choice、number、time、weekdays、timezone、list。默认值和保存值均为字符串 | 所属设置页 |
 | 文字卡、私有存储 · 已实现 | 上例返回 card 和 storage。首次的 storage 为 null，之后可用 `storage?.lastDays` 读回天数 | `owner: "tasks"` 显示在待办页 |
 | 日期标注 · 已实现 | 声明 `calendar.marker`，`refresh` 返回 `marker`，空字表示当天不标注。旧版 `owner: "calendar"` 加 `card` 的写法继续有效，`card` 即标注 | 展开「日程 → 日历」查看电脑当天日期下方的标注 |
@@ -46,7 +48,7 @@ function refresh({ settings, today }) {
 | 吉祥物表情 · 测试版 | `runtime: "assets"`、`owner: "appearance"`、`appearance.pet`，入口 `expressions.json` | 设置 → 外观 → 吉祥物表情，沿用原动作的触发时机与帧速 |
 | 画布字体 · 测试版 | `runtime: "assets"`、`owner: "appearance"`、`appearance.font`，入口 `fonts.json` | 在已安装插件中启用，画布文字按名称引用 |
 | 底部快捷切换 · 已实现 | 声明 `runtime: "assets"`、`owner: "pages"` 和 `navigation.shortcuts`，在 `shortcuts.json` 配置选中配色 | 展开岛仔，点击底部图标直达已启用页面。设置归属「页面管理」 |
-| GPU 材质 · 已实现 | 清单用 `runtime: "material"`、`owner: "appearance"`、`appearance.material` 能力和 `screen.backdrop` 权限。WGSL 入口实现 `material()`，沿用[材质接口](gpu-material.md) | 「设置 → 外观 → 材质」，同一时间选用一个材质，需开启 Direct3D 12 兼容渲染 |
+| GPU 材质 · 上游历史（定制版不支持） | 清单用 `runtime: "material"`、`owner: "appearance"`、`appearance.material` 能力和 `screen.backdrop` 权限。WGSL 入口实现 `material()`，沿用[材质接口](gpu-material.md) | 「设置 → 外观 → 材质」，同一时间选用一个材质，需开启 Direct3D 12 兼容渲染 |
 
 action 接收按钮 ID 和表单值，event 接收事件名和事件数据。两个入口沿用 refresh 的输出与私有存储格式。
 
@@ -107,7 +109,7 @@ action 接收按钮 ID 和表单值，event 接收事件名和事件数据。两
 
 权限说明用户允许岛仔替这个插件做哪些事。安装前看作者、归属和权限摘要，首次启用确认具体用途，更新时新增的权限单独确认。撤权后岛仔停止取数并丢弃旧请求的结果。
 
-JS 卡片可用空权限，或申请一个本地只读数据源。材质插件首次启用时单独确认 `screen.backdrop` 权限，岛背后的像素只在本机用于材质绘制，着色器可采样底片纹理，像素不保存、不上传。
+JS 卡片可用空权限，或申请一个本地只读数据源。（上游历史设计）材质插件首次启用时单独确认 `screen.backdrop` 权限，岛背后的像素只在本机用于材质绘制，着色器可采样底片纹理，像素不保存、不上传；定制版不支持该权限。
 
 ### 只读数据源
 
@@ -455,7 +457,7 @@ function refresh({settings}) {
 
 用户在「设置 → 插件 → 已安装 → 开发者工具」导入目录，集市切到「本地测试」。安装后在「已安装」管理。升级从同一目录领取同 ID、版本更高的包。更新验证通过后才替换安装快照，保留原启用选择、已保存的设置和私有数据。新增字段使用新版默认值。校验、试跑或兼容检查失败时保留旧包。
 
-本地测试集市接受合规的 QuickJS 插件、外观资源包、快捷切换插件、无线设备兼容包以及 GPU 材质。申请本地数据源的 JS 插件仍需用户安装后单独授权。索引及 ZIP 应来自用户信任的本机目录。SHA-256 核对包是否与索引一致。
+本地测试集市接受合规的 QuickJS 插件、外观资源包、快捷切换插件、无线设备兼容包（上游历史设计中还接受 GPU 材质，定制版不支持）。申请本地数据源的 JS 插件仍需用户安装后单独授权。索引及 ZIP 应来自用户信任的本机目录。SHA-256 核对包是否与索引一致。
 
 官方无线设备兼容包通过插件集市分发，在「已安装」管理。ZIP 包含 `plugin.json`、`wireless-receivers.json` 和 `cover.png`，只为本体补充核实过的 2.4G USB 接收器型号。
 

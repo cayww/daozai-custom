@@ -1,5 +1,7 @@
 # GPU 材质能力：分阶段任务
 
+> **定制版状态（2026-11-27）**：本任务清单对应上游已退役的 GPU 材质 SDK（wgpu/D3D12/WGSL）。定制版从未启用该栈，`src/material/` 已删除，这些阶段不再执行。下文保留为历史实现记录。
+
 设计见 [gpu-material.md](gpu-material.md)。各阶段按顺序做，每个阶段开一个新对话，上一阶段审查通过后再开下一阶段。开新对话时直接发：
 
 > 按 `D:\A-TangHao\REA\Windows小工具\01-专项工程\GPU材质\docs\plugins\gpu-material-tasks.md` 做第 N 阶段。

@@ -2186,3 +2186,16 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **待用户实机确认**：底部停靠岛体可见、可悬停/点击、拖到底部松手后正常。
 
 **教训**：用户说"上游有这功能"时，要逐行对照上游该功能的**完整实现链路**（含坐标系变换这种不起眼的闭包），不能只看放置/配置层；窗口监视日志（visible + rect）是区分"窗口问题 vs 渲染问题"的决定性手段。
+
+
+
+### 7.0zzzz 删除已退役的 src/material/ 死代码（2026-11-27 13:02）
+
+**背景**：上游 v0.6.70 合并带入 `dz-phone/src/material/`（`mod.rs`/`backdrop.rs`/`controls.rs`/`pipeline.rs`/`prelude.wgsl`/`debug.wgsl`，共约 2598 行）。全仓库无 `mod material;`、无 `#[path="material/..."]`、无 `material::` 引用；`Cargo.toml:57` 明确写「legacy wgpu/D3D12/WGSL stack is gone; rendering is D3D11 + winit only」，`sdk-material` 不在 default features。该目录从未接入编译，属纯死代码。真正的底片/抓屏在 `src/backdrop.rs` 与 `src/d3d11/wgc_capture.rs`。
+
+**改动**：`git rm -r dz-phone/src/material/`（6 文件删除）。同步修正 6 份文档：`merge-comparison-v0670.md`（不再声称 material/ 保留）、`plugins/gpu-material.md` 与 `plugins/gpu-material-tasks.md`（顶部标注已退役、历史设计保留）、`plugins/local-install.md`、`plugins/sdk-v1-design.md`、`plugins/sdk-open-tasks/5-settings-and-inputs.md`（材质相关条目标注定制版不支持）。`docs/HANDOFF.md` 与桌面 `HANDOFF.md` 追加本节。`dz-phone/CHANGELOG.md` 加一条面向用户的说明。
+
+**验证**：全量 lib **1553 passed / 0 failed / 138 ignored**（`--profile dev-release --lib -- --test-threads=1`，隔离 `DAOZAI_DATA_DIR`）；`cargo check --locked --lib --bins --tests` 通过。release 双 bin 构建在用户打断时中止，**未打包、未部署**（用户明确要求先不打包）。
+
+**状态**：仅提交，未 push、未部署。git 可随时恢复被删文件。
+

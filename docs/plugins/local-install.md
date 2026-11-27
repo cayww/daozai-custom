@@ -61,7 +61,7 @@ New-Item -ItemType Directory -Force (Split-Path $catalog) | Out-Null
 
 `--plugin-test` 检查清单、入口和封面。JavaScript 插件还会用默认设置试跑一张卡片。`--plugin-pack` 导出含封面的 ZIP。`--plugin-submit` 将已验证的包放进测试目录，随后更新索引。命令失败时查看输出，并在修正后重新执行。
 
-支持 GPU 材质的 Windows 版也可以按同样步骤打包[液态玻璃样例](../../spike/examples/liquid-glass)。`.wgsl` 入口须在包根目录并通过着色器校验。安装后保持停用，首次启用时需要确认屏幕底片权限，并开启 Direct3D 12 兼容渲染。
+（历史说明，定制版不支持）上游 Windows 版曾可按同样步骤打包[液态玻璃样例](../../spike/examples/liquid-glass)：`.wgsl` 入口须在包根目录并通过着色器校验，首次启用需要确认屏幕底片权限并开启 Direct3D 12 兼容渲染。本定制版已移除 GPU 材质栈，`src/material/` 与 `diagnostics/material.log` 均不存在，WGSL 材质包不会被加载；液态玻璃由 D3D11 自绘栈提供。
 
 提交到本地测试目录后，可以用 `--plugin-avatar <目录索引> <插件 ID> <GitHub 用户名>` 同步作者头像。例如 `& $island --plugin-avatar $catalog cayww.liquid-glass cayww`。同步后刷新测试集市目录即可查看，插件沿用原版本和 ZIP。
 

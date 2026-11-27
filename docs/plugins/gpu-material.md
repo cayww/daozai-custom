@@ -1,8 +1,10 @@
 # GPU 材质接口规范 v1
 
-状态：**定稿**，对应插件清单 `api: 1`。本文件约定的清单字段、着色器接口、控件角色和宿主行为，在 `api: 1` 内只按「稳定性约定」一节追加，不改变已有含义。第 6 阶段把定稿时新增的几项落地后，随 `feat/gpu-material` 合进 `main`（合并前须完成文末的补测）。材质插件支持本地安装和[本地测试集市](local-install.md#测试集市)，正式分发另行规定。
+> **定制版状态（2026-11-27）**：本文描述的上游 GPU 材质 SDK 属于已退役的 wgpu/D3D12/WGSL 栈。它从未接入本定制版的编译，`src/material/` 已删除，液态玻璃走 D3D11 自绘栈。下文保留为历史设计参考；其中 `diagnostics/material.log`、`src/material/*`、Direct3D 12 兼容渲染、材质插件启用流程等在定制版均不存在。
 
-实现分支 `feat/gpu-material`，工作树 `01-专项工程/GPU材质`。实现过程见 [gpu-material-tasks.md](gpu-material-tasks.md)。
+历史状态：**定稿**，对应插件清单 `api: 1`。本文件约定的清单字段、着色器接口、控件角色和宿主行为，在 `api: 1` 内只按「稳定性约定」一节追加，不改变已有含义。第 6 阶段把定稿时新增的几项落地后，随 `feat/gpu-material` 合进 `main`（合并前须完成文末的补测）。材质插件支持本地安装和[本地测试集市](local-install.md#测试集市)，正式分发另行规定。
+
+历史实现分支 `feat/gpu-material`，工作树 `01-专项工程/GPU材质`。实现过程见 [gpu-material-tasks.md](gpu-material-tasks.md)。
 
 ## 目标
 

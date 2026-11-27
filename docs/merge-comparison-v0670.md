@@ -41,7 +41,7 @@
 | 模块 | 内容 | 关键文件 / 目录 |
 |---|---|---|
 | 插件体系 | 插件画布、通知/状态插件、设置目录、已安装管理、额度插件 | `src/plugin_canvas*`、`plugin_notice*`、`plugin_status*`、`quota_plugin*`、`plugin_setting_catalog.rs` |
-| 插件 SDK 资源 | GPU 材质 SDK、JS/WASM SDK 源码与示例（材质不启用） | `src/material/`、`spike/`、`docs/plugins/` |
+| 插件 SDK 资源 | JS/WASM SDK 源码与示例（GPU 材质 SDK 属已退役的 wgpu/WGSL 栈，未启用；2026-11-27 已删除） | `spike/`、`docs/plugins/` |
 | 系统性能 / 无线设备 | 性能采样与指标、蓝牙设备状态/电量、设备图标 | `src/performance*.rs`、`bt/`、`bluetooth_ui*.rs`、`assets/device-icons/`（17 个） |
 | 日历 | 农历/节气、常驻日期、时区城市表 | `src/lunar_calendar.rs`、`resident_date.rs`、`plugin_timezone_cities.tsv` |
 | 邮箱 | Gmail 代理路由与测试 | `src/mail_proxy*.rs`、`module_mail_tests.rs` |
@@ -63,7 +63,7 @@
 
 | 项 | 说明 |
 |---|---|
-| 液态玻璃 / GPU 材质 | 本地 D3D11 自绘栈（`glass.rs`/`fluid.rs`/`gpu_glass`/`material/`）完整保留；插件市场里的 GPU 材质插件已显式屏蔽，不会接管外观 |
+| 液态玻璃 / GPU 材质 | 本地 D3D11 自绘栈（`glass.rs`/`fluid.rs`/`gpu_glass`/`d3d11/`）保留；上游 `src/material/`（wgpu/WGSL GPU 材质）从未接入编译，2026-11-27 已删除；插件市场里的 GPU 材质插件已显式屏蔽，不会接管外观 |
 | egui 0.37 pin / 版本 1.3.0 / ZCode | 定制核心，保留 |
 | vendor/* 64 文件 | egui 0.37 pin 与 D3D11 补丁，保留 |
 | 上游 9 个不兼容单测模块 | 依赖 egui 0.31 API（`ctx.run`）与 spike 资源路径，不编译；不影响产品功能 |
