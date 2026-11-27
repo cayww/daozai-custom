@@ -13,7 +13,7 @@ extension/          Chrome 扩展（MV3，manifest 里带固定 key → 扩展 I
 ```
 
 桥宿主（接收消息、写状态文件）已拆成独立 Rust 二进制 `daozai-bridge`，源码在
-`dz-custom/src/bin/daozai-bridge/`，由安装包（`installer/daozai.iss`）打包为
+`src/bin/daozai-bridge/`，由安装包（`installer/daozai.iss`）打包为
 `{app}\bridge\daozai_bridge.exe` 并写入 Chrome/Edge 的 NativeMessagingHosts 注册表。
 
 ## 安装（由岛仔安装包自动完成）

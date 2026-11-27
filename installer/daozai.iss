@@ -7,7 +7,7 @@
 ; 用户数据在 %APPDATA%\DaozaiCustom，安装/卸载都不碰。
 
 #define MyAppName "岛仔 DaozaiCustom"
-; 版本号由 build-innosetup.ps1 从 dz-custom\Cargo.toml 读出来传进来，避免和 exe 的
+; 版本号由 build-innosetup.ps1 从 Cargo.toml 读出来传进来，避免和 exe 的
 ; FileVersion 漂移（exe 版本来自 Cargo.toml）。手工编译时才用这里的默认值。
 #ifndef MyAppVersion
 #define MyAppVersion "1.4.1"
@@ -36,7 +36,7 @@ DefaultGroupName=岛仔
 DisableProgramGroupPage=yes
 OutputDir=.
 OutputBaseFilename=daozai-setup-{#MyAppBuild}
-SetupIconFile=..\dz-custom\assets\daozai.ico
+SetupIconFile=..\assets\daozai.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -53,10 +53,10 @@ Name: "autostart"; Description: "开机自动启动岛仔"; GroupDescription: "�
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "其他："; Flags: unchecked
 
 [Files]
-Source: "..\dz-custom\target\{#TargetProfile}\daozai.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dz-custom\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\target\{#TargetProfile}\daozai.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; 浏览器扩展桥宿主：独立精简版二进制（不链接 GUI 栈，约 460KB），复制为 daozai_bridge.exe。
-Source: "..\dz-custom\target\{#TargetProfile}\daozai-bridge.exe"; DestDir: "{app}\bridge"; DestName: "daozai_bridge.exe"; Flags: ignoreversion
+Source: "..\target\{#TargetProfile}\daozai-bridge.exe"; DestDir: "{app}\bridge"; DestName: "daozai_bridge.exe"; Flags: ignoreversion
 ; 无线设备电量组件：Rust 实现（约 514KB），随应用分发，主程序直接启动。
 Source: "..\vendor\halo-rust\target\{#TargetProfile}\daozai-halo.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\manifest.json"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion

@@ -25,3 +25,15 @@ dz-custom.tar.gz
 
 # v0.6.64 上游合并的临时工作区（诊断日志、构建缓存约 5 GB，不入库）
 merge-work/
+
+# 从 dz-custom/.gitignore 合并
+/prebuilt/
+/daozai.exe
+/dist/
+/design/
+/BUILD-ORDER-*.md
+/UI-SPEC.md
+.env
+.env.*
+*.pem
+*.key

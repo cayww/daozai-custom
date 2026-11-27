@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="dz-custom/assets/daozai-logo.png" width="112" alt="岛仔" />
+<img src="assets/daozai-logo.png" width="112" alt="岛仔" />
 
 # 岛仔 · Daozai（自定义构建）
 
@@ -13,7 +13,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 [![开源许可](https://img.shields.io/badge/License-MIT-3cbf91)](LICENSE)
 [![Rust 与 egui](https://img.shields.io/badge/Rust-egui-8b6ca8)](#从源码构建与参与开发)
 
-**[下载 Windows 版](https://github.com/cayww/daozai-custom/releases/latest)** · [更新记录](dz-custom/CHANGELOG.md) · [使用指南](dz-custom/docs/USAGE.md) · [反馈问题](https://github.com/cayww/daozai-custom/issues)
+**[下载 Windows 版](https://github.com/cayww/daozai-custom/releases/latest)** · [更新记录](CHANGELOG.md) · [使用指南](docs/USAGE.md) · [反馈问题](https://github.com/cayww/daozai-custom/issues)
 
 </div>
 
@@ -26,7 +26,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 > 最新发布说明见 [v1.4.0 Release Notes](docs/RELEASE_NOTES-1.4.0.md)；上游同期的更新见 [上游 v0.6.70 发布说明](https://github.com/Renly1994/xiaotang-daozai/releases/tag/v0.6.70)。
 > 接手开发请先读 [`docs/HANDOFF.md`](docs/HANDOFF.md)。
 >
-> 构建：`cd dz-custom && cargo build --locked --release --bin daozai`；
+> 构建：`cd . && cargo build --locked --release --bin daozai`；
 > 全量测试需加 `-- --test-threads=1`。
 
 岛仔是一款开源的 Windows 桌面小工具。平时收起在屏幕边缘，鼠标靠近就展开；切歌、看日程、复制验证码、记一条待办，都能顺手完成。小岛里的伙伴会眨眼、打盹、喝水，也会跟着音乐唱歌。
@@ -47,7 +47,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 
 ## 微信里有新消息，看一眼岛边
 
-![微信和 QQ 未读：收起时显示图标，展开后点击切换对应窗口](dz-custom/docs/images/readme/notifications.webp)
+![微信和 QQ 未读：收起时显示图标，展开后点击切换对应窗口](docs/images/readme/notifications.webp)
 
 - **微信、QQ 未读提醒**：收起时亮起图标和红点，展开后在面板旁查看，点击切换到对应窗口。
 - **微信多开分开看**：不同账号分别显示，点击对应账号的未读图标即可切换。
@@ -59,13 +59,13 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 
 ## 换个皮肤，也换个位置
 
-![五款皮肤：经典黑、奶油、毛玻璃浅色、毛玻璃深色、悬浮云；刘海和胶囊两种形态](dz-custom/docs/images/readme/appearance.webp)
+![五款皮肤：经典黑、奶油、毛玻璃浅色、毛玻璃深色、悬浮云；刘海和胶囊两种形态](docs/images/readme/appearance.webp)
 
 **五款皮肤 × 两种形态，自由搭配。** 经典黑、奶油、毛玻璃·浅、毛玻璃·深和「悬浮云」，都能搭配刘海或胶囊。毛玻璃透出身后的桌面；悬浮云随专辑封面换色，光晕跟着鼠标移动。
 
 本构建额外提供 **液态玻璃** 渲染（D3D11 自绘栈）：支持自动 / 深色 / 浅色主题模式，按背景亮度自动切换或手动固定；亮度采样采用 WCAG 相对亮度与分区采样，浅色背景下的文字对比度更稳。液态玻璃等定制改动见 [v1.4.0 发布说明](docs/RELEASE_NOTES-1.4.0.md)。
 
-![顶部、左侧和右侧停靠，以及侧边收起与展开状态](dz-custom/docs/images/readme/docking.webp)
+![顶部、左侧和右侧停靠，以及侧边收起与展开状态](docs/images/readme/docking.webp)
 
 - **四边停靠**：顶部和底部横向排列，底部向上展开，会跟随自动隐藏的任务栏。左右侧边收起为竖向胶囊，鼠标靠近后从屏幕边缘展开。
 - **大小与位置可调**：岛体大小支持 80%–140%，上下停靠可左右移动，侧边可上下调整。展开后按住日期时间，可以切换停靠边或把小岛拖到另一块屏幕。
@@ -89,7 +89,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 
 ## 听歌时，歌词就在抬眼处
 
-![音乐播放控制、展开歌词与收起状态下的岛上单行歌词](dz-custom/docs/images/readme/music.webp)
+![音乐播放控制、展开歌词与收起状态下的岛上单行歌词](docs/images/readme/music.webp)
 
 播放、暂停、切歌、调节音量和拖动进度，都能在岛上操作。展开看歌词，也可以收起后只留一行歌词，让桌面继续做自己的事。
 
@@ -101,7 +101,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 
 ## 日程、待办和专注，放在一起
 
-![日历与会议安排、每周重复待办、番茄专注与饮水提醒](dz-custom/docs/images/readme/daily.webp)
+![日历与会议安排、每周重复待办、番茄专注与饮水提醒](docs/images/readme/daily.webp)
 
 | 想做的事 | 岛仔能帮你 |
 | --- | --- |
@@ -118,7 +118,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 
 ## 文件先放岛上，刚复制的字也能找回
 
-![文件置物架与剪贴板历史：拖入文件、重新复制文字、固定常用内容](dz-custom/docs/images/readme/shelf.webp)
+![文件置物架与剪贴板历史：拖入文件、重新复制文字、固定常用内容](docs/images/readme/shelf.webp)
 
 **文件置物架**：拖入文件临时收集，点击打开、定位原文件，或拖出到其他应用。移除记录不会删除原文件。
 
@@ -128,7 +128,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 
 ## 验证码少切一次窗口，邮件也能直接读
 
-![验证码大卡点击复制与邮件正文阅读](dz-custom/docs/images/readme/mail.webp)
+![验证码大卡点击复制与邮件正文阅读](docs/images/readme/mail.webp)
 
 连接多个邮箱，在岛上查看来信、识别验证码并点击复制。邮件支持正文阅读与独立全文窗口，网页链接交给默认浏览器打开；正式日历邀请可进入日程。支持已读／未读切换、全部已读、移到回收站及恢复；默认仅在本机整理，可在邮件设置中开启「同步邮件操作到邮箱」。
 
@@ -140,7 +140,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 
 ## AI 还剩多少额度，抬眼就知道
 
-![AI 额度面板：Codex 额度、WorkBuddy 积分与 DeepSeek 余额](dz-custom/docs/images/readme/ai-quota.webp)
+![AI 额度面板：Codex 额度、WorkBuddy 积分与 DeepSeek 余额](docs/images/readme/ai-quota.webp)
 
 支持 **Codex、Claude、Kimi、Grok Bot、Gemini、GLM Coding Plan、WorkBuddy、DeepSeek、Kiro、豆包、OpenCode Go、MiniMax Coding Plan 和 Antigravity**。
 
@@ -205,7 +205,7 @@ Windows 桌面信息岛，抬眼就能看消息、歌词、日程、天气、系
 
 **系统**：Windows 10／11 x64。本构建使用 D3D11 自绘栈与液态玻璃渲染。Windows 11 已进行本机实测，Windows 10、不同显卡及多屏组合仍需更多反馈。暂不提供 macOS、Linux 或 ARM64 成品包。
 
-当前程序未做商业代码签名，Windows 可能提示未知发布者；请核对仓库来源与文件校验值。更多操作见 [使用指南](dz-custom/docs/USAGE.md)。
+当前程序未做商业代码签名，Windows 可能提示未知发布者；请核对仓库来源与文件校验值。更多操作见 [使用指南](docs/USAGE.md)。
 
 <details>
 <summary><b>连接服务之前，需要准备什么？</b></summary>
@@ -233,17 +233,16 @@ QQ 收信、邮件日程和飞书个人日历已进行真实账号测试。其�
 - 插件集市从 Gitee 加载目录、封面和作者头像。下载与收藏统计使用随机安装标识和该插件的操作记录。
 - 感谢墙的公开名单和图片从 GitHub Pages 加载并缓存在本机。
 
-完整说明见 [隐私与安全](dz-custom/docs/PRIVACY.md)。
+完整说明见 [隐私与安全](docs/PRIVACY.md)。
 
 </details>
 
 <details>
 <summary id="从源码构建与参与开发"><b>从源码构建与参与开发</b></summary>
 
-需要 Rust stable、MSVC C++ 构建工具和 Windows SDK。源码在 `dz-custom/`：
+需要 Rust stable、MSVC C++ 构建工具和 Windows SDK。仓库根就是 Cargo 包目录（标准布局）：
 
 ```powershell
-cd dz-custom
 rustup default stable-x86_64-pc-windows-msvc
 cargo build --locked --release --bin daozai
 .\target\release\daozai.exe
@@ -252,33 +251,30 @@ cargo build --locked --release --bin daozai
 运行测试与打包：
 
 ```powershell
-cd dz-custom
 cargo test --locked --release --lib -- --test-threads=1
 ```
 
-定制版安装包用 Inno Setup 7（脚本在 `installer/`）：先构建双 bin，再运行打包脚本：
+定制版安装包用 Inno Setup 7（脚本在 `installer/`）：先构建双 bin 和内置电量组件，再运行打包脚本：
 
 ```powershell
-cd dz-custom
 cargo build --locked --release --bin daozai --bin daozai-bridge
-cd ..\installer
+cargo build --offline --release --manifest-path vendor\halo-rust\Cargo.toml
+cd installer
 powershell -NoProfile -File build-innosetup.ps1
 ```
 
 测试按单线程运行，以隔离使用进程环境变量的数据目录测试；dev-release profile 可加快增量构建。低内存设备可设置 `$env:CARGO_BUILD_JOBS = "1"`。
 
-项目结构、界面预览与贡献方式见 [开发指南](dz-custom/CONTRIBUTING.md)；接手开发请读 [`docs/HANDOFF.md`](docs/HANDOFF.md)。
+项目结构、界面预览与贡献方式见 [开发指南](CONTRIBUTING.md)；接手开发请读 [`docs/HANDOFF.md`](docs/HANDOFF.md)。
 
 </details>
 
 ## 开源与致谢
 
-岛仔原创代码采用 [MIT License](LICENSE)。Rust 依赖、第三方图标及品牌标识沿用各自的许可或权利声明；MIT 不授予服务商标使用权，也不代表官方合作或认证。详见 [第三方声明](dz-custom/THIRD_PARTY_NOTICES.txt) 和 [依赖说明](dz-custom/docs/DEPENDENCIES.md)。
+岛仔原创代码采用 [MIT License](LICENSE)。Rust 依赖、第三方图标及品牌标识沿用各自的许可或权利声明；MIT 不授予服务商标使用权，也不代表官方合作或认证。详见 [第三方声明](THIRD_PARTY_NOTICES.txt) 和 [依赖说明](docs/DEPENDENCIES.md)。
 
 「悬浮云」皮肤作者：啵（[@hanhb123](https://github.com/hanhb123)）。感谢 egui／eframe、Rust 社区，以及提供参考与素材的开源项目。
 
 ## 感谢支持
-
-![感谢支持岛仔的朋友们](dz-custom/docs/images/readme/supporters.webp)
 
 喜欢岛仔的话，欢迎点一个 **Star**，也可以在 [本仓库 Issues](https://github.com/cayww/daozai-custom/issues) 反馈问题与建议。

@@ -61,7 +61,7 @@ mod tests {
         let result = (|| -> Result<()> {
             let id = "example.sticky-notes";
             let mut host = LocalPlugins::open(root.join("installed"));
-            host.install(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../spike/examples/sticky-notes/plugin.json"))?;
+            host.install(&Path::new(env!("CARGO_MANIFEST_DIR")).join("spike/examples/sticky-notes/plugin.json"))?;
             let path = host.export_storage(id, &root)?;
             for (backup_id, version) in [("example.other", 1), (id, 2)] {
                 fs::write(&path, json!({"id":backup_id,"dataVersion":version,"storage":{"items":[1]}}).to_string())?;

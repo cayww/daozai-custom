@@ -14,7 +14,7 @@
 ```
 
 - `protocol.rs`：与 Python 组件 VERSION=1 完全一致的 wire format（ready / poll / reply）
-- `hid.rs`：复用自主程序 `dz-custom/src/bt/usb_hid.rs`，cfgmgr32 + 重叠 I/O
+- `hid.rs`：复用自主程序 `src/bt/usb_hid.rs`，cfgmgr32 + 重叠 I/O
 - `providers.rs`：Provider trait + Engine（缓存、key、去重）
 - `providers/simple.rs`：声明式 Simple provider
 
