@@ -10,7 +10,7 @@
 ; 版本号由 build-innosetup.ps1 从 dz-custom\Cargo.toml 读出来传进来，避免和 exe 的
 ; FileVersion 漂移（exe 版本来自 Cargo.toml）。手工编译时才用这里的默认值。
 #ifndef MyAppVersion
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.4.1"
 #endif
 #define MyAppBuild "custom-isolated"
 ; 从哪个 cargo profile 的产物目录取 exe（release / dev-release）。

@@ -1,5 +1,13 @@
 # 更新记录
 
+## v1.4.1（2026-11-27）
+
+- 修复日历日程编辑器打开日期/时间选择器时，残留的玻璃按钮轮廓：选择器遮挡编辑器表单时不再发布 Cal* 控件几何，避免 HLSL 画出空心胶囊（提交 `8012cd0`）。
+- 清理无用的 `glass-diagnostics.txt` 诊断日志与每帧区域刷屏代码（提交 `35f62a6`）。
+- 合入上游 v0.6.71（53 提交），上游功能更新见：https://github.com/Renly1994/xiaotang-daozai/releases/tag/v0.6.71
+- 按定制版策略剔除上游 DX12/WGSL GPU 材质内容，液态玻璃仍走 D3D11 自绘栈；egui 0.37 pin 与本地定制行为保留。
+- 版本号 1.4.0 → 1.4.1；全量 lib 1619 passed / 0 failed / 141 ignored。
+
 ## v1.4.0（2026-11-27，release 包）
 
 - 版本号 1.3.0 → 1.4.0（Cargo.toml / Cargo.lock / daozai.iss 默认值同步）。
