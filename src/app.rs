@@ -37,9 +37,8 @@ pub const PH: f32 = 140.0; // 展开面板高
 /// pages.rs 的矢量兜底与这里的 GPU 透镜必须同值（ctl_geom 注释要求逐像素一致）。
 pub(crate) const MEDIA_CTL_R: f32 = 11.5;
 pub const MUSIC_PAGE: usize = 0;
-/// 收起态网页视频摘要的宽度（逻辑点）；MUSIC 槽原本只有 14 点，需要加宽容纳标题和进度条。
-pub(crate) const VIDEO_PILL_W: f32 = 132.0;
-const VIDEO_PILL_EXTRA: f32 = VIDEO_PILL_W - 14.0;
+/// 收起态视频与音乐槽同为 14 点，不再加宽；展开态「返回视频页」仍保留宽命中区。
+pub(crate) const VIDEO_HIT_W: f32 = 132.0;
 pub const FOCUS_PAGE: usize = 1;
 pub const WATER_PAGE: usize = 2;
 /// 久坐提醒的标题（通知按钮据此区分喝水提醒）。
@@ -214,6 +213,30 @@ mod pill_still_tests {
     #[test]
     fn non_liquid_skin_never_sleeps(){
         let mut i=input(); i.liquid=false; assert!(!pill_still(i));
+    }
+}
+
+#[cfg(test)]
+mod status_layout_tests {
+    use super::App;
+    use crate::island_status::Status;
+    fn status(id:&str,text:&str,priority:i32,progress:Option<f64>)->Status {
+        Status{id:id.into(),text:text.into(),detail:String::new(),seconds:0.0,progress,
+            color:"blue".into(),click:String::new(),priority,ttl:0.0,icon:String::new()}
+    }
+    #[test]
+    fn maa_inserts_after_equal_and_before_lower_priority(){
+        let live=[status("high","高",5,None),status("low","低",0,None)];
+        let maa=status("maa","MAA",5,Some(0.5));
+        let merged=App::merge_statuses(&live,Some(&maa));
+        let ids:Vec<_>=merged.iter().map(|s|s.id.as_str()).collect();
+        assert_eq!(ids,vec!["high","maa","low"]);
+    }
+    #[test]
+    fn progress_status_uses_narrow_ring_width(){
+        assert_eq!(App::status_item_width(&status("x","长标题长标题",0,Some(0.5))),App::STATUS_RING_W);
+        let text=App::status_item_width(&status("x","短",0,None));
+        assert!(text>App::STATUS_RING_W && text<=160.0);
     }
 }
 
@@ -3117,8 +3140,6 @@ impl App {
         let mut layout=Layout::new(self.battery_visible(),self.quota_bar_indices().len(),self.media.is_island_media()&&!bell,self.pomo.running,bell,self.pet_enabled(),self.weather_pill().is_some());
         let performance_bar=self.performance_on_bar();
         if performance_bar { layout.add_performance(self.settings.performance_bar.width(self.settings.performance_metrics)); }
-        // 视频摘要要占一整块，其余常驻组件对称让位。
-        if self.video_page(){layout.widen(bar::MUSIC,VIDEO_PILL_EXTRA);}
         // 状态总线：有存活状态时在胶囊右侧留一块并排区域（最多 3 条）。
         let status_width=self.status_total_width();
         if status_width>0.0 {layout.add_status(status_width);}
@@ -5115,19 +5136,31 @@ impl App {
     // ---------------------------------------------------------------
     // 顶栏：电池 + 日期 + 时钟。药丸里的电池与时钟会「飞」到顶栏位置（共享元素过渡）。
     // ---------------------------------------------------------------
-    /// 单条状态的估算宽度：中文按 11px/字，夹在 48~140 之间。
-    /// 渲染用的状态列表：状态总线里的常驻条目 + MAA 的常驻进度胶囊。
-    fn statuses_for_render(&self) -> Vec<crate::island_status::Status> {
-        let mut list = self.status_live.clone();
-        if let Some(maa) = &self.maa_status { list.push(maa.clone()); }
-        list
+    /// 带进度的状态改画成窄进度环，文字改为悬停提示；无进度仍是文字胶囊。
+    const STATUS_RING_W: f32 = 28.0;
+    fn status_ring_mode(status: &crate::island_status::Status) -> bool {
+        status.progress.is_some()
     }
-
-    fn status_item_width(&self, status: &crate::island_status::Status) -> f32 {
+    /// 单条状态的估算宽度：中文按 11px/字，夹在 48~160 之间；进度环固定 28px。
+    fn status_item_width(status: &crate::island_status::Status) -> f32 {
+        if Self::status_ring_mode(status) { return Self::STATUS_RING_W; }
         let chars = status.text.chars().count() as f32;
         // 有图标时左侧要留出图标位置。
         let icon_pad = if status.icon.is_empty() { 0.0 } else { 15.0 };
         (chars * 11.0 + 24.0 + icon_pad).clamp(48.0, 160.0)
+    }
+    /// 渲染用的状态列表：状态总线的条目按 priority 排好后，把 MAA 插到
+    /// 同优先级之后 / 低优先级之前，避免它被无条件追加到末尾后被「只取前 3 条」截掉。
+    fn merge_statuses(live: &[crate::island_status::Status], maa: Option<&crate::island_status::Status>) -> Vec<crate::island_status::Status> {
+        let mut list = live.to_vec();
+        if let Some(extra) = maa {
+            let at = list.iter().position(|s| s.priority < extra.priority).unwrap_or(list.len());
+            list.insert(at, extra.clone());
+        }
+        list
+    }
+    fn statuses_for_render(&self) -> Vec<crate::island_status::Status> {
+        Self::merge_statuses(&self.status_live, self.maa_status.as_ref())
     }
 
     /// 状态区总宽：最多 3 条，条间 6px。
@@ -5135,7 +5168,7 @@ impl App {
         let list = self.statuses_for_render();
         let shown = list.len().min(3);
         if shown == 0 { return 0.0; }
-        let items: f32 = list.iter().take(shown).map(|s| self.status_item_width(s)).sum();
+        let items: f32 = list.iter().take(shown).map(|s| Self::status_item_width(s)).sum();
         items + (shown.saturating_sub(1)) as f32 * 6.0
     }
 
@@ -5323,7 +5356,7 @@ impl App {
             }
             // 保持原来的短路语义：收起态不注册命中区，免得吞掉胶囊上的其它点击。
             if self.open && reveal>0.6 {
-                let hit=if video {base.hit(x-VIDEO_PILL_W/2.0,y-14.0,VIDEO_PILL_W,34.0,"header-music")}
+                let hit=if video {base.hit(x-VIDEO_HIT_W/2.0,y-14.0,VIDEO_HIT_W,34.0,"header-music")}
                         else {base.hit(x-13.0,y-14.0,26.0,28.0,"header-music")};
                 if hit.on_hover_text(if self.settings.visible_pages[0]{
                         if video{"返回网页视频页"}else{"返回音乐播放页"}}else{"打开音乐设置"})
@@ -5364,7 +5397,7 @@ impl App {
         if self.pomo.running && compact_alpha>0.004 {
             crate::focus_bar::draw(&base.faded(compact_alpha),local_cx+layout.x[bar::FOCUS].unwrap(),15.0,self.t,&self.pomo,self.phase_secs(self.pomo.phase),false);
         }
-        // 状态总线：并排显示最多 3 条常驻状态（色点 + 文本 + 可选进度条）。
+        // 状态总线：最多 3 条。带进度的画窄进度环（文字进 tooltip），其余仍是文字胶囊。
         if let Some(slot)=layout.status {
             if let Some(center)=layout.x[slot] {
                 let statuses=self.statuses_for_render();
@@ -5373,39 +5406,52 @@ impl App {
                     let total=layout.widths[slot];
                     let mut x=local_cx+center-total/2.0;
                     for status in statuses.iter().take(3) {
-                        let w=self.status_item_width(status);
+                        let w=Self::status_item_width(status);
                         let tone=crate::extras::status_color(&status.color);
-                        // 有进度条的胶囊：底色灰，彩色进度层从左向右逐渐填满整个胶囊
-                        // （裁剪到进度宽度，左圆角保留、右边缘随进度推进）。
                         let progress=status.progress.filter(|v|v.is_finite())
                             .map(|v|v.clamp(0.0,1.0) as f32);
-                        c.fill(x,5.0,w,20.0,10.0,Color32::from_gray(36));
-                        if let Some(p)=progress {
-                            if p>0.0 {
-                                // 填充层裁剪到 [x, x+w*p]，整体画圆角矩形即可得到「左边圆角+右侧随进度裁平」。
-                                let fillc=c.clipped(x,5.0,(w*p).max(1.0),20.0);
-                                fillc.fill(x,5.0,w,20.0,10.0,tone);
-                            }
-                        }
-                        // 带图标的状态（MAA 进度胶囊）：图标 + 文字作为整体在胶囊内水平居中。
-                        // 其他状态保持原来的「色点 + 左对齐文字」。
                         let icon_tex=if status.icon.is_empty() {None} else {
                             self.status_icons.borrow_mut()
                                 .get(c.ui.ctx(),std::path::Path::new(&status.icon))
                                 .and_then(|p|p.image)
                         };
-                        if let Some(tex)=icon_tex {
-                            // 图标 16 + 间距 4 = 20 的前导占位，按实际文字宽度整体居中。
-                            let fitted=c.fit(&status.text,10.5,W::Regular,(w-28.0).max(20.0));
-                            let text_w=c.text_w(&fitted,10.5,W::Regular);
-                            let start=x+((w-20.0-text_w).max(0.0))/2.0;
-                            let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
-                            c.painter.add(egui::epaint::RectShape::filled(
-                                c.rect(start,7.0,16.0,16.0),4.0*c.s,Color32::WHITE).with_texture(tex.id(),uv));
-                            c.centered_text(start+20.0,15.0,&fitted,10.5,W::Regular,theme::WHITE,H::Left);
+                        if Self::status_ring_mode(status) {
+                            let cx=x+w/2.0;
+                            let (cy,r,stroke)=(15.0,9.0,2.5);
+                            c.ring(cx,cy,r,stroke,Color32::from_gray(36));
+                            if let Some(p)=progress.filter(|p|*p>0.0) {
+                                let start=-std::f32::consts::FRAC_PI_2;
+                                c.arc(cx,cy,r,start,start+std::f32::consts::TAU*p,stroke,tone);
+                            }
+                            if let Some(tex)=icon_tex {
+                                let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
+                                c.painter.add(egui::epaint::RectShape::filled(
+                                    c.rect(cx-6.0,cy-6.0,12.0,12.0),3.0*c.s,Color32::WHITE).with_texture(tex.id(),uv));
+                            } else {
+                                c.circle(cx,cy,3.0,tone);
+                            }
+                            let tip=if status.detail.is_empty() {status.text.clone()}
+                                else {format!("{}\n{}",status.text,status.detail)};
+                            let hit=c.hit(x,5.0,w,20.0,("status-ring",status.key()));
+                            let _=crate::quota_ui::bar_tooltip(hit,tip);
                         } else {
-                            c.circle(x+8.0,15.0,2.5,tone);
-                            c.centered_text(x+14.0,15.0,&c.fit(&status.text,10.5,W::Regular,w-20.0),10.5,W::Regular,theme::WHITE,H::Left);
+                            c.fill(x,5.0,w,20.0,10.0,Color32::from_gray(36));
+                            if let Some(p)=progress.filter(|p|*p>0.0) {
+                                let fillc=c.clipped(x,5.0,(w*p).max(1.0),20.0);
+                                fillc.fill(x,5.0,w,20.0,10.0,tone);
+                            }
+                            if let Some(tex)=icon_tex {
+                                let fitted=c.fit(&status.text,10.5,W::Regular,(w-28.0).max(20.0));
+                                let text_w=c.text_w(&fitted,10.5,W::Regular);
+                                let start=x+((w-20.0-text_w).max(0.0))/2.0;
+                                let uv=Rect::from_min_max(Pos2::ZERO,Pos2::new(1.0,1.0));
+                                c.painter.add(egui::epaint::RectShape::filled(
+                                    c.rect(start,7.0,16.0,16.0),4.0*c.s,Color32::WHITE).with_texture(tex.id(),uv));
+                                c.centered_text(start+20.0,15.0,&fitted,10.5,W::Regular,theme::WHITE,H::Left);
+                            } else {
+                                c.circle(x+8.0,15.0,2.5,tone);
+                                c.centered_text(x+14.0,15.0,&c.fit(&status.text,10.5,W::Regular,w-20.0),10.5,W::Regular,theme::WHITE,H::Left);
+                            }
                         }
                         x+=w+6.0;
                     }

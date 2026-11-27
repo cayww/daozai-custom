@@ -10360,8 +10360,8 @@ fn browser_video_has_its_own_page_and_collapsed_summary(){
     h.frame(vec![]);h.frame(vec![]);
     assert!(h.app.video_page(),"浏览器网页媒体应走视频页");
     let collapsed=rendered_text(&h);
-    assert!(collapsed.iter().any(|t|t.contains("刚烈界魏延")),"收起态应显示视频标题");
-    assert!(collapsed.iter().any(|t|t.contains("Chrome")),"收起态应显示来源");
+    assert!(!collapsed.iter().any(|t|t.contains("刚烈界魏延")),"收起态改为进度环，不再画标题");
+    assert!(!collapsed.iter().any(|t|t.contains("Chrome")),"收起态不再画来源");
 
     h.app.show_page(0);
     h.hover(H::local(200.0,40.0),1.0);

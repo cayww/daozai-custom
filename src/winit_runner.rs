@@ -2,7 +2,7 @@
 //! 主窗口（岛体）+ 独立子 viewport（设置页/邮件阅读器）多窗口管理。
 
 use crate::Shell;
-use daozai::d3d11::runtime::{D3d11Runtime, GlassParams, PlainWindow, FrameStats};
+use daozai::d3d11::runtime::{set_capture_exclusion, D3d11Runtime, GlassParams, PlainWindow, FrameStats};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -98,13 +98,16 @@ struct DaozaiApp {
     /// draw_main 检测到 Present 报设备丢失后延迟到事件方法末尾重建，
     /// 避免同时持有 &Window 与 &mut self。
     device_lost_pending: bool,
+    /// 上次写入窗口的截图排除状态；只在液态皮肤切换时调用系统 API。
+    capture_exclusion: Option<bool>,
 }
 
 impl DaozaiApp {
     fn new(attrs: WindowAttributes, prefer_dgpu: bool) -> Self {
         Self { prefer_dgpu, attrs, window: None, runtime: None, shell: None,
                subs: HashMap::new(), sub_ids: HashMap::new(), pending_close: Vec::new(),
-               egui_ctx: None, next_repaint: None, device_lost_pending: false }
+               egui_ctx: None, next_repaint: None, device_lost_pending: false,
+               capture_exclusion: None }
     }
 
     fn hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
@@ -210,6 +213,15 @@ impl DaozaiApp {
         let ppp = w.scale_factor() as f32 * scale;
         let liquid = self.shell.as_ref()
             .is_some_and(|s| s.app.settings.skin == daozai::model::Skin::Liquid);
+        // 液态 WGC 需要排除自身；非液态不抓屏，必须允许截图/录屏。
+        if self.capture_exclusion != Some(liquid) {
+            if let Some(hwnd) = Self::hwnd(w) {
+                match set_capture_exclusion(hwnd, liquid) {
+                    Ok(()) => self.capture_exclusion = Some(liquid),
+                    Err(e) => eprintln!("[winit] 设置截图排除({liquid})失败: {e:?}"),
+                }
+            }
+        }
         let dock = self.shell.as_ref()
             .map(|s| s.app.settings.dock)
             .unwrap_or(daozai::model::Dock::Top);
@@ -327,6 +339,8 @@ impl ApplicationHandler<Wakeup> for DaozaiApp {
         let Some(hwnd) = Self::hwnd(&window) else {
             eprintln!("[winit] not a win32 window"); el.exit(); return;
         };
+        // 新 HWND 的 affinity 默认是 WDA_NONE；缓存必须一并失效。
+        self.capture_exclusion = None;
         // 关键：设备重置 / 系统 suspend 后重建 D3D 栈时沿用同一个 Context，
         // 否则 Shell、后台线程手里的旧 Context 与字体图集/repaint callback 全部脱节。
         let ctx = self.egui_ctx.clone().unwrap_or_else(egui::Context::default);

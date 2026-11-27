@@ -22,6 +22,15 @@ use windows::Win32::{
 
 pub const MAX_CTL: usize = 13;
 
+/// 按当前皮肤设置主窗口的截图排除：液态需要排除以免 WGC 递归自采样，
+/// 非液态保持 WDA_NONE，让普通截图/录屏能录到岛仔。
+pub fn set_capture_exclusion(hwnd: HWND, enabled: bool) -> windows::core::Result<()> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+    };
+    unsafe { SetWindowDisplayAffinity(hwnd, if enabled { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE }) }
+}
+
 /// 玻璃层 uniform，布局必须与 shaders/glass.hlsl 的 `cbuffer U` 完全一致（11 x float4）。
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -339,18 +348,9 @@ impl D3d11Runtime {
             return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL));
         };
         let size = window.inner_size();
-        // WGC 抓整屏合成帧；必须把岛仔自己排除出合成树，否则玻璃会采样到
-        // 它自己的窗口（递归自采样）。原版 gpu_glass.rs 在 wgpu 栈做同样的事，
-        // 但迁移后 gpu_glass 被重定向到 stub，这里由新渲染栈接手。
-        {
-            use windows::Win32::UI::WindowsAndMessaging::{
-                SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
-            };
-            let hwnd = HWND(h.hwnd.get() as _);
-            if let Err(e) = unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) } {
-                eprintln!("[d3d11] WDA_EXCLUDEFROMCAPTURE failed: {:?}", e);
-            }
-        }
+        // 截图排除由 winit_runner 按「当前是否液态皮肤」逐帧管理，不在这里无条件设置。
+        // 旧逻辑所有皮肤都排除，导致非液态岛仔也无法被截图/录制；液态需要排除是为
+        // 避免 WGC 递归自采样，非液态不抓屏，应保持 WDA_NONE。
         eprintln!("[d3d11] create_device_swap {}x{} hwnd={:?}", size.width, size.height, h.hwnd.get());
         let (device, ctx, swap, dcomp) = match Self::create_device_swap(HWND(h.hwnd.get() as _), size.width, size.height, prefer_dgpu) {
             Ok(v) => { eprintln!("[d3d11] device/swap/dcomp OK"); v }

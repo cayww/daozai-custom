@@ -280,20 +280,21 @@ impl App {
         }
     }
 
-    /// 收起态网页视频：标题 + 来源/时间 + 细进度条，代替音乐的小播放条。
+    /// 收起态网页视频：与普通音乐槽同宽的进度环 + 播放三角。
+    /// 标题 / 来源 / 时间留给展开后的视频页，不再为它们加宽 MUSIC 槽。
     pub(crate) fn draw_video_pill(&self,c:&Card,cx:f32,cy:f32){
-        let w=crate::app::VIDEO_PILL_W;
-        let left=cx-w/2.0;
-        let np=&self.media;
-        // Card::text 的 y 是基线（左上角 = y - ascent），不是顶部；收起药丸只有 30 点高，
-        // 原来标题基线 cy-11 会把字画到胶囊上方被裁掉。两行基线都收进胶囊内。
-        paint::play_pause(c,left+9.0,cy+2.0,6.0,if np.playing{1.0}else{0.0},theme::WHITE);
-        c.text(left+20.0,cy-2.0,&c.fit(&np.title,10.5,W::Semibold,w-30.0),10.5,W::Semibold,theme::WHITE,H::Left);
-        let detail=if np.duration>0.0 {format!("{} · {}",np.source,mmss(np.position))} else {np.source.clone()};
-        c.text(left+20.0,cy+8.0,&c.fit(&detail,9.0,W::Regular,w-30.0),9.0,W::Regular,theme::GRAY,H::Left);
-        let frac=if np.duration>0.0 {(np.position/np.duration).clamp(0.0,1.0) as f32}else{0.0};
-        c.fill(left,cy+10.0,w,2.0,1.0,Color32::from_gray(90));
-        if frac>0.0 {c.fill(left,cy+10.0,w*frac,2.0,1.0,theme::WHITE);}
+        let np: &crate::smtc::NowPlaying=&self.media;
+        let r=5.5;
+        let stroke=1.6;
+        c.ring(cx,cy,r,stroke,theme::GRAY);
+        if np.duration>0.0 {
+            let frac=(np.position/np.duration).clamp(0.0,1.0) as f32;
+            if frac>0.0 {
+                let start=-std::f32::consts::FRAC_PI_2;
+                c.arc(cx,cy,r,start,start+std::f32::consts::TAU*frac,stroke,theme::WHITE);
+            }
+        }
+        paint::play_pause(c,cx,cy,7.0,if np.playing{1.0}else{0.0},theme::WHITE);
     }
 
     fn change_music_volume(&mut self,command:Transport,cmds:&mut Vec<Cmd>){

@@ -2363,3 +2363,12 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **验证**：dev-release 串行全量 **1622 passed / 0 failed / 141 ignored**（新增 1 测试）；双 bin 构建通过；Inno 测试包 `installer\daozai-setup-custom-isolated.exe`：包 sha256 前16 `22a55538b79a99e9`、exe `26c11bfd79552c61`、bridge `b7ba117cc094febd`。提交 `236f58b`，分支 `feat/halobattery-rust`，未合并 main / 未部署 / 未推 origin。
 
 **待用户实机确认**：关掉综合监测后的收起过程两端完整；开的过程无回归。
+
+### 7.0zzzzz-i 收起态视频瘦身 + 状态总线环形化 + 非液态截图修复（2026-11-28 02:50）
+
+- 分支 `feat/halobattery-rust` 已 `--ff-only` 合并回 `main`（合并点 `ecc3cc5`）。
+- **视频**：移除 `VIDEO_PILL_W/VIDEO_PILL_EXTRA`，MUSIC 槽不再为视频加宽 118px；`draw_video_pill()` 改为 14px 窄进度环 + 播放三角，标题/来源/时间留给展开页；展开态点击区独立 `VIDEO_HIT_W=132`。
+- **状态总线**：带 `progress` 的状态改画 28px 进度环（有 icon 时居中显示，文字进 hover tooltip），无进度仍是文字胶囊；`merge_statuses()` 把 MAA 按 `priority` 插入列表，不再追加末尾被「只取前 3 条」截掉。
+- **截图**：D3D11 runtime 不再对所有皮肤设置 `WDA_EXCLUDEFROMCAPTURE`；`winit_runner` 按当前皮肤逐帧管理，仅液态排除 WGC 自采样，非液态保持可截图/录制。
+- **验证**：release 串行全量 **1624 passed / 0 failed / 141 ignored**；`cargo build --locked --release --bin daozai --bin daozai-bridge` 通过。
+- 未打包 / 未部署 / 未推 origin；待实机确认非液态截图、视频环与状态环观感。
