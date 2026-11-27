@@ -3543,7 +3543,9 @@ impl App {
             if dock==model::Dock::Left {Rect::from_min_max(Pos2::new(win.left(),r.top()),r.max)} else {Rect::from_min_max(r.min,Pos2::new(win.right(),r.bottom()))}
         } else if p > 0.02 || self.open {
             let height=self.expanded_height().max(self.h.pos)*1.08+16.0;
-            Rect::from_center_size(Pos2::new(cx, top + height/2.0), Vec2::new(PW + FLARE * 2.0 + 56.0, height))
+            // 常驻条比展开面板宽时（超长常驻岛），展开开头/收起末尾岛仍比面板宽；
+            // 窗口区域按当前岛宽取大，否则两侧会被系统按面板宽度直接切掉（上游 21fe022）。
+            Rect::from_center_size(Pos2::new(cx, top + height/2.0), Vec2::new(PW.max(self.w.pos) + FLARE * 2.0 + 56.0, height))
         } else {
             let (bw, bh) = self.base_size();
             Rect::from_center_size(Pos2::new(cx, top + (bh * SWELL.1 + 12.0) / 2.0), Vec2::new(bw * SWELL.0 + 24.0, bh * SWELL.1 + 12.0))

@@ -185,7 +185,7 @@ impl Dock {
     pub fn label(self) -> &'static str {
         match self { Self::Top => "顶部", Self::Bottom => "底部", Self::Left => "左侧", Self::Right => "右侧" }
     }
-    pub fn is_side(self) -> bool { self != Self::Top }
+    pub fn is_side(self) -> bool { matches!(self, Self::Left | Self::Right) }
 }
 
 /// 岛体大小（百分比）的范围与步进。
@@ -1389,6 +1389,14 @@ impl MaaPrefs {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bottom_dock_is_horizontal_not_side() {
+        // 底部停靠是横向的（向上展开）；只有左右才是竖向胶囊。
+        assert!(!Dock::Top.is_side());
+        assert!(!Dock::Bottom.is_side());
+        assert!(Dock::Left.is_side());
+        assert!(Dock::Right.is_side());
+    }
     use crate::anim::Spring;
 
     #[test]
