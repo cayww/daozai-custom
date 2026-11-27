@@ -2403,4 +2403,6 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 3. 56 个协议均无真机验证，读数正确性需逐设备确认；低 usage page 放行后需观察是否误触发其它设备。
 4. 未部署、未推 origin、未发 GitHub Release；本包为本地测试包，版本仍是 1.4.1。
 
+**提交**：`cdf9cf7`（main，157 files changed；未推 origin、未发 tag / Release）。
+
 **文档**：`vendor/halo-rust/MIGRATION.md` 已刷新为完成态；`vendor/halo-rust/HANDOFF-REMAINING.md` 顶部加状态更新（原 §4/§5 保留为历史快照）。工作日志写在 WorkBuddy 工作区，不进项目仓库。
