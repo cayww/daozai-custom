@@ -1,0 +1,20 @@
+[package]
+name = "daozai-halo-rust"
+version = "1.0.0"
+edition = "2021"
+publish = false
+description = "岛仔无线电量组件（Rust 版，stdin/stdout JSON 协议兼容 Python 组件）"
+
+[[bin]]
+name = "daozai-halo"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+windows = { version = "0.58", features = [
+  "Win32_Foundation", "Win32_Devices_DeviceAndDriverInstallation",
+  "Win32_Devices_HumanInterfaceDevice", "Win32_Storage_FileSystem",
+  "Win32_System_IO", "Win32_System_Threading",
+  "Win32_Devices_Properties", "Win32_Security", "Win32_Foundation",
+] }
