@@ -5270,7 +5270,8 @@ impl App {
                 crate::wgc::log(&format!("DIAG perf battery x={:.2} alpha={:.3} target={:.3} w={:.2} p={:.3} k={:.3}",bpos.0,alpha,target_alpha,self.w.pos,p,self.liquid_k));
             }
             // 抽动诊断：帧间差分，跳变超阈值自动记录（不依赖手动复现动作）。
-            crate::performance_ui::diag_battery_jump(bpos.0, alpha, p, self.liquid_k);
+            crate::performance_ui::diag_battery_jump(bpos.0, alpha, p, self.liquid_k,
+                bk, fit, self.resident.target.width);
             if let Some((pct,chg))=pc_ring {paint::battery(&base.faded(alpha),bpos.0,bpos.1,pct,chg,bk);}
         }
 

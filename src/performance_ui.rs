@@ -33,18 +33,26 @@ pub(crate) fn diag_perf_recent() -> bool {
 /// 帧间跳变超阈值就写日志（含上一帧值），据此判断是布局跳变还是渲染旧帧。
 /// 上一次观测打包为 (x 的位模式, alpha 的位模式)；用 CAS 循环避免多线程竞争。
 static DIAG_BATTERY_PREV: AtomicU64 = AtomicU64::new(0);
-pub(crate) fn diag_battery_jump(x: f32, alpha: f32, p: f32, k: f32) {
-    let bits = ((x.to_bits() as u64) << 32) | (alpha.to_bits() as u64);
-    let prev = DIAG_BATTERY_PREV.swap(bits, Ordering::Relaxed);
-    if prev == 0 { return; }
-    let px = f32::from_bits((prev >> 32) as u32);
-    let pa = f32::from_bits(prev as u32);
-    let dx = (x - px).abs();
-    let da = (alpha - pa).abs();
-    if dx > 1.5 || da > 0.05 {
+static DIAG_TICK: AtomicU64 = AtomicU64::new(0);
+pub(crate) fn diag_battery_jump(x: f32, alpha: f32, p: f32, k: f32, bk: f32, fit: f32, tw: f32) {
+    // 动画期（p 在 0..1 之间）每 2 帧强制记一次完整状态，便于看清 bk/fit/targetW
+    // 是否跳变；静止态只在 x/alpha 超阈值时记（省日志）。
+    let animating = p > 0.01 && p < 0.99;
+    let tick = DIAG_TICK.fetch_add(1, Ordering::Relaxed);
+    let mut jump = false;
+    if !animating {
+        let bits = ((x.to_bits() as u64) << 32) | (alpha.to_bits() as u64);
+        let prev = DIAG_BATTERY_PREV.swap(bits, Ordering::Relaxed);
+        if prev != 0 {
+            let px = f32::from_bits((prev >> 32) as u32);
+            let pa = f32::from_bits(prev as u32);
+            jump = (x - px).abs() > 1.5 || (alpha - pa).abs() > 0.05;
+        }
+    }
+    if jump || (animating && tick % 2 == 0) {
         crate::wgc::log(&format!(
-            "DIAG JUMP x={:.2}(prev {:.2},dx {:.2}) alpha={:.3}(prev {:.3},da {:.3}) p={:.3} k={:.3}",
-            x, px, dx, alpha, pa, da, p, k
+            "DIAG BATT x={:.2} alpha={:.3} bk={:.3} fit={:.3} targetW={:.1} p={:.3} k={:.3}{}",
+            x, alpha, bk, fit, tw, p, k, if jump { " JUMP" } else { "" }
         ));
     }
 }
