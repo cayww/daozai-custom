@@ -33,11 +33,30 @@
 | misc (~30 个简单协议) | ✅ 完成 | 1021 行 Rust |
 | 其余 ~50 个 | ⬜ 待迁移 | 见下方分组 |
 
-## 剩余协议分组
+## 剩余协议分组（按 Python 源文件精确核对，2026-11-27）
 
-- 大型状态机：corsair.py (1440)、asus.py (770)、logitech.py (721)、steelseries.py (626)、turtlebeach.py (610)、ajazz.py (603)
-- 中型：pulsar / audeze / lofree / dji / inphic / steam / rapoo / gwolves / msi 等
-- 简单声明式：~50 个 <200 行的 provider（可按 Simple 模式批量迁移）
+Python 侧 99 个设备协议文件（已排除 base/hidlist/worker/registry 等基础设施与 test_*）。
+Rust 已覆盖 43 个（含 beitong；blackshark2020 仅通用帧兜底），**未移植 56 个**：
+
+- **多步握手 / 状态机**（12）：plantronics、wraith、fractal、fantech、endgame_we、jabra、
+  atk_bitmouse、zowie、turtlebeach、ajazz、sony_inzone、gamesir
+- **需产品字符串放行**（5，Rust Collection API 不暴露）：gs3075t、urx、attackshark_x66、
+  redsquare、atk_keyboard
+- **非 vendor 集合 / 特殊传输**（2）：jbl_quantum350（0001:0000）、moondrop（0x000C）
+- **Razer 专用会话 / 私有帧**（7 个 provider，razer.rs 的 SKIP_PIDS 另含 Barracuda 系列 PID）：
+  BlackShark 2020 / 2023 PA / V3 / V3 Pro / V3 X、MediaTek 接收器、Barracuda 系列
+- **Logitech / Corsair 未移植子协议**（3）：logitech_centurion（bridge 协议）、
+  logitech_g435_rtk（bootloader 切换）、Corsair --probe 诊断路径
+- **其他未覆盖**（28）：akko_s9、atk_nearlink、audeze、aula、aula_f108、barracuda_x、
+  dji、eightbitdo、eightbitdo_ultimate2、eweadn_ydx、finalmouse、flydigi、glorious、
+  gwolves、inphic、irocks、jbl、keychron、kraken_v4、lofree、machenike、msi、
+  ninjutso_sora_v3、nzxt、rapoo、skullcandy、sony_serial、steam、vaxee、wlmouse
+
+**功能级偏差**（协议已移植但 Python 侧行为未完全复刻）：
+- mchose：G7 中值滤波、K99/A7 输入唤醒门控、休眠保持读数
+- razer：跨 PID 同型号灰显去重
+- Logitech：unit id 跨接收器去重、G535 的 000C 集合、ui_message 文案
+- HyperX：Kingston 的 GET_REPORT(Input) 预读（结果在 Python 侧被忽略）
 
 ## 验证状态
 
