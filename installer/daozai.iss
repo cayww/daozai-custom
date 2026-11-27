@@ -27,6 +27,9 @@ AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher=自定义构建
 DefaultDirName={autopf}\DaozaiCustom
 DirExistsWarning=no
+; Inno 的 DisableDirPage 默认 auto：检测到旧安装目录就跳过「选择目标位置」页。
+; 定制版要让用户每次都能自己指定安装目录，这里显式关掉自动跳过。
+DisableDirPage=no
 AppendDefaultDirName=no
 PrivilegesRequired=admin
 DefaultGroupName=岛仔

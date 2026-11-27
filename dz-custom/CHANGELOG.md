@@ -5,7 +5,7 @@
 - 版本号 1.3.0 → 1.4.0（Cargo.toml / Cargo.lock / daozai.iss 默认值同步）。
 - 修复 D3D11 自绘栈的「玻璃 uniform 差一帧」：`build_glass_params` 在 `run_ui` 之前读快照，而 `paint_gpu_glass` 在 `run_ui` 内才写当帧 body/shape/染色，导致收起成超宽岛体时玻璃边缘扫过常驻宠物与电量图标（看着像图标抽搐）。新增 `refresh_glass_uniforms` 与既有的控件透镜刷新一起放到 `run_ui` 之后。
 - 亮度采样的截尾中位数改为 O(n) 的 `select_nth_unstable_by`，不再整数组排序。
-- release 包：`daozai-setup-custom-isolated.exe`，sha `477ca69e254c04db`，exe `4dd6e4a31a7f70a0`，bridge `6c67040250a48f2e`；ProductVersion / FileVersion 均为 1.4.0。
+- release 包：`daozai-setup-custom-isolated.exe`，sha `ef9455d14630d597`，exe `4dd6e4a31a7f70a0`，bridge `6c67040250a48f2e`；ProductVersion / FileVersion 均为 1.4.0。
 - 全量 lib 1557 passed / 0 failed / 138 ignored（dev-release 默认并行）+ 独立泄漏测试 1 passed。
 
 ## 定制版：液态玻璃亮度采样改为分区 + WCAG 相对亮度（2026-11-27）

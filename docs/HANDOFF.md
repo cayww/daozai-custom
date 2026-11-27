@@ -2321,4 +2321,4 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 
 **验证**：全量 lib **1557 passed / 0 failed / 138 ignored**（dev-release 默认并行）+ `tests/layered_leak.rs` 1 passed；release 双 bin 构建成功；release exe 跑 `--collect-diagnostics` 退出码 0。**未部署。**
 
-**release 产物**：`installer\daozai-setup-custom-isolated.exe`（12,242,074 B，sha `477ca69e254c04db`，exe `4dd6e4a31a7f70a0`，bridge `6c67040250a48f2e`）。供 GitHub v1.4.0 发布使用。
+**release 产物**：`installer\daozai-setup-custom-isolated.exe`（12,242,075 B，sha `ef9455d14630d597`，exe `4dd6e4a31a7f70a0`，bridge `6c67040250a48f2e`）。供 GitHub v1.4.0 发布使用。
