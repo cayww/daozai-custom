@@ -3659,7 +3659,8 @@ impl App {
                 self.island_rect(win,PW+20.0,height).union(panel.expand(20.0))
             } else {
                 let (bw,bh)=self.base_size();
-                self.island_rect(win,bw*SWELL.1+14.0,bh*SWELL.0+FLARE+16.0).union(panel.expand(12.0))
+                // 同上：侧边停靠收缩时也要按动画中的尺寸取大，避免两端被裁。
+                self.island_rect(win,bw.max(self.w.pos)*SWELL.1+14.0,bh.max(self.h.pos)*SWELL.0+FLARE+16.0).union(panel.expand(12.0))
             };
             if dock==model::Dock::Left {Rect::from_min_max(Pos2::new(win.left(),r.top()),r.max)} else {Rect::from_min_max(r.min,Pos2::new(win.right(),r.bottom()))}
         } else if p > 0.02 || self.open {
@@ -3669,7 +3670,13 @@ impl App {
             Rect::from_center_size(Pos2::new(cx, top + height/2.0), Vec2::new(PW.max(self.w.pos) + FLARE * 2.0 + 56.0, height))
         } else {
             let (bw, bh) = self.base_size();
-            Rect::from_center_size(Pos2::new(cx, top + (bh * SWELL.1 + 12.0) / 2.0), Vec2::new(bw * SWELL.0 + 24.0, bh * SWELL.1 + 12.0))
+            // 宽度/高度弹簧还在从旧形态收回时，body 仍按动画中的 w.pos/h.pos 画；
+            // 窗口区域若只按新目标 base_size 算，超长常驻条变短的开头几帧
+            // 岛体两端会被系统直接裁掉，等弹簧缩到位才恢复。
+            // 取「目标与当前」的较大值，保证整个过渡期区域都包住玻璃。
+            let width = bw.max(self.w.pos) * SWELL.0 + 24.0;
+            let height = bh.max(self.h.pos) * SWELL.1 + 12.0;
+            Rect::from_center_size(Pos2::new(cx, top + height / 2.0), Vec2::new(width, height))
         };
         region=orient(region);
         // 拿起放大、甩动拉伸以及加深的投影都要留在窗口区域内，否则两端会被系统裁掉。

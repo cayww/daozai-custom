@@ -10908,3 +10908,29 @@ fn builtin_settings_navigation_clears_stale_plugin_page() {
     assert_eq!(h.app.settings_tab,crate::app::PAGE_SETTINGS_TABS[crate::app::MAIL_PAGE]);
     assert!(h.app.settings_open);
 }
+
+
+/// 超长常驻岛变短时，窗口区域必须按动画中尚未缩回的岛宽取大，
+/// 否则前几帧玻璃两端会被系统裁掉，等弹簧到位才恢复（用户 2026-11-28 反馈）。
+#[test]
+fn wide_bar_shrink_keeps_window_region_around_the_animating_glass() {
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.visible_pages[crate::app::PERFORMANCE_PAGE]=true;
+    h.app.settings.skin=crate::model::Skin::Liquid;
+    h.app.settings.island_shape=crate::model::IslandShape::Pill;
+    h.app.settings.performance_bar=crate::performance::BarStyle::Dashboard;
+    h.app.settings.performance_metrics=crate::performance::Metric::ALL.iter().map(|m|m.bit()).fold(0u16,|a,b|a|b);
+    h.app.settings.show_performance=true;
+    for _ in 0..180 {h.frame(vec![]);}
+    assert!(h.app.w.pos>crate::app::PW,"前置条件：常驻条应比展开面板宽");
+
+    h.app.settings.show_performance=false;
+    for i in 0..30 {
+        h.frame(vec![]);
+        let b=crate::gpu_glass::uniforms().body_rect;
+        let body=Rect::from_min_size(Pos2::new(b[0],b[1]),Vec2::new(b[2],b[3]));
+        assert!(h.region.contains_rect(body),
+            "第 {i} 帧窗口区域必须包住玻璃：region={:?} body={:?} w={:.1}",h.region,body,h.app.w.pos);
+    }
+}
