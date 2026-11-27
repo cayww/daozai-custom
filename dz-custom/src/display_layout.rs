@@ -362,7 +362,7 @@ mod bottom_dock_tests {
 
     #[cfg(windows)]
     #[test]
-    fn bottom_dock_follows_taskbar_on_every_reveal_and_retraction() {
+    fn bottom_dock_follows_taskbar_on_every_reveal_and_retraction() {let _windows=crate::test_locks::native_windows();
         use windows::{core::w,Win32::UI::WindowsAndMessaging::*};
         let work=connected().into_iter().find(|d|d.primary).unwrap().work;
         // 用临时原生栏覆盖一小段测试边界，验证窗口显隐与真实命中，无需修改系统任务栏。

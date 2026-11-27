@@ -1215,8 +1215,6 @@ pub struct App {
     glass_tick:u8,
     /// 收起且完全静止的起始时刻：持续 2 分钟进入深度休眠（整条管线降到 1Hz）。
     pill_still_since:Option<f64>,
-    /// 深休眠被挡原因的诊断日志节拍（每 10s 最多一条）。
-    pill_diag_at:f64,
     /// 当前是否处于收起深度休眠（1Hz）；宠物动画此时整体冻结。
     deep_sleep:bool,
     /// 深休眠工作集裁剪的下次允许时刻：进入即裁，之后每 5 分钟补一次。
@@ -1599,7 +1597,6 @@ impl App {
             liquid_k:1.0,
             glass_tick:0,
             pill_still_since:None,
-            pill_diag_at:0.0,
             deep_sleep:false,
             workset_trim_at:0.0,
             workset_quiet_since:None,
@@ -2932,10 +2929,10 @@ impl App {
         } else {
             self.glass_tick = 0;
         }
-        // 液态玻璃：背景亮度决定深/浅材质。0.52/0.66 之间是滞回区，
-        // 避免在阈值附近来回闪；平滑系数让 shader 与文字颜色同步过渡。
+        // 液态玻璃深/浅主题：自动模式按 WCAG 相对亮度决定（0.23/0.39 滞回避免阈值附近闪），
+        // 手动模式直接固定深或浅；两者都走同一条指数平滑，shader 与文字颜色同步过渡。
         let luma=crate::gpu_glass::background_luma();
-        let target=if luma>0.66 {1.0}else if luma<0.52 {0.0}else{self.liquid_k};
+        let target=self.settings.liquid_theme.target(luma,self.liquid_k);
         self.liquid_k+=(target-self.liquid_k)*(dt as f32*6.0).clamp(0.0,1.0);
         // 形变强度：用展开进度的变化率驱动，按帧衰减。
         // 展开/折叠只有约 100ms，progress 一帧就到 1，所以不能用 progress 本身
@@ -3672,20 +3669,6 @@ impl App {
         }else{
             self.workset_trim_at=self.t;
         }
-        // 深休眠没触发时把挡因写进诊断（10s 限频，只在收起态记录）——
-        // 「音乐软件关了但 SMTC 会话还在报 playing」这类残留状态一眼可见。
-        if !self.open && self.t>=self.pill_diag_at {
-            self.pill_diag_at=self.t+10.0;
-            let reasons=[("open",self.open),("cursor",!cursor_far),("transitioning",transitioning),
-                ("ambient",ambient),("lyrics",lyric_scrolling),
-                ("toast",self.toast.is_some()),("media",self.media.playing),
-                ("notice",self.notice.is_some()),("hud",self.hud_notice.is_some())];
-            let blocked=reasons.iter().filter(|(_,v)|*v).map(|(k,_)|*k).collect::<Vec<&str>>().join(",");
-            if !blocked.is_empty() {
-                crate::resources::append_log(&crate::model::config_dir().join("diagnostics"),
-                    "pill-sleep.log",&format!("t={:.0} blocked={blocked} media_title={:?}",self.t,self.media.title));
-            }
-        }
         let repaint_after=std::time::Duration::from_secs_f64(match self.glass_tick {
             1 => 1.0/60.0,
             2 | 3 if deep_sleep => 1.0,
@@ -3990,7 +3973,7 @@ impl App {
         if let Some(skin)=self.plugins.active_skin() { return Some(skin.palette); }
         // 液态皮肤：文字/描边 ink 随背景明暗切换 —— 深背景白字（GLASS_DARK），
         // 浅背景深墨字（GLASS_LIGHT），让任何壁纸上都看得清。切换阈值走 liquid_k
-        // 自带的滞回（0.52/0.66）+ 指数平滑，不会逐帧黑白跳变；玻璃材质深浅仍由
+        // 自带的滞回（相对亮度 0.23/0.39）+ 指数平滑，不会逐帧黑白跳变；玻璃材质深浅仍由
         // liquid_k 驱动 shader。原型 C：先用二选一，实机验证跳变是否可接受。
         match self.settings.skin {
             model::Skin::Cream=>Some(crate::skin_paint::CREAM),

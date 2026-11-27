@@ -1130,7 +1130,7 @@ mod tests {
     static NATIVE_STATE_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn dcomp_keeps_rect_window_region_even_with_legacy_opaque_flag() {
+    fn dcomp_keeps_rect_window_region_even_with_legacy_opaque_flag() {let _windows=crate::test_locks::native_windows();
         let _guard = NATIVE_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use windows::Win32::Graphics::Gdi::{GetWindowRgn, PtInRegion};
         for (backend, vendor, renderer) in [
@@ -1241,7 +1241,7 @@ mod tests {
 
     /// D3D11+DComp 不走分层读回窗口；owner 用矩形窗口区域 + 逐像素 alpha。
     #[test]
-    fn dcomp_ignores_legacy_outline_clip_without_layered_window() {
+    fn dcomp_ignores_legacy_outline_clip_without_layered_window() {let _windows=crate::test_locks::native_windows();
         use crate::app::GlassShape;
         use eframe::egui::{pos2, Rect};
         use windows::Win32::Graphics::Gdi::{
@@ -1450,7 +1450,7 @@ mod tests {
     }
 
     #[test]
-    fn top_bar_mode_restores_z_order_without_raising_over_unrelated_windows() {
+    fn top_bar_mode_restores_z_order_without_raising_over_unrelated_windows() {let _windows=crate::test_locks::native_windows();
         let _guard = NATIVE_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         struct TestWindow(HWND);
         impl Drop for TestWindow {
@@ -1581,7 +1581,7 @@ mod tests {
     }
 
     #[test]
-    fn expanding_raises_the_island_without_activating_it() {
+    fn expanding_raises_the_island_without_activating_it() {let _windows=crate::test_locks::native_windows();
         let _guard = NATIVE_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         struct TestWindow(HWND);
         impl Drop for TestWindow {
@@ -1719,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn file_capture_below_the_island_still_returns_click_through() {
+    fn file_capture_below_the_island_still_returns_click_through() {let _windows=crate::test_locks::native_windows();
         let _guard = NATIVE_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             let saved = std::mem::replace(
@@ -1779,7 +1779,7 @@ mod tests {
     }
 
     #[test]
-    fn activation_keeps_focus_messages_but_suppresses_nonclient_paint() {
+    fn activation_keeps_focus_messages_but_suppresses_nonclient_paint() {let _windows=crate::test_locks::native_windows();
         #[derive(Default)]
         struct Capture {
             activation: Vec<(usize, isize)>,
@@ -1846,7 +1846,7 @@ mod tests {
     }
 
     #[test]
-    fn editing_mode_does_not_recalculate_the_native_window_frame() {
+    fn editing_mode_does_not_recalculate_the_native_window_frame() {let _windows=crate::test_locks::native_windows();
         unsafe extern "system" fn count_frame(
             hwnd: HWND,
             msg: u32,
@@ -1914,7 +1914,7 @@ mod tests {
     }
 
     #[test]
-    fn mouse_click_keeps_overlay_inactive_except_when_editing() {
+    fn mouse_click_keeps_overlay_inactive_except_when_editing() {let _windows=crate::test_locks::native_windows();
         struct TestWindow(HWND);
         impl Drop for TestWindow {
             fn drop(&mut self) {

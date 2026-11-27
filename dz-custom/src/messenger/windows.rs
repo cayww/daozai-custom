@@ -566,7 +566,7 @@ mod tests {
         release.send(()).unwrap();worker.join().unwrap();assert_eq!(OPEN.active(),0);
     }
     #[test]
-    fn cached_targets_keep_client_namespaces_and_reject_mismatched_open_requests(){unsafe{
+    fn cached_targets_keep_client_namespaces_and_reject_mismatched_open_requests(){let _windows=crate::test_locks::native_windows();unsafe{
         use windows::Win32::System::Threading::GetCurrentProcess;
         let window=CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!(""),WS_POPUP,-10000,-10000,10,10,None,None,None,None).unwrap();
         let target=|source|Target{unread:Unread{source,pid:std::process::id(),window:window.0 as isize},started:process_started(GetCurrentProcess()).unwrap()};
@@ -579,7 +579,7 @@ mod tests {
         assert_eq!(wrong,Err(OpenError::Unavailable));assert_eq!(runtime.targets.len(),1);assert!(runtime.targets.contains_key(&wx.unread));
     }}
     #[test]
-    fn office_registration_keeps_the_verified_process_when_the_original_window_is_destroyed(){unsafe{
+    fn office_registration_keeps_the_verified_process_when_the_original_window_is_destroyed(){let _windows=crate::test_locks::native_windows();unsafe{
         use windows::Win32::System::{LibraryLoader::GetModuleHandleW,Threading::GetCurrentProcess};
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
         let class=w!("QtDaozaiRebuildQWindowIcon");
@@ -608,7 +608,7 @@ mod tests {
         DestroyWindow(window).unwrap();
     }}
     #[test]
-    fn manual_foreground_accepts_only_the_original_office_accounts_rebuilt_main_window(){unsafe{
+    fn manual_foreground_accepts_only_the_original_office_accounts_rebuilt_main_window(){let _windows=crate::test_locks::native_windows();unsafe{
         use windows::Win32::System::{LibraryLoader::GetModuleHandleW,Threading::GetCurrentProcess};
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
         let instance=GetModuleHandleW(None).unwrap().into();
@@ -732,7 +732,7 @@ mod tests {
         assert_eq!(accounts.target(2,35_000_000,|_|panic!("图标减少后也不能改绑旧通知")),None);
     }
     #[test]
-    fn qq_account_observation_tracks_the_original_native_window(){unsafe{
+    fn qq_account_observation_tracks_the_original_native_window(){let _windows=crate::test_locks::native_windows();unsafe{
         use windows::Win32::System::LibraryLoader::GetModuleHandleW;
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
         let instance=GetModuleHandleW(None).unwrap().into();
@@ -772,7 +772,7 @@ mod tests {
         }
     }
     #[test]
-    fn qq_unreads_never_show_hidden_helpers(){unsafe{
+    fn qq_unreads_never_show_hidden_helpers(){let _windows=crate::test_locks::native_windows();unsafe{
         use crate::app::{Messenger,Unread};
         let window=CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!(""),WS_POPUP,0,0,10,10,None,None,None,None).unwrap();
         let paths=[normalized(&std::env::current_exe().unwrap().to_string_lossy())];
@@ -781,7 +781,7 @@ mod tests {
         assert!(!visible && results.iter().all(Result::is_err),"不能显示辅助窗口或改为唤起其他 QQ");
     }}
     #[test]
-    fn wake_attempts_record_the_target_route_and_result_without_titles(){unsafe{
+    fn wake_attempts_record_the_target_route_and_result_without_titles(){let _windows=crate::test_locks::native_windows();unsafe{
         use crate::app::{Messenger,Unread};
         let window=CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!("聊天对象的名字"),WS_POPUP,0,0,10,10,None,None,None,None).unwrap();
         let paths=[normalized(&std::env::current_exe().unwrap().to_string_lossy())];
@@ -842,7 +842,7 @@ mod tests {
         }
     }
     #[test]
-    fn messenger_reminders_survive_hidden_or_destroyed_windows(){unsafe{
+    fn messenger_reminders_survive_hidden_or_destroyed_windows(){let _windows=crate::test_locks::native_windows();unsafe{
         use crate::app::{Messenger,Unread};
         let mut monitor=Runtime::default();
         for source in Messenger::ALL{

@@ -40,7 +40,7 @@
 | 补丁链 | **已退役（2026-11-17，用户同意归档）**：`daozai-patches/` 已从工作区移除，历史在 git（`git log -- daozai-patches` 可找回）；正式版源码锚点 = tag `custom-129`（`4b0b427`），重建正式版 `git checkout custom-129`；上游快照移到 `_archive\dz-custom-upstream-快照.tar.gz` |
 | 正式部署 `D:\software\Daozai` | **不要覆盖**，不要在正式目录里跑预览版 |
 | `Cargo.lock` | **不要动**，加依赖会破坏 `--locked` 构建 |
-| 用户数据 | 验证时不要真发邮件 / 标已读 / 改账户；`%APPDATA%\Daozai\settings.txt` 是用户的 |
+| 用户数据 | 验证时不要真发邮件 / 标已读 / 改账户；`%APPDATA%\DaozaiCustom\settings.txt` 是用户的 |
 | 工作日志 | `.workbuddy/memory/*.md` 是追加式，不要删、不要改写历史 |
 
 ---
@@ -1038,7 +1038,7 @@ python <skill>/scripts/ui_probe.py click --x 1293 --y 72
 
 | 变量 | 作用 |
 |---|---|
-| `DAOZAI_DATA_DIR=<dir>` | **必带**，否则读写 `%APPDATA%\Daozai` 的正式设置 |
+| `DAOZAI_DATA_DIR=<dir>` | **必带**，否则读写 `%APPDATA%\DaozaiCustom` 的正式设置 |
 | `DAOZAI_LIQUID_FREEZE_BG=1` | 冻结背景 + 解除捕获排除（截图/录屏可见），预热 24 帧后自动切 |
 | `DAOZAI_LIQUID_FLAT=1` | 玻璃内原样输出背景（查抓屏对齐） |
 | `DAOZAI_LIQUID_FLAT=2` | 20px 网格 + AA 细线（查折射位移/色散） |
@@ -2210,3 +2210,102 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **验证**：`cargo check --manifest-path dz-custom/Cargo.toml --locked --lib --bins --tests` 通过；全量 lib **1553 passed / 0 failed / 138 ignored**（dev-release，1m49s）。未打包、未部署。
 
 
+
+### 7.0zzzzz 清理非必须日志与残留诊断代码（2026-11-27 13:45）
+
+**背景**：用户要求「删除非必须的日志记录，排查遗留的无用检测诊断代码」。逐条核对「源码写入点 × 诊断包收集清单 × INSTALL-NOTES 文档」三方后，发现四类问题：恒常量的假日志、排查残留、周期噪声日志、文档与实现互相矛盾。
+
+**删除的日志写入点（4 个）**：
+
+| 日志 | 位置 | 删除理由 |
+|---|---|---|
+| `last-graphics.log` | `diagnostics::graphics()`（main.rs 启动时调用） | 内容恒为硬编码常量「渲染栈：D3D11 单 device + DirectComposition…」，不含任何运行期信息；真正的显卡/渲染器信息由诊断包的 `environment.json`（`diagnostics_tool/environment.rs`）采集 |
+| `fullscreen.log` | `system::log_maximized_exclusion()` | 底部停靠/全屏排查期的残留（「盖满屏幕却按普通最大化处理」），既不在收集清单也不在文档里，调查早已结束 |
+| `pill-sleep.log` | `app.rs` 深休眠挡因块 + `App::pill_diag_at` 字段 | 收起态每 10 秒无条件写一条，本机实测 930 行 / 36 KB 且持续增长，其中绝大多数是 `blocked=cursor`；挡因（media/toast/notice）在主界面与 `resources.log` 已可见。写入行还带 `media_title`，会记下歌名 |
+| `netease-shortcut.log` | `netease_control::diag()` 及 8 处调用 | 每次 ensure 都记「ok=true 788->788」这类成功空操作（本机 325 行 / 26 KB），从不被收集、不在文档；且把用户的快捷方式绝对路径（含桌面目录名）长期写盘 |
+
+**顺带清掉的失效代码**：`diagnostics::graphics()`、`system::log_maximized_exclusion()`、`App::pill_diag_at`（字段 + 初始化）、`netease_control::diag()` 及 8 处调用；`ensure_shortcut_with` 里只服务于日志的 before/after 文件大小读取一并去掉。
+
+**收集清单改为「缺什么补什么」**：诊断包新增 `liquid-glass.log`、`music-volume.log`、`otp.log`、`notice.log`、`mail.log`——这 5 份原来只写在 INSTALL-NOTES 里让用户自己去找，实际从未进过 zip；去掉已无生产者的 `last-graphics.log`。改后两个收集器（内嵌 Rust `diagnostics_tool::archive::LOGS` 与 `scripts/collect-diagnostics.ps1`）产出的日志集合逐项一致，本机实跑验证均为同一 13 项。
+
+**INSTALL-NOTES.txt 修正**（原文与实际偏差较大）：
+
+- 数据目录 `%APPDATA%\Daozai` → `%APPDATA%\DaozaiCustom`（`model::config_dir()` 的真实值；原文让用户去一个不存在的目录里找日志）。
+- 「诊断包不含应用日志」→ 改为「诊断包里就是这些日志，按问题对照即可」，并删掉 `renderer-fallback.txt`、`notification-banner.log`、`focus-browser.log` 这些源码里早已不存在的条目，以及本次删掉的 `last-graphics.log`、`pill-sleep.log`。
+- `collect-diagnostics.ps1` 的 `-DataDirectory` 默认值同样从 `Daozai` 改为 `DaozaiCustom`，清单与 Rust 侧对齐。
+
+**同时删除无人引用的 vendor 目录**（用户单独提出）：仓库根 `vendor/`（`egui-wgpu`/`egui-winit`/`wgpu-hal`，2.1 MB，根目录根本没有 `Cargo.toml`）与 `dz-custom/vendor/` 下 5 个 egui 系 crate（`eframe`/`egui`/`egui-wgpu`/`egui-winit`/`wgpu-hal`，约 4.4 MB）全部删除。`Cargo.toml` 的 `[patch.crates-io]` 只引用 `vendor/imap`、`vendor/imap-proto`、`vendor/ureq`，egui 系早已改用上游 git 固定提交（注释「egui/eframe/egui-winit vendor patches removed for egui 0.35」）。`docs/DEPENDENCIES.md` 同步删除两行已不存在的补丁说明。
+
+**验证**：`cargo build --locked --release --bin daozai` 通过；全量 lib **1546 passed / 7 failed / 138 ignored**，7 个失败全部是并行跑的既有 flaky（messenger 窗口枚举 4 个、doubao 临时文件 2 个、layered GDI 泄漏 1 个），`--test-threads=1` 单跑 7 个全 ok——与 HANDOFF 里「必须串行」的记录一致，与本次改动无关（合计 1553 与基线一致）。本机实跑收集器（`daozai.exe --collect-diagnostics` 与 PS 脚本各一次）产出诊断包，内容如上一节所述。**未打包、未部署。**
+
+**本机已失效日志已移出**：`%APPDATA%\DaozaiCustom\diagnostics\` 下的 `place.log`（代码早在 `7c73630` 删除）、`last-graphics.log`、`pill-sleep.log`、`netease-shortcut.log` 移到 `%TEMP%\daozai-retired-logs-20261127\`（未直接删除，可随时取回比对）。
+
+
+
+### 7.0zzzzz-b 并行测试修复 + 安装包统一叫 DaozaiCustom（2026-11-27 14:10）
+
+**背景**：上一节改完后跑全量 lib，默认并行（不加 `--test-threads=1`）有 7 个失败、串行全过。用户要求「统一修复，再用 dev-release 打包快速检验」。
+
+**7 个失败的根因**（都是「同进程并行」的污染，不是代码 bug）：
+
+| 测试 | 根因 |
+|---|---|
+| `messenger::desktop::tests::synthetic_native_windows_*` | 断言诊断日志里不能出现标题关键字，结果扫到了并行测试线程建的 `DaozaiLayeredDisplay` 窗口 |
+| `messenger::qq::tests::qq_multiple_main_windows_*` / `qq_single_tray_*` | 按 pid 枚举本进程顶层窗口，别的测试建的同类窗口让「唯一主窗口」判定变成歧义 |
+| `messenger::windows::tests::qq_account_observation_*` | 同上 |
+| `layered::tests::presenting_many_frames_does_not_leak` | 量整个进程的 GDI/私有内存，别的线程同时在分配 |
+| `quota::doubao::tests::*`（2 个） | `DAOZAI_DATA_DIR` 是进程级变量，别的测试把目录改走/删掉 → `Os error 2` |
+
+**改法**：
+
+- 新增 `crate::test_locks`（`#[cfg(test)]`）：`native_windows()` 串行化「建真实窗口 / 枚举本进程窗口 / 统计进程 GDI」的 36 个测试（display_layout、layered、messenger×3、native×8、system×5、wechat×7），`audio_worker()` 串行化两个占用音量写盘单线程的测试。
+- `doubao_quota_tests::with_data_dir` 复用 `ui_tests::ENV_LOCK`（与 qweather、UI 测试同一把锁）。
+- `layered` 的泄漏测试**移到 `dz-custom/tests/layered_leak.rs`**：它量的是整个进程的私有内存，只有独立进程才测得准；同进程并行时假报 +8MB。
+- 三个 `##` 结论：全量 lib **1552 passed / 0 failed / 138 ignored**（默认并行，39.8s），`tests/layered_leak.rs` 1 passed。总数 1553 与基线一致（一个测试从 lib 移到了集成测试）。
+
+**DaozaiCustom 命名统一**（用户指出 INSTALL-NOTES 没改干净）：
+
+- `INSTALL-NOTES.txt`：标题 `岛仔 Daozai（自定义构建 custom-133）` → `岛仔 DaozaiCustom`；默认安装目录 `C:\Program Files\Daozai` → `C:\Program Files\DaozaiCustom`。
+- `daozai.iss`：头注释两处路径、卸载提示 `%APPDATA%\Daozai` → `DaozaiCustom`；`AppVerName` / `UninstallDisplayName` 去掉 `（custom-isolated）`；`MyAppVersion` 改成 `#ifndef` 默认 1.3.0，由 `build-innosetup.ps1` 从 `dz-custom\Cargo.toml` 读出来传 `/DMyAppVersion=`——原来写死 0.6.66，而 exe 的 FileVersion 是 1.3.0，卸载项与程序对不上。
+- 源码里 11 处 `%APPDATA%\Daozai\...` 注释（model.rs 头注释、island_status.rs、extras.rs×3、netease_control.rs、phone_battery.rs×2）统一成 `DaozaiCustom`；其中 `extras.rs` 那处是**设置页可见文案**，原来指着一个不存在的目录。
+- `docs/HANDOFF.md` 红线表与 `DAOZAI_DATA_DIR` 说明里的数据目录同步改正（桌面副本同步）。
+
+**dev-release 打包**：`cargo build --profile dev-release --bin daozai --bin daozai-bridge` → `installer\build-innosetup.ps1 -CargoProfile dev-release -SkipBuild`。产物 `installer\daozai-setup-custom-isolated.exe`（11,926,852 B，包 sha `0082411acfeee555`，exe `e870e2a02e9914a5`，bridge `f5e6a713c254dc48`，ProductVersion 1.3.0 / ProductName「岛仔 DaozaiCustom」）。快速检验：用 dev-release 的 exe 跑 `--collect-diagnostics`，包内日志集合与新的收集清单一致（无 `last-graphics.log`，含 `liquid-glass`/`otp`/`notice`/`mail`）。**未部署。**
+
+**遗留**：`dz-custom/installer/setup.nsi` + `uninstall.ps1` + `update.ps1` 仍用上游 NSIS 身份（`%LOCALAPPDATA%\Programs\Daozai`、卸载键 `Daozai`），和 Inno 的 `DaozaiCustom` 是两条并行的安装链；定制版实际发布走 Inno，NSIS 只被上游 `scripts/package.ps1` 用，本次未动。
+
+
+### 7.0zzzzz-c 专注/休息按钮底色 + 液态玻璃主题可选自动/手动（2026-11-27 14:30）
+
+**需求**：用户要「专注/休息按钮像上游原仓库的液态玻璃那样有按钮底色」，并要「按背景采样换主题」支持用户选自动或手动指定。
+
+**对照上游**：`git show upstream/main:src/pages.rs` 的专注/休息循环走 `paint::material_capsule(..., background, ...)`，`background = selected ? mix(BTN, accent, 0.22) : BTN`，GPU 分支再 `button.fill(..., paint::alpha(accent, 0.28))`。我们这边早期为了避开双边缘，GPU 分支只画了 `white_alpha` 白雾，未选中态连白雾都没有——所以看起来没有底色。
+
+**改动**：
+- `src/pages.rs`：把 `background` / `hover_bg` 提到循环顶部（与上游一致）；GPU 分支选中态画 `alpha(accent,0.28)` 彩色底、未选中画中性底并保留 hover 提亮；矢量玻璃兜底也先铺底色再叠玻璃片；非玻璃分支继续用 `capsule(base,hover)`。
+- `src/model.rs`：新增 `LiquidTheme { Auto, Dark, Light }`（默认 Auto），`target(luma,current)` 把自动滞回与手动固定统一成一个函数；`Settings.liquid_theme` 持久化键 `liquid_theme=auto|dark|light`。
+- `src/app.rs`：原来内联的 `luma>0.66 / <0.52` 判断改成 `settings.liquid_theme.target(luma, liquid_k)`，平滑过渡不变。
+- `src/extras.rs`：「配置液态玻璃」弹窗「预览形态」下面加「主题」三选一，改动即时 save。
+- 诊断包 `environment.json` 的 DisplaySettings 新增 `liquid_theme`（Rust 白名单 + PS 脚本正则同步）。
+
+**测试**：新增 `liquid_theme_auto_or_manual_decides_the_light_dark_target`（自动/手动/滞回/持久化往返）与 `liquid_focus_and_rest_buttons_keep_the_upstream_tinted_background`（从绘制的 shape 里验红/绿底，实测 `#47_1D_1A_47` / `#0E_0E_0F_57`）。全量 lib **1554 passed / 0 failed / 138 ignored**（dev-release 默认并行）；`tests/layered_leak.rs` 1 passed。
+
+**踩坑**：UI 测试画布有窗口原点偏移（按钮中心 x 实际是 303/447 而不是 192/336），按绝对坐标找 shape 会拿到空数组，改成按按钮尺寸 88×25 定位。
+
+**打包**：`cargo build --profile dev-release --bin daozai --bin daozai-bridge` → `build-innosetup.ps1 -CargoProfile dev-release -SkipBuild`。包 `installer\daozai-setup-custom-isolated.exe`（11,918,745 B，sha `76a7a6bf736c1dee`，exe `8b6047c2b81d23d8`，bridge `58a546f5460426b7`）。上一节的包 sha `0082411acfeee555` 已被本包取代。**未部署。**
+
+
+### 7.0zzzzz-d 液态玻璃亮度采样改为分区 + WCAG 相对亮度（2026-11-27 14:45）
+
+**问题**：用户指出展开态下半部分是内容区，上缘亮、内容暗时整块平均被上缘带偏，全局选了浅色 ink，内容区看不清。WCAG 2.2 / G18 的原则正是「对比度按文字实际覆盖的局部背景测，不是整张背景的均值」；Apple HIG 对亮背景的建议是局部 dimming layer / 更厚 material，而非调全局阈值。
+
+**改动**（`src/wgc.rs`、`src/d3d11/runtime.rs`、`src/model.rs`）：
+- 亮度公式：`sRGB 线性化 + Rec.709 权重` 替代 `(R+G+B)/3`；聚合用 **10%~90% 截尾中位数**替代算术平均，抗小块高亮离群点。
+- 采样框分两路：上缘 35%、内容区 65%，各有独立的 `THEME_LUMA` / `THEME_DARK_PENDING`（`set_theme_rects`）。上缘仍用壁纸锚点挡开机过渡暗帧；内容区**不**用壁纸锚点——真实深色窗口本来就该和壁纸不同。
+- `effective_luma(top, content)`：差值 ≥ 0.16 相对亮度（≈跨过整个滞回带）时取内容区，否则取平均。所有现有消费方（`gpu_glass::background_luma()` → `liquid_k` → ink / 玻璃底色 / shader）自动跟随，不需要改 UI。
+- 口径统一：阈值改为 0.23/0.39（≈原 sRGB 0.52/0.66）；`wallpaper::luma()` 是 sRGB 均值，比较锚点和 `seed_theme_luma` 播种前都先转相对亮度；默认亮度 0.625。
+- 新增单测：相对亮度权重与线性化、截尾中位数抗离群、分区优先；全量 lib **1557 passed / 0 failed / 138 ignored**（dev-release 默认并行）+ `tests/layered_leak.rs` 1 passed。
+
+**取舍**：内容区优先时，上缘那一小条的 ink 也跟着内容区走（只有一个全局 ink）。要做真正逐区 ink 需要给 header 再加一个形状范围标记，本次未做。
+
+**打包**：`daozai-setup-custom-isolated.exe`（11,928,676 B，包 sha `ce8ce9fb17cd1e19`，exe `e7bd94176e2ab2fc`，bridge `446c58822d82d25c`）。上一节包 sha `76a7a6bf736c1dee` 已被取代。**未部署。**

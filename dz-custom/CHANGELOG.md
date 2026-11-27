@@ -1,5 +1,37 @@
 # 更新记录
 
+## 定制版：液态玻璃亮度采样改为分区 + WCAG 相对亮度（2026-11-27）
+
+- 原来整块玻璃做 sRGB 算术平均 `(R+G+B)/3`，一小块高亮就能把均值拉偏；现在改为 WCAG 相对亮度（sRGB 线性化 + Rec.709 权重 0.2126/0.7152/0.0722）+ 10%~90% 截尾中位数，抗离群点。
+- 采样框切成「玻璃上缘 35%」和「内容区 65%」两路独立采样，各自走原有的壁纸锚点/变暗两次确认/指数平滑。**两区亮度差 ≥ 0.16（相对亮度）时内容区优先**——展开态下半部分才是文字数据所在，上缘亮区不该把主题拉浅。差异小时取平均，行为和整块采样一致。
+- 阈值按新口径重标定：自动模式 0.23/0.39（≈原 sRGB 均值 0.52/0.66），壁纸锚点在比较前也转成相对亮度，播种值同样转口径。
+- 新增 3 个单测覆盖相对亮度/截尾中位数/分区优先；全量 lib **1557 passed / 0 failed / 138 ignored** + 独立泄漏测试 1 passed。
+- dev-release 包 sha `ce8ce9fb17cd1e19`。
+
+## 定制版：专注/休息按钮底色 + 液态玻璃主题可选自动/手动（2026-11-27）
+
+- 「专注 / 休息」分段按钮恢复上游原仓库的底色：选中态按主题色混 22%（专注偏红、休息偏绿），GPU 玻璃透镜上再叠 `accent 0.28` 的彩色底，未选中态用中性底；矢量玻璃兜底同样保留底色，不再只剩一圈白雾。
+- 新增液态玻璃主题设置 **自动 / 深色 / 浅色**（「配置液态玻璃」弹窗第一行）：自动沿用原来的背景亮度采样 + 0.52/0.66 滞回 + 指数平滑；手动固定深或浅，背景怎么变都不切换。设置写进 `settings.txt` 的 `liquid_theme=auto|dark|light`，诊断包也会收集。
+- 全量 lib **1554 passed / 0 failed / 138 ignored**（dev-release，默认并行）+ 独立进程泄漏测试 1 passed；新增两个测试分别覆盖按钮底色与主题模式的目标值/持久化往返。
+- dev-release 包：`daozai-setup-custom-isolated.exe`，包 sha `76a7a6bf736c1dee`。
+
+## 定制版：并行测试修复 + 安装包统一叫 DaozaiCustom（2026-11-27）
+
+- 修好 7 个「并行跑必失败、串行才过」的测试：给 36 个会建真实窗口并枚举本进程窗口的测试加了共享串行锁（`crate::test_locks::native_windows()`），豆包额度测试改用与 UI 测试同一把 `ENV_LOCK` 保护 `DAOZAI_DATA_DIR`。
+- 把量「整个进程私有内存」的泄漏测试移到独立测试二进制 `tests/layered_leak.rs`：同进程并行时别的测试的临时分配会被算进增长（实测假报 +8MB）。
+- 音量写盘的单一后台线程被两个测试同时占用导致 `Timeout`：这两个测试改为串行。
+- 全量 lib **1552 passed / 0 failed / 138 ignored**，默认并行跑（不再需要 `--test-threads=1`），另有独立进程的泄漏测试 1 passed。
+- 安装说明与安装包统一为 `DaozaiCustom`：标题去掉 `custom-133` 标记，默认安装目录写对为 `C:\Program Files\DaozaiCustom`，卸载提示里的数据目录改为 `%APPDATA%\DaozaiCustom`；安装包版本号改由 `Cargo.toml` 传入，不再和 exe 的 FileVersion 漂移（原 0.6.66 vs 实际 1.3.0）。
+
+## 定制版：清理非必须日志与残留诊断代码（2026-11-27）
+
+- 删除 4 个没有诊断价值的日志写入点：`last-graphics.log`（内容恒为一句硬编码的渲染栈说明）、`fullscreen.log`（"盖满屏幕却按普通最大化处理"的排查残留）、`pill-sleep.log`（收起态每 10 秒写一条挡因，本机一天上千行）、`netease-shortcut.log`（每次修复快捷方式都记成功空操作，还会把用户的快捷方式绝对路径写盘）。
+- 一并删除随之失效的诊断代码：`diagnostics::graphics()`、`log_maximized_exclusion()`、`App::pill_diag_at` 字段、`netease_control::diag()` 及其 8 处调用。
+- 诊断包改为收集 `liquid-glass.log`、`music-volume.log`、`otp.log`、`notice.log`、`mail.log`（这几份原来要用户手动找），并从清单里去掉已不存在的 `last-graphics.log`。
+- `INSTALL-NOTES.txt` 修正数据目录（`%APPDATA%\DaozaiCustom`）与日志对照表，删掉 `renderer-fallback.txt`、`notification-banner.log`、`focus-browser.log` 这些源码里早已不存在的条目，并说明诊断包已包含应用日志。
+- `scripts/collect-diagnostics.ps1` 的默认数据目录与收集清单同步改正。
+- 删除无人引用、也不在构建里的 `vendor/` 目录：仓库根的 `vendor/`（egui-wgpu/egui-winit/wgpu-hal，2.1 MB）与 `dz-custom/vendor/` 下 5 个 egui 系 crate（约 4.4 MB）。只保留 `[patch.crates-io]` 仍在用的 `imap`、`imap-proto`、`ureq`。
+
 ## 定制版：源码目录改名（2026-11-27）
 
 - 源码目录 `dz-phone/` 已改名为 `dz-custom/`；构建命令、安装脚本、文档与交接资料里的路径同步更新。

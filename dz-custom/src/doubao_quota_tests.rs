@@ -191,6 +191,9 @@ fn http_errors_redirects_and_limits_are_bounded_and_private() {
 }
 
 fn with_data_dir(run: impl FnOnce()) {
+    // DAOZAI_DATA_DIR 是进程级变量：并行跑时别的测试会把目录改走或删掉，
+    // 这里读到的 config_dir 就会指向不存在的路径。与所有改数据目录的测试共用一把锁。
+    let _env=crate::ui_tests::ENV_LOCK.lock().unwrap_or_else(|error|error.into_inner());
     let root = std::env::temp_dir().canonicalize().unwrap();
     let dir = root.join(format!("daozai-doubao-tests-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
     fs::create_dir(&dir).unwrap();

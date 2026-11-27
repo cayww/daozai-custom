@@ -602,7 +602,7 @@ impl Drop for Listener {
 mod tests {
     use super::*;
     #[test]
-    fn all_taskbar_clients_first_flash_after_minimizing_a_viewed_account_is_not_swallowed(){unsafe{
+    fn all_taskbar_clients_first_flash_after_minimizing_a_viewed_account_is_not_swallowed(){let _windows=crate::test_locks::native_windows();unsafe{
         use crate::messenger::Messenger;
         use windows::Win32::System::{LibraryLoader::GetModuleHandleW,Threading::GetCurrentProcess};
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
@@ -627,7 +627,7 @@ mod tests {
         }
     }}
     #[test]
-    fn office_shell_events_preserve_unknown_instances_until_a_new_unambiguous_event(){unsafe{
+    fn office_shell_events_preserve_unknown_instances_until_a_new_unambiguous_event(){let _windows=crate::test_locks::native_windows();unsafe{
         use crate::messenger::Messenger;
         use windows::Win32::System::{LibraryLoader::GetModuleHandleW,Threading::GetCurrentProcess};
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
@@ -663,7 +663,7 @@ mod tests {
     }}
     use crate::messenger::windows::open_unread_with_paths;
     #[test]
-    fn clicking_wechat_flash_never_shows_hidden_helper(){unsafe{
+    fn clicking_wechat_flash_never_shows_hidden_helper(){let _windows=crate::test_locks::native_windows();unsafe{
         let window=CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!(""),WS_POPUP,0,0,0,0,None,None,None,None).unwrap();
         let paths=[normalized(&std::env::current_exe().unwrap().to_string_lossy())];
         let unread=crate::app::Unread{source:crate::app::Messenger::Wechat,pid:std::process::id(),window:window.0 as isize};
@@ -673,7 +673,7 @@ mod tests {
         assert!(!visible && result.is_err(),"点击提醒不应显示隐藏的辅助窗口");
     }}
     #[test]
-    fn clicking_wechat_flash_never_shows_hidden_qt_frame(){unsafe{
+    fn clicking_wechat_flash_never_shows_hidden_qt_frame(){let _windows=crate::test_locks::native_windows();unsafe{
         // 复现 v0.6.60 白屏：微信 4 隐藏的 Qt 窗口带系统菜单 / 最小化按钮，过去会被 SW_SHOW 显示出来。
         use windows::Win32::System::LibraryLoader::GetModuleHandleW;
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
@@ -756,7 +756,7 @@ mod tests {
         assert_eq!(account_tray_pid(50,&[100,200,300,400],&parents),None);
     }
     #[test]
-    fn offscreen_wechat_frame_is_not_treated_as_open(){unsafe{
+    fn offscreen_wechat_frame_is_not_treated_as_open(){let _windows=crate::test_locks::native_windows();unsafe{
         // 复现双开主号：有一个「可见」但不在任何显示器上的微信窗口，过去会被当成主窗口「切换」过去，用户什么也看不到。
         use windows::Win32::System::LibraryLoader::GetModuleHandleW;
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
@@ -778,7 +778,7 @@ mod tests {
         assert!(result.is_err(),"不得假装切换成功");
     }}
     #[test]
-    fn process_tree_is_read_from_the_system(){
+    fn process_tree_is_read_from_the_system(){let _windows=crate::test_locks::native_windows();
         let parents=parent_processes();
         assert!(parents.contains_key(&std::process::id()));
         assert!(!ancestors(std::process::id(),&parents).is_empty(),"测试进程应有父进程");
@@ -1001,7 +1001,7 @@ mod tests {
         drop(listener);assert!(!IsWindow(hwnd).as_bool());
     }}
     #[test]
-    fn shell_notifications_filter_targets_merge_flashes_and_detach(){unsafe{
+    fn shell_notifications_filter_targets_merge_flashes_and_detach(){let _windows=crate::test_locks::native_windows();unsafe{
         let hwnd=CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!(""),WS_POPUP,0,0,0,0,None,None,None,None).unwrap();
         let message=RegisterWindowMessageW(w!("SHELLHOOK"));
         let state=Box::new(RefCell::new(State{message,taskbar_created:RegisterWindowMessageW(w!("TaskbarCreated")),source:crate::messenger::Messenger::Wechat,registered:true,paths:vec![],burst:Vec::new(),pending:Vec::new(),ctx:Default::default()}));

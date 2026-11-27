@@ -153,7 +153,7 @@ impl Reader {
 }
 
 /// 可选精确充电状态：外部自动化把 `1` / `0` 写进
-/// `%APPDATA%\Daozai\phone_charging.txt` 即可覆盖推测值
+/// `%APPDATA%\DaozaiCustom\phone_charging.txt` 即可覆盖推测值
 /// （例如手机端 Tasker 在插拔充电器时同步该文件）。
 /// 文件不存在、写着 auto 或其它内容时返回 None，沿用推测逻辑。
 fn override_charging() -> Option<bool> {
@@ -279,7 +279,7 @@ fn next_charging(previous: Option<u8>, level: u8, current: bool) -> bool {
 // 记住它上次停在哪一档，下次到这个电量只要很短的确认时间。
 // ---------------------------------------------------------------
 
-/// `%APPDATA%\Daozai\phone-charge.json`，每台手机一条记录。
+/// `%APPDATA%\DaozaiCustom\phone-charge.json`，每台手机一条记录。
 #[derive(Default, Clone, Serialize, Deserialize)]
 struct Book {
     #[serde(default)]

@@ -24,9 +24,13 @@ const THEME_STAGE_W: u32 = 1024; // ≥ 520CSS × 常见 ppp 上限，固定不�
 const THEME_STAGE_H: u32 = 256;
 static THEME_STAGE: Mutex<Option<ID3D11Texture2D>> = Mutex::new(None);
 static THEME_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
-static THEME_LUMA: AtomicU32 = AtomicU32::new(0x3f59_999a); // 0.85 默认浅色
+/// 内容区（展开态下半部分）的采样框：和上缘分开，避免「上缘亮、内容暗」时被平均掉。
+static THEME_CONTENT_RECT: Mutex<Option<(i32, i32, i32, i32)>> = Mutex::new(None);
+static THEME_LUMA: AtomicU32 = AtomicU32::new(0x3f20_0000); // 0.625 相对亮度（≈sRGB 0.82），默认浅色
+static THEME_LUMA_CONTENT: AtomicU32 = AtomicU32::new(0x3f20_0000);
 /// 从浅到深的大幅突变待确认：连续两次采样都低才真正采纳，挡掉开机过渡暗帧。
 static THEME_DARK_PENDING: AtomicBool = AtomicBool::new(false);
+static THEME_DARK_PENDING_CONTENT: AtomicBool = AtomicBool::new(false);
 static THEME_LAST_SAMPLE: Mutex<Option<Instant>> = Mutex::new(None);
 /// 毫秒时间戳的进程级原点（OnceLock 保证只初始化一次，跨平台安全）。
 static THEME_EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -45,11 +49,34 @@ fn theme_sample_due(now_ms: u64, last_ms: Option<u64>, interval_ms: u64) -> bool
 pub fn set_theme_rect(rect: Option<(i32, i32, i32, i32)>) {
     if let Ok(mut g) = THEME_RECT.lock() { *g = rect; }
 }
+/// 上缘与内容区分别设置。内容区采样框单独存在，避免两区亮度差被平均掉。
+pub fn set_theme_rects(top: Option<(i32, i32, i32, i32)>, content: Option<(i32, i32, i32, i32)>) {
+    set_theme_rect(top);
+    if let Ok(mut g) = THEME_CONTENT_RECT.lock() { *g = content; }
+}
+pub fn theme_luma_top() -> f32 { f32::from_bits(THEME_LUMA.load(Ordering::Relaxed)) }
+pub fn theme_luma_content() -> f32 { f32::from_bits(THEME_LUMA_CONTENT.load(Ordering::Relaxed)) }
+
+/// 决定主题的最终亮度。
+///
+/// 两区亮度差小于 0.25 时取平均（和一整块采样差不多，但抗离群点）；
+/// 差距明显时**内容区优先**——展开态下半部分才是文字/数据所在，
+/// 上缘一小条亮区不该把整个主题拉成浅色、让暗背景上的内容看不清。
+/// 这与 WCAG 的原则一致：对比度要按文字实际覆盖的局部背景评估。
+pub(crate) fn effective_luma(top: f32, content: f32) -> f32 {
+    // 0.16 相对亮度差 ≈ 跨过整个 0.23~0.39 滞回带，足以让主题翻转。
+    const DIVERGENCE: f32 = 0.16;
+    if (top - content).abs() >= DIVERGENCE { content } else { (top + content) * 0.5 }
+}
+
 /// 取最近一次采样到的背景亮度（f32 bits）。无采样时返回默认值，不影响调用方。
-pub fn theme_luma() -> f32 { f32::from_bits(THEME_LUMA.load(Ordering::Relaxed)) }
+pub fn theme_luma() -> f32 { effective_luma(theme_luma_top(), theme_luma_content()) }
 /// 用壁纸文件亮度播种主题锚值（启动时调用，开机第一帧就不依赖抓屏）。
+/// 入参是 `wallpaper::luma()` 的 sRGB 均值，转成 WCAG 相对亮度后再播种，口径与实时采样一致。
 pub fn seed_theme_luma(v: f32) {
-    THEME_LUMA.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    let v = srgb_linear_f32(v.clamp(0.0, 1.0)).clamp(0.0, 1.0).to_bits();
+    THEME_LUMA.store(v, Ordering::Relaxed);
+    THEME_LUMA_CONTENT.store(v, Ordering::Relaxed);
 }
 
 /// D3D11 液态玻璃栈用：从抓屏纹理采样玻璃背后亮度，按时间节流（500ms）。
@@ -114,15 +141,83 @@ pub(crate) fn theme_luma_commit(prev: f32, luma: f32, pending: bool, anchor: Opt
     }
 }
 
-/// 从干净 WGC 帧 src_tex 里取 theme_rect 小块算平均亮度，写 THEME_LUMA。
+fn srgb_linear_f32(s: f32) -> f32 {
+    if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+}
+fn srgb_linear(v: u8) -> f32 { srgb_linear_f32(v as f32 / 255.0) }
+
+/// WCAG 相对亮度：sRGB 线性化后按 Rec.709 权重，不再用 (R+G+B)/3 的 sRGB 均值。
+pub(crate) fn relative_luma(r: u8, g: u8, b: u8) -> f32 {
+    (0.2126 * srgb_linear(r) + 0.7152 * srgb_linear(g) + 0.0722 * srgb_linear(b)).clamp(0.0, 1.0)
+}
+
+/// 10%~90% 截尾后取中位数。算术平均会被一小块高亮窗口拉高，
+/// 中位数对这种离群点不敏感，更适合判断「文字背后到底是什么底色」。
+/// 用 `select_nth_unstable_by` 只定位分位点（O(n)），不做整数组排序（O(n log n)）。
+pub(crate) fn trimmed_median(mut values: Vec<f32>) -> f32 {
+    if values.is_empty() { return 0.625; }
+    let n = values.len();
+    let lo = n / 10;
+    let hi = n - lo;
+    let span = hi - lo;
+    if span == 1 { return values[lo].clamp(0.0, 1.0); }
+    let mid = lo + span / 2;
+    let cmp = |a: &f32, b: &f32| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+    let v = if span % 2 == 0 {
+        *values.select_nth_unstable_by(mid, cmp).1
+    } else {
+        // 偶数个样本要中间两位的平均：先定第 mid+1 小，再在前 mid+1 个里定第 mid 小。
+        values.select_nth_unstable_by(mid + 1, cmp);
+        let lower = *values[..=mid].select_nth_unstable_by(mid, cmp).1;
+        let upper = values[mid + 1];
+        (lower + upper) * 0.5
+    };
+    v.clamp(0.0, 1.0)
+}
+
+/// 从干净 WGC 帧的一个采样框算相对亮度。失败路径静默返回 None。
+fn sample_rect_luma(
+    device: &ID3D11Device, context: &ID3D11DeviceContext, stage: &ID3D11Texture2D,
+    src_tex: &ID3D11Texture2D, sx: i32, sy: i32, sw: i32, sh: i32,
+    rect: Option<(i32, i32, i32, i32)>,
+) -> Option<f32> {
+    let (left, top, right, bottom, rw, rh) = theme_sample_box(rect, sx, sy, sw, sh)?;
+    let box_src = D3D11_BOX {
+        left: left as u32, top: top as u32, front: 0, right: right as u32, bottom: bottom as u32, back: 1,
+    };
+    unsafe {
+        // 复制采样框到固定 staging 左上角；目标尺寸 rw×rh 恒 ≤ staging 尺寸。
+        context.CopySubresourceRegion(stage, 0, 0, 0, 0, src_tex, 0, Some(&box_src));
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        if context.Map(stage, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).is_err() { return None; }
+        let mut values = Vec::with_capacity((rw / 4) as usize * (rh / 4) as usize + 1);
+        if !mapped.pData.is_null() {
+            let ptr = mapped.pData as *const u8;
+            let pitch = mapped.RowPitch as usize;
+            // 每行只读 rw*4 字节；rw ≤ THEME_STAGE_W，pitch ≥ THEME_STAGE_W*4，绝不越界。
+            if pitch >= THEME_STAGE_W as usize * 4 {
+                for y in (0..rh as usize).step_by(4) {
+                    let row = std::slice::from_raw_parts(ptr.add(y * pitch), rw as usize * 4);
+                    for x in (0..rw as usize).step_by(4) {
+                        let i = x * 4;
+                        values.push(relative_luma(row[i + 2], row[i + 1], row[i])); // BGRA
+                    }
+                }
+            }
+        }
+        let _ = context.Unmap(stage, 0);
+        if values.is_empty() { None } else { Some(trimmed_median(values)) }
+    }
+}
+
+/// 从干净 WGC 帧里分别采「玻璃上缘」和「内容区」，写两个 THEME_LUMA。
 /// 全部失败路径静默——主题色只是视觉微调，绝不能影响主渲染或导致崩溃。
-/// sx/sy = 抓屏矩形在显示器帧里的原点；sw/sh = 显示器帧尺寸（用于裁剪源 box）。
 fn sample_theme_luma(
     device: &ID3D11Device, context: &ID3D11DeviceContext,
     src_tex: &ID3D11Texture2D, sx: i32, sy: i32, sw: i32, sh: i32,
 ) {
-    let rect = THEME_RECT.lock().ok().and_then(|g| *g);
-    let Some((left, top, right, bottom, rw, rh)) = theme_sample_box(rect, sx, sy, sw, sh) else { return; };
+    let top_rect = THEME_RECT.lock().ok().and_then(|g| *g);
+    let content_rect = THEME_CONTENT_RECT.lock().ok().and_then(|g| *g);
     let stage = {
         let Ok(mut guard) = THEME_STAGE.lock() else { return; };
         if guard.is_none() {
@@ -140,44 +235,20 @@ fn sample_theme_luma(
         let Some(stage) = guard.as_ref() else { return; };
         stage.clone()
     };
-    let box_src = D3D11_BOX {
-        left: left as u32, top: top as u32, front: 0, right: right as u32, bottom: bottom as u32, back: 1,
-    };
-    unsafe {
-        // 复制采样框到固定 staging 左上角；目标尺寸 rw×rh 恒 ≤ staging 尺寸。
-        context.CopySubresourceRegion(&stage, 0, 0, 0, 0, src_tex, 0, Some(&box_src));
-        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        if context.Map(&stage, 0, D3D11_MAP_READ, 0, Some(&mut mapped)).is_err() { return; }
-        if !mapped.pData.is_null() {
-            let ptr = mapped.pData as *const u8;
-            let pitch = mapped.RowPitch as usize;
-            // 每行只读 rw*4 字节；rw ≤ THEME_STAGE_W，pitch ≥ THEME_STAGE_W*4，绝不越界。
-            if pitch >= THEME_STAGE_W as usize * 4 {
-                let mut sum = 0.0f32;
-                let mut n = 0.0f32;
-                for y in (0..rh as usize).step_by(4) {
-                    let row = std::slice::from_raw_parts(ptr.add(y * pitch), rw as usize * 4);
-                    for x in (0..rw as usize).step_by(4) {
-                        let i = x * 4;
-                        sum += (row[i] as f32 + row[i + 1] as f32 + row[i + 2] as f32) / 3.0;
-                        n += 1.0;
-                    }
-                }
-                if n > 0.0 {
-                    let luma = (sum / n / 255.0).clamp(0.0, 1.0);
-                    // 开机/切屏早期桌面还在合成，抓到的过渡帧偏黑。采纳它会把液态玻璃
-                    // 判成深色材质且之后的采样被节流 → 一直不恢复。判据：大幅变暗
-                    // 要连续两次确认；平滑变化/变亮立即采纳。
-                    let prev = f32::from_bits(THEME_LUMA.load(Ordering::Relaxed));
-                    let pending = THEME_DARK_PENDING.load(Ordering::Relaxed);
-                    let anchor = crate::wallpaper::luma();
-                    let (commit, new_pending) = theme_luma_commit(prev, luma, pending, anchor);
-                    if let Some(v) = commit { THEME_LUMA.store(v.to_bits(), Ordering::Relaxed); }
-                    THEME_DARK_PENDING.store(new_pending, Ordering::Relaxed);
-                }
-            }
-        }
-        let _ = context.Unmap(&stage, 0);
+    // 上缘用壁纸锚点挡掉开机过渡暗帧；内容区常有真实的深色窗口，不能用壁纸锚点判假。
+    // 壁纸亮度是 sRGB 均值，先转到相对亮度再和采样值比较，口径必须一致。
+    let anchor = crate::wallpaper::luma().map(srgb_linear_f32);
+    for (rect, prev_atomic, pending_atomic, region_anchor) in [
+        (top_rect, &THEME_LUMA, &THEME_DARK_PENDING, anchor),
+        (content_rect, &THEME_LUMA_CONTENT, &THEME_DARK_PENDING_CONTENT, None),
+    ] {
+        let Some(luma) = sample_rect_luma(device, context, &stage, src_tex, sx, sy, sw, sh, rect) else { continue; };
+        // 开机/切屏早期桌面还在合成，大幅变暗要连续两次确认；平滑变化/变亮立即采纳。
+        let prev = f32::from_bits(prev_atomic.load(Ordering::Relaxed));
+        let pending = pending_atomic.load(Ordering::Relaxed);
+        let (commit, new_pending) = theme_luma_commit(prev, luma, pending, region_anchor);
+        if let Some(v) = commit { prev_atomic.store(v.to_bits(), Ordering::Relaxed); }
+        pending_atomic.store(new_pending, Ordering::Relaxed);
     }
 }
 
@@ -323,6 +394,32 @@ pub fn settling() -> bool {
 #[cfg(test)]
 mod theme_sample_tests {
     use super::{theme_sample_box, theme_sample_due, theme_luma_commit, THEME_STAGE_W, THEME_STAGE_H, THEME_SAMPLE_INTERVAL_MS};
+    use super::{effective_luma, relative_luma, trimmed_median};
+
+    #[test]
+    fn relative_luma_is_perceptual_and_rec709_weighted(){
+        assert!(relative_luma(255,255,255)>0.999);
+        assert!(relative_luma(0,0,0)<0.001);
+        let (red,green,blue)=(relative_luma(255,0,0),relative_luma(0,255,0),relative_luma(0,0,255));
+        assert!(green>red*3.0 && green>blue*4.0,"绿色权重 0.7152 必须占主导：{red}/{green}/{blue}");
+        assert!((relative_luma(128,128,128)-0.216).abs()<0.01,"sRGB 128 线性化后约 0.216");
+    }
+
+    #[test]
+    fn trimmed_median_resists_small_bright_or_dark_patches(){
+        let mut bright=vec![0.2;90]; bright.extend(vec![1.0;10]);
+        assert!(trimmed_median(bright)<0.25,"10% 高亮块不该把整块亮度拉高");
+        let mut dark=vec![0.8;90]; dark.extend(vec![0.0;10]);
+        assert!(trimmed_median(dark)>0.75,"10% 暗块同样不该拉低");
+    }
+
+    #[test]
+    fn effective_luma_prefers_content_when_regions_diverge(){
+        assert_eq!(effective_luma(0.9,0.2),0.2,"上亮下暗：内容区优先，不能让亮上缘把主题拉浅");
+        assert_eq!(effective_luma(0.2,0.9),0.9,"上暗下亮：内容区优先");
+        assert!((effective_luma(0.6,0.5)-0.55).abs()<1e-6,"差异小于阈值取平均，行为与整块采样一致");
+        assert_eq!(effective_luma(0.39,0.20),0.20,"跨过滞回带的差异就让内容区优先");
+    }
 
     #[test]
     fn 开机过渡暗帧不立即采纳(){

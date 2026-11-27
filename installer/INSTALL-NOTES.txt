@@ -1,11 +1,11 @@
-岛仔 Daozai（自定义构建 custom-133）
+岛仔 DaozaiCustom
 ====================================
 
 安装内容
   daozai.exe            主程序（灵动岛）
-  默认安装到 C:\Program Files\Daozai（安装时可选其它目录，需管理员权限）
+  默认安装到 C:\Program Files\DaozaiCustom（安装时可选其它目录，需管理员权限）
   bridge\extension\     浏览器扩展（岛仔状态桥，Chrome/Edge 通用）
-  bridge\daozai_bridge.exe   浏览器扩展桥宿主（主程序副本）
+  bridge\daozai_bridge.exe   浏览器扩展桥宿主（独立精简程序，约 0.5 MB）
   注册表：浏览器 Native Messaging 宿主 + 开机自启（HKCU）+ 卸载信息（HKLM，需管理员）
 
 启用浏览器下载进度上岛（一次性，两步）
@@ -19,44 +19,45 @@
   蓝色胶囊 = 下载中（进度条 + 速度）；绿色 = 完成（点一下打开文件）。
 
 说明
-  - 用户数据在 %APPDATA%\Daozai，升级安装与卸载都不会动它。
+  - 用户数据在 %APPDATA%\DaozaiCustom，升级安装与卸载都不会动它。
   - 设置页里可关闭检查更新（自定义构建默认关闭）。
 
 ====================================
 问题反馈：请提供哪些日志
 ====================================
 先做这一步（最省事）
-  设置 → 关于 →「收集诊断」。程序会把系统/显卡/显示器/进程信息和最近
-  7 天 Windows 错误记录打包成「岛仔诊断-<时间>.zip」存到桌面，自动选中，
-  直接把这个 zip 发来即可。岛仔卡死/启动崩溃打不开设置时，从开始菜单
-  打开「收集岛仔诊断」（或到安装目录运行 daozai.exe --collect-diagnostics）。
+  设置 → 关于 →「收集诊断」。程序会把下面这些应用日志，连同系统/显卡/显示器/
+  进程信息和最近 7 天 Windows 错误记录，一起打包成「岛仔诊断-<时间>.zip」存到
+  桌面，自动选中，直接把这个 zip 发来即可。岛仔卡死/启动崩溃打不开设置时，从
+  开始菜单打开「收集岛仔诊断」（或到安装目录运行 daozai.exe --collect-diagnostics）。
 
-诊断包不含应用日志，按问题再补交下面对应文件
-  所有文件都在：%APPDATA%\Daozai\diagnostics\
-  （%APPDATA% 即 C:\Users\<你的用户名>\AppData\Roaming；在资源管理器地址栏
-   输入 %APPDATA%\Daozai\diagnostics 回车即可打开）
-
+诊断包里的日志（按问题对照，不用再手动翻文件）
   崩溃 / 闪退 / 启动失败
-    last-error.log、last-startup.log、auto-restart.log、renderer-fallback.txt
+    last-error.log、last-startup.log、auto-restart.log
   黑屏 / 界面不出 / 圆角异常 / 液态玻璃异常
-    last-graphics.log、liquid-glass.log、%APPDATA%\Daozai\glass-diagnostics.txt
+    liquid-glass.log、glass-diagnostics.txt（在数据目录根下）
   内存高 / 睡眠后不回落
-    resources.log、last-resource-anomaly.log、resource-guard.log、pill-sleep.log
+    resources.log、last-resource-anomaly.log、resource-guard.log
   歌词不显示 / 没封面 / 没歌名
     lyrics.log、music-gaps.log、music-volume.log
   天气不显示        weather-network.log
   验证码没复制      otp.log
   邮件面板异常      mail.log
-  某类通知不上岛    notice.log、notification-banner.log
+  某类通知不上岛    notice.log
   QQ / 微信点开没反应
     messenger-events.log、wechat-events.log、wechat-tray.log
-  浏览器下载进度 / 打不开网页
-    focus-browser.log，以及 %APPDATA%\Daozai\island_status.json、bridge.json
   日历同步 / 导入失败
     calendar.log
   卡顿 / 慢帧        frames.log
 
+诊断包里没有的（只有这类问题才需要单独补交）
+  浏览器下载进度 / 打不开网页
+    %APPDATA%\DaozaiCustom\island_status.json、bridge.json
+
 补充说明
-  - 日志写满会自动轮转成同名 .previous.log，两种都请一并发来。
+  - 日志写满会自动轮转成同名 .previous.log，诊断包会一起带上。
   - last-error.log / last-startup.log 只保留最近一次，出问题后请尽快取样。
+  - 所有文件都在 %APPDATA%\DaozaiCustom\diagnostics\
+    （%APPDATA% 即 C:\Users\<你的用户名>\AppData\Roaming；在资源管理器地址栏
+     输入 %APPDATA%\DaozaiCustom\diagnostics 回车即可打开）
   - 歌词日志可能含歌名歌手、通知日志含正文；发送前请遮挡账号等隐私内容。

@@ -472,26 +472,30 @@ impl App {
             let selected=self.pomo.phase==phase;
             let accent=if phase==Phase::Focus{theme::RED_TOP}else{theme::SOFT_GREEN};
             let ctl=if phase==Phase::Focus {Ctl::Focus} else {Ctl::Rest};
+            // 上游原仓库（upstream/main:src/pages.rs）的按钮底色：选中混强调色 22%，未选中中性 BTN。
+            let background=if selected{mix(theme::BTN,accent,0.22)}else{theme::BTN};
+            let hover_bg=if selected{mix(theme::BTN_HOVER,accent,0.25)}else{theme::BTN_HOVER};
             let (response,button)=if glassy && self.ctl_on_gpu(ctl) {
                 // 玻璃由 GPU 着色器出，这里只留命中区、文字和选中态。
                 // 再叠一层矢量玻璃胶囊会和 GPU 那块错开双边缘（其他控件早就这么让位了）。
                 let response=c.hit(x,94.0,width,25.0,id);
                 let (hover,_)=c.hover_t(&response);
                 let card=c.scaled(x+width/2.0,106.5,self.ctl_scale(ctl));
-                if selected {
-                    // white_alpha 的 premultiplied 亮度很低，浅材质通用换色会把它压成暗雾；
-                    // 登记为玻璃材质原样保留（GPU 着色器的透镜上叠的就是白雾）。
-                    let from=paint::chrome_mark(c);
-                    card.fill(x,94.0,width,25.0,12.5,Color32::from_white_alpha((20.0+hover*20.0) as u8));
-                    paint::chrome_since(c,from);
-                }
+                // 上游靠 sdk-material 的 material_control 给控件上底色；定制版没有那条材质栈，
+                // 直接把同一份底色叠在 GPU 透镜上：选中用上游的 accent 0.28 彩色底，未选中中性底。
+                let from=paint::chrome_mark(c);
+                let tint=if selected{paint::alpha(accent,0.28)}else{paint::alpha(background,0.34)};
+                card.fill(x,94.0,width,25.0,12.5,mix(tint,Color32::from_white_alpha((12.0+16.0*hover) as u8),hover));
+                paint::chrome_since(c,from);
                 (response,card)
             } else if glassy {
-                // 玻璃分段：选中=整片点亮，未选中=只剩一圈边；文字色保持原逻辑。
+                // 矢量玻璃兜底也保留底色，不能只剩一圈白边。
+                let from=paint::chrome_mark(c);
+                c.fill(x,94.0,width,25.0,12.5,paint::alpha(background,if selected{0.45}else{0.30}));
+                paint::chrome_since(c,from);
                 paint::glass_capsule(c,x,94.0,width,25.0,id,if selected {0.55}else{0.10},if selected {0.20}else{0.45})
             } else {
-                let background=if selected{mix(theme::BTN,accent,0.22)}else{theme::BTN};
-                capsule(c,x,94.0,width,25.0,id,background,if selected{mix(theme::BTN_HOVER,accent,0.25)}else{theme::BTN_HOVER})
+                capsule(c,x,94.0,width,25.0,id,background,hover_bg)
             };
             button.text(x+width/2.0,110.0,label,size::BODY,W::Semibold,if selected{mix(accent,theme::WHITE,0.5)}else{theme::WHITE},H::Center);
             if response.clicked(){self.set_phase(phase);}

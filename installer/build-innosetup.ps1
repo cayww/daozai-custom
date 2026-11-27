@@ -86,8 +86,11 @@ try {
     # stderr 会被包成 ErrorRecord）。这一段临时放宽为 Continue，只按退出码判断成败。
     $previousEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    # 版本号取自 Cargo.toml（exe 的 FileVersion 也由它生成），装出来的卸载项不会和 exe 对不上。
+    $cargoVersion = [regex]::Match((Get-Content (Join-Path $projectRoot 'dz-custom\Cargo.toml') -Raw), '(?m)^version = "([^"]+)"').Groups[1].Value
+    if (-not $cargoVersion) { throw '无法从 dz-custom\Cargo.toml 读取版本号' }
     try {
-        & $iscc "/DTargetProfile=$CargoProfile" $iss
+        & $iscc "/DTargetProfile=$CargoProfile" "/DMyAppVersion=$cargoVersion" $iss
         $compileExit = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousEap

@@ -43,14 +43,6 @@ pub fn startup(stage:&str) {
     }
 }
 
-/// 记录实际使用的图形设备，避免把电脑里的显卡列表误当作当前渲染设备。
-/// D3D11 自绘栈：渲染器信息由 graphics 运行时写入，这里留空实现保持签名兼容。
-pub fn graphics() {
-    let details="渲染栈：D3D11 单 device + DirectComposition（WGC 抓屏 + HLSL 玻璃）\n".to_string();
-    let directory=daozai::model::config_dir().join("diagnostics");
-    if std::fs::create_dir_all(&directory).is_ok(){let _=std::fs::write(directory.join("last-graphics.log"),details);}
-}
-
 static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 fn diagnostics_dir() -> PathBuf { daozai::model::config_dir().join("diagnostics") }

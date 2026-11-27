@@ -1,11 +1,11 @@
 ﻿//! 持久化与状态模型。
 //!
 //! 文件布局与原工具同名同结构（原工具字符串中可见的路径与键名），但默认目录
-//! 用独立的 `%APPDATA%\Daozai`，避免与原工具的 `%APPDATA%\Nusa` 互相覆盖：
-//!   %APPDATA%\Daozai\settings.txt   -> pet=0/1, minimal=0/1
-//!   %APPDATA%\Daozai\todo.txt
-//!   %APPDATA%\Daozai\water.txt      -> bottle=<ml> / goal=<ml> / start=YYYY-MM-DD
-//!   %APPDATA%\Daozai\shelf.txt      -> 置物清单（每行一个绝对路径）
+//! 用独立的 `%APPDATA%\DaozaiCustom`，避免与原工具的 `%APPDATA%\Nusa` 互相覆盖：
+//!   %APPDATA%\DaozaiCustom\settings.txt   -> pet=0/1, minimal=0/1
+//!   %APPDATA%\DaozaiCustom\todo.txt
+//!   %APPDATA%\DaozaiCustom\water.txt      -> bottle=<ml> / goal=<ml> / start=YYYY-MM-DD
+//!   %APPDATA%\DaozaiCustom\shelf.txt      -> 置物清单（每行一个绝对路径）
 //!
 //! 设置环境变量 `DAOZAI_DATA_DIR` 可把以上目录整体改到别处（用于与已安装的
 //! 原工具并存、或跑测试时不碰真实数据）。
@@ -218,6 +218,35 @@ impl ResidentDate {
     }
 }
 
+/// 液态玻璃深/浅主题由谁决定。
+/// - 自动（默认）：按抓屏背景亮度切换，沿用相对亮度 0.23/0.39 滞回 + 指数平滑；
+/// - 深 / 浅：用户固定指定，忽略背景采样。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LiquidTheme {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+impl LiquidTheme {
+    pub const ALL: [LiquidTheme; 3] = [LiquidTheme::Auto, LiquidTheme::Dark, LiquidTheme::Light];
+    pub fn key(self) -> &'static str {
+        match self { Self::Auto => "auto", Self::Dark => "dark", Self::Light => "light" }
+    }
+    pub fn parse(value: &str) -> Self {
+        match value { "dark" => Self::Dark, "light" => Self::Light, _ => Self::Auto }
+    }
+    /// 自动模式下由亮度算出的目标（1 = 浅底深字，0 = 深底白字）；手动模式直接固定。
+    pub fn target(self, luma: f32, current: f32) -> f32 {
+        match self {
+            Self::Dark => 0.0,
+            Self::Light => 1.0,
+            // 阈值按 WCAG 相对亮度：0.23/0.39 ≈ 原 sRGB 均值的 0.52/0.66。
+            Self::Auto => if luma > 0.39 { 1.0 } else if luma < 0.23 { 0.0 } else { current },
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub display_id: String,
@@ -225,6 +254,8 @@ pub struct Settings {
     pub skin: Skin,
     pub island_shape: IslandShape,
     pub glass_blur: bool,
+    /// 液态玻璃深/浅主题：自动按背景采样，或用户手动固定深/浅。
+    pub liquid_theme: LiquidTheme,
     /// 液态玻璃：展开/折叠瞬间边缘折射的增强倍数（0 = 关闭，默认 1.0）。
     /// 只影响形变那一百多毫秒，静止状态完全不受影响。
     pub liquid_morph: f32,
@@ -457,7 +488,7 @@ impl OpenAnim {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true,true,true,true,true,true,true,true,true,false,false], page_order: [0,1,2,3,4,5,6,7,8,9,10], show_page_shortcuts: true, show_clock: true, show_battery: true, show_weather: true, performance_bar: Default::default(), performance_metrics: 7, show_performance: true, performance_view: Default::default(), resident_date: ResidentDate::Off, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, show_bluetooth: true, bluetooth_pinned: Vec::new(), bluetooth_resident_style: 0, bluetooth_resident_custom: false, bluetooth_battery_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code_only_notifications: false, mail_code: true, mail_code_popup: false, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: false, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
+        Self { display_id: String::new(), skin: Skin::Classic, island_shape: IslandShape::Notch, glass_blur: true, liquid_theme: LiquidTheme::Auto, liquid_morph: 1.0, liquid_prefer_dgpu: true, liquid_refract_px: 48.0, liquid_chroma_px: 8.0, liquid_blur_px: 1.5, liquid_band_px: 87.0, liquid_edge_w_px: 1.5, liquid_edge_op: 0.90, liquid_light_follow: 1.0, liquid_spring: 1.0, liquid_zeta: 0.5, liquid_idle_fps: 15, liquid_deep_sleep: true, liquid_shadow: true, island_size: 100, island_offset: 0, oled_shift: false, dock: Dock::Top, settings_theme: Default::default(), pet: true, minimal: false, browser_minimal: false, avoid_browsers: true, avoid_apps: Vec::new(), visible_pages: [true,true,true,true,true,true,true,true,true,false,false], page_order: [0,1,2,3,4,5,6,7,8,9,10], show_page_shortcuts: true, show_clock: true, show_battery: true, show_weather: true, performance_bar: Default::default(), performance_metrics: 7, show_performance: true, performance_view: Default::default(), resident_date: ResidentDate::Off, clock_12h: false, clock_period: 0, clock_seconds: false, resident_order: Vec::new(), system_hud: true, bluetooth_notifications: true, show_bluetooth: true, bluetooth_pinned: Vec::new(), bluetooth_resident_style: 0, bluetooth_resident_custom: false, bluetooth_battery_notifications: true, system_notify: true, read_notifications:false, wechat_notifications:false, wecom_notifications:false, feishu_notifications:false, dingtalk_notifications:false, wechat_tray_open:false, qq_only:false, notification_preview:false, notifications: true, sound: false, lyrics_enabled:true, island_lyrics:false, lyric_delay_ms:-350, hide_fullscreen: true, avoid_top_bar: true, top_bar_on_top: false, focus_minutes: 25, rest_minutes: 5, water_minutes: 45, serving_ml: 250, water_start: 9, water_end: 22, sit_remind: true, sit_minutes: 60, lunch_rest: true, lunch_start: 720, lunch_end: 810, mail_enabled: true, mail_sync_operations:false, mail_code_only_notifications: false, mail_code: true, mail_code_popup: false, mail_code_hide_seconds:60, mail_interval: 120, mail_ics: 15, ignored_mail_events: Vec::new(), calendar_prompt: true, calendar_auto_sync: true, clipboard_history: true, weather_city: String::new(), weather_position: None, weather_saved: Vec::new(), render_compat: false, render_compat_reason: String::new(), open_anim: OpenAnim::default(), hover_delay_ms: 200, phone_battery: false, notice_seconds: 10, otp_seconds: 90, notice_keep: true, auto_copy_otp: false, update_check: true, battery_alert: 20, quota_alert: 20, notice_keywords: String::new(), quiet_minutes: 0, quiet_meeting: true, mail_filter: String::new() }
     }
 }
 
@@ -523,6 +554,7 @@ impl Settings {
                 "island_shape" => s.island_shape = IslandShape::parse(&v),
                 "dock" => s.dock = Dock::parse(&v),
                 "glass_blur" => s.glass_blur = v != "0",
+                "liquid_theme" => s.liquid_theme = LiquidTheme::parse(&v),
                 "liquid_morph" => s.liquid_morph = v.parse::<f32>().unwrap_or(1.0).clamp(0.0, 3.0),
                 "liquid_prefer_dgpu" => s.liquid_prefer_dgpu = v != "0",
                 "liquid_refract_px" => s.liquid_refract_px = v.parse::<f32>().unwrap_or(48.0).clamp(0.0, 120.0),
@@ -654,6 +686,7 @@ impl Settings {
                 ("island_shape".into(),self.island_shape.key().into()),
                 ("dock".into(),self.dock.key().into()),
                 ("glass_blur".into(),(self.glass_blur as u8).to_string()),
+                ("liquid_theme".into(),self.liquid_theme.key().into()),
                 ("liquid_morph".into(),format!("{:.2}",self.liquid_morph)),
                 ("liquid_prefer_dgpu".into(),if self.liquid_prefer_dgpu {"1"}else{"0"}.into()),
                 ("liquid_refract_px".into(),format!("{:.1}",self.liquid_refract_px)),

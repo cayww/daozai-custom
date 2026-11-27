@@ -348,7 +348,7 @@ mod tests{
         assert_eq!(finish_open(None,||false),Err(OpenError::Unavailable),"仅置前的请求被拒后没有待确认的恢复操作");
     }
     #[test]
-    fn feishu_rebuilt_during_relaunch_waits_for_the_same_accounts_visible_main_window(){unsafe{
+    fn feishu_rebuilt_during_relaunch_waits_for_the_same_accounts_visible_main_window(){let _windows=crate::test_locks::native_windows();unsafe{
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
         let instance=GetModuleHandleW(None).unwrap().into();
         let class=w!("Chrome_WidgetWin_1");
@@ -417,7 +417,7 @@ mod tests{
         assert!(!main_frame(Messenger::WeCom,"WeWorkWindow",WS_POPUP.0,WS_EX_TOOLWINDOW.0));
     }
     #[test]
-    fn synthetic_native_windows_keep_original_handles_and_reject_ambiguity(){unsafe{
+    fn synthetic_native_windows_keep_original_handles_and_reject_ambiguity(){let _windows=crate::test_locks::native_windows();unsafe{
         unsafe extern "system" fn proc(h:HWND,m:u32,w:WPARAM,l:LPARAM)->LRESULT{DefWindowProcW(h,m,w,l)}
         let instance=GetModuleHandleW(None).unwrap().into();let pid=std::process::id();
         let paths=[normalized(&std::env::current_exe().unwrap().to_string_lossy())];
@@ -528,7 +528,7 @@ mod tests{
         for window in [chat,small,main]{DestroyWindow(window).unwrap();}
     }}
     #[test]
-    fn hidden_helpers_are_never_shown(){unsafe{
+    fn hidden_helpers_are_never_shown(){let _windows=crate::test_locks::native_windows();unsafe{
         let paths=[normalized(&std::env::current_exe().unwrap().to_string_lossy())];
         let window=CreateWindowExW(WS_EX_TOOLWINDOW,w!("STATIC"),w!(""),WS_POPUP,-10000,-10000,400,500,None,None,None,None).unwrap();
         for source in Messenger::OFFICE{

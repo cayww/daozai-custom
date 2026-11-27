@@ -1,13 +1,17 @@
 ; 岛仔（自定义构建）安装包 —— Inno Setup 7
 ; 编译：ISCC.exe daozai.iss
-; 特性：默认装到 C:\Program Files\Daozai（{autopf}，需管理员；2026-11-17 从
+; 特性：默认装到 C:\Program Files\DaozaiCustom（{autopf}，需管理员；2026-11-17 从
 ;       D:\software\Daozai 硬编码改为软件常用惯例，老用户升级 Inno 会记住原目录）、
 ;       浏览器扩展桥宿主注册（Chrome/Edge）、开机自启（可勾选）、
 ;       开始菜单/桌面快捷方式、自带卸载器。
-; 用户数据在 %APPDATA%\Daozai，安装/卸载都不碰。
+; 用户数据在 %APPDATA%\DaozaiCustom，安装/卸载都不碰。
 
 #define MyAppName "岛仔 DaozaiCustom"
-#define MyAppVersion "0.6.66"
+; 版本号由 build-innosetup.ps1 从 dz-custom\Cargo.toml 读出来传进来，避免和 exe 的
+; FileVersion 漂移（exe 版本来自 Cargo.toml）。手工编译时才用这里的默认值。
+#ifndef MyAppVersion
+#define MyAppVersion "1.3.0"
+#endif
 #define MyAppBuild "custom-isolated"
 ; 从哪个 cargo profile 的产物目录取 exe（release / dev-release）。
 ; 命令行覆盖：ISCC.exe /DTargetProfile=dev-release daozai.iss
@@ -19,7 +23,7 @@
 AppId={{C7E3A19D-5F42-4B8E-A1D6-9E2C4F7B83A5}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} {#MyAppVersion}（{#MyAppBuild}）
+AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher=自定义构建
 DefaultDirName={autopf}\DaozaiCustom
 DirExistsWarning=no
@@ -35,7 +39,7 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
-UninstallDisplayName={#MyAppName}（{#MyAppBuild}）
+UninstallDisplayName={#MyAppName} {#MyAppVersion}
 UninstallDisplayIcon={app}\daozai.ico
 
 [Languages]
@@ -115,5 +119,5 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usDone then
-    MsgBox('岛仔已卸载。用户数据（设置、通知记录等）保留在 %APPDATA%\Daozai，可手动删除。', mbInformation, MB_OK);
+    MsgBox('岛仔已卸载。用户数据（设置、通知记录等）保留在 %APPDATA%\DaozaiCustom，可手动删除。', mbInformation, MB_OK);
 end;

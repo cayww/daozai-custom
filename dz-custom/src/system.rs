@@ -272,7 +272,6 @@ unsafe fn covering_monitor(hwnd: HWND) -> Option<crate::display_layout::Bounds> 
     // 以客户区是否盖满整屏为准，不看样式位：有的游戏全屏时保留标题栏样式和最大化标志、
     // 实际并不画标题栏，按样式位判断会把它们当成普通最大化（0.6.65 的无畏契约回归）。
     if covers && IsZoomed(hwnd).as_bool() && !client_covers(hwnd, &info.rcMonitor) {
-        #[cfg(not(test))] log_maximized_exclusion(hwnd, r, info.rcMonitor);
         return None;
     }
     covers.then_some(crate::display_layout::Bounds {left:info.rcMonitor.left,top:info.rcMonitor.top,right:info.rcMonitor.right,bottom:info.rcMonitor.bottom})
@@ -287,26 +286,6 @@ unsafe fn client_covers(hwnd: HWND, monitor: &RECT) -> bool {
     let (mut tl, mut br) = (POINT { x: c.left, y: c.top }, POINT { x: c.right, y: c.bottom });
     if !ClientToScreen(hwnd, &mut tl).as_bool() || !ClientToScreen(hwnd, &mut br).as_bool() { return false; }
     tl.x <= monitor.left && tl.y <= monitor.top && br.x >= monitor.right && br.y >= monitor.bottom
-}
-
-/// 诊断：盖满屏幕却按普通最大化处理（不隐藏岛仔）的窗口，每个窗口只记一次，便于核对用户反馈。
-#[cfg(not(test))]
-unsafe fn log_maximized_exclusion(hwnd: HWND, window: RECT, monitor: RECT) {
-    use std::sync::Mutex;
-    static LOGGED: Mutex<isize> = Mutex::new(0);
-    let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
-    if *logged == hwnd.0 as isize { return; }
-    *logged = hwnd.0 as isize;
-    let mut cls = [0u16; 128];
-    let n = GetClassNameW(hwnd, &mut cls);
-    let mut c = RECT::default();
-    let _ = GetClientRect(hwnd, &mut c);
-    let line = format!("{} 普通最大化不隐藏：类名={} 样式=0x{:08x} 扩展=0x{:08x} 窗口={:?} 客户区={}×{} 屏幕={:?}",
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"), String::from_utf16_lossy(&cls[..n.max(0) as usize]),
-        GetWindowLongPtrW(hwnd, GWL_STYLE) as u32, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32,
-        (window.left, window.top, window.right, window.bottom), c.right - c.left, c.bottom - c.top,
-        (monitor.left, monitor.top, monitor.right, monitor.bottom));
-    crate::resources::append_log(&crate::model::config_dir().join("diagnostics"), "fullscreen.log", &line);
 }
 
 pub fn fullscreen() -> Option<crate::display_layout::Bounds> {
@@ -354,7 +333,7 @@ mod fullscreen_follow_tests {
     const MAX: Foreground = Foreground { hwnd: 100, pid: 7, root_owner: 100, app_window: true };
 
     #[test]
-    fn maximized_browser_and_borderless_fullscreen_at_the_same_bounds_are_distinct() {
+    fn maximized_browser_and_borderless_fullscreen_at_the_same_bounds_are_distinct() {let _windows=crate::test_locks::native_windows();
         unsafe {
             let hwnd = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, windows::core::w!("STATIC"),
                 windows::core::w!(""), WS_OVERLAPPEDWINDOW | WS_MAXIMIZE, 0, 0, 320, 240, None, None, None, None).unwrap();
@@ -378,7 +357,7 @@ mod fullscreen_follow_tests {
     }
 
     #[test]
-    fn game_that_keeps_caption_style_but_draws_no_caption_still_hides_the_island() {
+    fn game_that_keeps_caption_style_but_draws_no_caption_still_hides_the_island() {let _windows=crate::test_locks::native_windows();
         use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
         unsafe extern "system" fn proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
             // 不留非客户区：样式里有标题栏，但客户区就是整个窗口（自绘或无边框全屏的游戏）。
@@ -1078,7 +1057,7 @@ fn executable_description(path:&str)->Option<String> {
 mod avoidance_tests {
     use super::*;
     #[test]
-    fn registered_3ds_max_uses_visible_same_process_windows_for_avoidance() {
+    fn registered_3ds_max_uses_visible_same_process_windows_for_avoidance() {let _windows=crate::test_locks::native_windows();
         unsafe {
             let create=|x,y,width,height| CreateWindowExW(WS_EX_NOACTIVATE|WS_EX_APPWINDOW,windows::core::w!("STATIC"),
                 windows::core::w!(""),WS_POPUP|WS_VISIBLE,x-10000,y-10000,width,height,None,None,None,None).unwrap();
@@ -1112,7 +1091,7 @@ mod avoidance_tests {
     }
 
     #[test]
-    fn registered_app_keeps_avoidance_when_its_plugin_panel_takes_focus() {
+    fn registered_app_keeps_avoidance_when_its_plugin_panel_takes_focus() {let _windows=crate::test_locks::native_windows();
         unsafe {
             let create=|x,y,width,height,owner,ex| CreateWindowExW(WS_EX_NOACTIVATE|ex,windows::core::w!("STATIC"),
                 windows::core::w!(""),WS_POPUP|WS_VISIBLE,x-10000,y-10000,width,height,owner,None,None,None).unwrap();
@@ -1186,7 +1165,7 @@ mod avoidance_tests {
     }
 
     #[test]
-    fn browser_popup_follows_its_owner_when_browser_avoidance_is_enabled() {
+    fn browser_popup_follows_its_owner_when_browser_avoidance_is_enabled() {let _windows=crate::test_locks::native_windows();
         unsafe {
             let create=|x,y,width,height,owner| CreateWindowExW(WS_EX_NOACTIVATE,windows::core::w!("STATIC"),
                 windows::core::w!(""),WS_POPUP|WS_VISIBLE,x-10000,y-10000,width,height,owner,None,None,None).unwrap();

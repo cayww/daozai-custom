@@ -151,7 +151,6 @@ impl Shell {
 
     /// D3D11 自绘栈构造：直接接收 egui Context 与窗口 HWND（不经 eframe CreationContext）。
     fn new(egui_ctx: egui::Context, hwnd: windows::Win32::Foundation::HWND, opts: Options) -> Self {
-        diagnostics::graphics();
         diagnostics::startup("加载本地配置");
         let mut app = App::new(&egui_ctx, opts);
         // D3D11 自绘栈无 wgpu 渲染状态兼容模式；保留字段仅为设置页「需重启」提示。

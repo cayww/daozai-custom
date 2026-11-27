@@ -1,6 +1,6 @@
 ﻿param(
     [string]$OutputDirectory = [Environment]::GetFolderPath('Desktop'),
-    [string]$DataDirectory = $(if ($env:DAOZAI_DATA_DIR) { $env:DAOZAI_DATA_DIR } else { Join-Path $env:APPDATA 'Daozai' }),
+    [string]$DataDirectory = $(if ($env:DAOZAI_DATA_DIR) { $env:DAOZAI_DATA_DIR } else { Join-Path $env:APPDATA 'DaozaiCustom' }),
     [switch]$RevealArchive
 )
 $ErrorActionPreference = 'Stop'
@@ -20,12 +20,13 @@ function Save-Text([string]$Name, [string]$Value) {
 }
 New-Item -ItemType Directory -Path $collectionRoot | Out-Null
 try {
-    $logs = @('last-error.log', 'last-graphics.log', 'last-startup.log', 'resources.log',
+    $logs = @('last-error.log', 'last-startup.log', 'resources.log',
         'resources.previous.log', 'last-resource-anomaly.log', 'resource-guard.log',
         'weather-network.log', 'weather-network.previous.log',
         'messenger-events.log', 'messenger-events.previous.log', 'wechat-events.log', 'wechat-tray.log',
         'calendar.log', 'calendar.previous.log', 'lyrics.log', 'lyrics.previous.log',
-        'music-gaps.log', 'music-gaps.previous.log', 'frames.log', 'frames.previous.log', 'auto-restart.log')
+        'music-gaps.log', 'music-gaps.previous.log', 'music-volume.log', 'frames.log', 'frames.previous.log',
+        'liquid-glass.log', 'otp.log', 'notice.log', 'mail.log', 'auto-restart.log')
     foreach ($name in $logs + @('glass-diagnostics.txt')) {
         $source = if ($name -eq 'glass-diagnostics.txt') { Join-Path $DataDirectory $name } else { Join-Path (Join-Path $DataDirectory 'diagnostics') $name }
         if (!(Test-Path -LiteralPath $source -PathType Leaf)) { $missing.Add($name); continue }
@@ -48,7 +49,7 @@ try {
     } catch { $info.ScreensQuery = '无法读取显示器信息' }
     $settingsPath = Join-Path $DataDirectory 'settings.txt'
     if (Test-Path -LiteralPath $settingsPath) {
-        $info.DisplaySettings = @([IO.File]::ReadAllLines($settingsPath) | Where-Object { $_ -match '^(skin|island_shape|dock|glass_blur|island_size|island_offset|settings_theme|minimal|pet)=' })
+        $info.DisplaySettings = @([IO.File]::ReadAllLines($settingsPath) | Where-Object { $_ -match '^(skin|island_shape|dock|glass_blur|island_size|island_offset|settings_theme|liquid_theme|minimal|pet)=' })
         # 功能开关（只有开 / 关和页面顺序，不含账号、密码或内容）：用于判断「开关没开」一类问题。
         $info.FeatureSettings = @([IO.File]::ReadAllLines($settingsPath) | Where-Object { $_ -match '^(notifications|wechat_notifications|wechat_tray_open|wecom_notifications|feishu_notifications|dingtalk_notifications|read_notifications|qq_only|visible_pages|page_order|lyrics_enabled|island_lyrics|render_compat|calendar_auto_sync|mail_enabled)=' })
     }

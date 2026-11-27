@@ -710,13 +710,18 @@ impl D3d11Runtime {
             let by = origin.1 - cap_y as f32 + (win_h - params.bounds[1] - params.bounds[3]);
             let bw = params.bounds[2];
             let bh = params.bounds[3];
-            // 采样框比玻璃略窄、贴玻璃上缘（与旧栈 theme_rect 的「上缘锚定」一致），
-            // 全部夹在全屏帧内；旧栈内部有 theme_luma_commit 过滤过渡帧。
+            // 采样框比玻璃略窄、全部夹在全屏帧内。分两段：上缘 35% 和内容区 65%。
+            // 展开态下半部分才是文字/数据，上缘一小条亮区不该代表整块背景——
+            // 两区亮度差超过阈值时由 effective_luma 让内容区优先。
             let sx = (bx + bw * 0.05) as i32;
             let sy = by.max(0.0) as i32;
             let ex = (bx + bw * 0.95) as i32;
-            let ey = (by + bh.max(8.0)) as i32;
-            crate::wgc::set_theme_rect(Some((sx, sy, ex.max(sx + 1), ey.max(sy + 1))));
+            let top_h = (bh * 0.35).max(8.0).min(bh.max(8.0));
+            let top_y = (by + top_h) as i32;
+            let bottom_y = (by + bh.max(8.0)) as i32;
+            let top = (sx, sy, ex.max(sx + 1), top_y.max(sy + 1));
+            let content = (sx, top_y, ex.max(sx + 1), bottom_y.max(top_y + 1));
+            crate::wgc::set_theme_rects(Some(top), Some(content));
             crate::wgc::sample_theme_luma_d3d11(
                 &self.device, &self.ctx, &self.glass.bg_tex,
                 0, 0, self.glass.bg_w as i32, self.glass.bg_h as i32,

@@ -1756,7 +1756,7 @@ mod notice_duration_tests {
     }
 }
 
-/// 番茄统计：`%APPDATA%\Daozai\focus-stats.json`，只记「今天多少分钟」。
+/// 番茄统计：`%APPDATA%\DaozaiCustom\focus-stats.json`，只记「今天多少分钟」。
 /// 只统计真正在跑的专注阶段，暂停不计；写盘频率是每分钟一次。
 pub(crate) fn focus_stats_path() -> Option<std::path::PathBuf> {
     let base = std::env::var_os("APPDATA")?;
@@ -1851,7 +1851,7 @@ pub(crate) fn focus_add(minutes: u32) {
 }
 
 /// 通知历史（落盘，最多 100 条）：岛仔关掉之后「当时没看到的那条」还能查回来。
-/// 存 `%APPDATA%\Daozai\notices.json`，字段 at/title/body，新的在后面。
+/// 存 `%APPDATA%\DaozaiCustom\notices.json`，字段 at/title/body，新的在后面。
 pub(crate) fn notice_history_path() -> Option<std::path::PathBuf> {
     let base = std::env::var_os("APPDATA")?;
     Some(
@@ -4180,6 +4180,17 @@ fn liquid_glass_config_window(app: &mut crate::app::App, ctx: &egui::Context) {
                     let forms:[(bool,&str);2]=[(false,"展开态"),(true,"收起态")];
                     settings_control_row_right(ui,"预览形态",|ui|{settings_segmented(ui,&mut app.liquid_preview_collapsed,&forms,62.0);});
                     settings_hint(ui,"展开态看展开后的控件玻璃；收起态看胶囊常驻条的玻璃");
+                    // 深/浅主题：自动按抓屏背景亮度切换，也可固定成深或浅。
+                    let themes:[(crate::model::LiquidTheme,&str);3]=[
+                        (crate::model::LiquidTheme::Auto,"自动"),
+                        (crate::model::LiquidTheme::Dark,"深色"),
+                        (crate::model::LiquidTheme::Light,"浅色")];
+                    let theme_before=app.settings.liquid_theme;
+                    settings_control_row_right(ui,"主题",|ui|{
+                        settings_segmented(ui,&mut app.settings.liquid_theme,&themes,52.0);
+                    });
+                    if theme_before!=app.settings.liquid_theme {app.settings.save();}
+                    settings_hint(ui,"自动：跟随岛体背后的桌面颜色，按亮度切换深/浅（带滞回，不闪）；深色/浅色：固定不随背景变");
                                 ui.separator();
                                 let before=app.settings.liquid_prefer_dgpu;
                                 setting_row(ui,"优先独立显卡","让液态玻璃尽量使用独显，重启生效",&mut app.settings.liquid_prefer_dgpu);
@@ -6273,7 +6284,7 @@ impl App {
                         settings_card(ui,|ui|{
                             ui.label(egui::RichText::new("手机连接的通知按普通通知上岛；含验证码的短信会自动转成验证码卡片。").size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             ui.separator();
-                            ui.label(egui::RichText::new("手机 App 名单：检测到新 App 通知时自动加入并默认开启，这里只需取消勾选即可静音。也可直接改 %APPDATA%\\Daozai\\phone-apps.json。").size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
+                            ui.label(egui::RichText::new("手机 App 名单：检测到新 App 通知时自动加入并默认开启，这里只需取消勾选即可静音。也可直接改 %APPDATA%\\DaozaiCustom\\phone-apps.json。").size(12.0).color(settings_color(ui.ctx(),Color32::from_gray(180),Color32::from_gray(75))));
                             let before_phone_apps=self.phone_apps.items.clone();
                             for (name,label,allow) in &mut self.phone_apps.items {
                                 let title=if label==name {name.clone()} else {format!("{} · {}",label,name)};

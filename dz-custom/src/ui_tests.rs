@@ -9774,6 +9774,44 @@ fn control_glass_covers_focus_and_rest_segments(){
 }
 
 #[test]
+fn liquid_theme_auto_or_manual_decides_the_light_dark_target(){
+    use crate::model::LiquidTheme as T;
+    assert_eq!(T::Auto.target(0.2,0.0),0.0,"暗背景走深底");
+    assert_eq!(T::Auto.target(0.8,1.0),1.0,"亮背景走浅底");
+    assert_eq!(T::Auto.target(0.30,0.3),0.3,"相对亮度 0.23~0.39 滞回区保持当前值");
+    assert_eq!(T::Dark.target(0.99,1.0),0.0,"手动深色忽略背景采样");
+    assert_eq!(T::Light.target(0.01,0.0),1.0,"手动浅色忽略背景采样");
+    for mode in T::ALL {assert_eq!(T::parse(mode.key()),mode,"设置项持久化键必须能往返");}
+}
+
+#[test]
+fn liquid_focus_and_rest_buttons_keep_the_upstream_tinted_background(){
+    // 上游 upstream/main:src/pages.rs 里这两个按钮走 material_capsule，带
+    // background = selected ? mix(BTN, accent, 0.22) : BTN，选中还叠 accent 0.28。
+    // 定制版没有 sdk-material 栈，改成直接把同款底色叠在玻璃上，不能只剩白雾。
+    let _g=ENV_LOCK.lock().unwrap_or_else(|e|e.into_inner());
+    let mut h=H::new();
+    h.app.settings.skin=crate::model::Skin::Liquid;
+    h.app.show_page(1);
+    h.hover(H::local(200.0,40.0),1.2);
+    for _ in 0..40 {h.frame(vec![]);}
+    // 测试画布有窗口原点偏移，不能按绝对 x 找；按两个分段按钮的尺寸（88×25）取。
+    fn tab_fills(shapes:&[egui::epaint::ClippedShape])->Vec<egui::Color32>{
+        shapes.iter().filter_map(|s|match &s.shape{
+            egui::Shape::Rect(r) if (r.rect.width()-88.0).abs()<3.0
+                && (r.rect.height()-25.0).abs()<3.0 && r.fill.a()>0 => Some(r.fill),
+            _=>None,
+        }).collect()
+    }
+    let focus=tab_fills(&h.shapes);
+    assert!(focus.iter().any(|c|c.r()>c.g()+5),"专注选中按钮应有红色底：{focus:?}");
+    h.app.pomo.phase=crate::app::Phase::Rest;
+    h.frame(vec![]);
+    let rest=tab_fills(&h.shapes);
+    assert!(rest.iter().any(|c|c.g()>c.r()+5),"休息选中按钮应有绿色底：{rest:?}");
+}
+
+#[test]
 fn liquid_ink_follows_material_for_legibility(){
     // 需求：液态皮肤文字/描边 ink 随背景明暗切换，保证任何壁纸上都看得清。
     // 深背景（liquid_k 低）用白字 GLASS_DARK，浅背景（liquid_k 高）用深墨字 GLASS_LIGHT。

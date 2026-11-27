@@ -11,7 +11,7 @@
 //! - `status`（通用状态透传，白名单字段）
 //! - `ping`（保活）
 //!
-//! 配置：读 `%APPDATA%\Daozai\bridge.json`（与主程序设置页共用），
+//! 配置：读 `%APPDATA%\DaozaiCustom\bridge.json`（与主程序设置页共用），
 //! `done_seconds`（完成提示时长）、`min_progress_mb`（进度门槛）。
 
 use std::collections::HashMap;

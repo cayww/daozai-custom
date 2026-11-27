@@ -54,7 +54,6 @@ mod archive {
     const MAX_LOG_SIZE: u64 = 2 * 1024 * 1024;
     const LOGS: &[&str] = &[
         "last-error.log",
-        "last-graphics.log",
         "last-startup.log",
         "resources.log",
         "resources.previous.log",
@@ -72,8 +71,13 @@ mod archive {
         "lyrics.previous.log",
         "music-gaps.log",
         "music-gaps.previous.log",
+        "music-volume.log",
         "frames.log",
         "frames.previous.log",
+        "liquid-glass.log",
+        "otp.log",
+        "notice.log",
+        "mail.log",
         "auto-restart.log",
         "glass-diagnostics.txt",
     ];
@@ -180,6 +184,7 @@ mod archive {
                 "island_shape" => IslandShape::ALL.iter().any(|shape| shape.key() == value),
                 "dock" => Dock::ALL.iter().any(|dock| dock.key() == value),
                 "settings_theme" => matches!(value, "system" | "light" | "dark"),
+                "liquid_theme" => matches!(value, "auto" | "dark" | "light"),
                 "island_size" => value.parse::<u32>().is_ok(),
                 "island_offset" => value.parse::<i32>().is_ok(),
                 "glass_blur" | "minimal" | "pet" => flag,

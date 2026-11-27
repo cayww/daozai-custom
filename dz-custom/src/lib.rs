@@ -129,3 +129,29 @@ mod ui_tests;
 #[cfg(test)]
 #[path = "bin/daozai-record/raster.rs"]
 mod preview_raster;
+
+/// 测试里共享的进程级原生资源锁。
+///
+/// `cargo test` 默认多线程跑同一个进程，而下面这些测试会建**真实窗口**并枚举
+/// 「本进程的全部顶层窗口」或统计进程级 GDI 对象数——别的测试线程建出来的窗口
+/// 会出现在自己的枚举结果里，表现为「同一进程多了一个主窗口」「诊断日志里混进
+/// 别人的类名」「GDI 对象数偏多」。这些测试必须彼此串行。
+#[cfg(test)]
+pub(crate) mod test_locks {
+    use std::sync::{Mutex, MutexGuard};
+
+    static NATIVE_WINDOWS: Mutex<()> = Mutex::new(());
+
+    /// 独占本进程的原生窗口/GDI 状态，直到 guard 被丢弃。
+    pub(crate) fn native_windows() -> MutexGuard<'static, ()> {
+        NATIVE_WINDOWS.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    static AUDIO_WORKER: Mutex<()> = Mutex::new(());
+
+    /// 独占音量写盘的单一后台线程。占用它的测试会阻塞该线程数秒，
+    /// 并行跑时后面的测试只能排队等，超时后报「Timeout」。
+    pub(crate) fn audio_worker() -> MutexGuard<'static, ()> {
+        AUDIO_WORKER.lock().unwrap_or_else(|error| error.into_inner())
+    }
+}
