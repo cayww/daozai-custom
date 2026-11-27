@@ -5,7 +5,6 @@ use std::{io::{Read, Write}, path::PathBuf, sync::{mpsc::{self, Receiver}, Arc, 
 const REPOSITORY: &str = "https://github.com/cayww/daozai-custom";
 const API: &str = "https://api.github.com/repos/cayww/daozai-custom/releases/latest";
 const RELEASES: &str = "https://github.com/Renly1994/xiaotang-daozai/releases/latest";
-const BACKUP_DOWNLOAD: &str = "https://pan.quark.cn/s/0a39b4e1f332";
 const STARTUP_WINDOW: Duration = Duration::from_secs(10);
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(3600);
@@ -34,6 +33,10 @@ pub(crate) struct State {
     automatic_check_until: Option<Instant>,
     notified_version: Option<String>,
     history_path: Option<PathBuf>,
+    /// 安装脚本已就绪，等外壳摘托盘并退出（本地自绘栈不处理 ViewportCommand::Close）。
+    exit_requested: bool,
+    /// 弹窗里的链接改走 Cmd::OpenUrl（自绘栈不转发 egui 的 OpenUrl 平台命令）。
+    pending_cmds: Vec<crate::app::Cmd>,
 }
 
 impl Drop for State {
@@ -128,7 +131,7 @@ impl State {
                 }
                 Event::Installed => {
                     self.rx = None;
-                    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
+                    self.exit_requested = true;
                 }
             }
         }
@@ -150,7 +153,7 @@ impl State {
                 }
             }
             Some(Ok(None)) => { ui.label("当前已是最新版本"); }
-            Some(Err(message)) => { ui.label(message); ui.hyperlink_to("打开发布页", RELEASES); }
+            Some(Err(message)) => { ui.label(message); if ui.link("打开发布页").clicked() { self.pending_cmds.push(crate::app::Cmd::OpenUrl(RELEASES.into())); } }
             None if self.rx.is_some() => { ui.label("正在检查…"); }
             _ => {}
         }
@@ -160,6 +163,14 @@ impl State {
             ui.ctx().request_repaint_after(Duration::from_secs(1).min(wait));
         }
         ui.add_space(5.0);
+    }
+
+    pub(crate) fn take_exit_request(&mut self) -> bool {
+        std::mem::take(&mut self.exit_requested)
+    }
+
+    pub(crate) fn take_cmds(&mut self) -> Vec<crate::app::Cmd> {
+        std::mem::take(&mut self.pending_cmds)
     }
 
     fn dismiss(&mut self) {
@@ -279,11 +290,13 @@ impl State {
                         }
                         ui.add_space(2.0);
                         ui.horizontal(|ui| {
-                            ui.hyperlink_to(egui::RichText::new("网盘下载").size(11.5).color(theme::BLUE),BACKUP_DOWNLOAD);
+                            if ui.link(egui::RichText::new("浏览器下载").size(11.5).color(theme::GRAY)).clicked() {
+                                self.pending_cmds.push(crate::app::Cmd::OpenUrl(release.page.clone()));
+                            }
                             ui.label(egui::RichText::new("·").color(theme::DIM));
-                            ui.hyperlink_to(egui::RichText::new("浏览器下载").size(11.5).color(theme::GRAY),&release.page);
-                            ui.label(egui::RichText::new("·").color(theme::DIM));
-                            ui.hyperlink_to(egui::RichText::new("查看发布说明").size(11.5).color(theme::GRAY),&release.page);
+                            if ui.link(egui::RichText::new("查看发布说明").size(11.5).color(theme::GRAY)).clicked() {
+                                self.pending_cmds.push(crate::app::Cmd::OpenUrl(release.page.clone()));
+                            }
                         });
                         if release.package.is_none() { ui.label(egui::RichText::new("此版本请通过浏览器下载。").size(11.5).color(theme::DIM)); }
                     });
@@ -415,7 +428,7 @@ fn download(release: &Release, tx: &mpsc::Sender<Event>, cancel: &AtomicBool) ->
     std::fs::create_dir_all(&work).map_err(|_| "无法创建更新缓存")?;
     let result = (|| {
         let response = http_agent_builder()?.build()
-            .get(&package.url).call().map_err(|_| "连接下载服务器失败，请检查网络或代理，或使用网盘下载")?;
+            .get(&package.url).call().map_err(|_| "连接下载服务器失败，请检查网络或代理，请重试")?;
         if !response.get_url().starts_with("https://") { return Err("更新下载未使用安全连接".into()); }
         let mut input = response.into_reader();
         let mut output = std::fs::File::create(work.join("update.zip")).map_err(|_| "无法保存更新包")?;
@@ -435,7 +448,7 @@ pub(crate) fn transfer(input: &mut impl Read, output: &mut impl Write, package: 
     let mut buffer = [0u8; 65536]; let mut total = 0u64;
     loop {
         if cancel.load(Ordering::Relaxed) { return Err("下载已取消".into()); }
-        let length = input.read(&mut buffer).map_err(|_| "下载中断或等待超时，请重试或使用网盘下载")?;
+        let length = input.read(&mut buffer).map_err(|_| "下载中断或等待超时，请重试")?;
         if length == 0 { break; }
         total += length as u64;
         if total > package.size { return Err("更新包大小不符，请重新下载".into()); }
@@ -838,7 +851,7 @@ $null = (Get-Process -Id $ParentProcessId).WaitForExit(2000)
         let ctx = egui::Context::default();
         let mut app = crate::app::App::new(&ctx, Default::default());
         app.updates.result = Some(Ok(Some(Release { version: "v0.6.63".into(),
-            notes: "- 更新下载支持 Windows 系统代理\n- 连接失败及时提示，避免长时间停在 0%\n- 新增网盘下载入口".into(), page: RELEASES.into(),
+            notes: "- 更新下载支持 Windows 系统代理\n- 连接失败及时提示，避免长时间停在 0%".into(), page: RELEASES.into(),
             package: Some(Package { url: String::new(), size: 100, hash: String::new() }) })));
         app.updates.dialog_open = true;
         app.settings_tab = 9;
@@ -862,7 +875,7 @@ $null = (Get-Process -Id $ParentProcessId).WaitForExit(2000)
             ("update-dialog", None, ""),
             ("update-connecting", Some(0.0), ""),
             ("update-downloading", Some(0.42), ""),
-            ("update-failed", None, "连接下载服务器失败，请检查网络或代理，或使用网盘下载"),
+            ("update-failed", None, "连接下载服务器失败，请检查网络或代理，请重试"),
         ] {
         app.updates.cancel = progress.map(|_| Arc::new(AtomicBool::new(false)));
         app.updates.progress = progress.unwrap_or_default();

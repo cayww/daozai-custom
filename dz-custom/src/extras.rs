@@ -4452,7 +4452,7 @@ pub(crate) fn settings_label(ui: &mut egui::Ui, text: &str) {
     ui.add_space(4.0);
 }
 /// 关于岛仔：本项目介绍（独立定制版本线）+ 作者与仓库地址。不含任何捐赠入口。
-fn about_upstream(ui: &mut egui::Ui) {
+fn about_upstream(ui: &mut egui::Ui, pending: &mut Vec<Cmd>) {
     ui.label(egui::RichText::new("岛仔 Daozai · 自定义版").size(15.0).strong());
     ui.add_space(4.0);
     ui.label(
@@ -4460,14 +4460,14 @@ fn about_upstream(ui: &mut egui::Ui) {
             .size(12.0),
     );
     ui.add_space(3.0);
-    ui.hyperlink_to("github.com/cayww/daozai-custom", "https://github.com/cayww/daozai-custom");
+    if ui.link("github.com/cayww/daozai-custom").clicked() { pending.push(Cmd::OpenUrl("https://github.com/cayww/daozai-custom".into())); }
     ui.add_space(6.0);
     ui.label(
         egui::RichText::new("检查更新与发布包来自本项目仓库的 releases；原上游地址仅供查看。")
             .size(11.0)
             .color(ui.visuals().weak_text_color()),
     );
-    ui.hyperlink_to("github.com/Renly1994/xiaotang-daozai", "https://github.com/Renly1994/xiaotang-daozai");
+    if ui.link("github.com/Renly1994/xiaotang-daozai").clicked() { pending.push(Cmd::OpenUrl("https://github.com/Renly1994/xiaotang-daozai".into())); }
 }
 pub(crate) fn settings_control_row(
     ui: &mut egui::Ui,
@@ -5214,8 +5214,10 @@ impl App {
         self.updates.poll(ctx);
         // 更新脚本已就绪：交给外壳走完整退出（摘托盘 + exit），否则只关视窗时
         // 托盘还在、进程不退出，脚本替换 exe 会超时，UI 卡在「正在准备重启…」。
-        // 更新退出请求由外壳处理（上游 take_exit_request 未纳入）。
+        if self.updates.take_exit_request() { self.pending.push(crate::app::Cmd::ExitForUpdate); }
+        self.pending.append(&mut self.updates.take_cmds());
         self.updates.dialog_ui(ctx);
+        self.pending.append(&mut self.updates.take_cmds());
         if !self.settings_open {
             return;
         }
@@ -6437,11 +6439,11 @@ impl App {
                                     if crate::diagnostics_tool::launch().is_err(){self.say("无法启动诊断收集，请从开始菜单打开「收集岛仔诊断」");}
                                 }
                                 ui.label(egui::RichText::new("设备图标：Solar Icons · 480 Design").size(11.0).color(settings_color(ui.ctx(),Color32::from_gray(150),Color32::from_gray(105))));
-                                ui.hyperlink_to("CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/");
+                                if ui.link("CC BY 4.0").clicked(){self.pending.push(Cmd::OpenUrl("https://creativecommons.org/licenses/by/4.0/".into()));}
                             });
                         });
                         settings_label(ui,"关于岛仔");
-                        settings_card(ui,about_upstream);
+                        settings_card(ui,|ui| about_upstream(ui,&mut self.pending));
                     }
                     }
                 });

@@ -6,6 +6,9 @@
 - 清理无用的 `glass-diagnostics.txt` 诊断日志与每帧区域刷屏代码（提交 `35f62a6`）。
 - 合入上游 v0.6.71（53 提交），上游功能更新见：https://github.com/Renly1994/xiaotang-daozai/releases/tag/v0.6.71
 - 按定制版策略剔除上游 DX12/WGSL GPU 材质内容，液态玻璃仍走 D3D11 自绘栈；egui 0.37 pin 与本地定制行为保留。
+- 修复应用内更新卡在「正在准备重启…」：安装脚本就绪后改用 Cmd::ExitForUpdate 让外壳摘托盘退出，本地 D3D11 自绘栈不处理 ViewportCommand::Close。
+- 修复更新弹窗「浏览器下载 / 查看发布说明」与关于页链接点击无反应：改走 Cmd::OpenUrl（自绘栈不转发 egui 的 OpenUrl 平台命令）。
+- 移除「网盘下载」入口与下载失败文案里的网盘引导。
 - 版本号 1.4.0 → 1.4.1；全量 lib 1619 passed / 0 failed / 141 ignored。
 
 ## v1.4.0（2026-11-27，release 包）
