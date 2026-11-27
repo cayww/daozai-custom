@@ -28,7 +28,8 @@
 | mchose 系列 | ✅ 完成 | 主协议 + k99/kb/v9/a7/audio，1216 行 Rust |
 | HyperX/Kingston | ✅ 完成 | 8 个 provider，1112 行 Rust；部分私有会话跳过 |
 | Razer | ✅ 完成 | 通用 0x07 帧协议，565 行；8 个子协议跳过 |
-| 其余 ~85 个 | ⬜ 待迁移 | 见下方分组 |
+| SteelSeries 系列 | ✅ 完成 | 1150 行，45+ PID，11 测试 |
+| 其余 ~80 个 | ⬜ 待迁移 | 见下方分组 |
 
 ## 剩余协议分组
 
@@ -38,7 +39,7 @@
 
 ## 验证状态
 
-- `cargo test --offline`：35 passed / 0 failed（5 个协议族全部通过）
+- `cargo test --offline`：46 passed / 0 failed（6 个协议族全部通过）
 - `cargo build --release`：8.4s，二进制 ~1 MB（PyInstaller onefile 约 10 MB+ 且启动需解压）
 - 协议握手：`ready` + `poll` 回复格式正确
 - **硬件验证**：未在真实设备上进行。每个协议的字节格式必须在实机上确认。
