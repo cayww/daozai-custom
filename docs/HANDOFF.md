@@ -2309,3 +2309,16 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **取舍**：内容区优先时，上缘那一小条的 ink 也跟着内容区走（只有一个全局 ink）。要做真正逐区 ink 需要给 header 再加一个形状范围标记，本次未做。
 
 **打包**：`daozai-setup-custom-isolated.exe`（11,928,676 B，包 sha `ce8ce9fb17cd1e19`，exe `e7bd94176e2ab2fc`，bridge `446c58822d82d25c`）。上一节包 sha `76a7a6bf736c1dee` 已被取代。**未部署。**
+
+
+### 7.0zzzzz-e v1.4.0 release 包（2026-11-27 15:20）
+
+**版本**：`Cargo.toml` / `Cargo.lock` / `installer/daozai.iss` 默认值 1.3.0 → 1.4.0。`build-innosetup.ps1` 从 Cargo.toml 读版本传 `/DMyAppVersion=`，已核对安装包 ProductVersion=1.4.0、exe FileVersion=1.4.0、ProductName=「岛仔 DaozaiCustom」。
+
+**修复 D3D11 自绘栈的玻璃 uniform 差一帧**（用户报「收起成超宽岛时宠物/电量图标闪烁抽搐」）：`winit_runner::build_glass_params` 在 `run_ui` **之前**读 `gpu_glass::uniforms()` / `shape_params()`，而 `app::paint_gpu_glass` 在 `run_ui` **里面**才 `set_body` / `set_shape` —— shader 每帧用的岛体矩形、刘海肩部、指针、染色都是上一帧的。收起动画 body 逐帧变，玻璃边缘扫过常驻图标，看着像图标在抽。此前只给控件透镜加了 `refresh_control_uniforms`（注释里记过「宠物与时间之间闪一条竖线」），body/shape 这一组没补。本次新增 `refresh_glass_uniforms`，与控件透镜一起在 `run_ui` 之后、`draw_glass` 之前刷新；ppp/画布尺寸/停靠方向沿用 build_glass_params 冻结的值，不从设置反推。
+
+**性能**：`trimmed_median` 由整数组排序 O(n log n) 改为 `select_nth_unstable_by` 只定位分位点 O(n)。
+
+**验证**：全量 lib **1557 passed / 0 failed / 138 ignored**（dev-release 默认并行）+ `tests/layered_leak.rs` 1 passed；release 双 bin 构建成功；release exe 跑 `--collect-diagnostics` 退出码 0。**未部署。**
+
+**release 产物**：`installer\daozai-setup-custom-isolated.exe`（12,242,074 B，sha `477ca69e254c04db`，exe `4dd6e4a31a7f70a0`，bridge `6c67040250a48f2e`）。供 GitHub v1.4.0 发布使用。

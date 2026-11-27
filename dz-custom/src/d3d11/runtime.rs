@@ -56,6 +56,32 @@ pub struct GlassParams {
     pub meta2: [f32; 4],
 }
 
+/// app 的 `paint_gpu_glass` 在 `run_ui` 内写当帧的岛体几何/刘海形状/染色快照，
+/// 而 `build_glass_params` 在 `run_ui` 之前读，拿到的是上一帧。收起成超宽岛体时
+/// body_rect 与肩部 flare 逐帧变化，差一帧就会让玻璃边缘扫过常驻宠物和电量图标，
+/// 表现为图标闪烁/抽搐。这里在 run_ui 之后按快照重算，和控件透镜的刷新同理。
+fn refresh_glass_uniforms(u: &mut GlassParams) {
+    let snap = crate::gpu_glass::uniforms();
+    if !snap.active {
+        u.bounds = [-10000.0, -10000.0, 1.0, 1.0];
+        return;
+    }
+    // ppp / 画布尺寸 / 停靠方向由 build_glass_params 冻结在 u 里，这里不再从设置反推。
+    let ppp = u.params[1].max(0.1);
+    let h = u.extra[2];
+    let b = snap.body_rect;
+    let (bx, by, bw, bh) = (b[0] * ppp, b[1] * ppp, b[2] * ppp, b[3] * ppp);
+    u.bounds = [bx, h - by - bh, bw, bh];
+    u.extra[0] = snap.radius * ppp;
+    u.params = [snap.chroma * ppp, ppp, snap.morph, snap.material];
+    u.misc = [snap.pointer[0] * ppp, h - snap.pointer[1] * ppp, snap.refract * ppp, 0.0];
+    u.look = [snap.blur * ppp, snap.band * ppp, snap.edge_w * ppp, snap.edge_op];
+    u.lightcfg = [snap.light_follow, 0.0, snap.shadow, 0.0];
+    u.tint = if snap.material > 0.5 { [0.96, 0.97, 1.0, 0.10] } else { [0.55, 0.72, 0.90, 0.10] };
+    let shape = crate::gpu_glass::shape_params();
+    u.notch = [shape[0] * ppp, shape[1] * ppp, shape[2], 1.0];
+}
+
 /// 把 app 本帧写入的控件玻璃快照（egui 逻辑点、y 从顶）同步到 shader uniform。
 /// 必须在 `ctx.run_ui` 之后调用——app 的 paint_gpu_glass 在 run_ui 内发布控件，
 /// 提前读会拿到上一帧，展开/收起动画时残留透镜白边会闪一条竖线。
@@ -755,9 +781,10 @@ impl D3d11Runtime {
         // egui pass（ctx 先克隆，避免闭包内同时借用 self 与移动 run_ui）
         let ctx = self.egui_ctx.clone();
         let egui_output = ctx.run_ui(input, |ui| run_ui(&ctx, ui));
-        // 控件玻璃透镜：run_ui 里 app 刚写入本帧控件快照，在这里（draw_glass 之前）
-        // 同步到 uniform。若在 render 之前填会读到上一帧，收起动画时残留的透镜白边
-        // 会在宠物与时间之间闪一条竖线，多帧后才随弹簧收敛消失。
+        // run_ui 之后统一刷新本帧快照：先岛体/形状/染色（收起动画时逐帧变的 body、
+        // 肩部），再控件透镜。两者在 render 之前填都会读到上一帧，表现分别是玻璃边缘
+        // 扫过常驻图标、以及宠物与时间之间残留一条透镜白边。
+        refresh_glass_uniforms(&mut u);
         refresh_control_uniforms(&mut u);
         let platform = {
             let (ro, mut po, viewports) = super::renderer::split_output(egui_output);
