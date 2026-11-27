@@ -1,25 +1,563 @@
 [
-  { "vid": "2717", "pid": "5055", "name": "小米无线键鼠套装 2" },
-  { "vid": "045E", "pid": "07A5", "name": "微软无线接收器" },
-  { "vid": "045E", "pid": "07B2", "name": "微软无线接收器" },
-  { "vid": "046D", "pid": "C548", "name": "罗技 Bolt 接收器" },
-  { "vid": "046D", "pid": "C52B", "name": "罗技 Unifying 接收器" },
-  { "vid": "046D", "pid": "C532", "name": "罗技 Unifying 接收器" },
-  { "vid": "046D", "pid": "C539", "name": "罗技 LIGHTSPEED 接收器" },
-  { "vid": "046D", "pid": "C53D", "name": "罗技 LIGHTSPEED 接收器" },
-  { "vid": "046D", "pid": "C53F", "name": "罗技 LIGHTSPEED 接收器" },
-  { "vid": "046D", "pid": "C541", "name": "罗技 LIGHTSPEED 接收器" },
-  { "vid": "046D", "pid": "C543", "name": "罗技 LIGHTSPEED 接收器" },
-  { "vid": "046D", "pid": "C545", "name": "罗技 LIGHTSPEED 接收器" },
-  { "vid": "046D", "pid": "C547", "name": "罗技 LIGHTSPEED 接收器", "battery_protocol": "logitech-hidpp-2" },
-  { "vid": "046D", "pid": "C54D", "name": "罗技 LIGHTSPEED 接收器" },
-  { "vid": "046D", "pid": "C53A", "name": "罗技 POWERPLAY 接收器" },
-  { "vid": "046D", "pid": "C52F", "name": "罗技 Nano 接收器" },
-  { "vid": "046D", "pid": "C521", "name": "罗技 Nano 接收器" },
-  { "vid": "046D", "pid": "C525", "name": "罗技 Nano 接收器" },
-  { "vid": "046D", "pid": "C526", "name": "罗技 Nano 接收器" },
-  { "vid": "046D", "pid": "C52E", "name": "罗技 Nano 接收器" },
-  { "vid": "046D", "pid": "C531", "name": "罗技 Nano 接收器" },
-  { "vid": "046D", "pid": "C534", "name": "罗技 Nano 接收器" },
-  { "vid": "046D", "pid": "C537", "name": "罗技 Nano 接收器" }
+  {
+    "vid": "2717",
+    "pid": "5055",
+    "name": "小米无线键鼠套装 2"
+  },
+  {
+    "vid": "045E",
+    "pid": "07A5",
+    "name": "微软无线接收器"
+  },
+  {
+    "vid": "045E",
+    "pid": "07B2",
+    "name": "微软无线接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C548",
+    "name": "罗技 Bolt 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C52B",
+    "name": "罗技 Unifying 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C532",
+    "name": "罗技 Unifying 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C539",
+    "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C53D",
+    "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C53F",
+    "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C541",
+    "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C543",
+    "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C545",
+    "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C547",
+    "name": "罗技 LIGHTSPEED 接收器",
+    "battery_protocol": "logitech-hidpp-2"
+  },
+  {
+    "vid": "046D",
+    "pid": "C54D",
+    "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C53A",
+    "name": "罗技 POWERPLAY 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C52F",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C521",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C525",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C526",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C52E",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C531",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C534",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C537",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "03F0",
+    "pid": "08BE",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "03F0",
+    "pid": "098D",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "03F0",
+    "pid": "173F",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "046D",
+    "pid": "0ACB",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "046D",
+    "pid": "0B21",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "054C",
+    "pid": "0E53",
+    "name": "body = bytes([0x96, 0xC3, 0x41, 0x04, 0x01, tid & 0xFF, (tid"
+  },
+  {
+    "vid": "088D",
+    "pid": "062E",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "088D",
+    "pid": "062F",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "089D",
+    "pid": "062E",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "089D",
+    "pid": "062F",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "093A",
+    "pid": "E010",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "093A",
+    "pid": "EB02",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0951",
+    "pid": "173F",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0B05",
+    "pid": "18D6",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0B05",
+    "pid": "18D7",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1963",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1ACE",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1C12",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1C92",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0C45",
+    "pid": "FEFC",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0C45",
+    "pid": "FEFE",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "206B",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "14A5",
+    "pid": "C009",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "14A5",
+    "pid": "C010",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1532",
+    "pid": "0536",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1532",
+    "pid": "053A",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1532",
+    "pid": "0550",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1532",
+    "pid": "0552",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1915",
+    "pid": "0723",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1915",
+    "pid": "073C",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "0A62",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "0A69",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "0A6A",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "1BB5",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "2B43",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1E71",
+    "pid": "2101",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "1E71",
+    "pid": "2129",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2023",
+    "pid": "2255",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2023",
+    "pid": "6008",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2023",
+    "pid": "600A",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2023",
+    "pid": "6044",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2023",
+    "pid": "6045",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "20BC",
+    "pid": "515C",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "248A",
+    "pid": "5C2F",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "248A",
+    "pid": "5D2E",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "249A",
+    "pid": "5C2F",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "249A",
+    "pid": "5D2E",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "258A",
+    "pid": "2022",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "25A7",
+    "pid": "FA07",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "25A7",
+    "pid": "FA08",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2DC8",
+    "pid": "310B",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2E3C",
+    "pid": "00A5",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2E3C",
+    "pid": "00A6",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2E3C",
+    "pid": "00E5",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "2E3C",
+    "pid": "00E6",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3151",
+    "pid": "4011",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3151",
+    "pid": "4015",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3151",
+    "pid": "5007",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "320F",
+    "pid": "05AC",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3367",
+    "pid": "1961",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "342D",
+    "pid": "E411",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3537",
+    "pid": "0575",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3537",
+    "pid": "1053",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3554",
+    "pid": "FB08",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3554",
+    "pid": "FB09",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3554",
+    "pid": "FB44",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "35D8",
+    "pid": "0133",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "36B0",
+    "pid": "3002",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "36EB",
+    "pid": "0087",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "36EB",
+    "pid": "1087",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "373E",
+    "pid": "0047",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3837",
+    "pid": "2255",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3837",
+    "pid": "3033",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3837",
+    "pid": "6008",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3837",
+    "pid": "600A",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3837",
+    "pid": "6044",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "3837",
+    "pid": "6045",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "388D",
+    "pid": "05AC",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "413C",
+    "pid": "211D",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "5253",
+    "pid": "2255",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "5253",
+    "pid": "6008",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "5253",
+    "pid": "600A",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "5253",
+    "pid": "6044",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "5253",
+    "pid": "6045",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "A8A5",
+    "pid": "2255",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "A8A5",
+    "pid": "6008",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "A8A5",
+    "pid": "600A",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "A8A5",
+    "pid": "6044",
+    "name": "from __future__ import annotations"
+  },
+  {
+    "vid": "A8A5",
+    "pid": "6045",
+    "name": "from __future__ import annotations"
+  }
 ]

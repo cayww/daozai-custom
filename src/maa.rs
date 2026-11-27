@@ -9,7 +9,7 @@
 //! - `AllTasksCompleted`：全部日常跑完
 //! - `SubTaskExtraInfo` 且 `class=asst::AutoRecruitTask` 且 `details.level>=4`：
 //!   公招刷出 4 星以上 tag，值得提醒
-//! - `SubTaskError` / `TaskChainError`：出错
+//! - `TaskChainError`：任务链真出错；`SubTaskError` 是识别分支未命中的控制流信号，忽略
 //!
 //! 日志可能很大（几十 MB），只从上次读到的偏移往后读，增量解析。
 
@@ -88,7 +88,7 @@ pub fn parse_callback(line: &str) -> Option<Event> {
                 None
             }
         }
-        "SubTaskError" | "TaskChainError" => {
+        "TaskChainError" => {
             let chain = json_str(payload, "taskchain").unwrap_or_else(|| "任务".into());
             Some(Event::Error(chain_label(&chain)))
         }
@@ -311,8 +311,11 @@ mod tests {
     fn 解析全部完成与错误() {
         let all = r#"[..] Assistant::append_callback | AllTasksCompleted {"finished_tasks":[4,5,6],"taskchain":"Award","taskid":8}"#;
         assert_eq!(parse_callback(all), Some(Event::AllDone(String::new())));
-        let err = r#"[..] Assistant::append_callback | SubTaskError {"taskchain":"Fight","taskid":3}"#;
+        let err = r#"[..] Assistant::append_callback | TaskChainError {"taskchain":"Fight","taskid":3}"#;
         assert_eq!(parse_callback(err), Some(Event::Error("理智作战".into())));
+        // MAA 用 SubTaskError 表示分支未命中（如余额不足 / 线索已满），不是真错误。
+        let branch = r#"[..] Assistant::append_callback | SubTaskError {"class":"asst::ProcessTask","first":["CreditShop-NoMoney"],"taskchain":"Mall","taskid":4}"#;
+        assert_eq!(parse_callback(branch), None);
     }
 
     #[test]

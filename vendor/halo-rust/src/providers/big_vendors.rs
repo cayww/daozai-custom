@@ -162,6 +162,9 @@ mod corsair {
         bragi: HashMap<String, (u8, bool)>,
         /// HS80 线缆身份是否出现过（Python 用整轮 enumerate 判断）。
         hs80_cable_seen: bool,
+        /// SABRE v3 线缆身份（2B43）是否出现过。Python 用整轮 enumerate 的
+        /// `sabre_cable` 判断；Rust 单次 poll 只拿到一个接收器，用跨轮询状态近似。
+        sabre_v3_cable_seen: bool,
     }
 
     impl Corsair {
@@ -659,6 +662,14 @@ mod corsair {
         None
     }
 
+    /// Python: `if charging is None and sabre_cable: charging = True`，
+    /// `charging_known = charging is not None`（在兜底赋值之后求值）。
+    /// 返回 (charging, charging_known)。
+    fn infer_sabre_charging(charging: Option<bool>, cable_seen: bool) -> (bool, bool) {
+        let charging = charging.or_else(|| cable_seen.then_some(true));
+        (charging.unwrap_or(false), charging.is_some())
+    }
+
     fn query_sabre(c: &Collection, pid: u16) -> Option<(u8, Option<bool>)> {
         let (endpoint, size) = if pid == SABRE_V3_CABLE_PID {
             (SABRE_V3_CABLE_ENDPOINT, 64 + 1)
@@ -701,6 +712,11 @@ mod corsair {
             // HS80：线缆身份先记下，供接收器读数判断 charging。
             if pid == HS80_USB_PID || pid == HS80_CHARGING_CABLE_PID {
                 state.hs80_cable_seen = true;
+            }
+            // SABRE v3：线缆身份（2B43）出现即记为“线缆在场”，供无 charge 属性
+            // 的接收器读数兜底为 charging=True（Python 的 sabre_cable 近似）。
+            if pid == SABRE_V3_CABLE_PID {
+                state.sabre_v3_cable_seen = true;
             }
 
             // 1) HS80 直接 USB / 接收器（接口 3 FF42）
@@ -776,14 +792,21 @@ mod corsair {
                         } else {
                             "2.4 GHz receiver"
                         };
+                        // 线缆身份在场（或正在读线缆本身）且无 charge 属性 -> 视为充电。
+                        // 注意：这是跨轮询近似；Python 在同一次 poll 内看整轮 enumerate，
+                        // 若接收器先于线缆被轮询，本轮仍拿不到该信号，下一轮才生效。
+                        let (charging, charging_known) = infer_sabre_charging(
+                            charging,
+                            pid == SABRE_V3_CABLE_PID || state.sabre_v3_cable_seen,
+                        );
                         let mut st = make_status(
                             SABRE_V3_KEY,
                             *name,
                             "mouse",
                             "corsair",
                             Some(level),
-                            Some(charging.unwrap_or(true)),
-                            charging.is_some(),
+                            Some(charging),
+                            charging_known,
                         );
                         st.source = format!("corsair ({via})");
                         return vec![st];
@@ -916,6 +939,17 @@ mod corsair {
             let (status, data) = sabre_reply(&reply, SABRE_V3_ENDPOINT, SABRE_V3_CMD_GET).unwrap();
             assert_eq!(status, 0);
             assert_eq!(sabre_level(data), Some(90));
+        }
+
+        #[test]
+        fn sabre_v3_cable_seen_infers_charging() {
+            // 有 charge 属性时按属性值，不受线缆信号影响。
+            assert_eq!(infer_sabre_charging(Some(false), true), (false, true));
+            assert_eq!(infer_sabre_charging(Some(true), false), (true, true));
+            // 无 charge 属性且线缆在场 -> 视为充电（Python sabre_cable 规则）。
+            assert_eq!(infer_sabre_charging(None, true), (true, true));
+            // 无线缆信号 -> 未知，不猜充电。
+            assert_eq!(infer_sabre_charging(None, false), (false, false));
         }
     }
 }
@@ -1368,6 +1402,18 @@ mod asus {
         cols
     }
 
+    /// 等价于 Python 对 Harpe II 接收器路径的 `"mi_02&col03" in shown.lower()`
+    /// 子串判断：Collection 不暴露 path，改用 (interface=2, FF01:0001) 精确匹配。
+    fn is_harpe_ii_mouse(interface: Option<u8>, usage_page: u16, usage: u16) -> bool {
+        interface == Some(OMNI_INTERFACE) && usage_page == OMNI_MOUSE && usage == 0x0001
+    }
+
+    fn harpe_ii_mouse_collection<'a>(collections: &'a [Collection]) -> Option<&'a Collection> {
+        collections.iter().find(|c| {
+            is_harpe_ii_mouse(c.interface, c.usage_page, c.usage)
+        })
+    }
+
     /// OMNI 接收器：先读配对列表，再按配对 pid 选择鼠标/键盘集合。
     fn poll_omni(
         cols: &HashMap<u16, &Collection>,
@@ -1471,24 +1517,19 @@ mod asus {
             // 3) OMNI / SpeedNova 接收器
             if pid == OMNI_PID || pid == HARPE_II_RECEIVER {
                 let cols = collect_omni(collections);
-                for (name, kind, reading) in poll_omni(&cols, pid) {
-                    out.push(make_status(
-                        format!("asus:{}", name.to_lowercase().replace(' ', "-")),
-                        name,
-                        kind,
-                        "asus",
-                        Some(reading.level),
-                        Some(reading.charging),
-                        true,
-                    ));
-                }
-                // SpeedNova：配对列表里 1C12 才算 Azoth 96 HE，键盘字节 6。
                 if pid == HARPE_II_RECEIVER {
+                    // Harpe II 专用路由（Python asus.py 694-714）：不读配对列表选型号，
+                    // 直接在 (interface=2, FF01:0001) 集合上问 03 12 07；这与通用
+                    // OMNI 路由不同（后者必须先有配对 PID）。
+                    // 若同一接收器的配对列表阳性识别 1C12（Azoth 96 HE），则跳过
+                    // Harpe 查询，避免把 SpeedNova 键盘接收器误判成鼠标。
+                    let mut speednova_kb = false;
                     if let Some(control) = cols.get(&OMNI_CONTROL) {
                         if let Some(r) = ask(control, OMNI_PAIRS, |x| !pair_pids(x).is_empty(), OMNI_PACKET_LENGTH) {
                             if r.len() == OMNI_PACKET_LENGTH
                                 && pair_pids(&r).contains(&SPEEDNOVA_KEYBOARD_PID)
                             {
+                                speednova_kb = true;
                                 if let Some(kb) = cols.get(&OMNI_KEYBOARD) {
                                     if let Some(r) = ask(kb, OMNI_KEYBOARD_REQUEST, is_omni_keyboard, OMNI_PACKET_LENGTH) {
                                         if let Some(reading) = parse_omni_keyboard(&r, 6) {
@@ -1507,6 +1548,37 @@ mod asus {
                             }
                         }
                     }
+                    if !speednova_kb {
+                        if let Some(mouse) = harpe_ii_mouse_collection(collections) {
+                            if let Some(r) = ask(mouse, OMNI_MOUSE_REQUEST, is_omni_mouse, OMNI_PACKET_LENGTH) {
+                                if let Some(reading) = parse_omni_mouse(&r) {
+                                    // 名称来自 product string（Extreme/Ace）；Collection
+                                    // 无该字段，统一按默认 "Ace"，与 Python fallback 一致。
+                                    out.push(make_status(
+                                        "asus:rog-harpe-ii-ace",
+                                        "ROG Harpe II Ace",
+                                        "mouse",
+                                        "asus",
+                                        Some(reading.level),
+                                        Some(reading.charging),
+                                        true,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    return out;
+                }
+                for (name, kind, reading) in poll_omni(&cols, pid) {
+                    out.push(make_status(
+                        format!("asus:{}", name.to_lowercase().replace(' ', "-")),
+                        name,
+                        kind,
+                        "asus",
+                        Some(reading.level),
+                        Some(reading.charging),
+                        true,
+                    ));
                 }
                 return out;
             }
@@ -1588,6 +1660,16 @@ mod asus {
             r[OMNI_FIRST_SLOT + OMNI_SLOT] = 0x12;
             r[OMNI_FIRST_SLOT + OMNI_SLOT + 1] = 0x1C;
             assert_eq!(pair_pids(&r), vec![0x1B65, 0x1C12]);
+        }
+
+        #[test]
+        fn harpe_ii_receiver_collection_matches_mi_02_col03() {
+            // 等价于 Python 的 "mi_02&col03" 路径子串判断。
+            assert!(is_harpe_ii_mouse(Some(2), 0xFF01, 0x0001));
+            // 同页不同 usage、不同接口、控制集合都不能误命中。
+            assert!(!is_harpe_ii_mouse(Some(2), 0xFF01, 0x0002));
+            assert!(!is_harpe_ii_mouse(Some(0), 0xFF01, 0x0001));
+            assert!(!is_harpe_ii_mouse(Some(2), 0xFF02, 0x0001));
         }
 
         #[test]
@@ -2058,6 +2140,43 @@ mod logitech {
         HEADSETS.iter().find(|(p, _)| *p == pid).map(|(_, n)| *n)
     }
 
+    /// Python `_read` / `_register_battery` / `_headset_register` 的统一 key 规则：
+    /// 有 unit id（设备自身序列号，F_INFO fn0）时跨接收器/线缆共用同一个 key，
+    /// 否则回退到接收器槽位；多个同类接收器时 key 再带 receiver instance。
+    /// 注：Engine 目前按 (provider, usb_instance, status.key) 生成最终 key，
+    /// 跨接收器的 unit id 去重仍需 Engine 层按 status.key 合并（见接线建议）。
+    fn device_key(unit: &str, pid: u16, idx: u8, inst: &str, multi: bool) -> String {
+        if unit.is_empty() {
+            let prefix = if multi { format!("{inst}:") } else { String::new() };
+            format!("logitech:{prefix}{pid:04x}:{idx}")
+        } else {
+            format!("logitech:{unit}")
+        }
+    }
+
+    /// Python `DeviceStatus.ui_message` 的文案键。`Status` / `Reading` wire format
+    /// 没有 ui_message / ui_params 字段，这里集中保留映射，待协议扩展后直接接线。
+    #[allow(dead_code)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum UiMessage {
+        None,
+        ApproxGrade,
+        ChargingWas,
+        ChargingLevelUnknown,
+    }
+
+    #[allow(dead_code)]
+    impl UiMessage {
+        fn code(self) -> &'static str {
+            match self {
+                Self::None => "",
+                Self::ApproxGrade => "state.approx_grade",
+                Self::ChargingWas => "state.charging_was",
+                Self::ChargingLevelUnknown => "state.charging_level_unknown",
+            }
+        }
+    }
+
     fn ping(state: &mut State, ch: &mut Channel, pid: u16, inst: &str, idx: u8) -> bool {
         let slot = (pid, inst.to_string(), idx);
         let timeout = if state.asleep.contains(&slot) { TIMEOUT_MS } else { PING_TIMEOUT_MS };
@@ -2102,8 +2221,7 @@ mod logitech {
                 .find(|(p, _, _)| *p == pid)
                 .map(|(_, n, k)| ((*n).to_string(), (*k).to_string()))
                 .unwrap_or((name, String::new()));
-            let prefix = if multi { format!("{inst}:") } else { String::new() };
-            let key = format!("logitech:{prefix}{pid:04x}:{idx}");
+            let key = device_key("", pid, idx, inst, multi);
             replace_slot_key(state, &slot, &key);
             let mut st = make_status(
                 key, name, &kind, "logitech", Some(level), Some(b.charging), true,
@@ -2125,8 +2243,7 @@ mod logitech {
         let r = ch.read_headset_register(idx, HEADSET_CHARGE_REG, TIMEOUT_MS)?;
         let (level, charging) = parse_headset_voltage(&r)?;
         let name = headset_name(pid).unwrap_or("Logitech headset");
-        let prefix = if multi { format!("{inst}:") } else { String::new() };
-        let key = format!("logitech:{prefix}{pid:04x}:{idx}");
+        let key = device_key("", pid, idx, inst, multi);
         let slot = (pid, inst.to_string(), idx);
         replace_slot_key(state, &slot, &key);
         Some(make_status(key, name, "headset", "logitech", Some(level), Some(charging), true))
@@ -2197,12 +2314,7 @@ mod logitech {
             let Some(level) = b.level else {
                 continue;
             };
-            let prefix = if multi { format!("{inst}:") } else { String::new() };
-            let key = if unit.is_empty() {
-                format!("logitech:{prefix}{pid:04x}:{idx}")
-            } else {
-                format!("logitech:{unit}")
-            };
+            let key = device_key(&unit, pid, idx, inst, multi);
             replace_slot_key(state, &slot, &key);
             // 电压型电量：充电时的电压读数是满电附近，改用断电前最后一次读数。
             if *feature == F_VOLTAGE || *feature == F_ADC {
@@ -2258,6 +2370,9 @@ mod logitech {
                 c.usage_page == SHORT_PAGE && c.usage == LONG_USAGE
             }).or_else(|| {
                 if headset_name(pid).is_some() {
+                    // Python HEADSET_COLLECTION[0x0AC4] = (0x000C, 0x0001) 是 G535 的
+                    // 首选长集合；hid.rs 只放行 usage_page>=0xFF00，该消费集合不会
+                    // 传入，故这里退到 ff43:0202（Python 在 G535 上也把它作为 alt）。
                     collections.iter().find(|c| {
                         (c.usage_page, c.usage) == (HEADSET_PAGE, HEADSET_USAGE)
                     })
@@ -2441,6 +2556,30 @@ mod logitech {
             r[13] = 0x7F;
             assert_eq!(parse_g325_reply(&r), Some((87, false, false)));
         }
+
+        #[test]
+        fn device_key_uses_unit_id_across_receivers() {
+            // 有 unit id：跨接收器/线缆共用 key，且与 instance 无关。
+            let a = device_key("A1B2C3D4", 0xC547, 1, "receiver-1", true);
+            let b = device_key("A1B2C3D4", 0xC548, 0xFF, "receiver-2", false);
+            assert_eq!(a, "logitech:A1B2C3D4");
+            assert_eq!(a, b);
+            // 无 unit id：回退到槽位；多同类接收器时带 instance。
+            assert_eq!(device_key("", 0xC52B, 1, "r1", false), "logitech:c52b:1");
+            assert_eq!(device_key("", 0xC52B, 1, "r1", true), "logitech:r1:c52b:1");
+            assert_eq!(device_key("", 0xC52B, 1, "r2", true), "logitech:r2:c52b:1");
+        }
+
+        #[test]
+        fn ui_message_codes_match_python() {
+            assert_eq!(UiMessage::None.code(), "");
+            assert_eq!(UiMessage::ApproxGrade.code(), "state.approx_grade");
+            assert_eq!(UiMessage::ChargingWas.code(), "state.charging_was");
+            assert_eq!(
+                UiMessage::ChargingLevelUnknown.code(),
+                "state.charging_level_unknown"
+            );
+        }
     }
 }
 
@@ -2456,14 +2595,20 @@ pub fn all_providers() -> Vec<Box<dyn Provider>> {
 // string，或需要跨 USB 实例枚举 / 复杂写入会话，无法在不猜字节格式的前提下安全移植）：
 //
 // - Corsair Bragi SABRE v3 的 `00 00 04 0d` 自发帧过滤：仅按 endpoint/cmd 匹配，
-//   与 Python 一致；跨实例的“线缆身份出现即视为充电”由 hs80_cable_seen 近似。
+//   与 Python 一致；跨实例的“线缆身份出现即视为充电”已用 sabre_v3_cable_seen
+//   近似（infer_sabre_charging）。接收器先于线缆被轮询时本轮拿不到信号，下一轮生效。
 // - Corsair `_probe_matrix` / `_listen` / 软件模式切换：仅 --probe 诊断路径， tray 不发送。
-// - Asus Harpe II 接收器的 `mi_02&col03` 路径子串判断：Rust Collection 无 path 字段，
-//   改用 (pid, interface=2, FF01:0001) 匹配；其余按源码实现。
+// - Asus Harpe II 接收器：已按 Python asus.py 694-714 实现专用路由（不读配对列表，
+//   直接问 FF01:0001）。`mi_02&col03` 路径子串判断改用 (interface=2, FF01:0001)
+//   精确匹配；product string 不可得，名称统一按默认 "ROG Harpe II Ace"。
 // - Asus OMNI/SpeedNova 以“同一接收器实例”分组，与 Python 按 path instance 分组等价。
 // - Logitech G535 的 000C:0001 消费集合：hid.rs 只放行 usage_page>=0xFF00 的集合，
 //   该集合不会传入；仅保留 ff43:0202 备用集合路径。
 // - Logitech Centurion（bridge 协议）、G435 RTK（切换 bootloader 模式）：独立的复杂
 //   设备协议，不属于 HID++ 核心，未移植。
-// - Logitech 的 unit id 跨接收器去重 / ui_message 文案：Rust Status 无对应字段，
-//   近似等级只置 approximate=true；电量数值与充电状态按源码解析。
+// - Logitech 的 unit id 跨接收器去重：provider 侧 device_key() 已按 Python 规则
+//   用 F_INFO 的 unit id 作 key（跨接收器/线缆一致），但 Engine 最终 key 仍带
+//   usb_instance，完整去重需 Engine 按 status.key 合并（见接线建议）。
+// - Logitech 的 ui_message / ui_params：Status/Reading wire format 无字段，
+//   UiMessage::code() 已保留 Python 文案键（state.approx_grade / charging_was /
+//   charging_level_unknown），协议扩展后可直接接线；近似等级目前只置 approximate。

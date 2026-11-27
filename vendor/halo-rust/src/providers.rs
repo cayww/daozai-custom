@@ -13,6 +13,11 @@ pub mod hyperx;
 pub mod big_vendors;
 pub mod misc;
 pub mod steelseries;
+pub mod instance_guard;
+pub mod state_a;
+pub mod state_b;
+pub mod product_string;
+pub mod longtail;
 
 /// 统一注册入口：所有协议族在这里汇总。
 pub fn all_providers() -> Vec<Box<dyn Provider>> {
@@ -24,6 +29,10 @@ pub fn all_providers() -> Vec<Box<dyn Provider>> {
     all.extend(steelseries::all_providers());
     all.extend(misc::all_providers());
     all.extend(big_vendors::all_providers());
+    all.extend(state_a::all_providers());
+    all.extend(state_b::all_providers());
+    all.extend(product_string::all_providers());
+    all.extend(longtail::all_providers());
     all
 }
 

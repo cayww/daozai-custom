@@ -29,6 +29,8 @@ pub struct Collection {
     pub input_len: usize,
     pub output_len: usize,
     pub feature_len: usize,
+    /// HidD_GetProductString，供只靠 product string 分流的协议使用。
+    pub product: String,
     path: Vec<u16>,
     preparsed: Preparsed,
 }
@@ -157,7 +159,23 @@ fn collection_for(path: &[u16], interface: Option<u8>) -> Option<Collection> {
     if status != HIDP_STATUS_SUCCESS || !supported_usage(caps.UsagePage, caps.Usage, interface) {
         return None;
     }
-    let writable = caps.UsagePage >= 0xff00;
+    let special = special_consumer_collection(caps.UsagePage, caps.Usage, interface);
+    let writable = caps.UsagePage >= 0xff00 || special;
+    let mut product_buf = [0u16; 256];
+    let product = if unsafe {
+        HidD_GetProductString(
+            *metadata,
+            product_buf.as_mut_ptr().cast(),
+            (product_buf.len() * 2) as u32,
+        )
+    }
+    .as_bool()
+    {
+        let end = product_buf.iter().position(|&u| u == 0).unwrap_or(product_buf.len());
+        String::from_utf16_lossy(&product_buf[..end])
+    } else {
+        String::new()
+    };
     Some(Collection {
         usage_page: caps.UsagePage,
         usage: caps.Usage,
@@ -173,14 +191,28 @@ fn collection_for(path: &[u16], interface: Option<u8>) -> Option<Collection> {
         } else {
             0
         },
+        product,
         path: path.to_vec(),
         preparsed,
     })
 }
 
+fn special_consumer_collection(page: u16, usage: u16, interface: Option<u8>) -> bool {
+    // JBL Quantum 350：接口 3 的 Generic Desktop 集合，用 feature report 读电量。
+    // MOONDROP GM01 Pro：接口 3 的 Consumer 集合，用 vendor 风格的 0x4B 命令读。
+    // 其余低 usage page 来自 Python 侧实测集合：akko_s9 / eightbitdo / eweadn_ydx /
+    // machenike / msi PRO / zowie EC-CW。这里只负责让集合进入引擎，协议侧仍按
+    // VID/PID + interface + usage 精确匹配，不会误读其它设备。
+    (page == 0x0001 && matches!(usage, 0x0000 | 0x0004 | 0x0005))
+        || (page == 0x000c && interface == Some(3))
+        || matches!(page, 0x000a | 0x008c | 0x00ff)
+}
+
 fn supported_usage(page: u16, usage: u16, interface: Option<u8>) -> bool {
     // Cloud III S 的实测输入报告位于接口 3 的这一个集合。它只允许读取。
-    page >= 0xff00 || (page, usage, interface) == (0x01c0, 0x0001, Some(3))
+    page >= 0xff00
+        || (page, usage, interface) == (0x01c0, 0x0001, Some(3))
+        || special_consumer_collection(page, usage, interface)
 }
 
 fn supported_collection(node: u32, interface: Option<u8>) -> bool {
@@ -268,7 +300,9 @@ impl Collection {
     }
 
     pub fn open(&self) -> Option<Handle> {
-        let access = if self.usage_page >= 0xff00 {
+        let access = if self.usage_page >= 0xff00
+            || special_consumer_collection(self.usage_page, self.usage, self.interface)
+        {
             (GENERIC_READ | GENERIC_WRITE).0
         } else {
             GENERIC_READ.0

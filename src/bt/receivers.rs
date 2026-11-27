@@ -563,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn receiver_snapshot_native_catalog_covers_all_23_without_plugin() {
+    fn receiver_snapshot_native_catalog_covers_all_rows_without_plugin() {
         let rows = builtin_data();
         let instances: Vec<_> = rows
             .iter()
@@ -576,7 +576,7 @@ mod tests {
             })
             .collect();
         let devices = receiver_snapshot(None, &instances);
-        assert_eq!(devices.len(), 23);
+        assert_eq!(devices.len(), rows.len());
         for (instance, row) in instances.iter().zip(rows) {
             let device = devices
                 .iter()

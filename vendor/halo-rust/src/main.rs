@@ -19,10 +19,11 @@ fn write_json<T: serde::Serialize>(stream: &mut impl Write, value: &T) -> io::Re
 }
 
 fn licenses() -> io::Result<()> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap_or_else(|| std::path::Path::new("."));
-    let upstream = root.join("halo-battery/upstream");
-    for name in ["LICENSE", "docs/credits.md"] {
-        let path = upstream.join(name);
+    // 旧 Python 组件已移除，其上游 LICENSE / credits.md 保留在 crate 内，
+    // --licenses 继续可用（与 THIRD_PARTY_NOTICES.txt 的说明一致）。
+    let licenses = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("upstream-licenses");
+    for name in ["LICENSE", "credits.md"] {
+        let path = licenses.join(name);
         if path.is_file() {
             let mut out = io::stdout().lock();
             writeln!(out, "{}", path.file_name().unwrap_or_default().to_string_lossy())?;
@@ -44,6 +45,20 @@ fn main() {
     if args.get(1).map(|s| s.as_str()) != Some("--stdio") {
         std::process::exit(2);
     }
+
+    // Python 侧 InstanceGuard：同名全局 mutex 已存在时直接退出，避免两个 worker
+    // 同时抢 HID 设备；权限不足创建失败时只记日志继续，不让组件因此失效。
+    let _guard = match providers::instance_guard::InstanceGuard::acquire() {
+        Ok(guard) => Some(guard),
+        Err(providers::instance_guard::GuardError::AlreadyRunning) => {
+            eprintln!("[halo] 已有 daozai-halo 实例在运行，退出");
+            std::process::exit(1);
+        }
+        Err(error) => {
+            eprintln!("[halo] {error}，跳过单实例保护");
+            None
+        }
+    };
 
     let mut engine = providers::Engine::new();
     // 统一注册入口：simple + compx 等全部协议族（见 providers::all_providers）。

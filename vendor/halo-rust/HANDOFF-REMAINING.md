@@ -3,6 +3,25 @@
 > 写于 2026-11-27，供接手 agent 直接执行。本文自包含；不需要回看历史对话。
 > 当前分支：`feat/halobattery-rust`（提交 `41bda45`）。**未合并 main、未发布、未在真机验证。**
 
+> ## ⚠️ 状态更新（2026-11-28 05:02，接手先读）
+>
+> 本文 §1–§8 是 **2026-11-27 的原始 backlog 快照**，保留用于追溯当时的分析与决策。
+> **§4 的 56 个协议、§5 的功能级偏差已在 2026-11-28 全部落地并合并 main**：
+> - 新增 `state_a.rs`（turtlebeach / ajazz / lofree / audeze / dji）、`state_b.rs`（10 个状态机）、
+>   `product_string.rs`（7 个产品字符串 / 特殊集合协议）、`longtail.rs`（26 个长尾 + 2 个 Logitech 子协议），
+>   `razer.rs` 补齐 8 个专用帧；`hid.rs` 新增 `Collection.product` 并谨慎放行低 usage page 集合，
+>   `instance_guard.rs` 实现单实例保护并接入 worker 主循环。
+> - `vendor/halo-rust` 单测 **161 passed**；主程序 release 全量 **1624 passed / 0 failed**；
+>   `daozai-halo.exe` 952,320 B（sha 前16 `fd6e66739fc62bcd`）；
+>   测试安装包 `installer\daozai-setup-custom-isolated.exe`（包 sha 前16 `9ea481ed2efa1172`，exe `5df90ebdd649ead8`）。
+> - **尚需处理的真实残留**：DJI 解析已实现但读数走 interface 6 的 WinUSB bulk，现有 `Provider` 只拿 HID 集合，
+>   `poll()` 暂返空，需后续接 bulk 通道；mchose 输入唤醒门控、razer 跨 PID 去重、Logitech unit id 去重 /
+>   `ui_message`、Corsair `--probe` 未复刻；所有协议均未在真机验证。
+> - **旧 Python 组件 `vendor/halo-battery/` 已从工作树删除**（用户 2026-11-28 确认不再使用；git 历史可恢复）。
+>   其上游 `LICENSE` / `credits.md` 迁到 `vendor/halo-rust/upstream-licenses/`，`--licenses` 路径已同步更新；
+>   下文 §2.3 提到的 Python 源码路径仅供追溯，需查看时用 `git show <旧提交>:vendor/halo-battery/...`。
+> - 最新状态与验证记录以 `vendor/halo-rust/MIGRATION.md` 和桌面 `HANDOFF.md` §7.0zzzzz-j 为准。
+
 ---
 
 ## 1. 目标与现状

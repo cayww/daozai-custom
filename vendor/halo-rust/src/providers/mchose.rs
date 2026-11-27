@@ -4,14 +4,18 @@
 //! 每个 USB instance 对应一个物理设备：VID/PID 从 instance 解析，HID 集合按各协议的
 //! 白名单筛选。请求报文、回复解析与校验均来自源码常量，不做猜测。
 //!
-//! 以下依赖 Python 侧状态机的部分 **未移植**（见文件末尾说明）：
-//! - G7 的 `_smooth_g7` 中值滤波（本实现直接给出原始读数）
-//! - K99 的 `KeyboardActivity` / A7 V3 的 `MouseActivity` 输入唤醒门控
-//! - `_last` 休眠保持（由 Rust Engine 的 fresh/age_ms 机制承担）
+//! 已移植的 Python 侧状态机：G7 的 `_smooth_g7` 中值滤波 + 80% 启动/低电量确认。
+//! 仍受架构限制的部分（见文件末尾说明）：
+//! - K99 的 `KeyboardActivity` / A7 V3 的 `MouseActivity` 输入唤醒门控：Rust worker
+//!   是 stdin/stdout JSON 子进程，没有 Python 的 Raw Input 监听线程与输入源。
+//! - `_last` 休眠保持：主程序 `bt/state.rs` 保留最后一次有效读数；worker 的
+//!   `online=false` 会被 `bt/receivers.rs` 过滤，故这里不重复产出离线 Status。
 
 use crate::hid::Collection;
 use crate::protocol::parse_instance_vid_pid;
 use crate::providers::{Provider, Status};
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -155,6 +159,127 @@ const G3_QUERY: [u8; 65] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0,
 ];
+
+// ---- G7 滑动中值滤波（精确对应 mchose.py 的 _smooth_g7 状态机） ----
+const G7_WINDOW: usize = 5;          // Python deque(maxlen=5)
+const G7_SPACED_S: u64 = 5;          // 采样/确认的最小间隔（秒）
+const G7_RESTART_S: u64 = 600;       // 超过这个空档视为重新开始
+const G7_STARTUP_80: u32 = 5;        // 连续 5 次间隔 >=5s 的 80% 才接纳
+const G7_DROP_CONFIRM: u8 = 20;      // 中心值比当前值高 >20 才进入低电量确认
+const G7_LOW_TOLERANCE: u8 = 5;      // 两次低电量读数允许的差异
+const ASLEEP_KEEP_S: u64 = 300;      // Python ASLEEP_KEEP；仅作文档说明（见文件末尾）
+
+/// Python `statistics.median` + `round()`（banker's rounding）。samples 最多 5 个。
+fn median_u8(samples: &VecDeque<u8>) -> Option<u8> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<u8> = samples.iter().copied().collect();
+    sorted.sort_unstable();
+    let n = sorted.len();
+    if n % 2 == 1 {
+        return Some(sorted[n / 2]);
+    }
+    let a = sorted[n / 2 - 1] as u16;
+    let b = sorted[n / 2] as u16;
+    let sum = a + b;
+    // round((a+b)/2)：偶数和直接取半；奇数和是 x.5，向偶数舍入。
+    let rounded = if sum % 2 == 0 {
+        sum / 2
+    } else {
+        let base = sum / 2;
+        if base % 2 == 0 { base } else { base + 1 }
+    };
+    Some(rounded as u8)
+}
+
+/// G7 状态机：字段与 Python `_g7_samples/_g7_seen_at/_g7_sample_at/
+/// _g7_startup_80/_g7_80_at/_g7_low` 一一对应。`now` 由调用方注入以便测试。
+#[derive(Default)]
+struct G7Smoother {
+    samples: VecDeque<u8>,
+    seen_at: Option<Instant>,
+    sample_at: Option<Instant>,
+    startup_80: u32,
+    g7_80_at: Option<Instant>,
+    low: Option<(u8, Instant)>,
+}
+
+impl G7Smoother {
+    fn spaced(now: Instant, at: Option<Instant>) -> bool {
+        at.is_none_or(|t| now.saturating_duration_since(t) >= Duration::from_secs(G7_SPACED_S))
+    }
+
+    fn smooth(&mut self, level: u8, charging: bool, now: Instant) -> Option<u8> {
+        // Python: if charging or self._g7_seen_at is None or not 0 <= now-seen < 600:
+        let fresh = self.seen_at.is_some_and(|t| {
+            now.saturating_duration_since(t) < Duration::from_secs(G7_RESTART_S)
+        });
+        if charging || !fresh {
+            self.samples.clear();
+            self.sample_at = None;
+            self.startup_80 = 0;
+            self.g7_80_at = None;
+            self.low = None;
+        }
+        self.seen_at = Some(now);
+
+        if charging {
+            self.samples.push_back(level);
+            self.sample_at = Some(now);
+        } else if level == 80 && self.samples.is_empty() {
+            // Repeated 80s can be stale for many minutes. Five spaced readings
+            // are an availability fallback, not proof of the true charge.
+            if Self::spaced(now, self.g7_80_at) {
+                self.startup_80 += 1;
+                self.g7_80_at = Some(now);
+                if self.startup_80 >= G7_STARTUP_80 {
+                    self.samples.push_back(80);
+                    self.sample_at = Some(now);
+                }
+            }
+        } else {
+            self.startup_80 = 0;
+            self.g7_80_at = None;
+            let centre = median_u8(&self.samples);
+            if level == 80 && centre.is_some_and(|c| c.abs_diff(80) >= 10) {
+                // Keep rejecting out-of-trend 80s once there is an estimate.
+                self.low = None;
+            } else if Self::spaced(now, self.sample_at) {
+                if centre.is_some_and(|c| (c as i16) - (level as i16) > G7_DROP_CONFIRM as i16) {
+                    match self.low {
+                        Some((pending, at))
+                            if pending.abs_diff(level) <= G7_LOW_TOLERANCE
+                                && Self::spaced(now, Some(at)) =>
+                        {
+                            // Two similar, spaced low replies replace the high history.
+                            self.samples.clear();
+                            self.samples.push_back(pending);
+                            self.low = None;
+                        }
+                        _ => self.low = Some((level, now)),
+                    }
+                } else {
+                    self.low = None;
+                }
+                self.samples.push_back(level);
+                self.sample_at = Some(now);
+            } else if let Some((low_level, _)) = self.low {
+                // Even a fast contradictory refresh cancels confirmation.
+                let contradicts = centre.is_none()
+                    || centre.is_some_and(|c| (c as i16) - (level as i16) <= G7_DROP_CONFIRM as i16)
+                    || low_level.abs_diff(level) > G7_LOW_TOLERANCE;
+                if contradicts {
+                    self.low = None;
+                }
+            }
+        }
+        while self.samples.len() > G7_WINDOW {
+            self.samples.pop_front();
+        }
+        median_u8(&self.samples)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Variant {
@@ -843,7 +968,28 @@ fn pick<'a>(variant: Variant, collections: &'a [Collection]) -> Vec<&'a Collecti
     picked
 }
 
-pub struct Mchose;
+#[derive(Default)]
+struct State {
+    g7: G7Smoother,
+    /// `_last` 休眠保持：按 (USB instance, Status.key) 缓存最后一次有效读数。
+    last: HashMap<(String, String), (Status, Instant)>,
+}
+
+pub struct Mchose {
+    state: Mutex<State>,
+}
+
+impl Mchose {
+    pub fn new() -> Self {
+        Self { state: Mutex::new(State::default()) }
+    }
+}
+
+impl Default for Mchose {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Provider for Mchose {
     fn name(&self) -> &'static str {
@@ -854,9 +1000,10 @@ impl Provider for Mchose {
         let Some((vid, pid)) = parse_instance_vid_pid(instance) else {
             return Vec::new();
         };
-        let Some(variant) = classify(vid, pid) else {
-            return Vec::new();
-        };
+        let variant = classify(vid, pid);
+        let mut state = self.state.lock().unwrap();
+        let mut found: Option<Status> = None;
+        if let Some(variant) = variant {
         for col in pick(variant, collections) {
             let status = match variant {
                 Variant::Legacy5253 | Variant::LegacyNew => {
@@ -877,13 +1024,16 @@ impl Provider for Mchose {
                         )
                     })
                 }
-                Variant::G7 => read_g7(col).map(|(level, charging)| {
+                Variant::G7 => read_g7(col).map(|(raw, charging)| {
+                    // Python: level = self._smooth_g7(raw, charge)；返回 None 时
+                    // 仍产出 Status，只是 level=None（"battery pending"）。
+                    let level = state.g7.smooth(raw, charging, Instant::now());
                     make_status(
                         device_key(vid, pid),
                         "MCHOSE G7",
                         "mouse",
                         "mchose",
-                        Some(level),
+                        level,
                         Some(charging),
                         true,
                     )
@@ -1005,16 +1155,46 @@ impl Provider for Mchose {
                     )
                 }),
             };
-            if let Some(status) = status {
-                return vec![status];
+            if status.is_some() {
+                found = status;
+                break;
             }
         }
-        Vec::new()
+        }
+
+        let now = Instant::now();
+        if let Some(status) = found {
+            // 与 Python `self._last[key] = (level, charge, time.time())` 对应。
+            state.last.insert((instance.to_string(), status.key.clone()), (status.clone(), now));
+            return vec![status];
+        }
+
+        // 无回复：保持最后一次读数一段时间并灰显（Python `_last` 循环）。
+        // 主程序 bt/receivers.rs 会过滤 online=false，但保留 Engine.observed
+        // 的热度，使设备唤醒后的同值读数仍能被判为 fresh 并 ingested。
+        let mut out = Vec::new();
+        let mut expired = Vec::new();
+        for ((inst, key), (status, at)) in state.last.iter() {
+            if inst != instance {
+                continue;
+            }
+            if now.saturating_duration_since(*at) >= Duration::from_secs(ASLEEP_KEEP_S) {
+                expired.push((inst.clone(), key.clone()));
+                continue;
+            }
+            let mut offline = status.clone();
+            offline.online = false;
+            out.push(offline);
+        }
+        for k in expired {
+            state.last.remove(&k);
+        }
+        out
     }
 }
 
 pub fn all_providers() -> Vec<Box<dyn Provider>> {
-    vec![Box::new(Mchose)]
+    vec![Box::new(Mchose::new())]
 }
 
 #[cfg(test)]
@@ -1202,14 +1382,94 @@ mod tests {
         assert_eq!(device_key(NEW_VID, HEADSET_BODY_PID), "mchose:3837:6008");
         assert_eq!(device_key(NEW_VID, X9_PID), "mchose:3837:6045");
     }
+
+    #[test]
+    fn median_u8_uses_bankers_rounding() {
+        let queue = |v: &[u8]| v.iter().copied().collect::<VecDeque<u8>>();
+        assert_eq!(median_u8(&queue(&[])), None);
+        assert_eq!(median_u8(&queue(&[40, 60, 50])), Some(50));
+        // 偶样本：79.5 -> 80（向偶数），78.5 -> 78，80.5 -> 80。
+        assert_eq!(median_u8(&queue(&[79, 80])), Some(80));
+        assert_eq!(median_u8(&queue(&[78, 79])), Some(78));
+        assert_eq!(median_u8(&queue(&[80, 81])), Some(80));
+    }
+
+    #[test]
+    fn g7_smooth_startup_80_needs_five_spaced_readings() {
+        let mut s = G7Smoother::default();
+        let t0 = Instant::now();
+        // 前 4 次间隔 5s 的 80% 只是启动计数，还不产出读数。
+        for i in 0..4 {
+            let t = t0 + Duration::from_secs(i * 5);
+            assert_eq!(s.smooth(80, false, t), None);
+        }
+        // 第 5 次（与前一次间隔 >=5s）才接纳 80。
+        assert_eq!(s.smooth(80, false, t0 + Duration::from_secs(20)), Some(80));
+        assert_eq!(s.samples.len(), 1);
+    }
+
+    #[test]
+    fn g7_smooth_charging_resets_and_median_filters() {
+        let mut s = G7Smoother::default();
+        let t0 = Instant::now();
+        assert_eq!(s.smooth(46, false, t0), Some(46));
+        assert_eq!(s.smooth(80, false, t0 + Duration::from_secs(5)), Some(46));
+        // 充电时清空历史，直接跟随原始读数。
+        assert_eq!(s.smooth(100, true, t0 + Duration::from_secs(6)), Some(100));
+        assert_eq!(s.samples.len(), 1);
+        // 断电后跨过 600s 空档重新起步。
+        assert_eq!(s.smooth(55, false, t0 + Duration::from_secs(700)), Some(55));
+    }
+
+    #[test]
+    fn g7_smooth_confirms_large_drop_across_spaced_readings() {
+        let mut s = G7Smoother::default();
+        let t0 = Instant::now();
+        s.smooth(90, false, t0);
+        s.smooth(90, false, t0 + Duration::from_secs(5));
+        // 单次骤降不进入历史，中值仍保持 90。
+        s.smooth(50, false, t0 + Duration::from_secs(10));
+        assert_eq!(median_u8(&s.samples), Some(90));
+        assert!(s.low.is_some());
+        // 第二次相近且间隔 >=5s 的低电量替换历史：清空后放入 [pending, level]。
+        s.smooth(52, false, t0 + Duration::from_secs(20));
+        assert_eq!(s.samples.len(), 2); // [50, 52]
+        assert!(s.low.is_none());
+    }
+
+    #[test]
+    fn asleep_keep_cache_marks_offline_and_expires() {
+        let mut state = State::default();
+        let now = Instant::now();
+        let st = make_status("mchose:291d", "MCHOSE mouse", "mouse", "mchose", Some(42), Some(false), true);
+        state.last.insert(("instance-a".to_string(), st.key.clone()), (st.clone(), now));
+        // 模拟无回复轮询：命中缓存，产出灰显状态（保留读数、online=false）。
+        let mut offline = st.clone();
+        offline.online = false;
+        assert!(!offline.online);
+        assert_eq!(offline.key, st.key);
+        assert_eq!(offline.level, st.level);
+        // 超过 ASLEEP_KEEP 的条目应被清理。
+        state.last.insert(("instance-b".to_string(), "old".to_string()), (st, now - Duration::from_secs(ASLEEP_KEEP_S + 1)));
+        let expired: Vec<_> = state.last.iter()
+            .filter(|((_, _), (_, t))| now.saturating_duration_since(*t) >= Duration::from_secs(ASLEEP_KEEP_S))
+            .map(|((i, k), _)| (i.clone(), k.clone()))
+            .collect();
+        assert_eq!(expired, vec![("instance-b".to_string(), "old".to_string())]);
+    }
 }
 
-// 未移植项（按团队要求明确列出，不猜测字节格式）：
-// 1. `_smooth_g7`：G7 的滑动中值滤波 + 80% 启动/低电量确认状态机，依赖 time.monotonic
-//    与跨轮询历史；Rust 版本直接给出 parse_g7 的原始读数，实机需确认抖动是否可接受。
-// 2. `KeyboardActivity` / `MouseActivity`：K99 与 A7 V3 Ultra+ 的“仅在真实输入后查询”
-//    门控依赖 Python 侧的鼠标/键盘监听线程，Rust 组件没有该输入源。
-// 3. `_last` 休眠保持：Python 在无回复时输出 online=False 的最后读数。Rust Engine 用
-//    fresh/age_ms 实现读取生命周期，因此这里无回复时不产出 Status。
+// 功能级偏差处理说明（按团队要求明确列出，不猜测字节格式）：
+// 1. `_smooth_g7`：已精确移植（中值滤波 + 5 次间隔 80% 启动兜底 + 20% 骤降双次确认 +
+//    600s 重启窗口 + 充电时重置）。`now` 用 Instant 注入以便单测；实机抖动表现需确认。
+// 2. `KeyboardActivity` / `MouseActivity`：未移植。K99 与 A7 V3 Ultra+ 的“仅在真实
+//    输入后查询”门控依赖 Python 的 Raw Input 监听线程（RegisterRawInputDevices +
+//    消息循环）与 `wake_on_input`/`polling_paused` 字段。Rust worker 是 stdin/stdout
+//    子进程，既不拥有输入监听线程，Status/Reading wire format 也没有对应字段。
+//    若后续要补：需在 worker 内起 Raw Input 线程，并扩展协议加 paused 标志。
+// 3. `_last` 休眠保持：已在 provider 内实现（ASLEEP_KEEP=300s，无回复时产出
+//    online=false 的最后读数）。主程序 `bt/receivers.rs` 会过滤 online=false，
+//    但保留 Engine.observed 的热度；设备唤醒后同值读数仍会被判为 fresh。
+//    若需与 Python 完全一致的“灰显图标”，需主程序侧改动（不在本批次范围）。
 // 4. G7/A5/V9 等依赖 `set_nonblocking` 的读循环：Rust 用带 deadline 的同步读替代；
 //    协议字节与重试次数保持一致，超时行为需在实机确认。

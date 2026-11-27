@@ -120,8 +120,14 @@ fn parse_kingston_charging(reply: &[u8]) -> Option<bool> {
 
 fn kingston_query(collection: &Collection, cmd: u8) -> Option<Vec<u8>> {
     let mut handle = collection.open()?;
-    // Python 侧用 hid.get_input_report(0x06, 62) 做一次被忽略的 prepare 读；
-    // Rust Handle 没有 GET_REPORT(Input) 接口（且不允许改 hid.rs），故跳过该步。
+    // Python `_query_kingston` 在每次 write 前调用 hid.get_input_report(0x06, 62)
+    // （HeadsetControl 的 prepareDevice），结果被忽略。Rust Handle 没有
+    // HidD_GetInputReport / GET_REPORT(Input) 接口（且不允许改 hid.rs），这里用
+    // 一次 10ms 短 deadline 的输入管道 read() 做 best-effort 近似：清空尚未取走的
+    // 陈旧输入帧，结果同样忽略。严格来说不等价——get_input_report 是按 report id
+    // 取报告的控制传输，read() 是读输入管道，且不保证取到 0x06；协议字节与后续
+    // 写/读/解析流程均与 Python 一致，实机需确认该 prepare 步是否必要。
+    let _ = handle.read(until(10));
     if !handle.write(&kingston_request(cmd), until(100)) {
         return None;
     }
@@ -955,6 +961,20 @@ mod tests {
         assert_eq!(parse_kingston_charging(&reply), None);
         reply[0] = 0x0c;
         assert!(parse_kingston_reply(&reply, 0x03).is_none());
+    }
+
+    #[test]
+    fn kingston_prepare_report_id_differs_from_reply() {
+        // Python 的 prepare read 用 report id 0x06（与请求首字节相同），
+        // 真正的回复是 0x0B；所以短 deadline 的 read() 只能做 best-effort drain，
+        // 无法按 id 取到 0x06 报告——严格等价性说明见 kingston_query 注释。
+        let request = kingston_request(K_CMD_LEVEL);
+        assert_eq!(request[0], 0x06);
+        let mut reply = vec![0u8; K_READ_LEN];
+        reply[..4].copy_from_slice(&[0x0B, 0x00, 0xBB, K_CMD_LEVEL]);
+        assert!(parse_kingston_reply(&reply, K_CMD_LEVEL).is_some());
+        reply[0] = 0x06;
+        assert!(parse_kingston_reply(&reply, K_CMD_LEVEL).is_none());
     }
 
     #[test]
