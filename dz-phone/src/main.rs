@@ -459,18 +459,9 @@ impl Shell {
         {
         let bounds=daozai::display_layout::selected(&self.app.displays,&self.app.settings.display_id)
             .map(|d|d.dock_bounds(self.app.settings.dock,self.app.settings.avoids_top_bar()));
-        let ppp_now=ctx.pixels_per_point();
-        let poll=self.placement_at.ready(Duration::from_secs(1));
-        if !self.placed || self.placed_bounds!=bounds || self.placement_scale!=ppp_now || self.placement_key!=placement_key || poll {
-            // 诊断：谁触发了重定位（底部停靠消失排查用），写独立日志文件
-            {
-                let line=format!("placed={} bounds_chg={} scale_chg={}({}->{}) key_chg={} poll={} dock={:?} ppp={}",
-                    self.placed, self.placed_bounds!=bounds, self.placement_scale!=ppp_now, self.placement_scale, ppp_now,
-                    self.placement_key!=placement_key, poll, self.app.settings.dock, ppp_now);
-                daozai::resources::append_log(&daozai::model::config_dir().join("diagnostics"),"place.log",&line);
-            }
+        if !self.placed || self.placed_bounds!=bounds || self.placement_scale!=ctx.pixels_per_point() || self.placement_key!=placement_key || self.placement_at.ready(Duration::from_secs(1)) {
             // 只有位置变化时沿用已知屏幕，避免拖动中每帧枚举显示器。
-            let offset_only=self.placed && self.placed_bounds==bounds && self.placement_scale==ctx.pixels_per_point() && !poll
+            let offset_only=self.placed && self.placed_bounds==bounds && self.placement_scale==ctx.pixels_per_point() && !self.placement_at.ready(Duration::from_secs(1))
                 && (&self.placement_key.0,self.placement_key.2,self.placement_key.3,self.placement_key.4)==(&placement_key.0,placement_key.2,placement_key.3,placement_key.4);
             if !offset_only {
                 self.placement_at=PollClock::now();
