@@ -2605,7 +2605,7 @@ pub fn all_providers() -> Vec<Box<dyn Provider>> {
 // - Logitech G535 的 000C:0001 消费集合：hid.rs 只放行 usage_page>=0xFF00 的集合，
 //   该集合不会传入；仅保留 ff43:0202 备用集合路径。
 // - Logitech Centurion（bridge 协议）、G435 RTK（切换 bootloader 模式）：独立的复杂
-//   设备协议，不属于 HID++ 核心，未移植。
+//   设备协议，不属于 HID++ 核心；已由 longtail.rs 的专属 Provider 覆盖，本文件不再重复。
 // - Logitech 的 unit id 跨接收器去重：provider 侧 device_key() 已按 Python 规则
 //   用 F_INFO 的 unit id 作 key（跨接收器/线缆一致），但 Engine 最终 key 仍带
 //   usb_instance，完整去重需 Engine 按 status.key 合并（见接线建议）。

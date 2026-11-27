@@ -1,8 +1,48 @@
 [
   {
-    "vid": "2717",
-    "pid": "5055",
-    "name": "小米无线键鼠套装 2"
+    "vid": "03F0",
+    "pid": "02CC",
+    "name": "HyperX Cloud III S Wireless"
+  },
+  {
+    "vid": "03F0",
+    "pid": "05B7",
+    "name": "HyperX Cloud III Wireless"
+  },
+  {
+    "vid": "03F0",
+    "pid": "06BE",
+    "name": "HyperX Cloud III S Wireless"
+  },
+  {
+    "vid": "03F0",
+    "pid": "0795",
+    "name": "HyperX Cloud II Core Wireless"
+  },
+  {
+    "vid": "03F0",
+    "pid": "0995",
+    "name": "HyperX Cloud II Core Wireless"
+  },
+  {
+    "vid": "03F0",
+    "pid": "0C9D",
+    "name": "HyperX Cloud III Wireless"
+  },
+  {
+    "vid": "03F0",
+    "pid": "0D97",
+    "name": "HyperX Pulsefire Haste 2 Wireless"
+  },
+  {
+    "vid": "03F0",
+    "pid": "0F98",
+    "name": "HyperX Pulsefire Haste 2 Wireless"
+  },
+  {
+    "vid": "03F0",
+    "pid": "0FCC",
+    "name": "HyperX Cloud III Wireless"
   },
   {
     "vid": "045E",
@@ -16,8 +56,98 @@
   },
   {
     "vid": "046D",
-    "pid": "C548",
-    "name": "罗技 Bolt 接收器"
+    "pid": "0A5B",
+    "name": "Logitech G933"
+  },
+  {
+    "vid": "046D",
+    "pid": "0A5C",
+    "name": "Logitech G633"
+  },
+  {
+    "vid": "046D",
+    "pid": "0A66",
+    "name": "Logitech G533"
+  },
+  {
+    "vid": "046D",
+    "pid": "0A87",
+    "name": "Logitech G935"
+  },
+  {
+    "vid": "046D",
+    "pid": "0A89",
+    "name": "Logitech G635"
+  },
+  {
+    "vid": "046D",
+    "pid": "0AA7",
+    "name": "Logitech G PRO"
+  },
+  {
+    "vid": "046D",
+    "pid": "0AAA",
+    "name": "Logitech G PRO X"
+  },
+  {
+    "vid": "046D",
+    "pid": "0AB5",
+    "name": "Logitech G733"
+  },
+  {
+    "vid": "046D",
+    "pid": "0ABA",
+    "name": "Logitech G PRO X"
+  },
+  {
+    "vid": "046D",
+    "pid": "0AC4",
+    "name": "Logitech G535"
+  },
+  {
+    "vid": "046D",
+    "pid": "0AF7",
+    "name": "Logitech G PRO X 2 LIGHTSPEED"
+  },
+  {
+    "vid": "046D",
+    "pid": "0AFB",
+    "name": "Logitech G PRO X 2"
+  },
+  {
+    "vid": "046D",
+    "pid": "0AFC",
+    "name": "Logitech G PRO X 2"
+  },
+  {
+    "vid": "046D",
+    "pid": "0AFE",
+    "name": "Logitech G733"
+  },
+  {
+    "vid": "046D",
+    "pid": "0B1F",
+    "name": "Logitech G733"
+  },
+  {
+    "vid": "046D",
+    "pid": "0B45",
+    "name": "Logitech PRO X 3 LIGHTSPEED"
+  },
+  {
+    "vid": "046D",
+    "pid": "C521",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C525",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C526",
+    "name": "罗技 Nano 接收器"
   },
   {
     "vid": "046D",
@@ -26,13 +156,43 @@
   },
   {
     "vid": "046D",
+    "pid": "C52E",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C52F",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C531",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
     "pid": "C532",
     "name": "罗技 Unifying 接收器"
   },
   {
     "vid": "046D",
+    "pid": "C534",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C537",
+    "name": "罗技 Nano 接收器"
+  },
+  {
+    "vid": "046D",
     "pid": "C539",
     "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C53A",
+    "name": "罗技 POWERPLAY 接收器"
   },
   {
     "vid": "046D",
@@ -62,8 +222,12 @@
   {
     "vid": "046D",
     "pid": "C547",
-    "name": "罗技 LIGHTSPEED 接收器",
-    "battery_protocol": "logitech-hidpp-2"
+    "name": "罗技 LIGHTSPEED 接收器"
+  },
+  {
+    "vid": "046D",
+    "pid": "C548",
+    "name": "罗技 Bolt 接收器"
   },
   {
     "vid": "046D",
@@ -71,493 +235,1993 @@
     "name": "罗技 LIGHTSPEED 接收器"
   },
   {
-    "vid": "046D",
-    "pid": "C53A",
-    "name": "罗技 POWERPLAY 接收器"
+    "vid": "047F",
+    "pid": "02EE",
+    "name": "Plantronics headset"
   },
   {
-    "vid": "046D",
-    "pid": "C52F",
-    "name": "罗技 Nano 接收器"
-  },
-  {
-    "vid": "046D",
-    "pid": "C521",
-    "name": "罗技 Nano 接收器"
-  },
-  {
-    "vid": "046D",
-    "pid": "C525",
-    "name": "罗技 Nano 接收器"
-  },
-  {
-    "vid": "046D",
-    "pid": "C526",
-    "name": "罗技 Nano 接收器"
-  },
-  {
-    "vid": "046D",
-    "pid": "C52E",
-    "name": "罗技 Nano 接收器"
-  },
-  {
-    "vid": "046D",
-    "pid": "C531",
-    "name": "罗技 Nano 接收器"
-  },
-  {
-    "vid": "046D",
-    "pid": "C534",
-    "name": "罗技 Nano 接收器"
-  },
-  {
-    "vid": "046D",
-    "pid": "C537",
-    "name": "罗技 Nano 接收器"
-  },
-  {
-    "vid": "03F0",
-    "pid": "08BE",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "03F0",
-    "pid": "098D",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "03F0",
-    "pid": "173F",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "046D",
-    "pid": "0ACB",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "046D",
-    "pid": "0B21",
-    "name": "from __future__ import annotations"
+    "vid": "047F",
+    "pid": "02F7",
+    "name": "Plantronics headset"
   },
   {
     "vid": "054C",
     "pid": "0E53",
-    "name": "body = bytes([0x96, 0xC3, 0x41, 0x04, 0x01, tid & 0xFF, (tid"
+    "name": "Sony INZONE H9"
   },
   {
-    "vid": "088D",
-    "pid": "062E",
-    "name": "from __future__ import annotations"
+    "vid": "054C",
+    "pid": "0EBF",
+    "name": "Sony INZONE H5"
   },
   {
-    "vid": "088D",
-    "pid": "062F",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "089D",
-    "pid": "062E",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "089D",
-    "pid": "062F",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "093A",
-    "pid": "E010",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "093A",
-    "pid": "EB02",
-    "name": "from __future__ import annotations"
+    "vid": "054C",
+    "pid": "0FA8",
+    "name": "Sony INZONE H9 II"
   },
   {
     "vid": "0951",
-    "pid": "173F",
-    "name": "from __future__ import annotations"
+    "pid": "16C4",
+    "name": "HyperX Cloud Flight Wireless"
+  },
+  {
+    "vid": "0951",
+    "pid": "1723",
+    "name": "HyperX Cloud Flight Wireless"
   },
   {
     "vid": "0B05",
-    "pid": "18D6",
-    "name": "from __future__ import annotations"
+    "pid": "18E3",
+    "name": "ROG Chakram"
   },
   {
     "vid": "0B05",
-    "pid": "18D7",
-    "name": "from __future__ import annotations"
+    "pid": "18E5",
+    "name": "ROG Chakram"
   },
   {
     "vid": "0B05",
-    "pid": "1963",
-    "name": "from __future__ import annotations"
+    "pid": "1906",
+    "name": "ROG Pugio II"
   },
   {
     "vid": "0B05",
-    "pid": "1ACE",
-    "name": "from __future__ import annotations"
+    "pid": "1908",
+    "name": "ROG Pugio II"
   },
   {
     "vid": "0B05",
-    "pid": "1C12",
-    "name": "from __future__ import annotations"
+    "pid": "1947",
+    "name": "ROG Strix Impact II Wireless"
   },
   {
     "vid": "0B05",
-    "pid": "1C92",
-    "name": "from __future__ import annotations"
+    "pid": "1949",
+    "name": "ROG Strix Impact II Wireless"
   },
   {
-    "vid": "0C45",
-    "pid": "FEFC",
-    "name": "from __future__ import annotations"
+    "vid": "0B05",
+    "pid": "195E",
+    "name": "ROG Keris Wireless"
   },
   {
-    "vid": "0C45",
-    "pid": "FEFE",
-    "name": "from __future__ import annotations"
+    "vid": "0B05",
+    "pid": "1960",
+    "name": "ROG Keris Wireless"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1977",
+    "name": "ROG Spatha X"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1979",
+    "name": "ROG Spatha X"
+  },
+  {
+    "vid": "0B05",
+    "pid": "197D",
+    "name": "ROG Gladius III Wireless"
+  },
+  {
+    "vid": "0B05",
+    "pid": "197F",
+    "name": "ROG Gladius III Wireless"
+  },
+  {
+    "vid": "0B05",
+    "pid": "19F4",
+    "name": "TUF Gaming M4 Wireless"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A18",
+    "name": "ROG Chakram X"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A1A",
+    "name": "ROG Chakram X"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A57",
+    "name": "ROG Keris EVA Edition"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A59",
+    "name": "ROG Keris EVA Edition"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A66",
+    "name": "ROG Keris Wireless Aimpoint"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A68",
+    "name": "ROG Keris Wireless Aimpoint"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A6A",
+    "name": "ROG Keris Wireless Aimpoint"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A70",
+    "name": "ROG Gladius III Aimpoint"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A72",
+    "name": "ROG Gladius III Aimpoint"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A85",
+    "name": "ROG Azoth"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A8D",
+    "name": "TX Gaming Mouse"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A92",
+    "name": "ROG Harpe Ace Aim Lab Edition"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1A94",
+    "name": "ROG Harpe Ace Aim Lab Edition"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1AB0",
+    "name": "ROG Strix Scope II 96 Wireless"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1AD7",
+    "name": "ROG Strix Impact III Wireless"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1AF3",
+    "name": "TX Gaming Mouse Mini"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1AF5",
+    "name": "TX Gaming Mouse Mini"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B06",
+    "name": "ROG Falchion RX Low Profile"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B0A",
+    "name": "ROG Gladius III Eva 2"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B0C",
+    "name": "ROG Gladius III Eva 2"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B18",
+    "name": "ROG Keris II Ace"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B1A",
+    "name": "ROG Keris II Ace"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B42",
+    "name": "ROG Azoth Extreme"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B65",
+    "name": "ROG Harpe Ace Mini"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B68",
+    "name": "ROG Harpe Ace Extreme"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B69",
+    "name": "ROG Harpe Ace Extreme"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1B7A",
+    "name": "ROG Strix Scope II 96 RX Wireless"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1C0E",
+    "name": "ROG Keris II Origin"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1C25",
+    "name": "ROG Azoth X"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1C56",
+    "name": "TUF Gaming Mini Miku Edition"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1C57",
+    "name": "TUF Gaming Mini Miku Edition"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1C5A",
+    "name": "TX Gaming Mouse Mini Miku"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1CEA",
+    "name": "ROG Strix Morph 96 Wireless"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1CF1",
+    "name": "ROG Azoth Extreme SE"
+  },
+  {
+    "vid": "0B05",
+    "pid": "1D4E",
+    "name": "ROG Keris II Origin KJP"
+  },
+  {
+    "vid": "0B0E",
+    "pid": "24C7",
+    "name": "Jabra Link 380"
+  },
+  {
+    "vid": "0B0E",
+    "pid": "24C8",
+    "name": "Jabra Link 380"
+  },
+  {
+    "vid": "0B0E",
+    "pid": "24C9",
+    "name": "Jabra Link 380"
+  },
+  {
+    "vid": "0B0E",
+    "pid": "24CA",
+    "name": "Jabra Link 380"
+  },
+  {
+    "vid": "0B0E",
+    "pid": "24E9",
+    "name": "Jabra Link 380"
+  },
+  {
+    "vid": "0B0E",
+    "pid": "2E57",
+    "name": "Jabra Link 390"
+  },
+  {
+    "vid": "0DB0",
+    "pid": "0D3B",
+    "name": "MSI Clutch GM31 Lightweight Wireless"
+  },
+  {
+    "vid": "0DB0",
+    "pid": "0D3C",
+    "name": "MSI Clutch GM31 Lightweight Wireless"
+  },
+  {
+    "vid": "0DB0",
+    "pid": "0D4B",
+    "name": "MSI Clutch GM41 Lightweight Wireless"
+  },
+  {
+    "vid": "0DB0",
+    "pid": "0D4C",
+    "name": "MSI Clutch GM41 Lightweight Wireless"
+  },
+  {
+    "vid": "0DB0",
+    "pid": "1620",
+    "name": "MSI STRIKE PRO WIRELESS"
+  },
+  {
+    "vid": "0DB0",
+    "pid": "1FC6",
+    "name": "MSI VERSA PRO WIRELESS"
+  },
+  {
+    "vid": "0DB0",
+    "pid": "9E22",
+    "name": "MSI VERSA 300 ELITE WIRELESS"
   },
   {
     "vid": "0ECB",
-    "pid": "206B",
-    "name": "from __future__ import annotations"
+    "pid": "2125",
+    "name": "JBL Quantum 650 Wireless"
   },
   {
-    "vid": "14A5",
-    "pid": "C009",
-    "name": "from __future__ import annotations"
+    "vid": "0ECB",
+    "pid": "2126",
+    "name": "JBL Quantum 650 Wireless"
   },
   {
-    "vid": "14A5",
-    "pid": "C010",
-    "name": "from __future__ import annotations"
+    "vid": "0ECB",
+    "pid": "2127",
+    "name": "JBL Quantum 950 Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "2128",
+    "name": "JBL Quantum 950 Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "213B",
+    "name": "JBL Quantum 650X Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "213D",
+    "name": "JBL Quantum 650X Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "213E",
+    "name": "JBL Quantum 950X Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "2140",
+    "name": "JBL Quantum 950X Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "218D",
+    "name": "JBL Quantum 520 Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "218E",
+    "name": "JBL Quantum 520 Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "219A",
+    "name": "JBL Quantum 850 Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "219B",
+    "name": "JBL Quantum 850 Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "21A7",
+    "name": "JBL Quantum 520X Wireless"
+  },
+  {
+    "vid": "0ECB",
+    "pid": "21A9",
+    "name": "JBL Quantum 520X Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "1252",
+    "name": "Arctis Pro Wireless 2019"
+  },
+  {
+    "vid": "1038",
+    "pid": "1260",
+    "name": "Arctis 7"
+  },
+  {
+    "vid": "1038",
+    "pid": "1290",
+    "name": "Arctis Pro Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "12AD",
+    "name": "Arctis 7"
+  },
+  {
+    "vid": "1038",
+    "pid": "12B3",
+    "name": "Arctis 1 Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "12B6",
+    "name": "Arctis 1 Wireless Xbox"
+  },
+  {
+    "vid": "1038",
+    "pid": "12C2",
+    "name": "Arctis 9"
+  },
+  {
+    "vid": "1038",
+    "pid": "12D5",
+    "name": "Arctis 7P"
+  },
+  {
+    "vid": "1038",
+    "pid": "12D7",
+    "name": "Arctis 7X"
+  },
+  {
+    "vid": "1038",
+    "pid": "12E0",
+    "name": "Arctis Nova Pro Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "12E5",
+    "name": "Arctis Nova Pro Wireless X"
+  },
+  {
+    "vid": "1038",
+    "pid": "1830",
+    "name": "SteelSeries Rival 3 Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "1838",
+    "name": "SteelSeries Aerox 3 Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "1852",
+    "name": "SteelSeries Aerox 5 Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "1858",
+    "name": "SteelSeries Aerox 9 Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "185C",
+    "name": "SteelSeries Aerox 5 Wireless Destiny 2 Edition"
+  },
+  {
+    "vid": "1038",
+    "pid": "1860",
+    "name": "SteelSeries Aerox 5 Wireless Diablo IV Edition"
+  },
+  {
+    "vid": "1038",
+    "pid": "1872",
+    "name": "SteelSeries Rival 3 Wireless Gen 2"
+  },
+  {
+    "vid": "1038",
+    "pid": "1874",
+    "name": "SteelSeries Aerox 9 Wireless WOW Edition"
+  },
+  {
+    "vid": "1038",
+    "pid": "1878",
+    "name": "SteelSeries Aerox 3 Wireless CS2 Dragon Lore"
+  },
+  {
+    "vid": "1038",
+    "pid": "2202",
+    "name": "Arctis Nova 7"
+  },
+  {
+    "vid": "1038",
+    "pid": "2206",
+    "name": "Arctis Nova 7x"
+  },
+  {
+    "vid": "1038",
+    "pid": "220A",
+    "name": "Arctis Nova 7P"
+  },
+  {
+    "vid": "1038",
+    "pid": "220E",
+    "name": "Arctis 7+"
+  },
+  {
+    "vid": "1038",
+    "pid": "2212",
+    "name": "Arctis 7+ PS5"
+  },
+  {
+    "vid": "1038",
+    "pid": "2216",
+    "name": "Arctis 7+ Xbox"
+  },
+  {
+    "vid": "1038",
+    "pid": "2232",
+    "name": "Arctis Nova 5"
+  },
+  {
+    "vid": "1038",
+    "pid": "2236",
+    "name": "Arctis 7+ Destiny"
+  },
+  {
+    "vid": "1038",
+    "pid": "223A",
+    "name": "Arctis Nova 7 Diablo IV"
+  },
+  {
+    "vid": "1038",
+    "pid": "2244",
+    "name": "Arctis Nova Elite"
+  },
+  {
+    "vid": "1038",
+    "pid": "2253",
+    "name": "Arctis Nova 5X"
+  },
+  {
+    "vid": "1038",
+    "pid": "2258",
+    "name": "Arctis Nova 7x"
+  },
+  {
+    "vid": "1038",
+    "pid": "2269",
+    "name": "Arctis Nova 3P Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "226D",
+    "name": "Arctis Nova 3X Wireless"
+  },
+  {
+    "vid": "1038",
+    "pid": "227A",
+    "name": "Arctis Nova 7 WoW Edition"
+  },
+  {
+    "vid": "1038",
+    "pid": "227E",
+    "name": "Arctis Nova 7 Gen 2"
+  },
+  {
+    "vid": "1038",
+    "pid": "2298",
+    "name": "Arctis Nova 7P"
+  },
+  {
+    "vid": "1038",
+    "pid": "229E",
+    "name": "Arctis Nova 7x"
+  },
+  {
+    "vid": "1038",
+    "pid": "22A1",
+    "name": "Arctis Nova 7"
+  },
+  {
+    "vid": "1038",
+    "pid": "22A4",
+    "name": "Arctis Nova 7X"
+  },
+  {
+    "vid": "1038",
+    "pid": "22A5",
+    "name": "Arctis Nova 7X"
+  },
+  {
+    "vid": "1038",
+    "pid": "22A7",
+    "name": "Arctis Nova 7P"
+  },
+  {
+    "vid": "1038",
+    "pid": "22A9",
+    "name": "Arctis Nova 7 Diablo IV"
+  },
+  {
+    "vid": "1038",
+    "pid": "22AD",
+    "name": "Arctis Nova 7x"
+  },
+  {
+    "vid": "1038",
+    "pid": "230A",
+    "name": "Arctis GameBuds"
+  },
+  {
+    "vid": "1038",
+    "pid": "2317",
+    "name": "Arctis GameBuds X"
+  },
+  {
+    "vid": "10F5",
+    "pid": "2232",
+    "name": "Turtle Beach Stealth 600X Gen 3"
+  },
+  {
+    "vid": "10F5",
+    "pid": "2250",
+    "name": "Turtle Beach Stealth 700 Gen 3"
+  },
+  {
+    "vid": "10F5",
+    "pid": "2251",
+    "name": "Turtle Beach Stealth 700 Gen 3"
+  },
+  {
+    "vid": "10F5",
+    "pid": "2253",
+    "name": "Turtle Beach Stealth 700 Gen 3 headset"
+  },
+  {
+    "vid": "10F5",
+    "pid": "225E",
+    "name": "Turtle Beach Atlas Air"
+  },
+  {
+    "vid": "10F5",
+    "pid": "2285",
+    "name": "Turtle Beach Stealth Pro II Xbox"
+  },
+  {
+    "vid": "10F5",
+    "pid": "229B",
+    "name": "Turtle Beach Stealth Pro II"
+  },
+  {
+    "vid": "10F5",
+    "pid": "229E",
+    "name": "Turtle Beach Stealth Pro II"
   },
   {
     "vid": "1532",
-    "pid": "0536",
-    "name": "from __future__ import annotations"
+    "pid": "001F",
+    "name": "Razer Naga Epic"
   },
   {
     "vid": "1532",
-    "pid": "053A",
-    "name": "from __future__ import annotations"
+    "pid": "0024",
+    "name": "Razer Mamba (2012)"
   },
   {
     "vid": "1532",
-    "pid": "0550",
-    "name": "from __future__ import annotations"
+    "pid": "0025",
+    "name": "Razer Mamba (2012)"
   },
   {
     "vid": "1532",
-    "pid": "0552",
-    "name": "from __future__ import annotations"
+    "pid": "0032",
+    "name": "Razer Ouroboros"
   },
   {
-    "vid": "1915",
-    "pid": "0723",
-    "name": "from __future__ import annotations"
+    "vid": "1532",
+    "pid": "003E",
+    "name": "Razer Naga Epic Chroma"
   },
   {
-    "vid": "1915",
-    "pid": "073C",
-    "name": "from __future__ import annotations"
+    "vid": "1532",
+    "pid": "003F",
+    "name": "Razer Naga Epic Chroma"
+  },
+  {
+    "vid": "1532",
+    "pid": "0044",
+    "name": "Razer Mamba"
+  },
+  {
+    "vid": "1532",
+    "pid": "0045",
+    "name": "Razer Mamba"
+  },
+  {
+    "vid": "1532",
+    "pid": "0059",
+    "name": "Razer Lancehead"
+  },
+  {
+    "vid": "1532",
+    "pid": "005A",
+    "name": "Razer Lancehead"
+  },
+  {
+    "vid": "1532",
+    "pid": "0062",
+    "name": "Razer Atheris"
+  },
+  {
+    "vid": "1532",
+    "pid": "006F",
+    "name": "Razer Lancehead Wireless"
+  },
+  {
+    "vid": "1532",
+    "pid": "0070",
+    "name": "Razer Lancehead Wireless"
+  },
+  {
+    "vid": "1532",
+    "pid": "0072",
+    "name": "Razer Mamba Wireless"
+  },
+  {
+    "vid": "1532",
+    "pid": "0073",
+    "name": "Razer Mamba Wireless"
+  },
+  {
+    "vid": "1532",
+    "pid": "0077",
+    "name": "Razer Pro Click"
+  },
+  {
+    "vid": "1532",
+    "pid": "007A",
+    "name": "Razer Viper Ultimate"
+  },
+  {
+    "vid": "1532",
+    "pid": "007B",
+    "name": "Razer Viper Ultimate"
+  },
+  {
+    "vid": "1532",
+    "pid": "007C",
+    "name": "Razer DeathAdder V2 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "007D",
+    "name": "Razer DeathAdder V2 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "0080",
+    "name": "Razer Pro Click"
+  },
+  {
+    "vid": "1532",
+    "pid": "0083",
+    "name": "Razer Basilisk X HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "0086",
+    "name": "Razer Basilisk Ultimate"
+  },
+  {
+    "vid": "1532",
+    "pid": "0088",
+    "name": "Razer Basilisk Ultimate"
+  },
+  {
+    "vid": "1532",
+    "pid": "008F",
+    "name": "Razer Naga Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "0090",
+    "name": "Razer Naga Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "0094",
+    "name": "Razer Orochi V2"
+  },
+  {
+    "vid": "1532",
+    "pid": "009A",
+    "name": "Razer Pro Click Mini"
+  },
+  {
+    "vid": "1532",
+    "pid": "009C",
+    "name": "Razer DeathAdder V2 X HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "009E",
+    "name": "Razer Viper Mini SE"
+  },
+  {
+    "vid": "1532",
+    "pid": "009F",
+    "name": "Razer Viper Mini SE"
+  },
+  {
+    "vid": "1532",
+    "pid": "00A4",
+    "name": "Razer Mouse Dock Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00A5",
+    "name": "Razer Viper V2 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00A6",
+    "name": "Razer Viper V2 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00A7",
+    "name": "Razer Naga V2 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00A8",
+    "name": "Razer Naga V2 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00AA",
+    "name": "Razer Basilisk V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00AB",
+    "name": "Razer Basilisk V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00AF",
+    "name": "Razer Cobra Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00B0",
+    "name": "Razer Cobra Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00B3",
+    "name": "Razer HyperPolling Dongle"
+  },
+  {
+    "vid": "1532",
+    "pid": "00B4",
+    "name": "Razer Naga V2 HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "00B6",
+    "name": "Razer DeathAdder V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00B7",
+    "name": "Razer DeathAdder V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00B8",
+    "name": "Razer Viper V3 HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "00B9",
+    "name": "Razer Basilisk V3 X HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "00BE",
+    "name": "Razer DeathAdder V4 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00BF",
+    "name": "Razer DeathAdder V4 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00C0",
+    "name": "Razer Viper V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00C1",
+    "name": "Razer Viper V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00C2",
+    "name": "Razer DeathAdder V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00C3",
+    "name": "Razer DeathAdder V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00C4",
+    "name": "Razer DeathAdder V3 HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "00C5",
+    "name": "Razer DeathAdder V3 HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "00C7",
+    "name": "Razer Pro Click V2 Vertical Edition"
+  },
+  {
+    "vid": "1532",
+    "pid": "00C8",
+    "name": "Razer Pro Click V2 Vertical Edition"
+  },
+  {
+    "vid": "1532",
+    "pid": "00CC",
+    "name": "Razer Basilisk V3 Pro 35K"
+  },
+  {
+    "vid": "1532",
+    "pid": "00CD",
+    "name": "Razer Basilisk V3 Pro 35K"
+  },
+  {
+    "vid": "1532",
+    "pid": "00D0",
+    "name": "Razer Pro Click V2"
+  },
+  {
+    "vid": "1532",
+    "pid": "00D1",
+    "name": "Razer Pro Click V2"
+  },
+  {
+    "vid": "1532",
+    "pid": "00D3",
+    "name": "Razer Basilisk Mobile"
+  },
+  {
+    "vid": "1532",
+    "pid": "00D4",
+    "name": "Razer Basilisk Mobile"
+  },
+  {
+    "vid": "1532",
+    "pid": "00D6",
+    "name": "Razer Basilisk V3 Pro 35K Phantom Green"
+  },
+  {
+    "vid": "1532",
+    "pid": "00D7",
+    "name": "Razer Basilisk V3 Pro 35K Phantom Green"
+  },
+  {
+    "vid": "1532",
+    "pid": "00DE",
+    "name": "Razer Viper V3 Pro SE"
+  },
+  {
+    "vid": "1532",
+    "pid": "00DF",
+    "name": "Razer Viper V3 Pro SE"
+  },
+  {
+    "vid": "1532",
+    "pid": "00E2",
+    "name": "Razer Basilisk V4 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00E3",
+    "name": "Razer Basilisk V4 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00E5",
+    "name": "Razer Viper V4 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "00E6",
+    "name": "Razer Viper V4 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "0258",
+    "name": "Razer BlackWidow V3 Mini HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "025A",
+    "name": "Razer BlackWidow V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "025C",
+    "name": "Razer BlackWidow V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "0271",
+    "name": "Razer BlackWidow V3 Mini HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "027B",
+    "name": "Razer Pro Type Ultra"
+  },
+  {
+    "vid": "1532",
+    "pid": "0290",
+    "name": "Razer DeathStalker V2 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "0292",
+    "name": "Razer DeathStalker V2 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "0296",
+    "name": "Razer DeathStalker V2 Pro TKL"
+  },
+  {
+    "vid": "1532",
+    "pid": "0298",
+    "name": "Razer DeathStalker V2 Pro TKL"
+  },
+  {
+    "vid": "1532",
+    "pid": "02B9",
+    "name": "Razer BlackWidow V4 Mini HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "02BA",
+    "name": "Razer BlackWidow V4 Mini HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "02D5",
+    "name": "Razer BlackWidow V4 Tenkeyless HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "02D7",
+    "name": "Razer BlackWidow V4 Tenkeyless HyperSpeed"
+  },
+  {
+    "vid": "1532",
+    "pid": "0528",
+    "name": "Razer BlackShark V2 Pro (2020)"
+  },
+  {
+    "vid": "1532",
+    "pid": "0555",
+    "name": "Razer BlackShark V2 Pro (2023)"
+  },
+  {
+    "vid": "1532",
+    "pid": "0556",
+    "name": "Razer BlackShark V2 Pro (2023)"
+  },
+  {
+    "vid": "1532",
+    "pid": "0557",
+    "name": "Razer BlackShark V2 Pro (2023)"
+  },
+  {
+    "vid": "1532",
+    "pid": "0577",
+    "name": "Razer BlackShark V3 Pro"
+  },
+  {
+    "vid": "1532",
+    "pid": "057A",
+    "name": "Razer BlackShark V3"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "0A3D",
+    "name": "Corsair Virtuoso RGB Wireless SE"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "0A3E",
+    "name": "Corsair Virtuoso RGB Wireless SE"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "0A40",
+    "name": "Corsair Virtuoso RGB Wireless SE"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "0A55",
+    "name": "Corsair Void Elite Wireless"
   },
   {
     "vid": "1B1C",
     "pid": "0A62",
-    "name": "from __future__ import annotations"
+    "name": "Corsair Virtuoso RGB Wireless XT"
   },
   {
     "vid": "1B1C",
-    "pid": "0A69",
-    "name": "from __future__ import annotations"
+    "pid": "0A64",
+    "name": "Corsair Virtuoso RGB Wireless XT"
   },
   {
     "vid": "1B1C",
-    "pid": "0A6A",
-    "name": "from __future__ import annotations"
+    "pid": "0A97",
+    "name": "Corsair HS80 Max Wireless"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "1B7F",
+    "name": "Corsair Dark Core RGB Pro SE"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "1BA6",
+    "name": "Corsair M65 RGB Ultra Wireless"
   },
   {
     "vid": "1B1C",
     "pid": "1BB5",
-    "name": "from __future__ import annotations"
+    "name": "Corsair M65 RGB Ultra Wireless"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "1BDC",
+    "name": "Corsair M75 Wireless"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "2A02",
+    "name": "Corsair Virtuoso Max Wireless"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "2A08",
+    "name": "Corsair Void v2 Wireless"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "2B07",
+    "name": "Corsair K65 PLUS Wireless"
+  },
+  {
+    "vid": "1B1C",
+    "pid": "2B42",
+    "name": "Corsair SABRE v3 PRO Ultralight"
   },
   {
     "vid": "1B1C",
     "pid": "2B43",
-    "name": "from __future__ import annotations"
+    "name": "Corsair SABRE v3 PRO Ultralight"
   },
   {
-    "vid": "1E71",
-    "pid": "2101",
-    "name": "from __future__ import annotations"
+    "vid": "1D57",
+    "pid": "FA60",
+    "name": "Attack Shark X11 / R1 / X3 Max"
   },
   {
-    "vid": "1E71",
-    "pid": "2129",
-    "name": "from __future__ import annotations"
+    "vid": "1D57",
+    "pid": "FA65",
+    "name": "Inphic In9 Pro"
   },
   {
-    "vid": "2023",
-    "pid": "2255",
-    "name": "from __future__ import annotations"
+    "vid": "24AE",
+    "pid": "14A9",
+    "name": "Rapoo VT9 Pro V2"
   },
   {
-    "vid": "2023",
-    "pid": "6008",
-    "name": "from __future__ import annotations"
+    "vid": "258A",
+    "pid": "2011",
+    "name": "Model O"
   },
   {
-    "vid": "2023",
-    "pid": "600A",
-    "name": "from __future__ import annotations"
+    "vid": "258A",
+    "pid": "2012",
+    "name": "Model D"
   },
   {
-    "vid": "2023",
-    "pid": "6044",
-    "name": "from __future__ import annotations"
+    "vid": "258A",
+    "pid": "2013",
+    "name": "Model O-"
   },
   {
-    "vid": "2023",
-    "pid": "6045",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "20BC",
-    "pid": "515C",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "248A",
-    "pid": "5C2F",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "248A",
-    "pid": "5D2E",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "249A",
-    "pid": "5C2F",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "249A",
-    "pid": "5D2E",
-    "name": "from __future__ import annotations"
+    "vid": "258A",
+    "pid": "2014",
+    "name": "Model D-"
   },
   {
     "vid": "258A",
     "pid": "2022",
-    "name": "from __future__ import annotations"
+    "name": "Glorious Model O Wireless"
   },
   {
-    "vid": "25A7",
-    "pid": "FA07",
-    "name": "from __future__ import annotations"
+    "vid": "258A",
+    "pid": "2023",
+    "name": "Glorious Model D Wireless"
   },
   {
-    "vid": "25A7",
-    "pid": "FA08",
-    "name": "from __future__ import annotations"
+    "vid": "258A",
+    "pid": "2024",
+    "name": "Glorious Model O- Wireless"
   },
   {
-    "vid": "2DC8",
-    "pid": "310B",
-    "name": "from __future__ import annotations"
+    "vid": "258A",
+    "pid": "2025",
+    "name": "Glorious Model D- Wireless"
   },
   {
-    "vid": "2E3C",
-    "pid": "00A5",
-    "name": "from __future__ import annotations"
+    "vid": "260D",
+    "pid": "1074",
+    "name": "DAREU A950 (2.4 GHz)"
   },
   {
-    "vid": "2E3C",
-    "pid": "00A6",
-    "name": "from __future__ import annotations"
+    "vid": "260D",
+    "pid": "1084",
+    "name": "DAREU mouse (2.4 GHz)"
   },
   {
-    "vid": "2E3C",
-    "pid": "00E5",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "2E3C",
-    "pid": "00E6",
-    "name": "from __future__ import annotations"
+    "vid": "2717",
+    "pid": "5055",
+    "name": "小米无线键鼠套装 2"
   },
   {
     "vid": "3151",
-    "pid": "4011",
-    "name": "from __future__ import annotations"
+    "pid": "402D",
+    "name": "AJAZZ AJ159 PRO"
   },
   {
     "vid": "3151",
-    "pid": "4015",
-    "name": "from __future__ import annotations"
+    "pid": "5006",
+    "name": "Attack Shark X820 Ultra"
   },
   {
     "vid": "3151",
-    "pid": "5007",
-    "name": "from __future__ import annotations"
+    "pid": "5026",
+    "name": "MonsGeek FUN60 Pro"
   },
   {
-    "vid": "320F",
-    "pid": "05AC",
-    "name": "from __future__ import annotations"
+    "vid": "3151",
+    "pid": "5031",
+    "name": "Kysona Uranus"
   },
   {
-    "vid": "3367",
-    "pid": "1961",
-    "name": "from __future__ import annotations"
+    "vid": "3329",
+    "pid": "4B18",
+    "name": "Audeze Maxwell (Xbox)"
   },
   {
-    "vid": "342D",
-    "pid": "E411",
-    "name": "from __future__ import annotations"
+    "vid": "3329",
+    "pid": "4B19",
+    "name": "Audeze Maxwell"
+  },
+  {
+    "vid": "3329",
+    "pid": "4B1A",
+    "name": "Audeze Maxwell (USB cable)"
+  },
+  {
+    "vid": "3329",
+    "pid": "4B28",
+    "name": "Audeze Maxwell 2 (Xbox)"
+  },
+  {
+    "vid": "3329",
+    "pid": "4B29",
+    "name": "Audeze Maxwell 2"
+  },
+  {
+    "vid": "33E4",
+    "pid": "2708",
+    "name": "G-Wolves HTX Mini"
+  },
+  {
+    "vid": "33E4",
+    "pid": "2717",
+    "name": "G-Wolves HTX Mini"
+  },
+  {
+    "vid": "33E4",
+    "pid": "2719",
+    "name": "G-Wolves HTX Mini"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3508",
+    "name": "G-Wolves Fenrir"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3517",
+    "name": "G-Wolves Fenrir"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3519",
+    "name": "G-Wolves Fenrir Asym"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3608",
+    "name": "G-Wolves Fenrir Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3617",
+    "name": "G-Wolves Fenrir Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3619",
+    "name": "G-Wolves Fenrir Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3708",
+    "name": "G-Wolves Fenrir Max"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3717",
+    "name": "G-Wolves Fenrir Max"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3808",
+    "name": "G-Wolves HTM Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3817",
+    "name": "G-Wolves HTM Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3908",
+    "name": "G-Wolves VUK"
+  },
+  {
+    "vid": "33E4",
+    "pid": "3917",
+    "name": "G-Wolves VUK"
+  },
+  {
+    "vid": "33E4",
+    "pid": "4219",
+    "name": "G-Wolves WARG"
+  },
+  {
+    "vid": "33E4",
+    "pid": "4718",
+    "name": "G-Wolves Lycan"
+  },
+  {
+    "vid": "33E4",
+    "pid": "4719",
+    "name": "G-Wolves Lycan"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5219",
+    "name": "G-Wolves HTS Plus Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5308",
+    "name": "G-Wolves HTS Ultra"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5317",
+    "name": "G-Wolves HTS Ultra"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5403",
+    "name": "G-Wolves HTS Plus ACE"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5404",
+    "name": "G-Wolves HTS Plus ACE"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5407",
+    "name": "G-Wolves HTS Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5408",
+    "name": "G-Wolves HTS Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5417",
+    "name": "G-Wolves HTS Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5418",
+    "name": "G-Wolves HTS Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5419",
+    "name": "G-Wolves HTS Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5608",
+    "name": "G-Wolves HTXU"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5617",
+    "name": "G-Wolves HTXU"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5618",
+    "name": "G-Wolves HTXU"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5619",
+    "name": "G-Wolves HTXU"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5703",
+    "name": "G-Wolves HTX ACE"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5704",
+    "name": "G-Wolves HTX ACE"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5707",
+    "name": "G-Wolves HTX"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5708",
+    "name": "G-Wolves HTX"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5717",
+    "name": "G-Wolves HTX"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5803",
+    "name": "G-Wolves HSK Pro ACE"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5804",
+    "name": "G-Wolves HSK Pro ACE"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5807",
+    "name": "G-Wolves HSK Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5808",
+    "name": "G-Wolves HSK Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5817",
+    "name": "G-Wolves HSK Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5903",
+    "name": "G-Wolves HSK Plus ACE"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5904",
+    "name": "G-Wolves HSK Plus ACE"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5907",
+    "name": "G-Wolves HSK Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5908",
+    "name": "G-Wolves HSK Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "5917",
+    "name": "G-Wolves HSK Plus"
+  },
+  {
+    "vid": "33E4",
+    "pid": "6808",
+    "name": "G-Wolves HSK Pro 2.0"
+  },
+  {
+    "vid": "33E4",
+    "pid": "6817",
+    "name": "G-Wolves HSK Pro 2.0"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7203",
+    "name": "G-Wolves HSK Lite"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7204",
+    "name": "G-Wolves HSK Lite"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7704",
+    "name": "G-Wolves HTR"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7708",
+    "name": "G-Wolves HTR Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7713",
+    "name": "G-Wolves HTR"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7717",
+    "name": "G-Wolves HTR Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7904",
+    "name": "G-Wolves HT-S2"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7908",
+    "name": "G-Wolves HT-S2 Pro"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7913",
+    "name": "G-Wolves HT-S2"
+  },
+  {
+    "vid": "33E4",
+    "pid": "7917",
+    "name": "G-Wolves HT-S2 Pro"
+  },
+  {
+    "vid": "3434",
+    "pid": "D026",
+    "name": "Keychron Nape Pro"
+  },
+  {
+    "vid": "3434",
+    "pid": "D028",
+    "name": "Keychron Ultra-Link 8K"
+  },
+  {
+    "vid": "3434",
+    "pid": "D048",
+    "name": "Keychron M5"
+  },
+  {
+    "vid": "34F0",
+    "pid": "3210",
+    "name": "Skullcandy PLYR"
+  },
+  {
+    "vid": "34F0",
+    "pid": "5310",
+    "name": "Skullcandy Crusher PLYR 720"
   },
   {
     "vid": "3537",
     "pid": "0575",
-    "name": "from __future__ import annotations"
+    "name": "GameSir Cyclone 2"
   },
   {
     "vid": "3537",
-    "pid": "1053",
-    "name": "from __future__ import annotations"
+    "pid": "100B",
+    "name": "GameSir Cyclone 2"
   },
   {
-    "vid": "3554",
-    "pid": "FB08",
-    "name": "from __future__ import annotations"
+    "vid": "3537",
+    "pid": "10C5",
+    "name": "Aimlabs"
   },
   {
-    "vid": "3554",
-    "pid": "FB09",
-    "name": "from __future__ import annotations"
+    "vid": "3537",
+    "pid": "10C6",
+    "name": "Aimlabs"
   },
   {
-    "vid": "3554",
-    "pid": "FB44",
-    "name": "from __future__ import annotations"
+    "vid": "3537",
+    "pid": "10C7",
+    "name": "Nioh 3"
   },
   {
-    "vid": "35D8",
-    "pid": "0133",
-    "name": "from __future__ import annotations"
+    "vid": "3537",
+    "pid": "10C8",
+    "name": "Nioh 3"
   },
   {
-    "vid": "36B0",
-    "pid": "3002",
-    "name": "from __future__ import annotations"
+    "vid": "3537",
+    "pid": "10C9",
+    "name": "NBA 2K"
   },
   {
-    "vid": "36EB",
-    "pid": "0087",
-    "name": "from __future__ import annotations"
+    "vid": "3537",
+    "pid": "10CA",
+    "name": "NBA 2K"
   },
   {
-    "vid": "36EB",
-    "pid": "1087",
-    "name": "from __future__ import annotations"
+    "vid": "3537",
+    "pid": "10FD",
+    "name": "Golden Apple"
+  },
+  {
+    "vid": "3537",
+    "pid": "10FE",
+    "name": "Golden Apple"
+  },
+  {
+    "vid": "361D",
+    "pid": "0100",
+    "name": "Finalmouse UltralightX"
+  },
+  {
+    "vid": "36A7",
+    "pid": "A868",
+    "name": "WLmouse Beast X Mini Pro"
+  },
+  {
+    "vid": "36A7",
+    "pid": "A880",
+    "name": "WLmouse Beast X Max"
+  },
+  {
+    "vid": "36A7",
+    "pid": "A881",
+    "name": "WLmouse Beast X Max"
+  },
+  {
+    "vid": "36A7",
+    "pid": "A887",
+    "name": "WLmouse Beast X"
+  },
+  {
+    "vid": "3710",
+    "pid": "0100",
+    "name": "Hitscan Hyperlight (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "0200",
+    "name": "Hitscan Hyperlight (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "0300",
+    "name": "Hitscan Hyperlight (8K receiver)"
+  },
+  {
+    "vid": "3710",
+    "pid": "101A",
+    "name": "ATK X1 Pro (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "101B",
+    "name": "ATK Fire X 8K (2.4 GHz dongle)"
+  },
+  {
+    "vid": "3710",
+    "pid": "1085",
+    "name": "ATK VXE R1 SE+ (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "10C9",
+    "name": "ATK A9 SE (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "11B6",
+    "name": "ATK A9 Ultimate (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "11D9",
+    "name": "ATK A9 Ultimate (2.4 GHz dongle)"
+  },
+  {
+    "vid": "3710",
+    "pid": "1273",
+    "name": "VXE R1 Pro Max (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "1B1C",
+    "name": "Corsair Sabre v2 Pro Ultralight"
+  },
+  {
+    "vid": "3710",
+    "pid": "2B2A",
+    "name": "Corsair Sabre v2 Pro Ultralight"
+  },
+  {
+    "vid": "3710",
+    "pid": "33E4",
+    "name": "G-Wolves mouse (8K receiver)"
+  },
+  {
+    "vid": "3710",
+    "pid": "3402",
+    "name": "Pulsar X2 V3 Mini (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "3414",
+    "name": "Pulsar X2 CrazyLight Mini (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "3510",
+    "name": "Pulsar X2N CrazyLight (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "3554",
+    "name": "Scyrox 8K Dongle"
+  },
+  {
+    "vid": "3710",
+    "pid": "35BB",
+    "name": "HECATE mouse (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "3710",
+    "name": "Pulsar X2 CrazyLight Mini (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "373B",
+    "name": "ATK A9 Ultimate (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "3770",
+    "name": "Hitscan Hyperlight (8K receiver)"
+  },
+  {
+    "vid": "3710",
+    "pid": "3854",
+    "name": "G-Wolves mouse (8K receiver)"
+  },
+  {
+    "vid": "3710",
+    "pid": "5403",
+    "name": "Pulsar X2 V3 Mini (8K wireless)"
+  },
+  {
+    "vid": "3710",
+    "pid": "5406",
+    "name": "2.4 GHz"
+  },
+  {
+    "vid": "3710",
+    "pid": "D3FA",
+    "name": "HECATE mouse (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "D3FC",
+    "name": "HECATE mouse (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "D3FD",
+    "name": "HECATE mouse (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F505",
+    "name": "VGN Dragonfly 4K (receiver)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F506",
+    "name": "VGN Dragonfly 4K (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F507",
+    "name": "Pulsar X2 V2 Mini (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F508",
+    "name": "Pulsar X2 V2 Mini (wireless)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F50D",
+    "name": "Lamzu Atlantis V2 (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F520",
+    "name": "Teevolution Terra Pro (1K receiver)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F523",
+    "name": "Teevolution Terra Pro (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F526",
+    "name": "Zaopin Z2 4K (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F527",
+    "name": "Zaopin Z2 4K (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F55D",
+    "name": "Redragon M916 Pro / M913 (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F55E",
+    "name": "Redragon M991 (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F58A",
+    "name": "VXE R1 Pro / R1 Pro Max (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F58C",
+    "name": "VXE R1 Pro Max (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F58F",
+    "name": "ATK VXE R1 SE+ (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F5D5",
+    "name": "Redragon M991 / K1NG Max (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F5DC",
+    "name": "Cougar Revenger Pro (2.4 GHz)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F5DE",
+    "name": "Cougar Revenger Pro 4K (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F5DF",
+    "name": "Cougar Revenger Pro 4K"
+  },
+  {
+    "vid": "3710",
+    "pid": "F5F6",
+    "name": "Scyrox (wired)"
+  },
+  {
+    "vid": "3710",
+    "pid": "F5F7",
+    "name": "Scyrox 8K Dongle"
+  },
+  {
+    "vid": "3710",
+    "pid": "FA09",
+    "name": "Compx 2.4 GHz keyboard"
   },
   {
     "vid": "373E",
-    "pid": "0047",
-    "name": "from __future__ import annotations"
+    "pid": "0009",
+    "name": "Arbiter Studio Akitsu"
   },
   {
-    "vid": "3837",
-    "pid": "2255",
-    "name": "from __future__ import annotations"
+    "vid": "373E",
+    "pid": "000A",
+    "name": "Arbiter Studio Akitsu"
   },
   {
-    "vid": "3837",
-    "pid": "3033",
-    "name": "from __future__ import annotations"
+    "vid": "373E",
+    "pid": "0038",
+    "name": "Arbiter Studio Akitsu 3950"
   },
   {
-    "vid": "3837",
-    "pid": "6008",
-    "name": "from __future__ import annotations"
+    "vid": "373E",
+    "pid": "0039",
+    "name": "Arbiter Studio Akitsu 3950"
   },
   {
-    "vid": "3837",
-    "pid": "600A",
-    "name": "from __future__ import annotations"
+    "vid": "373E",
+    "pid": "0066",
+    "name": "Arbiter Studio Akitsu Medium"
   },
   {
-    "vid": "3837",
-    "pid": "6044",
-    "name": "from __future__ import annotations"
+    "vid": "373E",
+    "pid": "0067",
+    "name": "Arbiter Studio Akitsu Medium"
   },
   {
-    "vid": "3837",
-    "pid": "6045",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "388D",
-    "pid": "05AC",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "413C",
-    "pid": "211D",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "5253",
-    "pid": "2255",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "5253",
-    "pid": "6008",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "5253",
-    "pid": "600A",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "5253",
-    "pid": "6044",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "5253",
-    "pid": "6045",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "A8A5",
-    "pid": "2255",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "A8A5",
-    "pid": "6008",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "A8A5",
-    "pid": "600A",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "A8A5",
-    "pid": "6044",
-    "name": "from __future__ import annotations"
-  },
-  {
-    "vid": "A8A5",
-    "pid": "6045",
-    "name": "from __future__ import annotations"
+    "vid": "37D7",
+    "pid": "2401",
+    "name": "FlyDigi Vader 5 Pro"
   }
 ]

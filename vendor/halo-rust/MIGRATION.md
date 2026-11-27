@@ -37,6 +37,30 @@
 | Logitech 未移植子协议 | ✅ 完成 | logitech_centurion / logitech_g435_rtk 在 longtail.rs |
 | 功能级偏差 | ✅ 已补 | mchose 中值滤波/80% 确认/休眠保持、Logitech/Corsair/HyperX/Asus 近似规则、单实例保护 |
 
+## 2026-11-28 05:26 修复：雷蛇 Viper V3 Pro 不显示电量
+
+用户反馈「鼠标雷蛇 V3 Pro 原本能显示电量，迁移后不显示」。定位到两个叠加根因，均已修复：
+
+1. **内置接收器目录是错的**：上一轮从 Python 源码用正则抽 VID/PID 时，把每个文件的首行
+   `from __future__ import annotations` 当成设备名，89 条新增记录里 88 条名字错误，而且只收进
+   0536/053A/0550/0552 等 Python 明确**跳过**的 Razer PID，**没有 00C0/00C1**。主程序只把目录里的
+   USB ID 发给 worker，所以 Viper V3 Pro 根本没被轮询。现已用 AST 从 git 历史里的 Python 表重建：
+   原 23 条中文条目保留，新增 422 条来自各 provider 的 (VID, PID, 名称)，共 445 条、无错误名字。
+2. **HID 集合白名单漏掉雷蛇鼠标集合**：Viper V3 Pro 的电量 feature report 在标准 HID 鼠标集合
+   `0001:0002` 上，而 `hid.rs` 原先只放行 `usage_page >= 0xFF00` 与少数例外（page 1 只放行
+   usage 0/4/5，单测还明确断言 usage 2 不放行）。现已按社区逆向资料放行 `VID_1532` 的
+   `0001:0002`（interface 3 仍拒绝），且该集合被系统独占时先用 `dwDesiredAccess=0` 打开，
+   只做 Feature IOCTL；再补上 Python `maybe_wireless` 的产品名门控，未知 Razer PID 只要名字含
+   `hyperspeed/wireless/receiver/dongle/dock/blackshark/barracuda/nari` 也会探测。
+
+社区依据（协议事实，非复制代码）：
+- OpenRazer `razermouse_driver.c` / 社区整理 https://github.com/Skesov/rigbat/blob/master/docs/razer.md ：
+  90 字节请求、`07:80` 读电量、`07:84` 读充电、事务号 0x1F、CRC 为 [2..88) XOR、Viper V3 Pro 61ms 等待。
+- https://github.com/linglochen/RazerV3BatteryTray ：`1532:00C1` 无线 / `00C0` 有线、`0001:0002` 集合、
+  `CreateFile` 用 `dwDesiredAccess=0` 绕过独占锁、插线时两条链路只有一条响应（工作树已覆盖该场景）。
+- https://github.com/JimmyRespawn/vigil-watt/blob/main/docs/hardware/razer-viper-se.md ：91 字节 report、
+  事务号 0x1F、SetFeature 后 60ms 读取、响应 status/CRC 校验细节（与本实现一致）。
+
 ## 残留风险与已知偏差（必须如实交付）
 
 - **DJI**：解析与状态机已实现，但真实读数走 interface 6 的 WinUSB bulk；当前 `Provider` 只接收 HID 集合，
@@ -55,12 +79,13 @@
 
 ## 验证状态（2026-11-28 05:01，Python 组件删除后重验）
 
-- `vendor/halo-rust`：`cargo test --offline` — **161 passed / 0 failed**（3 条告警：2 个 unused、1 个 dead_code，不影响功能）。
-- 协议握手：`{"version":1,"id":42,"command":"poll","receivers":[]}` → `ready` + `poll` 回复正确（04:24 无实例时验证通过；05:02 用户已启动岛仔，第二次运行按设计被单实例保护拒绝，说明 guard 生效）。
+- `vendor/halo-rust`：`cargo test --offline` — **163 passed / 0 failed**（新增 2 个回归测试：Razer 鼠标集合放行、未知 PID 无线名门控）。
+- 协议握手：`{"version":1,"id":42,"command":"poll","receivers":[]}` → `ready` + `poll` 回复正确（05:02 单实例保护验证见 HANDOFF）。
 - 主程序：`cargo test --locked --release --lib -- --test-threads=1` — **1624 passed / 0 failed / 141 ignored**。
-- release 构建：主程序双 bin + `daozai-halo.exe` 均成功；`daozai-halo.exe` 952,320 B（sha256 前16 `fd6e66739fc62bcd`）。
-- 安装包：`installer\daozai-setup-custom-isolated.exe`（12,650,777 B，包 sha256 前16 `9ea481ed2efa1172`，
-  exe `5df90ebdd649ead8`，bridge `77ede6ed744346b9`），版本 1.4.1；未部署、未推 origin。
+- release 构建：主程序双 bin（独立 target 目录，避开运行中的 exe）+ `daozai-halo.exe` 均成功；
+  `daozai-halo.exe` sha256 前16 `54c43321e73dc81a`。
+- 安装包：`installer\daozai-setup-custom-isolated.exe`（12,652,307 B，包 sha256 前16 `1c93e996075c3ff2`，
+  exe `2b4569b0fc7266ef`，bridge `0119b3c1fd0f0d58`，halo `54c43321e73dc81a`），版本 1.4.1；未部署、未推 origin。
 - 内置接线：`daozai.iss` 把 `vendor\halo-rust\target\{profile}\daozai-halo.exe` 复制到 `{app}\daozai-halo.exe`，
   卸载时清理；无需 Gitee 下载。
 

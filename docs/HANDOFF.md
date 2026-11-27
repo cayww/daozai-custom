@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-28 05:02
+> **最后更新**：2026-11-28 05:26
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -11,7 +11,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| **HaloBattery Rust 全量迁移收尾（2026-11-28 05:02）** | 剩余 56 个协议已全部静态移植并注册（`state_a/state_b/product_string/longtail` + Razer 8 专用帧），`hid.rs` 新增 product string 与低 usage page 放行，`instance_guard.rs` 接进 worker；主程序 MAA 只认 `TaskChainError`、USB 接收器内置目录扩到 112 条。halo 单测 **161 passed**、主程序 release 全量 **1624 passed / 0 failed / 141 ignored**、双 bin + halo release 构建通过。新测试包 `installer\daozai-setup-custom-isolated.exe`（12,650,777 B，包 sha `9ea481ed2efa1172`，exe `5df90ebdd649ead8`，bridge `77ede6ed744346b9`，halo `fd6e66739fc62bcd`），版本 1.4.1；**未部署 / 未推 origin / 未真机验证**。DJI bulk 通道等残留见 §7.0zzzzz-j。 |
+| **HaloBattery Rust 全量迁移 + Viper V3 Pro 修复（2026-11-28 05:26）** | 剩余 56 个协议已全部静态移植并注册（`state_a/state_b/product_string/longtail` + Razer 8 专用帧），`hid.rs` 新增 product string 与低 usage page 放行，`instance_guard.rs` 接进 worker；主程序 MAA 只认 `TaskChainError`、USB 接收器内置目录扩到 112 条。halo 单测 **161 passed**、主程序 release 全量 **1624 passed / 0 failed / 141 ignored**、双 bin + halo release 构建通过。新测试包 `installer\daozai-setup-custom-isolated.exe`（12,652,307 B，包 sha `1c93e996075c3ff2`，exe `2b4569b0fc7266ef`，bridge `0119b3c1fd0f0d58`，halo `54c43321e73dc81a`），版本 1.4.1；**未部署 / 未推 origin / 未真机验证**。DJI bulk 通道等残留见 §7.0zzzzz-j。 |
 | **上游合并（2026-11-25 20:30）** | **新分支 `merge-upstream-v0670` HEAD=`9dad7c8`**（双亲：`017108d` + 上游 `0615f19`=v0.6.70），已合入上游 418 提交（v0.6.66–v0.6.70）。141 处冲突按「定制优先」解决：保留 egui 0.37 pin / D3D11＋液态玻璃 / 版本 1.3.0 / ZCode / 定制通知与邮件行为；新增插件集市/SDK、性能与无线设备页、Antigravity、rtl_text、蓝牙设备图标等未冲突模块已纳入。Cargo.toml 增加 sdk-js/sdk-material/sdk-wasm 特性（material 去掉 eframe/direct-composition，改走自绘栈），Cargo.lock 已由 Cargo 重算。release 构建通过，**全量 1456 passed / 0 failed / 138 ignored**。未部署、未推 origin。详见 §7.0zze。 |
 | **上游合并 v0.6.71（2026-11-27 21:00）** | **新分支 `merge-upstream-v0671` HEAD=`a240b36`**（双亲：`8012cd0` + 上游 `1c0c633`=v0.6.71），合入上游 53 提交（v0.6.70→v0.6.71）。38 处冲突按「定制优先」解决：egui 0.37 pin / 版本 1.4.0 / D3D11 液态玻璃 / ZCode 删除路径保留。**按用户要求剔除 DX12/WGSL**：删 `dx12_surface_memory.rs` 测试、`egui-wgpu` surface-test 依赖、`surface_recovery_test.rs`、GPU 材质集市白名单改动；`sdk-material` 未启用。纳入插件邮箱视图/SDK v1、页面管理与排序、HaloBattery 无线电量、微信托盘唤起、CalDAV Digest、Antigravity 登录修复、通知唤醒与内存积压修复、额度环间距。egui 0.31→0.37 API 适配；14 个依赖未移植布局的上游测试标记 `__upstream_tests_off__`。dev-release 串行全量 **1619 passed / 0 failed / 141 ignored**。已打 release 包 `installer\daozai-setup-custom-isolated.exe`（包 sha `c392da4e0c2003e2`，exe `5e5e3974096b9fc3`），版本 1.4.1；提交 `f57151e`，tag `v1.4.1`。未部署。详见 §7.0zzzzz-f。 |
 | **egui pin（2026-11-25）** | `90431d979ab1faae2de6d9f736e9d33ca0d31956`（提交 `ec19bd1`，0.37.0，1412 passed；未打包部署） |
@@ -2394,8 +2394,8 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **验证（2026-11-28 04:24–04:29）**：
 - `vendor/halo-rust`：`cargo test --offline` **161 passed / 0 failed / 0 ignored**（3 条非阻断告警）；`printf ... | daozai-halo.exe --stdio` 握手输出 `ready` + `devices:[]`（05:02 用户已启动岛仔，再跑一次被单实例保护按设计拒绝，说明 guard 生效）。
 - 主程序：`cargo test --locked --release --lib -- --test-threads=1` **1624 passed / 0 failed / 141 ignored**。
-- release：`cargo build --offline --release --manifest-path vendor/halo-rust/Cargo.toml` 与 `cargo build --locked --release --bin daozai --bin daozai-bridge` 均成功；`daozai.exe` sha `5df90ebdd649ead8`、`daozai-bridge.exe` `77ede6ed744346b9`、`daozai-halo.exe` `fd6e66739fc62bcd`（952,320 B）。
-- 打包（04:30 首轮；05:01 因删除 Python 组件、调整 `--licenses` 路径重打）：Inno Setup 7 成功，`installer\daozai-setup-custom-isolated.exe`（12,650,777 B；包 sha `9ea481ed2efa1172cb6cd052b33c9b96296f7501fbb9c01a58d9800026401aa2`）；旧包 `c97f7f547cd95bd8` 已被覆盖。ISCC 有已知 `PrivilegesRequired=admin` + HKCU 警告，按既有惯例忽略。
+- release：`cargo build --offline --release --manifest-path vendor/halo-rust/Cargo.toml` 与 `cargo build --locked --release --bin daozai --bin daozai-bridge` 均成功；`daozai.exe` sha `2b4569b0fc7266ef`、`daozai-bridge.exe` `0119b3c1fd0f0d58`、`daozai-halo.exe` `54c43321e73dc81a`（952,320 B）。
+- 打包（04:30 首轮；05:01 因删除 Python 组件、调整 `--licenses` 路径重打）：Inno Setup 7 成功，`installer\daozai-setup-custom-isolated.exe`（12,652,307 B；包 sha `1c93e996075c3ff275bacc69b7e99992cbd31cc7174dce74a8d7d88448058e18`）；旧包 `c97f7f547cd95bd8` 已被覆盖。ISCC 有已知 `PrivilegesRequired=admin` + HKCU 警告，按既有惯例忽略。
 
 **残留 / 待实机确认**：
 1. **DJI**：interface 6 的 WinUSB bulk 通道未接，解析与状态机已写好但 `poll()` 暂时返回空。
@@ -2406,3 +2406,24 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 **提交**：`cdf9cf7`（main，157 files changed；未推 origin、未发 tag / Release）。
 
 **文档**：`vendor/halo-rust/MIGRATION.md` 已刷新为完成态；`vendor/halo-rust/HANDOFF-REMAINING.md` 顶部加状态更新（原 §4/§5 保留为历史快照）。工作日志写在 WorkBuddy 工作区，不进项目仓库。
+
+### 7.0zzzzz-k 雷蛇 Viper V3 Pro 电量不显示：接收器目录 + HID 集合双根因修复（2026-11-28 05:26）
+
+**用户反馈**：「鼠标雷蛇 V3 Pro 原本能显示电量，迁移后不显示；还有哪些没复刻，社区有没有方法」。
+
+**根因 1：内置接收器目录被上一轮抽坏**。上一轮用正则从 Python 源码抽 VID/PID，把每个文件首行 `from __future__ import annotations` 当成设备名：89 条新增里 88 条名字错误，且只收了 0536/053A/0550/0552 这些 Python 明确**跳过**的 Razer PID，**没有 Viper V3 Pro 的 00C0/00C1**。主程序只把目录内 USB ID 发给 worker，因此该鼠标从未被轮询。
+- 修复：从 `git show cdf9cf7^:vendor/halo-battery` 导出 Python 参考，用 AST 解析 VID 常量 + PID 字典/元组重建目录；保留原 23 条中文条目，新增 422 条真实型号，共 **445 条、0 条错误名字**。`1532:00C0/00C1` = `Razer Viper V3 Pro`，`00DE/00DF` = SE，`00B3` = HyperPolling Dongle。
+
+**根因 2：HID 集合白名单漏掉雷蛇鼠标集合**。Viper V3 Pro 的电量 90 字节 feature report 在标准 HID 鼠标集合 `0001:0002`；`hid.rs` 原先只放行 `usage_page >= 0xFF00` 加少数例外（page 1 只放行 usage 0/4/5，旧单测还断言 usage 2 不放行），集合根本进不了引擎。
+- 修复：`HidD_GetAttributes` 给 `Collection` 增加 vid/pid；放行 `VID_1532 && page 0001 && usage 0002 && interface != 3`；该集合被 Windows 独占时用 `dwDesiredAccess=0` 打开再做 Feature IOCTL（失败再退回普通读写）；`Razer::poll` 补上 Python `maybe_wireless` 的产品名门控，未知 PID 只要名字含 hyperspeed/wireless/receiver/dongle/dock/blackshark/barracuda/nari 也探测。
+
+**社区依据（仅取协议事实，未复制代码）**：
+- OpenRazer `razermouse_driver.c` 与社区整理 `Skesov/rigbat/docs/razer.md`：90 字节报告、`07:80`/`07:84`、事务号 0x1F、CRC `[2..88)` XOR、Viper V3 Pro 61ms 等待。
+- `linglochen/RazerV3BatteryTray`：00C1 无线 / 00C0 有线、`0001:0002`、`dwDesiredAccess=0` 绕独占、插线两条链路只有一条响应。
+- `JimmyRespawn/vigil-watt/docs/hardware/razer-viper-se.md`：91 字节 report、SetFeature 后 60ms、status/CRC 校验细节（与本实现一致）。
+
+**验证**：halo 单测 **163 passed**（新增 2 个回归）；主程序 release 全量 **1624 passed / 0 failed / 141 ignored**。用户仍在运行岛仔，为不打断进程，主程序双 bin 在独立 `CARGO_TARGET_DIR` 构建，Inno 用临时 .iss 指向独立产物目录打包；项目 `target/release/daozai.exe` 仍是旧目录版本，下次构建会刷新。
+
+**新包**：`installer\daozai-setup-custom-isolated.exe`（12,652,307 B；包 sha `1c93e996075c3ff275bacc69b7e99992cbd31cc7174dce74a8d7d88448058e18`，exe `2b4569b0fc7266ef`，bridge `0119b3c1fd0f0d58`，halo `54c43321e73dc81a`）。上一版 `9ea481ed2efa1172` 已被覆盖。未部署 / 未推 origin；**请用户装包后实机确认 Viper V3 Pro 电量**。
+
+**仍未复刻（与本次修复无关）**：DJI interface 6 WinUSB bulk 通道未接（解析已实现但 `poll()` 返空）；mchose 输入唤醒门控、razer 跨 PID 灰显去重、Logitech `ui_message` 文案 / 跨进程 unit id 合并、Corsair `--probe` 未做；HyperX 预读与 Asus Harpe II 路径为语义近似。

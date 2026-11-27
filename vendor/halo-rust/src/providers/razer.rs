@@ -163,6 +163,14 @@ fn keyboard_interface(pid: u16) -> Option<u8> {
     KEYBOARD_INTERFACE.iter().find(|(p, _)| *p == pid).map(|(_, i)| *i)
 }
 
+/// Python `maybe_wireless` 的产品名关键字：未知 PID 仅在这些名字上探测。
+fn product_suggests_wireless(product: &str) -> bool {
+    let lower = product.to_lowercase();
+    ["hyperspeed", "wireless", "receiver", "dongle", "dock",
+     "blackshark", "barracuda", "nari"]
+        .iter().any(|word| lower.contains(word))
+}
+
 /// 构造 90 字节请求；CRC 为 msg[2..88] 的 XOR（不含 transaction id）。
 fn build_request(transaction_id: u8, cmd_class: u8, cmd_id: u8, size: u8) -> [u8; 90] {
     let mut msg = [0u8; 90];
@@ -403,10 +411,20 @@ impl Provider for Razer {
         if vid != VID {
             return Vec::new();
         }
-        let Some((name, pref_tid)) = known(pid) else {
-            // Python: 不在 KNOWN 中的设备仅在产品名含无线关键字时探测；
-            // Collection 未暴露 product string，因此保守跳过未知 PID。
-            return Vec::new();
+        let (name, pref_tid) = match known(pid) {
+            Some(known) => (known.0.to_string(), known.1),
+            None => {
+                // Python `maybe_wireless`：不在 KNOWN 表中的设备只有产品名含
+                // 无线关键字时才探测。hid.rs 已暴露 Collection.product，照此放行。
+                let product = collections.iter()
+                    .map(|c| c.product.trim())
+                    .find(|p| !p.is_empty())
+                    .unwrap_or("");
+                if !product_suggests_wireless(product) {
+                    return Vec::new();
+                }
+                (if product.is_empty() { format!("Razer {pid:04x}") } else { product.to_string() }, 0x1F)
+            }
         };
         if SKIP_PIDS.contains(&pid) || DEDICATED_PIDS.contains(&pid) {
             return Vec::new();
@@ -432,7 +450,7 @@ impl Provider for Razer {
                 Some(status) => format!("status {status:02x}"),
             };
             state.failing.insert(gkey.clone(), reason);
-            return keep_asleep(&state, &key, name, kind, is_headset, now);
+            return keep_asleep(&state, &key, &name, kind, is_headset, now);
         }
 
         state.failing.remove(&gkey);
@@ -2134,6 +2152,14 @@ mod tests {
         assert!(bx_is_charging(&[3900, 3920, 3940]));
         assert!(!bx_is_charging(&[3900, 3901, 3902]));
         assert!(bx_is_charging(&[4200, 4200, 4200]));
+    }
+
+    #[test]
+    fn unknown_pid_wireless_product_name_gate() {
+        assert!(super::product_suggests_wireless("Razer Viper V3 Pro Receiver"));
+        assert!(super::product_suggests_wireless("Razer BlackShark V3 Pro HID"));
+        assert!(!super::product_suggests_wireless("Razer Huntsman V2"));
+        assert!(!super::product_suggests_wireless(""));
     }
 
     #[test]

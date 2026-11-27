@@ -11,16 +11,19 @@
 >   `product_string.rs`（7 个产品字符串 / 特殊集合协议）、`longtail.rs`（26 个长尾 + 2 个 Logitech 子协议），
 >   `razer.rs` 补齐 8 个专用帧；`hid.rs` 新增 `Collection.product` 并谨慎放行低 usage page 集合，
 >   `instance_guard.rs` 实现单实例保护并接入 worker 主循环。
-> - `vendor/halo-rust` 单测 **161 passed**；主程序 release 全量 **1624 passed / 0 failed**；
->   `daozai-halo.exe` 952,320 B（sha 前16 `fd6e66739fc62bcd`）；
->   测试安装包 `installer\daozai-setup-custom-isolated.exe`（包 sha 前16 `9ea481ed2efa1172`，exe `5df90ebdd649ead8`）。
+> - `vendor/halo-rust` 单测 **163 passed**；主程序 release 全量 **1624 passed / 0 failed**；
+>   `daozai-halo.exe` 最终包指纹见 MIGRATION.md（sha 前16 `54c43321e73dc81a`）；
+>   测试安装包 `installer\daozai-setup-custom-isolated.exe`（包 sha 前16 `1c93e996075c3ff2`，exe `2b4569b0fc7266ef`）。
 > - **尚需处理的真实残留**：DJI 解析已实现但读数走 interface 6 的 WinUSB bulk，现有 `Provider` 只拿 HID 集合，
 >   `poll()` 暂返空，需后续接 bulk 通道；mchose 输入唤醒门控、razer 跨 PID 去重、Logitech unit id 去重 /
 >   `ui_message`、Corsair `--probe` 未复刻；所有协议均未在真机验证。
 > - **旧 Python 组件 `vendor/halo-battery/` 已从工作树删除**（用户 2026-11-28 确认不再使用；git 历史可恢复）。
 >   其上游 `LICENSE` / `credits.md` 迁到 `vendor/halo-rust/upstream-licenses/`，`--licenses` 路径已同步更新；
 >   下文 §2.3 提到的 Python 源码路径仅供追溯，需查看时用 `git show <旧提交>:vendor/halo-battery/...`。
-> - 最新状态与验证记录以 `vendor/halo-rust/MIGRATION.md` 和桌面 `HANDOFF.md` §7.0zzzzz-j 为准。
+> - **05:26 追加修复**：用户反馈雷蛇 Viper V3 Pro 迁移后不显示电量，根因是接收器目录上一轮抽取错误
+>   （88 条错误名字、漏 00C0/00C1）和 `hid.rs` 不放行雷蛇鼠标 `0001:0002` 集合；均已修复，
+>   详见 `MIGRATION.md` 的「2026-11-28 05:26 修复」章节与桌面 `HANDOFF.md` §7.0zzzzz-k。
+> - 最新状态与验证记录以 `vendor/halo-rust/MIGRATION.md` 和桌面 `HANDOFF.md` §7.0zzzzz-k 为准。
 
 ---
 

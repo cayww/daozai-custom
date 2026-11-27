@@ -29,6 +29,9 @@ pub struct Collection {
     pub input_len: usize,
     pub output_len: usize,
     pub feature_len: usize,
+    /// HidD_GetAttributes，用于只放行特定厂商的标准 HID 集合。
+    pub vid: u16,
+    pub pid: u16,
     /// HidD_GetProductString，供只靠 product string 分流的协议使用。
     pub product: String,
     path: Vec<u16>,
@@ -154,12 +157,26 @@ fn collection_for(path: &[u16], interface: Option<u8>) -> Option<Collection> {
         return None;
     }
     let preparsed = Preparsed(prepared);
+    let mut attributes = HIDD_ATTRIBUTES {
+        Size: std::mem::size_of::<HIDD_ATTRIBUTES>() as u32,
+        ..Default::default()
+    };
+    let (vid, pid) = if unsafe { HidD_GetAttributes(*metadata, &mut attributes) }.as_bool() {
+        (attributes.VendorID, attributes.ProductID)
+    } else {
+        (0, 0)
+    };
     let mut caps = HIDP_CAPS::default();
     let status = unsafe { HidP_GetCaps(preparsed.0, &mut caps) };
-    if status != HIDP_STATUS_SUCCESS || !supported_usage(caps.UsagePage, caps.Usage, interface) {
+    let feature_mouse = razer_mouse_feature_collection(
+        caps.UsagePage, caps.Usage, interface, vid, pid,
+    );
+    if status != HIDP_STATUS_SUCCESS
+        || (!supported_usage(caps.UsagePage, caps.Usage, interface) && !feature_mouse)
+    {
         return None;
     }
-    let special = special_consumer_collection(caps.UsagePage, caps.Usage, interface);
+    let special = special_consumer_collection(caps.UsagePage, caps.Usage, interface) || feature_mouse;
     let writable = caps.UsagePage >= 0xff00 || special;
     let mut product_buf = [0u16; 256];
     let product = if unsafe {
@@ -192,6 +209,8 @@ fn collection_for(path: &[u16], interface: Option<u8>) -> Option<Collection> {
             0
         },
         product,
+        vid,
+        pid,
         path: path.to_vec(),
         preparsed,
     })
@@ -206,6 +225,20 @@ fn special_consumer_collection(page: u16, usage: u16, interface: Option<u8>) -> 
     (page == 0x0001 && matches!(usage, 0x0000 | 0x0004 | 0x0005))
         || (page == 0x000c && interface == Some(3))
         || matches!(page, 0x000a | 0x008c | 0x00ff)
+}
+
+/// 雷蛇鼠标的标准 HID 鼠标集合（0001:0002），电量 90 字节 feature report
+/// 走的就是它（OpenRazer / 社区逆向一致，Viper V3 Pro 等）。Windows 会独占
+/// 该集合，普通读写句柄打不开，须用零访问权限只做 Feature IOCTL。
+/// 不放行 interface 3：那里是键盘/消费集合，之前已验证不应进入引擎。
+fn razer_mouse_feature_collection(
+    page: u16,
+    usage: u16,
+    interface: Option<u8>,
+    vid: u16,
+    _pid: u16,
+) -> bool {
+    vid == 0x1532 && page == 0x0001 && usage == 0x0002 && interface != Some(3)
 }
 
 fn supported_usage(page: u16, usage: u16, interface: Option<u8>) -> bool {
@@ -307,7 +340,19 @@ impl Collection {
         } else {
             GENERIC_READ.0
         };
-        let file = open_path(&self.path, access)?;
+        // 系统独占的雷蛇鼠标集合用 dwDesiredAccess=0 打开即可收发 Feature
+        // 报告（社区实测，Windows 不接受 GENERIC_READ/WRITE 时会 err=5）。
+        let file = if razer_mouse_feature_collection(
+            self.usage_page,
+            self.usage,
+            self.interface,
+            self.vid,
+            self.pid,
+        ) {
+            open_path(&self.path, 0).or_else(|| open_path(&self.path, access))?
+        } else {
+            open_path(&self.path, access)?
+        };
         let event = unsafe { Owned::new(CreateEventW(None, true, false, PCWSTR::null()).ok()?) };
         Some(Handle {
             file,
@@ -445,5 +490,14 @@ mod tests {
         assert!(!supported_usage(0x01c0, 2, Some(3)));
         assert!(!supported_usage(1, 2, Some(3)));
         assert!(!supported_usage(1, 6, Some(3)));
+    }
+
+    #[test]
+    fn razer_mouse_collection_is_admitted_only_for_razer() {
+        assert!(razer_mouse_feature_collection(1, 2, Some(0), 0x1532, 0x00C1));
+        assert!(razer_mouse_feature_collection(1, 2, None, 0x1532, 0x00C0));
+        assert!(!razer_mouse_feature_collection(1, 2, Some(3), 0x1532, 0x00C1));
+        assert!(!razer_mouse_feature_collection(1, 2, Some(0), 0x046D, 0x00C1));
+        assert!(!razer_mouse_feature_collection(1, 6, Some(0), 0x1532, 0x00C1));
     }
 }
