@@ -1,5 +1,6 @@
 //! D3D11 自绘渲染运行时：单 device 上 WGC 抓屏 → HLSL 玻璃 → egui widgets →
-//! Present → DComp Commit。从 egui-directx11 的 glass_spike.rs 移植到 windows 0.58。
+//! 仅在初始化时 DComp Commit 一次（visual 内容不变），每帧只 Present。
+//! 从 egui-directx11 的 glass_spike.rs 移植到 windows 0.58。
 //!
 //! 透明路线：CreateSwapChainForComposition + IDCompositionVisual（逐像素预乘 alpha），
 //! 窗口用 WS_EX_NOREDIRECTIONBITMAP，玻璃外区域完全透明显示桌面。
@@ -667,7 +668,7 @@ impl D3d11Runtime {
         resp.repaint
     }
 
-    /// 渲染一帧：clear 透明 → 抓屏 → HLSL 玻璃 → egui → Present → Commit。
+    /// 渲染一帧：clear 透明 → 抓屏 → HLSL 玻璃 → egui → Present（DComp 已在初始化提交）。
     /// `run_ui` 回调里调用岛仔的 Shell 绘制逻辑。`root_scale` 只作用于主窗口的
     /// 输入/输出换算（设置里的「岛体大小」），不碰全局 zoom。
     pub fn render(&mut self, window: &winit::window::Window, origin: (f32, f32),
@@ -830,12 +831,16 @@ impl D3d11Runtime {
             // Present 之前消费截图/剪贴板动作：FLIP_DISCARD 后缓冲内容失效。
             drain_actions(self.egui_winit.as_mut().unwrap(), &mut self.actions,
                 &self.device, &self.ctx, Some(&rt), egui::ViewportId::ROOT);
+            // 不要每帧调 DComp Commit：visual 的内容/根在 create_device_swap 里设好后
+            // 从不变化，MSDN《高性能窗口分层》明确说这种情况只需初始化 Commit 一次，
+            // 「交换链 Present 与视觉树变化不同步」，每帧 Commit 只会让 DWM 批处理
+            // 时序抖动、偶发用上一帧合成（岛上图标/数字抽动）。子 viewport 的 render
+            // 也只有 Present 没有 Commit，这里保持一致。
             let present = unsafe { self.swap.Present(1, DXGI_PRESENT(0)) };
             // 显卡重置 / 远程桌面断开时 Present 会返回 DEVICE_REMOVED/RESET。
             // 旧代码把错误丢弃，结果是永久黑屏只能重启；这里上报让事件循环重建整条 D3D 栈。
             device_lost = present == DXGI_ERROR_DEVICE_REMOVED || present == DXGI_ERROR_DEVICE_RESET;
             if device_lost { dlog(&format!("Present failed: {present:?}; device lost")); }
-            unsafe { let _ = self.dcomp._device.Commit(); }
         }
         FrameStats { fps: self.fps, wgc_live: self.wgc_ever_frame,
                      viewport_commands: platform.1, active_viewports: platform.2, device_lost }

@@ -14,7 +14,40 @@ use eframe::egui::{self, Color32, Pos2};
 use std::collections::VecDeque;
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+static DIAG_PERF_ON: AtomicBool = AtomicBool::new(false);
+static DIAG_PERF_MS: AtomicU64 = AtomicU64::new(0);
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+/// 「显示在岛上」切换后的 3 秒内为 true，用来只在关键时刻写逐帧日志。
+pub(crate) fn diag_perf_recent() -> bool {
+    let at = DIAG_PERF_MS.load(Ordering::Relaxed);
+    at != 0 && now_ms().saturating_sub(at) < 3000
+}
+
+/// 常驻栏图标抽动诊断：无需精确复现动作，逐帧比对电量图标的 x/alpha，
+/// 帧间跳变超阈值就写日志（含上一帧值），据此判断是布局跳变还是渲染旧帧。
+/// 上一次观测打包为 (x 的位模式, alpha 的位模式)；用 CAS 循环避免多线程竞争。
+static DIAG_BATTERY_PREV: AtomicU64 = AtomicU64::new(0);
+pub(crate) fn diag_battery_jump(x: f32, alpha: f32, p: f32, k: f32) {
+    let bits = ((x.to_bits() as u64) << 32) | (alpha.to_bits() as u64);
+    let prev = DIAG_BATTERY_PREV.swap(bits, Ordering::Relaxed);
+    if prev == 0 { return; }
+    let px = f32::from_bits((prev >> 32) as u32);
+    let pa = f32::from_bits(prev as u32);
+    let dx = (x - px).abs();
+    let da = (alpha - pa).abs();
+    if dx > 1.5 || da > 0.05 {
+        crate::wgc::log(&format!(
+            "DIAG JUMP x={:.2}(prev {:.2},dx {:.2}) alpha={:.3}(prev {:.3},da {:.3}) p={:.3} k={:.3}",
+            x, px, dx, alpha, pa, da, p, k
+        ));
+    }
+}
 
 // ---------- 配色：每类硬件一种主色，次级读数（上传、写入）取主色的浅色 ----------
 pub(crate) const CPU_COLOR: Color32 = Color32::from_rgb(99, 218, 207);
@@ -535,8 +568,13 @@ fn neon(c: &Card, pts: &[(f32, f32)], width: f32, color: Color32) {
 
 impl App {
     pub(crate) fn performance_on_bar(&self) -> bool {
-        self.module_on(PERFORMANCE_PAGE) && self.settings.show_performance && !self.effective_minimal()
-            && (self.settings.performance_bar != BarStyle::Custom || self.settings.performance_metrics != 0)
+        let on = self.module_on(PERFORMANCE_PAGE) && self.settings.show_performance && !self.effective_minimal()
+            && (self.settings.performance_bar != BarStyle::Custom || self.settings.performance_metrics != 0);
+        // 临时诊断：记录「显示在岛上」切换时刻，供常驻栏逐帧日志对齐。
+        if on != DIAG_PERF_ON.swap(on, std::sync::atomic::Ordering::Relaxed) {
+            DIAG_PERF_MS.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+        }
+        on
     }
     /// 岛内当前显示的页面：先看岛内的临时选择，没有就用设置里的。
     fn performance_view(&self) -> View {
