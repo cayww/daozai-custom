@@ -1,6 +1,6 @@
 # 岛仔（Daozai）交接文档
 
-> **最后更新**：2026-11-27 21:00
+> **最后更新**：2026-11-28 02:40
 > **本文档是唯一权威交接入口**（`C:\Users\cay\Desktop\HANDOFF.md`）。
 > 仓库内同步副本：`D:\code\daozai-custom\docs\HANDOFF.md`；凌晨版原件在
 > `Daozai-液态玻璃预览\_archive\交接文档-2026-11-16.md`。
@@ -2350,3 +2350,16 @@ Bottom 时把按"顶部坐标系"算出的 region/hit/file_drop_zone 沿窗口�
 - 修正 `Cargo.lock` 全局替换误把 `http` crate 版本号改成 1.4.1 的问题（`f57151e`），tag `v1.4.1` 已指向最终提交。
 - release 双 bin 构建（`cargo build --offline --locked --release --bin daozai --bin daozai-bridge`，4m52s）→ Inno Setup 7 打包成功。`installer\daozai-setup-custom-isolated.exe`，包 sha256 前16 `c392da4e0c2003e2`，exe `5e5e3974096b9fc3`，bridge `875dde2f1c2d9623`。上一版 `109bd7090236df61` 已被取代；本包修复应用内更新卡在「正在准备重启」、链接不跳转、移除网盘入口。
 - `git merge --ff-only merge-upstream-v0671` 到 main，推送 origin / tag 与 GitHub Release 见后续记录。
+
+
+### 7.0zzzzz-h 超长常驻岛变短时两端被裁（2026-11-28 02:40，提交 `236f58b`）
+
+**现象**：开综合监测把岛撑成超长条后再关掉（超宽→短），收起动画开头几帧玻璃两端被窗口直接切平，弹簧缩到位后恢复。短→超宽方向按当前代码推演 region 已足够宽，未复现裁切。
+
+**源码推演实证**（UI 测试夹具：液态皮肤 / 药丸 / Dashboard / 全部指标，目标宽 440→120）：关掉第 0 帧玻璃 body 宽 415.8（x=112.1..527.9），窗口区域却只有 153（x=243.5..396.5），两端被裁；到第 8 帧 body 缩到 156.1 才重新被包住。展开分支早有 `PW.max(self.w.pos)`（§7.0zzzu），收起分支只按新目标 `base_size()` 算，漏掉动画中尚未缩回的 `w.pos/h.pos`。
+
+**修复**：`src/app.rs` 收起态窗口区域宽高改为 `bw.max(self.w.pos)` / `bh.max(self.h.pos)`；侧边停靠的收起分支同样取大。新增回归测试 `wide_bar_shrink_keeps_window_region_around_the_animating_glass` 断言过渡 30 帧内 region 始终包住 glass body。
+
+**验证**：dev-release 串行全量 **1622 passed / 0 failed / 141 ignored**（新增 1 测试）；双 bin 构建通过；Inno 测试包 `installer\daozai-setup-custom-isolated.exe`：包 sha256 前16 `22a55538b79a99e9`、exe `26c11bfd79552c61`、bridge `b7ba117cc094febd`。提交 `236f58b`，分支 `feat/halobattery-rust`，未合并 main / 未部署 / 未推 origin。
+
+**待用户实机确认**：关掉综合监测后的收起过程两端完整；开的过程无回归。
