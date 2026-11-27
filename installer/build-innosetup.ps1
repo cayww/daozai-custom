@@ -4,8 +4,10 @@
 
 .DESCRIPTION
     自动探测 ISCC.exe（优先 D:\software\Inno Setup 7\ISCC.exe，其次注册表/PATH/常见路径），
-    编译 daozai.iss，输出安装包路径与 sha256。构建 daozai.exe / daozai-bridge.exe 需先执行：
+    编译 daozai.iss，输出安装包路径与 sha256。需先执行：
       cargo build --locked --release --manifest-path dz-custom\Cargo.toml --bin daozai --bin daozai-bridge
+      cargo build --offline --release --manifest-path vendor\halo-rust\Cargo.toml
+    （无线电量组件 daozai-halo.exe 随应用分发，不再从 Gitee 下载）
 
 .PARAMETER InnoCompiler
     显式指定 ISCC.exe 路径，跳过自动探测。
@@ -36,6 +38,7 @@ $iss = Join-Path $installerDir 'daozai.iss'
 $targetDir = Join-Path $projectRoot ('dz-custom\target\' + $CargoProfile)
 $exe = Join-Path $targetDir 'daozai.exe'
 $bridge = Join-Path $targetDir 'daozai-bridge.exe'
+$haloExe = Join-Path $projectRoot ('vendor\halo-rust\target\' + $CargoProfile + '\daozai-halo.exe')
 
 # ---------- 探测 ISCC ----------
 function Find-ISCC {
@@ -71,9 +74,9 @@ if (-not $iscc) {
 }
 
 # ---------- 前置检查 ----------
-foreach ($f in @($iss, $exe, $bridge)) {
+foreach ($f in @($iss, $exe, $bridge, $haloExe)) {
     if (-not (Test-Path -LiteralPath $f)) {
-        throw "缺少文件：$f（先跑 cargo build --profile $CargoProfile --bin daozai --bin daozai-bridge）"
+        throw "缺少文件：$f（先跑主程序 cargo build --profile $CargoProfile --bin daozai --bin daozai-bridge，再跑 vendor\halo-rust 的 cargo build --profile $CargoProfile）"
     }
 }
 Push-Location $installerDir

@@ -63,8 +63,11 @@
 
 ## 接线与发布（2026-11-27）
 
-- `build-release.ps1`：构建 `dist/daozai-halo.exe` 并输出 size + sha256 + component.json 模板。
-- **主程序零改动**：`halo_component.rs` 从 Gitee 下载 `daozai-halo.exe`（版本由 `component.json` 指定），wire 协议 VERSION=1 完全一致。
-- 发布步骤：把 Rust exe 发布为 Gitee `wireless-battery-vX.Y.Z/daozai-halo.exe`，更新 `component.json` 的 `version` / `size` / `sha256` 即可。
-- 实测产物：684,032 B（Python PyInstaller onefile 约 10 MB+），SHA256 `e60d1907139db8805c7ae7b34072dee88956fbb1666cbff8c805aab4eda28c1d`。
-- 未做：未上传到 Gitee、未发布新 component.json、未在主程序里切换组件版本。这是发布决策，需用户确认。
+改为**随应用分发**，与 `daozai-bridge.exe` 同一模式，不再走 Gitee 按需下载。
+
+- `build-release.ps1`：构建 `dist/daozai-halo.exe` 并输出 size + sha256，供发布记录使用。
+- `halo_component.rs`：组件目录改为「主程序 exe 同目录」，优先直接激活 `daozai-halo.exe`，无需网络、无需 receipt；仅当内置缺失（开发运行/旧版免安装包）时才回退到缓存与 Gitee 下载。wire 协议 VERSION=1 与 Python 组件完全一致。
+- 构建顺序：`cargo build --offline --release --manifest-path vendor/halo-rust/Cargo.toml` → 主程序 release 构建 → `installer\build-innosetup.ps1`（脚本会检查内置 exe 是否存在）。
+- 安装包：`daozai.iss` 已把 `vendor\halo-rust\target\{profile}\daozai-halo.exe` 复制到 `{app}\daozai-halo.exe`，并加入卸载清理；免安装 ZIP 也必须把该 exe 放在 `daozai.exe` 同目录。
+- 实测产物：release 525,824 B（Python PyInstaller onefile 约 10 MB+）。release（显式 LTO/strip）SHA256 `dd2a8cd355ac9bd758542d9b03cd6604a181381312676e4fe9605c06ce99a217`；dev-release `fc603486034945025835fb0594c0c9b2f9bbab5717bbfb17d1f7db0527ef5a00`。构建参数变化会导致 sha 变化，以实际产物为准。
+- 未做：尚未合并到 main、尚未发布新版本；当前只在 `feat/halobattery-rust` 分支。

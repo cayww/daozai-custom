@@ -23,6 +23,8 @@ static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone)]
 pub(crate) struct Component {
     directory: PathBuf,
+    /// 随应用分发的组件目录：主程序 exe 同目录（与 daozai-bridge 一致）。
+    bundled_dir: PathBuf,
     state: Arc<Mutex<State>>,
 }
 
@@ -44,6 +46,10 @@ pub(crate) struct Status {
 impl Component {
     pub(crate) fn load(directory: PathBuf) -> Self {
         let directory = std::path::absolute(&directory).unwrap_or(directory);
+        let bundled_dir = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| directory.clone());
         let enabled = File::open(directory.join(CHOICE))
             .and_then(|file| {
                 let mut choice = Vec::new();
@@ -53,6 +59,7 @@ impl Component {
             .unwrap_or(false);
         let component = Self {
             directory,
+            bundled_dir,
             state: Arc::new(Mutex::new(State {
                 enabled,
                 ..State::default()
@@ -131,21 +138,31 @@ impl Component {
         let result = std::thread::Builder::new()
             .name("daozai-battery-component".into())
             .spawn(move || {
-                let prepared = if !refresh {
-                    cached(&component.directory, &work).map(|path| Prepared {
+                // 内置组件随应用分发，优先直接使用：无需网络、无需 receipt。
+                // 仅当内置缺失（开发运行/旧版免安装包）时才走缓存与下载兜底。
+                let prepared = bundled_executable(&component.bundled_dir)
+                    .map(|path| Prepared {
                         path,
                         installation: None,
                     })
-                } else {
-                    Err("需要检查组件更新".into())
-                }
-                .or_else(|error| {
-                    if allow_download && !work.load(Ordering::Relaxed) {
-                        download(&component.directory, &work)
-                    } else {
-                        Err(error)
-                    }
-                });
+                    .ok_or_else(|| "未找到内置电量组件".to_owned())
+                    .or_else(|error| {
+                        if !refresh {
+                            cached(&component.directory, &work).map(|path| Prepared {
+                                path,
+                                installation: None,
+                            })
+                        } else {
+                            Err("需要检查组件更新".into())
+                        }
+                    })
+                    .or_else(|error| {
+                        if allow_download && !work.load(Ordering::Relaxed) {
+                            download(&component.directory, &work)
+                        } else {
+                            Err(error)
+                        }
+                    });
                 {
                     let mut state = component
                         .state
@@ -340,6 +357,12 @@ fn request_component(
 
 fn binary_path(directory: &Path, package: &Package) -> PathBuf {
     directory.join(format!("daozai-halo-{}.exe", package.hash))
+}
+
+/// 随应用分发的组件固定叫 daozai-halo.exe，位于主程序 exe 同目录。
+fn bundled_executable(directory: &Path) -> Option<PathBuf> {
+    let path = directory.join("daozai-halo.exe");
+    path.is_file().then_some(path)
 }
 
 fn cached(directory: &Path, cancel: &AtomicBool) -> Result<PathBuf, String> {
@@ -643,6 +666,40 @@ mod tests {
     }
 
     #[test]
+    fn builtin_component_is_activated_without_download() {
+        use std::{sync::mpsc, time::Duration};
+        let root = std::env::temp_dir().join(format!(
+            "daozai-battery-builtin-{}-{}",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed),
+        ));
+        let directory = root.join("data");
+        let bundled = root.join("app");
+        fs::create_dir_all(&bundled).unwrap();
+        let exe = bundled.join("daozai-halo.exe");
+        fs::write(&exe, b"builtin fixture").unwrap();
+        let component = Component {
+            directory: directory.clone(),
+            bundled_dir: bundled,
+            state: Arc::new(Mutex::new(State::default())),
+        };
+        let (finished, ready) = mpsc::channel();
+        component
+            .set_enabled(true, move || {
+                let _ = finished.send(());
+            })
+            .unwrap();
+        ready.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(component.executable(), Some(exe));
+        assert!(
+            !directory.join(RECEIPT).exists(),
+            "内置组件不应产生下载 receipt"
+        );
+        component.set_enabled(false, || {}).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn optional_battery_default_creates_nothing_and_rejects_tampered_component() {
         let directory = std::env::temp_dir().join(format!(
             "daozai-optional-battery-{}-{}",
@@ -698,6 +755,16 @@ mod tests {
     }
 
     fn verify_installation(download_timeout: std::time::Duration) {
+        // 这是下载链路验收测试：测试二进制旁若已有内置组件，会优先走内置路径。
+        if let Some(dir) = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(Path::to_path_buf))
+        {
+            assert!(
+                !dir.join("daozai-halo.exe").is_file(),
+                "下载验收测试不能在内置组件存在时运行"
+            );
+        }
         use super::super::halo_worker::{Receiver, Worker};
         use std::{
             sync::mpsc,

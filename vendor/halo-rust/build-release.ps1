@@ -24,10 +24,4 @@ Write-Host "EXE: $dest"
 Write-Host "SIZE: $size"
 Write-Host "SHA256: $hash"
 Write-Host ""
-Write-Host 'component.json template:'
-$manifest = @{
-    version = 'x.y.z'
-    size = $size
-    sha256 = $hash
-} | ConvertTo-Json -Compress
-Write-Host $manifest
+Write-Host 'Bundled with the app: installer\daozai.iss copies target\<profile>\daozai-halo.exe to {app}\daozai-halo.exe'

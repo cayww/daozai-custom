@@ -57,6 +57,8 @@ Source: "..\dz-custom\target\{#TargetProfile}\daozai.exe"; DestDir: "{app}"; Fla
 Source: "..\dz-custom\assets\daozai.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; 浏览器扩展桥宿主：独立精简版二进制（不链接 GUI 栈，约 460KB），复制为 daozai_bridge.exe。
 Source: "..\dz-custom\target\{#TargetProfile}\daozai-bridge.exe"; DestDir: "{app}\bridge"; DestName: "daozai_bridge.exe"; Flags: ignoreversion
+; 无线设备电量组件：Rust 实现（约 514KB），随应用分发，主程序直接启动。
+Source: "..\vendor\halo-rust\target\{#TargetProfile}\daozai-halo.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\manifest.json"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion
 Source: "..\browser-bridge\extension\sw.js"; DestDir: "{app}\bridge\extension"; Flags: ignoreversion
 Source: "INSTALL-NOTES.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
@@ -76,6 +78,7 @@ Name: "{autodesktop}\岛仔"; Filename: "{app}\daozai.exe"; IconFilename: "{app}
 ; [Code] 在安装时生成的文件不在 [Files] 清单里，卸载时要显式删掉
 [UninstallDelete]
 Type: files; Name: "{app}\bridge\daozai_bridge.exe"
+Type: files; Name: "{app}\daozai-halo.exe"
 Type: files; Name: "{app}\bridge\com.daozai.island.json"
 Type: files; Name: "{app}\CUSTOM_BUILD.txt"
 Type: dirifempty; Name: "{app}\bridge"
