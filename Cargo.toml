@@ -184,6 +184,13 @@ inherits = "release"
 lto = false
 codegen-units = 8
 
+# 测试里大量 helper 只取 `.shapes`，不会把 egui 0.37 的 TexturesDelta 应用到光栅器。
+# egui 在 debug_assert 开启时对未清空的 delta 断言失败，串行跑会连带把整个测试进程
+# 搞成 STATUS_STACK_BUFFER_OVERRUN。本项目自己的代码没有 debug_assert!，发布构建也
+# 不开断言，所以测试 profile 关掉它，和 release 行为一致。
+[profile.test]
+debug-assertions = false
+
 # 内存剖析专用：带行号表（供 dhat 回溯符号化），其余与 release 一致。
 # cargo build --profile memprof --features memprof
 [profile.memprof]
