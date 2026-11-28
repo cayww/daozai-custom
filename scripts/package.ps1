@@ -23,7 +23,7 @@ try {
             Remove-Item Env:DAOZAI_TEST_BUILD -ErrorAction SilentlyContinue
             $trimFlags = $privatePaths | ForEach-Object { '"/d1trimfile:' + $_ + '"' }
             $env:CL = (@($originalCL) + $trimFlags) -join ' '
-            cargo +stable-x86_64-pc-windows-msvc build --locked --release --features sdk-js,sdk-material --bin daozai --target x86_64-pc-windows-msvc
+            cargo +stable-x86_64-pc-windows-msvc build --locked --release --features sdk-js,sdk-material --bin daozai --bin daozai-bridge --target x86_64-pc-windows-msvc
             if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
         } finally {
             $env:CL = $originalCL
@@ -66,7 +66,10 @@ try {
     $setup = Join-Path $outputDirectory "Daozai-Setup-v$version-x64.exe"
     # setup.nsi 是无 BOM 的 UTF-8（含中文版本信息），必须指定输入编码，
     # 否则 NSIS 按系统 ANSI 解读导致 "Bad text encoding" 中断。
-    & $NsisCompiler /INPUTCHARSET UTF8 /V2 /WX "/DAPP_VERSION=$version" "/DPROJECT_DIR=$projectRoot" "/DSOURCE_EXE=$($binary.FullName)" "/DOUTPUT_FILE=$setup" (Join-Path $projectRoot 'installer\setup.nsi')
+    # bridge 由同一次 cargo build 产出，位置在 target/<triple>/release 而非 target/release，
+    # 显式传给 setup.nsi，避免它按默认路径找不到文件。
+    $bridgeExe = Join-Path $targetDirectory 'x86_64-pc-windows-msvc\release\daozai-bridge.exe'
+    & $NsisCompiler /INPUTCHARSET UTF8 /V2 /WX "/DAPP_VERSION=$version" "/DPROJECT_DIR=$projectRoot" "/DSOURCE_EXE=$($binary.FullName)" "/DBRIDGE_EXE=$bridgeExe" "/DOUTPUT_FILE=$setup" (Join-Path $projectRoot 'installer\setup.nsi')
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
     $archive = Join-Path $outputDirectory "$packageName.zip"
     Compress-Archive -LiteralPath $stagingDirectory -DestinationPath $archive
