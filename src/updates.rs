@@ -11,6 +11,9 @@ const STARTUP_WINDOW: Duration = Duration::from_secs(10);
 const CHECK_INTERVAL: Duration = Duration::from_secs(3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(3600);
 const MANUAL_INTERVAL: Duration = Duration::from_secs(30);
+/// 历史文件结构版本：追加 etag/last-modified 之后必须让旧状态立即到期，
+/// 否则从 24 小时间隔的旧版本升级上来，下一次自动检查要等到明天。
+const HISTORY_SCHEMA: i64 = 2;
 #[cfg(windows)]
 const INSTALL_PREPARE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -76,7 +79,12 @@ impl State {
         let notified_version = array.and_then(|a| a.get(1)).and_then(|v| v.as_str()).map(str::to_owned);
         let etag = array.and_then(|a| a.get(2)).and_then(|v| v.as_str()).map(str::to_owned);
         let last_modified = array.and_then(|a| a.get(3)).and_then(|v| v.as_str()).map(str::to_owned);
+        let schema = array.and_then(|a| a.get(4)).and_then(|v| v.as_i64()).unwrap_or_default();
+        let legacy = schema != HISTORY_SCHEMA;
         let now_unix = chrono::Utc::now().timestamp();
+        // 旧格式立即检查并清掉已通知标记，避免"设置里查过一次就永远不再提醒"。
+        let next = if legacy { 0 } else { next };
+        let notified_version = if legacy { None } else { notified_version };
         if option_env!("DAOZAI_TEST_BUILD").is_none() && next <= now_unix {
             state.startup_check_until = Some(Instant::now() + STARTUP_WINDOW);
         }
@@ -99,7 +107,7 @@ impl State {
         if let Some(parent) = path.parent() {
             if std::fs::create_dir_all(parent).is_err() { return; }
         }
-        if let Ok(bytes) = serde_json::to_vec(&(next, &self.notified_version, &self.etag, &self.last_modified)) {
+        if let Ok(bytes) = serde_json::to_vec(&(next, &self.notified_version, &self.etag, &self.last_modified, HISTORY_SCHEMA)) {
             let _ = crate::model::atomic_write(path, &bytes);
         }
     }
@@ -1062,10 +1070,16 @@ mod update_schedule_tests {
         assert_eq!(loaded.etag.as_deref(), Some("\"v142\""));
         assert_eq!(loaded.last_modified.as_deref(), Some("Sat, 28 Nov 2026 02:00:00 GMT"));
         assert!(loaded.next_check_at.is_some());
-        // 旧的两元素格式仍能读，不把旧文件当成损坏。
+        // 旧格式（两元素 / v1.4.3 的四元素）必须立即到期并清掉已通知标记。
         std::fs::write(&path, b"[0,null]").unwrap();
         let legacy = State::load(path.clone());
         assert!(legacy.etag.is_none() && legacy.notified_version.is_none());
+        assert!(legacy.startup_check_until.is_some() == option_env!("DAOZAI_TEST_BUILD").is_none());
+        let future = chrono::Utc::now().timestamp() + 3600;
+        std::fs::write(&path, format!(r#"[{future},"v1.4.4",null,null]"#)).unwrap();
+        let migrated = State::load(path.clone());
+        assert!(migrated.notified_version.is_none());
+        assert!(migrated.startup_check_until.is_some() == option_env!("DAOZAI_TEST_BUILD").is_none());
         std::fs::remove_file(path).unwrap();
     }
 }
