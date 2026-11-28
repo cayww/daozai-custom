@@ -50,7 +50,7 @@ fn main() {
                 continue;
             };
             for tid in [0x1Fu8, 0x3F, 0xFF, 0x9F, 0x08] {
-                for (class, id) in [(0x07u8, 0x80u8), (0x07, 0x84)] {
+                for (class, id) in [(0x00u8, 0x81u8), (0x07u8, 0x80u8), (0x07, 0x84)] {
                     let mut req = [0u8; 90];
                     req[1] = tid;
                     req[5] = 0x02;
