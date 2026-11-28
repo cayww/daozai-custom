@@ -20,6 +20,14 @@ const PPP: f32 = 2.0;
 const FPS: f64 = 60.0;
 const WX: f32 = (CW - WIN_W) / 2.0; // 窗口在画布中的位置
 
+/// egui 0.37 把 DroppedFile 从结构体改成了 trait，录制器只需要路径。
+#[derive(Debug)]
+struct RecDroppedFile(PathBuf);
+impl egui::DroppedFile for RecDroppedFile {
+    fn path(&self) -> &std::path::Path { &self.0 }
+    fn bytes(&self) -> Result<Vec<u8>, String> { std::fs::read(&self.0).map_err(|e| e.to_string()) }
+}
+
 /// 面板坐标（相对展开面板左上角）→ 画布坐标
 fn p(x: f32, y: f32) -> Pos2 {
     Pos2::new(CW / 2.0 - daozai::app::PW / 2.0 + x, y)
@@ -290,7 +298,7 @@ fn main() {
     // DAOZAI_FAST=1：只跑脚本不出画面，调试点击位置用
     let fast = std::env::var("DAOZAI_FAST").is_ok();
     let ctx = egui::Context::default();
-    let mut app = App::new(&ctx, Options { fetch_lyrics: false, pet_idle: 4.0 });
+    let mut app = App::new(&ctx, Options { fetch_lyrics: false, pet_idle: 4.0, ..Default::default() });
 
     let title = "晚风与海";
     let artist = "示例乐队";
@@ -394,7 +402,7 @@ fn main() {
                 }
                 Act::DragDrop => {
                     if let Some(f) = dragging.take() {
-                        dropped.push(egui::DroppedFile { path: Some(f), ..Default::default() });
+                        dropped.push(std::sync::Arc::new(RecDroppedFile(f)) as egui::DroppedFileHandle);
                     }
                     cur = None;
                     continue;
@@ -435,6 +443,7 @@ fn main() {
         let total = 14 * 3600 + 20 * 60 + t as u64;
         let env = Env {
             t,
+            window_origin: [0.0, 0.0],
             clock: format!("{:02}:{:02}", total / 3600, total / 60 % 60),
             today: "2026-10-28".into(),
             date: "10月28日 周三".into(),
@@ -459,10 +468,6 @@ fn main() {
             backdrop: None,
             glass_blur: false,
             opaque_surface: false,
-            #[cfg(all(windows, feature = "sdk-material"))]
-            material_active: false,
-            #[cfg(all(windows, feature = "sdk-material"))]
-            material_appearance: Default::default(),
         };
 
         let mut vp = egui::ViewportInfo::default();
@@ -480,7 +485,7 @@ fn main() {
         };
         let dbg_click = raw.events.iter().any(|e| matches!(e, Event::PointerButton { .. }));
         let mut fo: Option<FrameOut> = None;
-        let output = ctx.run(raw, |ctx| {
+        let output = ctx.run_ui(raw, |ctx| {
             egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
                 fo = Some(app.frame(ui, win, &env));
             });
@@ -547,7 +552,7 @@ fn gallery() {
     std::fs::create_dir_all(&dest).unwrap();
     for scene in 0..23 {
         let ctx=egui::Context::default();
-        let mut app=App::new(&ctx,Options{fetch_lyrics:false,pet_idle:45.0});
+        let mut app=App::new(&ctx,Options{fetch_lyrics:false,pet_idle:45.0,..Default::default()});
         app.settings.pet=true;
         let mut ras=raster::Raster::new(1280,380);
         let mut rgba=vec![];
@@ -567,7 +572,7 @@ fn gallery() {
             let idle=if scene==7{60.0}else if scene==8{200.0}else{0.0};
             let env=Env{t,clock:"10:28:00".into(),today:"2026-10-28".into(),date:"10月28日 周三".into(),battery:Some(76),charging:true,cursor:if scene<6{Some(Pos2::new(320.0,60.0))}else{None},idle_seconds:Some(idle),recording:true,..Default::default()};
             let raw=egui::RawInput{screen_rect:Some(Rect::from_min_size(Pos2::ZERO,Vec2::new(640.0,190.0))),time:Some(t),viewports:std::iter::once((egui::ViewportId::ROOT,egui::ViewportInfo{native_pixels_per_point:Some(2.0),..Default::default()})).collect(),..Default::default()};
-            let output=ctx.run(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new().fill(Color32::from_rgb(23,28,45))).show(ctx,|ui|{let win=ui.max_rect();app.frame(ui,win,&env);});});
+            let output=ctx.run_ui(raw,|ctx|{egui::CentralPanel::default().frame(egui::Frame::new().fill(Color32::from_rgb(23,28,45))).show(ctx,|ui|{let win=ui.max_rect();app.frame(ui,win,&env);});});
             ras.update_textures(&output.textures_delta);
             if frame==74 {
                 ras.buf.fill([0.09,0.11,0.18,1.0]);
