@@ -46,7 +46,8 @@ UninstallDisplayName={#MyAppName} {#MyAppVersion}
 UninstallDisplayIcon={app}\daozai.ico
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; 用仓库内语言文件，不依赖编译器是否附带中文语言包（GitHub runner 的 Inno 6 就没有）。
+Name: "chinesesimplified"; MessagesFile: "languages\ChineseSimplified.isl"
 
 [Tasks]
 Name: "autostart"; Description: "开机自动启动岛仔"; GroupDescription: "其他："; Flags: checkedonce
