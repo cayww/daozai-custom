@@ -6,7 +6,9 @@ const REPOSITORY: &str = "https://github.com/cayww/daozai-custom";
 const API: &str = "https://api.github.com/repos/cayww/daozai-custom/releases/latest";
 const RELEASES: &str = "https://github.com/Renly1994/xiaotang-daozai/releases/latest";
 const STARTUP_WINDOW: Duration = Duration::from_secs(10);
-const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 3600);
+// 常规检查间隔 1 小时：单次只是一次几 KB 的 HTTPS 请求 + 一个短命线程，
+// 空闲期只有时间戳比较，不会常驻轮询占 CPU。
+const CHECK_INTERVAL: Duration = Duration::from_secs(3600);
 const RETRY_INTERVAL: Duration = Duration::from_secs(3600);
 const MANUAL_INTERVAL: Duration = Duration::from_secs(30);
 #[cfg(windows)]
@@ -16,7 +18,20 @@ const INSTALL_PREPARE_TIMEOUT: Duration = Duration::from_secs(60);
 struct Release { version: String, notes: String, page: String, package: Option<Package> }
 #[derive(Clone, Debug)]
 pub(crate) struct Package { pub(crate) url: String, pub(crate) size: u64, pub(crate) hash: String }
-enum Event { Checked(Result<Option<Release>, String>), Progress(f32), Ready(PathBuf), Installed, Failed(String) }
+enum Event {
+    Checked(Result<Option<Release>, String>),
+    /// GitHub 建议：把 ETag / Last-Modified 存下来做条件请求，304 不消耗配额；
+    /// 限流时按 Retry-After / X-RateLimit-Reset 退避。
+    Headers(CheckHeaders),
+    Progress(f32), Ready(PathBuf), Installed, Failed(String),
+}
+
+#[derive(Clone, Default)]
+struct CheckHeaders {
+    etag: Option<String>,
+    last_modified: Option<String>,
+    retry_after: Option<Duration>,
+}
 
 #[derive(Default)]
 pub(crate) struct State {
@@ -29,9 +44,15 @@ pub(crate) struct State {
     focus_requested: bool,
     logo: Option<egui::TextureHandle>,
     startup_check_until: Option<Instant>,
+    /// 常驻轮询的到期时刻：从 update-check.json 的下次检查时间恢复，每次检查后重排。
+    /// 和 startup_check_until 分开，避免进程长期不重启时永远不再检查。
+    next_check_at: Option<Instant>,
     manual_check_after: Option<Instant>,
     automatic_check_until: Option<Instant>,
     notified_version: Option<String>,
+    etag: Option<String>,
+    last_modified: Option<String>,
+    pending_retry_after: Option<Duration>,
     history_path: Option<PathBuf>,
     /// 安装脚本已就绪，等外壳摘托盘并退出（本地自绘栈不处理 ViewportCommand::Close）。
     exit_requested: bool,
@@ -46,24 +67,39 @@ impl Drop for State {
 impl State {
     pub(crate) fn load(path: PathBuf) -> Self {
         let mut state = Self::default();
-        let (next, notified_version) = std::fs::read(&path).ok()
-            .and_then(|bytes| serde_json::from_slice::<(i64, Option<String>)>(&bytes).ok())
+        // 兼容旧的 [next, notified_version] 两元素格式；新格式追加 etag / last-modified。
+        let history: serde_json::Value = std::fs::read(&path).ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
-        if option_env!("DAOZAI_TEST_BUILD").is_none() && next <= chrono::Utc::now().timestamp() {
+        let array = history.as_array();
+        let next = array.and_then(|a| a.first()).and_then(|v| v.as_i64()).unwrap_or_default();
+        let notified_version = array.and_then(|a| a.get(1)).and_then(|v| v.as_str()).map(str::to_owned);
+        let etag = array.and_then(|a| a.get(2)).and_then(|v| v.as_str()).map(str::to_owned);
+        let last_modified = array.and_then(|a| a.get(3)).and_then(|v| v.as_str()).map(str::to_owned);
+        let now_unix = chrono::Utc::now().timestamp();
+        if option_env!("DAOZAI_TEST_BUILD").is_none() && next <= now_unix {
             state.startup_check_until = Some(Instant::now() + STARTUP_WINDOW);
         }
+        let wait = if next > now_unix { (next - now_unix) as u64 } else { 0 };
+        state.next_check_at = Some(Instant::now() + Duration::from_secs(wait));
         state.notified_version = notified_version;
+        state.etag = etag;
+        state.last_modified = last_modified;
         state.history_path = Some(path);
         state
     }
 
-    fn remember_check(&self, delay: Duration) {
+    fn remember_check(&mut self, delay: Duration) {
+        // 运行期轮询至少隔 RETRY_INTERVAL 再排，避免「错过启动窗口」的 ZERO 延迟
+        // 在同一进程里变成每帧网络请求；ZERO 只用于让下次启动立刻重试。
+        let runtime_delay = if delay.is_zero() { RETRY_INTERVAL } else { delay };
+        self.next_check_at = Some(Instant::now() + runtime_delay);
         let Some(path) = &self.history_path else { return };
         let next = chrono::Utc::now().timestamp() + delay.as_secs() as i64;
         if let Some(parent) = path.parent() {
             if std::fs::create_dir_all(parent).is_err() { return; }
         }
-        if let Ok(bytes) = serde_json::to_vec(&(next, &self.notified_version)) {
+        if let Ok(bytes) = serde_json::to_vec(&(next, &self.notified_version, &self.etag, &self.last_modified)) {
             let _ = crate::model::atomic_write(path, &bytes);
         }
     }
@@ -85,6 +121,23 @@ impl State {
         true
     }
 
+    /// 带 GitHub 条件请求头的一次检查。头部事件先入队，结果事件后入队，
+    /// poll 会先更新缓存再处理响应，保证 304/限流后下一次请求带上正确头。
+    fn begin_check_with_headers(&mut self, ctx: &egui::Context, automatic_until: Option<Instant>, load: impl FnOnce(CheckHeaders) -> (Result<Option<Release>, String>, CheckHeaders) + Send + 'static) -> bool {
+        if self.rx.is_some() || !self.manual_wait().is_zero() { return false; }
+        let (tx, rx) = mpsc::channel(); self.rx = Some(rx); self.automatic_check_until = automatic_until;
+        self.message.clear(); self.result = None; self.dialog_open = false; self.focus_requested = false;
+        let ctx = ctx.clone();
+        let headers = CheckHeaders { etag: self.etag.clone(), last_modified: self.last_modified.clone(), retry_after: None };
+        std::thread::spawn(move || {
+            let (result, headers) = load(headers);
+            let _ = tx.send(Event::Headers(headers));
+            let _ = tx.send(Event::Checked(result));
+            ctx.request_repaint();
+        });
+        true
+    }
+
     pub(crate) fn poll(&mut self, ctx: &egui::Context) {
         loop {
             let event = match self.rx.as_ref().map(|rx| rx.try_recv()) {
@@ -97,6 +150,11 @@ impl State {
                 _ => break,
             };
             match event {
+                Event::Headers(headers) => {
+                    self.etag = headers.etag;
+                    self.last_modified = headers.last_modified;
+                    self.pending_retry_after = headers.retry_after;
+                }
                 Event::Checked(result) => {
                     let automatic_until = self.automatic_check_until.take();
                     let now = Instant::now();
@@ -106,7 +164,8 @@ impl State {
                     self.focus_requested = self.dialog_open;
                     if self.dialog_open { if let Ok(Some(release)) = &result { self.notified_version = Some(release.version.clone()); } }
                     // 错过启动时段的新版留在设置里，下次启动时可以再提醒。
-                    let delay = if result.is_err() { RETRY_INTERVAL }
+                    let delay = if let Some(retry) = self.pending_retry_after.take() { retry }
+                        else if result.is_err() { RETRY_INTERVAL }
                         else if new_notice && !self.dialog_open { Duration::ZERO }
                         else { CHECK_INTERVAL };
                     self.remember_check(delay);
@@ -136,7 +195,13 @@ impl State {
             }
         }
         if !cfg!(test) {
-            if let Some(until) = self.take_startup_check(Instant::now()) { self.begin_check(ctx, Some(until), check); }
+            let now = Instant::now();
+            if let Some(until) = self.take_startup_check(now) {
+                self.begin_check_with_headers(ctx, Some(until), check_with_headers);
+            } else if self.next_check_at.is_some_and(|at| now >= at) && self.manual_wait().is_zero() {
+                // 常驻轮询：成功后 CHECK_INTERVAL、失败按 Retry-After 退避；发现新版本直接弹窗。
+                self.begin_check_with_headers(ctx, None, check_with_headers);
+            }
         }
         if self.rx.is_some() && self.automatic_check_until.is_none() { ctx.request_repaint_after(Duration::from_millis(100)); }
     }
@@ -394,6 +459,54 @@ fn check_error(error: ureq::Error) -> String {
         ureq::Error::Status(404, _) => "暂未找到正式版本，请查看发布页",
         _ => "无法连接更新服务，请检查网络或代理后重试",
     }.to_owned()
+}
+
+/// GitHub 官方建议：按 Retry-After 或 X-RateLimit-Reset 退避，而不是固定 1 小时重试。
+fn rate_limit_delay(error: &ureq::Error) -> Option<Duration> {
+    let ureq::Error::Status(code, response) = error else { return None };
+    if *code != 429 && *code != 403 { return None; }
+    const MAX: u64 = 24 * 3600;
+    if let Some(seconds) = response.header("Retry-After").and_then(|v| v.trim().parse::<u64>().ok()) {
+        return Some(Duration::from_secs(seconds.min(MAX)));
+    }
+    if response.header("X-RateLimit-Remaining") == Some("0") {
+        if let Some(reset) = response.header("X-RateLimit-Reset").and_then(|v| v.trim().parse::<i64>().ok()) {
+            let seconds = (reset - chrono::Utc::now().timestamp()).clamp(1, MAX as i64);
+            return Some(Duration::from_secs(seconds as u64));
+        }
+    }
+    None
+}
+
+/// 带条件请求头的检查：ETag / Last-Modified 命中时 GitHub 返回 304，
+/// 未改动的响应不消耗主要配额（官方建议）。头部随结果一起回传并落盘。
+fn check_with_headers(headers: CheckHeaders) -> (Result<Option<Release>, String>, CheckHeaders) {
+    let mut out = headers.clone();
+    let agent = match http_agent_builder() { Ok(builder) => builder.build(), Err(message) => return (Err(message), out) };
+    let mut request = agent.get(API)
+        .set("User-Agent", concat!("Daozai/", env!("CARGO_PKG_VERSION")))
+        .set("Accept", "application/vnd.github+json");
+    if let Some(etag) = &headers.etag { request = request.set("If-None-Match", etag); }
+    if let Some(last_modified) = &headers.last_modified { request = request.set("If-Modified-Since", last_modified); }
+    let response = match request.call() {
+        Ok(response) => response,
+        Err(ureq::Error::Status(304, response)) => {
+            out.etag = response.header("etag").map(str::to_owned).or(headers.etag);
+            out.last_modified = response.header("last-modified").map(str::to_owned).or(headers.last_modified);
+            return (Ok(None), out);
+        }
+        Err(error) => {
+            out.retry_after = rate_limit_delay(&error);
+            return (Err(check_error(error)), out);
+        }
+    };
+    out.etag = response.header("etag").map(str::to_owned);
+    out.last_modified = response.header("last-modified").map(str::to_owned);
+    let value: serde_json::Value = match serde_json::from_reader(response.into_reader()) {
+        Ok(value) => value,
+        Err(_) => return (Err("更新信息格式异常，请稍后重试".to_owned()), out),
+    };
+    (release_info(&value, env!("CARGO_PKG_VERSION")), out)
 }
 
 fn check() -> Result<Option<Release>, String> {
@@ -917,5 +1030,42 @@ fn update_window_region_excludes_black_corners() {
             }
             let _ = DeleteObject(region);
         }
+    }
+}
+
+#[cfg(test)]
+mod update_schedule_tests {
+    use super::*;
+
+    #[test]
+    fn periodic_check_is_scheduled_with_a_retry_floor() {
+        let mut state = State::default();
+        assert!(state.next_check_at.is_none());
+        state.remember_check(Duration::ZERO);
+        let at = state.next_check_at.expect("轮询时刻应被写入");
+        assert!(at > Instant::now(), "ZERO 延迟不能在同进程里变成立刻重查");
+        assert!(at <= Instant::now() + RETRY_INTERVAL);
+        state.remember_check(CHECK_INTERVAL);
+        assert!(state.next_check_at > Some(at));
+    }
+
+    #[test]
+    fn conditional_headers_roundtrip_in_history() {
+        let path = std::env::temp_dir().join(format!("daozai-update-headers-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut state = State::default();
+        state.history_path = Some(path.clone());
+        state.etag = Some("\"v142\"".into());
+        state.last_modified = Some("Sat, 28 Nov 2026 02:00:00 GMT".into());
+        state.remember_check(Duration::from_secs(3600));
+        let loaded = State::load(path.clone());
+        assert_eq!(loaded.etag.as_deref(), Some("\"v142\""));
+        assert_eq!(loaded.last_modified.as_deref(), Some("Sat, 28 Nov 2026 02:00:00 GMT"));
+        assert!(loaded.next_check_at.is_some());
+        // 旧的两元素格式仍能读，不把旧文件当成损坏。
+        std::fs::write(&path, b"[0,null]").unwrap();
+        let legacy = State::load(path.clone());
+        assert!(legacy.etag.is_none() && legacy.notified_version.is_none());
+        std::fs::remove_file(path).unwrap();
     }
 }

@@ -1,4 +1,4 @@
-; 岛仔（自定义构建）安装包 —— Inno Setup 7
+﻿; 岛仔（自定义构建）安装包 —— Inno Setup 7
 ; 编译：ISCC.exe daozai.iss
 ; 特性：默认装到 C:\Program Files\DaozaiCustom（{autopf}，需管理员；2026-11-17 从
 ;       D:\software\Daozai 硬编码改为软件常用惯例，老用户升级 Inno 会记住原目录）、
@@ -10,7 +10,7 @@
 ; 版本号由 build-innosetup.ps1 从 Cargo.toml 读出来传进来，避免和 exe 的
 ; FileVersion 漂移（exe 版本来自 Cargo.toml）。手工编译时才用这里的默认值。
 #ifndef MyAppVersion
-#define MyAppVersion "1.4.2"
+#define MyAppVersion "1.4.3"
 #endif
 #define MyAppBuild "custom-isolated"
 ; 从哪个 cargo profile 的产物目录取 exe（release / dev-release）。

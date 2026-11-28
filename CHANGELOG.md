@@ -1,5 +1,14 @@
 # 更新记录
 
+## v1.4.3（2026-11-28）
+
+- 更新检查改为常驻每小时轮询：不打开设置也能发现新版本，发现后直接弹窗提醒。
+- 按 GitHub 官方建议缓存 ETag / Last-Modified 做条件请求，未变更的响应不消耗接口配额；遇到限流按 Retry-After 退避。
+
+## v1.4.4（2026-11-28，仅测试）
+
+- 测试版：用于验证 v1.4.3 的自动更新提醒，不建议日常使用。
+
 ## v1.4.2（2026-11-28）
 
 - 无线电量组件（HaloBattery）完成全量 Rust 内置：补齐 Razer、SteelSeries、HyperX、CompX、mchose、DJI、Logitech 等设备协议，覆盖 56 个长尾设备；不再从 Gitee 下载 Python 组件。
