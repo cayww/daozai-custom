@@ -263,6 +263,7 @@ impl Config {
     #[cfg(windows)]
     #[test]
     fn custom_script_storage_is_encrypted_and_can_refresh_after_reload(){
+        let _validation=crate::test_locks::quota_validation();
         let slot=format!("script-{:048x}",chrono::Utc::now().timestamp_nanos_opt().unwrap());
         struct Cleanup(String);impl Drop for Cleanup{fn drop(&mut self){let _=delete_slot(&self.0);}}
         let _cleanup=Cleanup(slot.clone());
@@ -328,6 +329,7 @@ impl Config {
         let value=serde_json::json!({"accounts":[{"id":"a","provider":"MiniMax","alias":"a","source":"cn","slot":"keep"}]});assert_eq!(persisted_active_slots(&value).unwrap(),vec!["keep"]);
     }
     #[test] fn overlapping_validation_is_rejected_without_spawning_a_request(){
+        let _validation=crate::test_locks::quota_validation();
         assert!(!VALIDATING.swap(true,std::sync::atomic::Ordering::AcqRel));let _guard=ValidationSlot;
         let connection=Connect::start(Provider::OpenCodeGo,String::new(),String::new(),"synthetic".into());
         assert!(connection.poll().unwrap().is_err());

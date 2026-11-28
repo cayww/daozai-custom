@@ -154,4 +154,12 @@ pub(crate) mod test_locks {
     pub(crate) fn audio_worker() -> MutexGuard<'static, ()> {
         AUDIO_WORKER.lock().unwrap_or_else(|error| error.into_inner())
     }
+
+    static QUOTA_VALIDATION: Mutex<()> = Mutex::new(());
+
+    /// 独占额度验证的进程级 VALIDATING 标志。两个测试都调 Connect::start*，
+    /// 并行时后一个会被前一个的全局占位挡掉，报「上次验证仍在结束」。
+    pub(crate) fn quota_validation() -> MutexGuard<'static, ()> {
+        QUOTA_VALIDATION.lock().unwrap_or_else(|error| error.into_inner())
+    }
 }
