@@ -2484,5 +2484,7 @@ bridge `5aea9d259320c482`，halo `a98078c345dc7885`）。上一版 `1c93e996075c
 **新包**：`installer\daozai-setup-custom-isolated.exe`（12,679,635 B；包 sha `b5d5768704d3763a`，exe `66d71d4766fadf90`，
 bridge `5aea9d259320c482`，halo `a98078c345dc7885`）。上一版 `065babf6e011d920` 已被覆盖。未部署 / 未推 origin。
 
+**提交**：`adae4e2`（main；未推 origin）。
+
 **当前真正未做**：Corsair `--probe`（按设计不做）、Logitech `ui_params` 具体数值、HyperX/Asus 已精确复刻但无真机验证。
 所有读数仍建议逐设备实机确认。
