@@ -67,6 +67,8 @@ pub(super) struct Reading {
     pub charging: Option<bool>,
     #[serde(default)]
     pub approximate: bool,
+    #[serde(default)]
+    pub ui_message: String,
     pub online: Option<bool>,
     pub vid: u16,
     pub pid: u16,

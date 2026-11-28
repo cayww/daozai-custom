@@ -68,11 +68,11 @@
 - **mchose**：K99（10s 活动窗 / 300s 刷新）与 A7 V3 Ultra+（250ms / 60s）的输入唤醒门控已由 `activity.rs`
   的 Raw Input 监听实现；Status/Reading wire format 没有 `polling_paused` 字段，门控期间输出缓存的最后读数。
 - **razer**：跨 PID 同型号灰显去重已在 Engine 汇总后实现（另一 PID 本轮在线时丢弃灰显副本）。
-- **Logitech**：unit id 跨接收器去重已在 Engine 按 `status.key` 生成稳定 key；`ui_message` 字面文案未接线，
-  但其语义由 `approximate` / `charging_known` 字段表达；G535 的 `000C:0001` 集合仍受 HID 放行规则限制。
-- **HyperX**：Kingston `get_input_report(0x06, 62)` 预读在 Python 侧结果被忽略，Rust 用短 deadline 轮询代替，字节协议等价。
+- **Logitech**：unit id 跨接收器去重已在 Engine 按 `status.key` 生成稳定 key；`ui_message` 文案键已接线到
+  Reading wire 与主程序悬停提示，`ui_params` 的具体档位/插电前数值未传；G535 的 `000C:0001` 集合仍受 HID 放行规则限制。
+- **HyperX**：Kingston 的 `get_input_report(0x06, 62)` 已用 `HidD_GetInputReport` 精确复刻（HeadsetControl 的 prepareDevice），不再用输入管道 read() 近似。
 - **Corsair**：Bragi SABRE v3「线缆出现即充电」用跨轮询 `sabre_v3_cable_seen` 近似；`--probe` 诊断路径未移植（主程序不发）。
-- **Asus**：Harpe II 接收器路径子串判断改为 (pid, interface=2, FF01:0001) 匹配。
+- **Asus**：Harpe II 接收器已按 Python/G-Helper 的 `mi_02&col03` 路径子串精确匹配（`Collection::path()`），不再只靠 interface/usage。
 - **HID 放行扩展**：低 usage page 集合现可被所有 provider 看到，但各协议均按 VID/PID + interface + usage 精确匹配；
   新设备插入时仍需观察是否误触发。
 - **无真机验证**：所有协议均为静态移植，只保证与 Python 逻辑/字节格式一致，读数正确性必须逐设备实机确认；
@@ -92,18 +92,32 @@
   Logitech 的最终 key 只由 provider + `status.key` 生成，实现跨接收器 unit id 合并。
 - 单测新增 5 个（GUID 解析、接收器实例门控、Raw Input 路径归一化、Razer 灰显去重 ×2）。
 
-## 验证状态（2026-11-28 05:49）
+## 2026-11-28 09:08 未做项复核：用途与社区方案
+
+用户追问「未做的有什么用，社区有没有方案」。逐项结论：
+- **Corsair `--probe`**：Python 自己的诊断 CLI（issue #28），做 6 秒先听后写、打印每次写入返回值/帧耗时/报告长度、
+  必要时切厂商软件模式。它明确写着「比托盘该做的更深」，且会向控制集合试探写入，放进 worker 会阻塞托盘轮询，
+  社区里对应的是 OpenLinkHub / ckb-next 这类完整控制守护进程（不是诊断补丁）。**不做是正确取舍**。
+- **Logitech `ui_message`**：只是 Python UI 的提示文案键（`state.approx_grade` / `charging_was` /
+  `charging_level_unknown`），社区无标准，属于本组件自身 UI 约定。已端到端接线：worker `Status`/`Reading`
+  增加 `ui_message`，主程序 Reading/BatteryReading 透传，悬停提示翻译为中文；`ui_params` 的具体数值未传。
+- **HyperX Kingston 预读**：社区 HeadsetControl PR #519 的 `prepareDevice`，写前用 `get_input_report(0x06, 62)`
+  清掉陈旧输入帧。已用 `HidD_GetInputReport` 精确实现，不再是管道 read 近似。
+- **Asus Harpe II 路径**：G-Helper `HarpeIIAce.cs` 的路径 `mi_02&col03` 判据（`asus.py` 引 upstream #364）。
+  已用 `Collection::path()` 做大小写无关子串匹配。
+
+## 验证状态（2026-11-28 09:08）
 
 - `vendor/halo-rust`：`cargo test --offline` — **168 passed / 0 failed**。
 - 主程序：`cargo test --locked --release --lib -- --test-threads=1` — **1624 passed / 0 failed / 141 ignored**。
 - release 构建：主程序双 bin（独立 target 目录，避开运行中的 exe）+ `daozai-halo.exe` 均成功。
-- 安装包：`installer\daozai-setup-custom-isolated.exe`（12,678,778 B，包 sha256 前16 `065babf6e011d920`，
-  exe `47cfea52ab8236c5`，bridge `e47f3872be09cc8e`，halo `3a97b072d9e97ab0`），版本 1.4.1；未部署、未推 origin。
+- 安装包：`installer\daozai-setup-custom-isolated.exe`（12,679,635 B，包 sha256 前16 `b5d5768704d3763a`，
+  exe `66d71d4766fadf90`，bridge `5aea9d259320c482`，halo `a98078c345dc7885`），版本 1.4.1；未部署、未推 origin。
 - 内置接线：`daozai.iss` 把 `vendor\halo-rust\target\{profile}\daozai-halo.exe` 复制到 `{app}\daozai-halo.exe`，
   卸载时清理；无需 Gitee 下载。
 
 ## 后续待办
 
 1. 实机逐设备验证读数与充电状态（尤其 DJI WinUSB、Viper V3 Pro、mchose 输入门控）。
-2. Corsair `--probe` 诊断路径未移植（主程序不发送，优先级低）；Logitech `ui_message` 字面文案需扩展 wire format 才能显示。
+2. Corsair `--probe` 按设计不移植（诊断专用，会试探写入且阻塞托盘）；Logitech `ui_params` 具体数值未传（仅提示文案已接线）。
 3. 发布前确认是否需要升版本号 / 发 GitHub Release / 部署（当前仅为本地测试包）。

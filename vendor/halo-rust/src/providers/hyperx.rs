@@ -121,13 +121,9 @@ fn parse_kingston_charging(reply: &[u8]) -> Option<bool> {
 fn kingston_query(collection: &Collection, cmd: u8) -> Option<Vec<u8>> {
     let mut handle = collection.open()?;
     // Python `_query_kingston` 在每次 write 前调用 hid.get_input_report(0x06, 62)
-    // （HeadsetControl 的 prepareDevice），结果被忽略。Rust Handle 没有
-    // HidD_GetInputReport / GET_REPORT(Input) 接口（且不允许改 hid.rs），这里用
-    // 一次 10ms 短 deadline 的输入管道 read() 做 best-effort 近似：清空尚未取走的
-    // 陈旧输入帧，结果同样忽略。严格来说不等价——get_input_report 是按 report id
-    // 取报告的控制传输，read() 是读输入管道，且不保证取到 0x06；协议字节与后续
-    // 写/读/解析流程均与 Python 一致，实机需确认该 prepare 步是否必要。
-    let _ = handle.read(until(10));
+    // （HeadsetControl 的 prepareDevice），结果被忽略。现在用 HidD_GetInputReport
+    // 精确复刻按 report id 取报告的控制传输，不再用输入管道 read() 近似。
+    handle.prepare_input_report(0x06);
     if !handle.write(&kingston_request(cmd), until(100)) {
         return None;
     }

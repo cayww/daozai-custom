@@ -32,10 +32,12 @@ pub struct BatteryReading {
     /// None 表示来源没有上报充电状态。
     pub charging:Option<bool>,
     pub approximate:bool,
+    /// worker 提供的文案键，UI 翻译后作为悬停提示的第二行。
+    pub ui_message:String,
 }
 impl BatteryReading {
     pub(crate) fn new(percent:u8,source:BatterySource,observed:Instant,charging:Option<bool>)->Self {
-        Self{percent,source,observed,value_since:observed,charging,approximate:false}
+        Self{percent,source,observed,value_since:observed,charging,approximate:false,ui_message:String::new()}
     }
 }
 

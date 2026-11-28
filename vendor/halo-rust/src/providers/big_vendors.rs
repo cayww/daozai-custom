@@ -1402,15 +1402,22 @@ mod asus {
         cols
     }
 
-    /// 等价于 Python 对 Harpe II 接收器路径的 `"mi_02&col03" in shown.lower()`
-    /// 子串判断：Collection 不暴露 path，改用 (interface=2, FF01:0001) 精确匹配。
     fn is_harpe_ii_mouse(interface: Option<u8>, usage_page: u16, usage: u16) -> bool {
         interface == Some(OMNI_INTERFACE) && usage_page == OMNI_MOUSE && usage == 0x0001
+    }
+
+    /// Python asus.py 对 Harpe II 接收器还要求路径含 `mi_02&col03`；现用
+    /// `Collection::path()` 做同样的大小写无关子串判断，不再只靠 interface/usage。
+    fn harpe_ii_path_ok(path: &[u16]) -> bool {
+        String::from_utf16_lossy(path)
+            .to_ascii_lowercase()
+            .contains("mi_02&col03")
     }
 
     fn harpe_ii_mouse_collection<'a>(collections: &'a [Collection]) -> Option<&'a Collection> {
         collections.iter().find(|c| {
             is_harpe_ii_mouse(c.interface, c.usage_page, c.usage)
+                && harpe_ii_path_ok(c.path())
         })
     }
 
@@ -1670,6 +1677,9 @@ mod asus {
             assert!(!is_harpe_ii_mouse(Some(2), 0xFF01, 0x0002));
             assert!(!is_harpe_ii_mouse(Some(0), 0xFF01, 0x0001));
             assert!(!is_harpe_ii_mouse(Some(2), 0xFF02, 0x0001));
+            let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<_>>();
+            assert!(harpe_ii_path_ok(&w(r"\\?\hid#vid_0b05&pid_1ad0&mi_02&col03#{guid}")));
+            assert!(!harpe_ii_path_ok(&w(r"\\?\hid#vid_0b05&pid_1ad0&mi_02&col01#{guid}")));
         }
 
         #[test]
@@ -2154,8 +2164,8 @@ mod logitech {
         }
     }
 
-    /// Python `DeviceStatus.ui_message` 的文案键。`Status` / `Reading` wire format
-    /// 没有 ui_message / ui_params 字段，这里集中保留映射，待协议扩展后直接接线。
+    /// Python `DeviceStatus.ui_message` 的文案键，随 `Status.ui_message` 传到
+    /// Reading wire format，由主程序 UI 翻译为中文提示。
     #[allow(dead_code)]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum UiMessage {
@@ -2326,15 +2336,21 @@ mod logitech {
                             key, name, &kind, "logitech", Some(before), Some(true), true,
                         );
                         st.approximate = true;
+                        st.ui_message = UiMessage::ChargingWas.code().to_string();
                         return Some(st);
                     }
-                    return Some(make_status(
+                    let mut st = make_status(
                         key, name, &kind, "logitech", None, Some(true), true,
-                    ));
+                    );
+                    st.ui_message = UiMessage::ChargingLevelUnknown.code().to_string();
+                    return Some(st);
                 }
             }
             let mut st = make_status(key, name, &kind, "logitech", Some(level), Some(b.charging), true);
             st.approximate = b.grade.is_some();
+            if b.grade.is_some() {
+                st.ui_message = UiMessage::ApproxGrade.code().to_string();
+            }
             return Some(st);
         }
         register_battery(state, ch, pid, inst, idx, multi)
@@ -2609,6 +2625,6 @@ pub fn all_providers() -> Vec<Box<dyn Provider>> {
 // - Logitech 的 unit id 跨接收器去重：provider 侧 device_key() 已按 Python 规则
 //   用 F_INFO 的 unit id 作 key（跨接收器/线缆一致），但 Engine 最终 key 仍带
 //   usb_instance，完整去重需 Engine 按 status.key 合并（见接线建议）。
-// - Logitech 的 ui_message / ui_params：Status/Reading wire format 无字段，
-//   UiMessage::code() 已保留 Python 文案键（state.approx_grade / charging_was /
-//   charging_level_unknown），协议扩展后可直接接线；近似等级目前只置 approximate。
+// - Logitech 的 ui_params（具体档位/插电前数值）未随 wire format 传输；
+//   ui_message 文案键已接线，主程序按 state.approx_grade / charging_was /
+//   charging_level_unknown 翻译为提示文字。

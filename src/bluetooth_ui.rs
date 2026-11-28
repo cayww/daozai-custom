@@ -28,6 +28,16 @@ const STAGGER:f32=0.07;
 const LINKED:&str="已连接";
 const RECEIVER_NOTE:&str="2.4G 接收器 · 电量未知";
 const NO_BATTERY_NOTE:&str="设备没有提供电量";
+
+/// worker 的 ui_message 文案键 → 中文提示；未知键不显示。
+fn ui_message_text(code:&str)->&'static str {
+    match code {
+        "state.approx_grade"=>"约略电量（设备只上报档位）",
+        "state.charging_was"=>"充电中 · 沿用插电前电量",
+        "state.charging_level_unknown"=>"充电中 · 设备不报告电量",
+        _=>"",
+    }
+}
 /// 连上后这么久还没有电量读数，就当作设备不提供电量。新连接会立即读一次，读数通常几秒内到。
 const READ_GRACE:f64=15.0;
 
@@ -377,7 +387,11 @@ impl App {
             let linked=self.wireless_linked(device);
             let details=if device.kind==DeviceKind::Receiver24G&&device.reading.is_none() {format!("{}\n{RECEIVER_NOTE}",device.name)}
                 else if linked {format!("{}\n{LINKED} · {NO_BATTERY_NOTE}",device.name)} else {
-                device.reading.as_ref().map(|r|format!("{}\n{} · {}",device.name,r.source.label(),reading_age(device).unwrap_or_default())).unwrap_or_else(||format!("{}\n正在读取电量",device.name))
+                device.reading.as_ref().map(|r|{
+                    let hint=ui_message_text(&r.ui_message);
+                    let base=format!("{}\n{} · {}",device.name,r.source.label(),reading_age(device).unwrap_or_default());
+                    if hint.is_empty() {base} else {format!("{base}\n{hint}")}
+                }).unwrap_or_else(||format!("{}\n正在读取电量",device.name))
             };
             let tile_top=ring_y-r-6.0;
             let tile_bottom=name_y+8.0;

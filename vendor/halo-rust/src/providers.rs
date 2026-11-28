@@ -48,6 +48,7 @@ pub struct Status {
     pub approximate: bool,
     pub charging_known: bool,
     pub source: String,
+    pub ui_message: String,
 }
 
 impl Status {
@@ -55,7 +56,7 @@ impl Status {
         Self {
             key: key.into(), name: name.into(), kind: String::new(), level: None,
             charging: None, online: true, approximate: false, charging_known: true,
-            source: String::new(),
+            source: String::new(), ui_message: String::new(),
         }
     }
 }
@@ -109,6 +110,7 @@ impl Engine {
                     out.push(Reading {
                         key, name: status.name.chars().take(256).collect(), kind: status.kind,
                         level, charging, online: status.online, approximate: coarse, fresh, age_ms,
+                        ui_message: status.ui_message,
                         vid: receiver.vid, pid: receiver.pid,
                         usb_instance: receiver.usb_instance.clone(),
                     });
@@ -187,7 +189,8 @@ mod tests {
         Reading {
             key: format!("{name}:{pid:04x}"), name: name.into(), kind: String::new(),
             level: Some(50), charging: Some(false), online, approximate: false,
-            fresh: true, age_ms: None, vid: 0x1532, pid, usb_instance: String::new(),
+            ui_message: String::new(), fresh: true, age_ms: None, vid: 0x1532, pid,
+            usb_instance: String::new(),
         }
     }
 

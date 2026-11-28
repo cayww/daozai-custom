@@ -399,6 +399,20 @@ impl Handle {
         Some(report)
     }
 
+    /// HidD_GetInputReport：按 report id 取一次输入报告（控制传输）。
+    /// HeadsetControl 的 prepareDevice / Python hid.get_input_report 在 Kingston
+    /// 修订的每次写前都做这一步且忽略结果，用来清掉陈旧输入帧。
+    pub fn prepare_input_report(&mut self, report_id: u8) {
+        if self.input_len == 0 {
+            return;
+        }
+        let mut report = vec![0u8; self.input_len];
+        report[0] = report_id;
+        unsafe {
+            let _ = HidD_GetInputReport(*self.file, report.as_mut_ptr().cast(), report.len() as u32);
+        }
+    }
+
     pub fn set_feature(&mut self, bytes: &[u8], deadline: Instant) -> bool {
         if bytes.is_empty() || bytes.len() > self.feature_len {
             return false;

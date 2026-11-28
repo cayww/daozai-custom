@@ -39,6 +39,9 @@ pub struct Reading {
     pub charging: Option<bool>,
     pub online: bool,
     pub approximate: bool,
+    /// Python DeviceStatus.ui_message 的文案键（如 state.charging_was）。
+    #[serde(default)]
+    pub ui_message: String,
     pub fresh: bool,
     pub age_ms: Option<u64>,
     pub vid: u16,

@@ -352,6 +352,7 @@ fn merge_enhanced(
                         observed.charging,
                     );
                     reading.approximate = observed.approximate;
+                    reading.ui_message.clone_from(&observed.ui_message);
                     reading
                 });
             if device.reading.is_none() {
