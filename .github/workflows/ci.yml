@@ -29,22 +29,21 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$null,[ref]$parseErrors) | Out-Null
             if ($parseErrors) { throw ($parseErrors | Out-String) }
           }
-      - name: 验证发布构建与打包
+      # 唯一打包入口：installer/build-innosetup.ps1（Inno Setup，GitHub runner 自带）。
+      # 它会构建主程序 + bridge + 内置电量组件，编译 daozai.iss，产出 dist 下
+      # Daozai-Setup-vX-x64.exe / Daozai-vX-windows-x64.zip / SHA256SUMS.txt。
+      - name: 验证发布构建与 Inno 打包
         shell: pwsh
-        run: |
-          $compiler = ./scripts/get-nsis.ps1 -Directory $env:RUNNER_TEMP
-          ./scripts/package.ps1 -NsisCompiler $compiler
+        run: ./installer/build-innosetup.ps1
       - name: 验证正式程序的诊断归档
         shell: pwsh
-        run: ./tests/diagnostics_archive.ps1
-  installer:
+        run: ./tests/diagnostics_archive.ps1 -Executable (Join-Path $pwd 'target\release\daozai.exe')
+  update:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 验证安装、升级与卸载
+      - name: 验证应用内更新替换流程
         shell: pwsh
         run: |
-          $compiler = ./scripts/get-nsis.ps1 -Directory $env:RUNNER_TEMP
-          ./tests/native_installer.ps1 -NsisCompiler $compiler
           ./tests/update_installer.ps1
           exit 0

@@ -48,6 +48,14 @@
 - 复测旧版本、审 PR 等临时任务在 `tmp` 下建工作树，任务结束时删除；需要提交的临时分支用 `test/…`，一并删除。
 - 工作树不建在 `target`、`D:\Temp` 或其他工作树里面。
 
+# 发布打包（唯一入口）
+
+发布资源**只允许**用 `installer\build-innosetup.ps1`（Inno Setup 7 / `installer\daozai.iss`）生成，不再维护任何 NSIS 打包路径。脚本默认从零构建；`-SkipBuild` 复用 `target\<profile>` 下已有产物；`-CargoProfile dev-release` 用于自测，正式发版用默认 `release`。
+
+产物固定落在 `dist\`，名字与历史发布一致：`Daozai-Setup-v<version>-x64.exe`、`Daozai-v<version>-windows-x64.zip`、`SHA256SUMS.txt`。zip 必须保持 `Daozai-v<version>-windows-x64/daozai.exe` 的结构（`updates.rs::release_info` 依赖它校验更新包）。上传 Release 时同时上传安装器和 zip，不能只传安装器；不要上传 `daozai-setup-custom-isolated.exe` 这类中间产物。
+
+CI 的打包步骤也只调用 `installer\build-innosetup.ps1`；不要恢复 `scripts\package.ps1`、`scripts\get-nsis.ps1`、`installer\setup.nsi` 或 `tests\native_installer.ps1`。
+
 # 本机测试版交付
 
 桌面「岛仔－当前测试版」只运行 `test/acceptance` 的编译结果，快捷方式指向测试分支工作树 `D:\daozai-build\worktrees\acceptance` 里的 `target/x86_64-pc-windows-msvc/release/daozai.exe`。任何会话都不用自己的分支或 `main` 直接覆盖测试版。

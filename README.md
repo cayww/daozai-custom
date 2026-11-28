@@ -254,14 +254,15 @@ cargo build --locked --release --bin daozai
 cargo test --locked --release --lib -- --test-threads=1
 ```
 
-定制版安装包用 Inno Setup 7（脚本在 `installer/`）：先构建双 bin 和内置电量组件，再运行打包脚本：
+**发布资源只走一个入口**：`installer\build-innosetup.ps1`（Inno Setup）。它会构建主程序、bridge 和内置电量组件，编译 `installer\daozai.iss`，并在 `dist\` 产出历史命名的安装包、便携 zip 与校验和：
 
 ```powershell
-cargo build --locked --release --bin daozai --bin daozai-bridge
-cargo build --offline --release --manifest-path vendor\halo-rust\Cargo.toml
-cd installer
-powershell -NoProfile -File build-innosetup.ps1
+powershell -NoProfile -File installer\build-innosetup.ps1
+# 自测用：可复用已有 dev-release 产物，跳过构建
+powershell -NoProfile -File installer\build-innosetup.ps1 -CargoProfile dev-release -SkipBuild
 ```
+
+产物：`Daozai-Setup-v<版本>-x64.exe`、`Daozai-v<版本>-windows-x64.zip`、`SHA256SUMS.txt`。zip 的名字与内部结构对齐应用内更新检查，不能用别的方式替代。NSIS（`setup.nsi` / `scripts\package.ps1` / `get-nsis.ps1`）已移除，GitHub Actions 也只验证 Inno 打包。
 
 测试按单线程运行，以隔离使用进程环境变量的数据目录测试；dev-release profile 可加快增量构建。低内存设备可设置 `$env:CARGO_BUILD_JOBS = "1"`。
 
