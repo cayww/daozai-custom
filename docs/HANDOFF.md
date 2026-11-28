@@ -2512,4 +2512,4 @@ bridge `dcd243eed0448f88`，halo `ea1db245840ea3b8`）。上一版 `065babf6e011
 
 **新包**：`installer\daozai-setup-custom-isolated.exe`（12,680,333 B；包 sha `46a69b20321eeb17`，
 exe `94ed6f5fe60d8ca1`，bridge `dcd243eed0448f88`，halo `ea1db245840ea3b8`）。上一版 `b5d5768704d3763a`
-已被覆盖。未部署 / 未推 origin。
+已被覆盖。**提交**：`523373a`（main；未推 origin）。未部署 / 未推 origin。
