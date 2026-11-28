@@ -15,7 +15,9 @@ $fixture = Join-Path $root 'fixture.exe'
 & (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe') /nologo /target:winexe "/out:$fixture" $source
 if ($LASTEXITCODE -ne 0) { throw '测试程序编译失败' }
 $setup = Join-Path $root 'Daozai-TestInstaller.exe'
-& $NsisCompiler /V2 /WX "/DAPP_ID=$id" "/DAPP_NAME=$name" /DAPP_VERSION=9.8.7 "/DPROJECT_DIR=$project" "/DSOURCE_EXE=$fixture" "/DOUTPUT_FILE=$setup" (Join-Path $project 'installer\setup.nsi')
+# setup.nsi 默认从 target\release 取 daozai-bridge.exe；CI 的 installer job 不构建桥，
+# 这里把同一个 fixture 作为桥的替身传进去，只验证安装/升级/卸载流程。
+& $NsisCompiler /V2 /WX "/DAPP_ID=$id" "/DAPP_NAME=$name" /DAPP_VERSION=9.8.7 "/DPROJECT_DIR=$project" "/DSOURCE_EXE=$fixture" "/DBRIDGE_EXE=$fixture" "/DOUTPUT_FILE=$setup" (Join-Path $project 'installer\setup.nsi')
 if ($LASTEXITCODE -ne 0) { throw '测试安装器编译失败' }
 New-Item -ItemType Directory -Path $data -Force | Out-Null
 Set-Content -LiteralPath $sentinel -Value 'keep-user-data'
