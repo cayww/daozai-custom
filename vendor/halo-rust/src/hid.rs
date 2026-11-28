@@ -118,6 +118,76 @@ pub fn collections(instance: &str) -> Vec<Collection> {
     collections
 }
 
+/// 诊断用：列出该 USB 实例下所有 HID 集合的真实 usage / interface / 报告长度，
+/// 不做白名单过滤，用来排查「设备插着但引擎看不到」。
+pub fn debug_raw_collections(instance: &str) -> Vec<String> {
+    let instance: Vec<u16> = instance.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut root = 0u32;
+    if unsafe { CM_Locate_DevNodeW(&mut root, PCWSTR(instance.as_ptr()), CM_LOCATE_DEVNODE_NORMAL) }
+        != CR_SUCCESS
+    {
+        return vec![format!("CM_Locate_DevNodeW failed for {instance:?}")];
+    }
+    let mut out = Vec::new();
+    let mut pending = vec![(root, None)];
+    while let Some((node, parent_interface)) = pending.pop() {
+        let mut id = [0u16; MAX_DEVICE_ID_LEN as usize];
+        if unsafe { CM_Get_Device_IDW(node, &mut id, 0) } != CR_SUCCESS {
+            continue;
+        }
+        let end = id.iter().position(|&u| u == 0).unwrap_or(id.len());
+        let name = String::from_utf16_lossy(&id[..end]);
+        let upper = name.to_ascii_uppercase();
+        let mut parts = upper.split('\\');
+        let bus = parts.next().unwrap_or("");
+        let hardware = parts.next().unwrap_or("");
+        let interface = hardware.split('&').find_map(|part| {
+            let number = part.strip_prefix("MI_")?;
+            (number.len() == 2).then(|| u8::from_str_radix(number, 16).ok()).flatten()
+        }).or(parent_interface);
+        if node != root && bus == "USB" && interface.is_none() {
+            continue;
+        }
+        if bus == "HID" {
+            if let Some(paths) = present_paths(PCWSTR(id.as_ptr())) {
+                for path in paths.split_inclusive(|&u| u == 0).filter(|p| p.len() > 1 && p.last() == Some(&0)) {
+                    let Some(metadata) = open_path(path, 0) else { continue };
+                    let mut prepared = PHIDP_PREPARSED_DATA::default();
+                    if !unsafe { HidD_GetPreparsedData(*metadata, &mut prepared) }.as_bool() { continue; }
+                    let preparsed = Preparsed(prepared);
+                    let mut caps = HIDP_CAPS::default();
+                    let status = unsafe { HidP_GetCaps(preparsed.0, &mut caps) };
+                    let mut attributes = HIDD_ATTRIBUTES {
+                        Size: std::mem::size_of::<HIDD_ATTRIBUTES>() as u32,
+                        ..Default::default()
+                    };
+                    let vid_pid = if unsafe { HidD_GetAttributes(*metadata, &mut attributes) }.as_bool() {
+                        format!("{:04x}:{:04x}", attributes.VendorID, attributes.ProductID)
+                    } else { "????:????".to_string() };
+                    out.push(format!(
+                        "iface={interface:?} usage={:04x}:{:04x} in/out/feat={}/{}/{} vidpid={vid_pid} admitted={} razer_mouse={} node={name}",
+                        caps.UsagePage, caps.Usage, caps.InputReportByteLength,
+                        caps.OutputReportByteLength, caps.FeatureReportByteLength,
+                        status == HIDP_STATUS_SUCCESS && supported_collection(node, interface),
+                        razer_mouse_feature_collection(caps.UsagePage, caps.Usage, interface,
+                            attributes.VendorID, attributes.ProductID),
+                    ));
+                }
+            }
+        }
+        let mut child = 0;
+        if unsafe { CM_Get_Child(&mut child, node, 0) } == CR_SUCCESS {
+            loop {
+                pending.push((child, interface));
+                let mut sibling = 0;
+                if unsafe { CM_Get_Sibling(&mut sibling, child, 0) } != CR_SUCCESS { break; }
+                child = sibling;
+            }
+        }
+    }
+    out
+}
+
 fn present_paths(instance: PCWSTR) -> Option<Vec<u16>> {
     for _ in 0..3 {
         let mut size = 0;
@@ -266,9 +336,11 @@ fn supported_collection(node: u32, interface: Option<u8>) -> bool {
     {
         return false;
     }
-    String::from_utf16_lossy(&ids[..size as usize / 2])
-        .to_ascii_uppercase()
-        .split('\0')
+    let text = String::from_utf16_lossy(&ids[..size as usize / 2]).to_ascii_uppercase();
+    // 节点级过滤必须和 collection_for 使用同一套 Razer 例外：否则 0001:0002
+    // 鼠标集合在这里就被丢掉，后面的 feature report 特判根本没有机会执行。
+    let (vid, pid) = hardware_vid_pid(&text);
+    text.split('\0')
         .filter_map(|id| id.strip_prefix("HID_DEVICE_UP:")?.split_once("_U:"))
         .any(|(page, usage)| {
             let (Ok(page), Ok(usage)) = (
@@ -278,7 +350,24 @@ fn supported_collection(node: u32, interface: Option<u8>) -> bool {
                 return false;
             };
             supported_usage(page, usage, interface)
+                || razer_mouse_feature_collection(page, usage, interface, vid, pid)
         })
+}
+
+fn hardware_vid_pid(text: &str) -> (u16, u16) {
+    for part in text.split(['&', '\\', '\0']) {
+        if let Some(hex) = part.strip_prefix("VID_") {
+            if let Ok(vid) = u16::from_str_radix(&hex[..hex.len().min(4)], 16) {
+                let pid = text
+                    .split(['&', '\\', '\0'])
+                    .find_map(|p| p.strip_prefix("PID_"))
+                    .and_then(|hex| u16::from_str_radix(&hex[..hex.len().min(4)], 16).ok())
+                    .unwrap_or(0);
+                return (vid, pid);
+            }
+        }
+    }
+    (0, 0)
 }
 
 fn open_path(path: &[u16], access: u32) -> Option<Owned<HANDLE>> {
@@ -518,5 +607,14 @@ mod tests {
         assert!(!razer_mouse_feature_collection(1, 2, Some(3), 0x1532, 0x00C1));
         assert!(!razer_mouse_feature_collection(1, 2, Some(0), 0x046D, 0x00C1));
         assert!(!razer_mouse_feature_collection(1, 6, Some(0), 0x1532, 0x00C1));
+    }
+
+    #[test]
+    fn hardware_ids_yield_vid_pid_for_node_level_razer_gate() {
+        assert_eq!(
+            hardware_vid_pid(r"HID\VID_1532&PID_00B7&REV_0200\HID_DEVICE_UP:0001_U:0002"),
+            (0x1532, 0x00B7)
+        );
+        assert_eq!(hardware_vid_pid("HID_DEVICE_UP:000C_U:0001"), (0, 0));
     }
 }

@@ -12,8 +12,8 @@
 >   `razer.rs` 补齐 8 个专用帧；`hid.rs` 新增 `Collection.product` 并谨慎放行低 usage page 集合，
 >   `instance_guard.rs` 实现单实例保护并接入 worker 主循环。
 > - `vendor/halo-rust` 单测 **168 passed**；主程序 release 全量 **1624 passed / 0 failed**；
->   `daozai-halo.exe` 最终包指纹见 MIGRATION.md（sha 前16 `a98078c345dc7885`）；
->   测试安装包 `installer\daozai-setup-custom-isolated.exe`（包 sha 前16 `b5d5768704d3763a`，exe `66d71d4766fadf90`）。
+>   `daozai-halo.exe` 最终包指纹见 MIGRATION.md（sha 前16 `ea1db245840ea3b8`）；
+>   测试安装包 `installer\daozai-setup-custom-isolated.exe`（包 sha 前16 `46a69b20321eeb17`，exe `94ed6f5fe60d8ca1`）。
 > - **尚需处理的真实残留**：DJI 解析已实现但读数走 interface 6 的 WinUSB bulk，现有 `Provider` 只拿 HID 集合，
 >   `poll()` 暂返空，需后续接 bulk 通道；mchose 输入唤醒门控、razer 跨 PID 去重、Logitech unit id 去重 /
 >   `ui_message`、Corsair `--probe` 未复刻；所有协议均未在真机验证。
@@ -29,7 +29,10 @@
 > - **09:08 未做项复核**：HyperX Kingston 的 prepareDevice 已用 `HidD_GetInputReport` 精确复刻，
 >   Asus Harpe II 已按 G-Helper 的 `mi_02&col03` 路径判据匹配，Logitech `ui_message` 已端到端接线到
 >   主程序悬停提示；Corsair `--probe` 是诊断专用且会试探写入，按设计不移植。详见 `MIGRATION.md`。
-> - 最新状态与验证记录以 `vendor/halo-rust/MIGRATION.md` 和桌面 `HANDOFF.md` §7.0zzzzz-m 为准。
+> - **09:27 实机排查**：找到雷蛇 V3 Pro 系列仍读不到的根因——节点级 `supported_collection()` 在
+>   `0001:0002` 鼠标集合进入 `collection_for()` 之前就把它过滤掉，Razer 特判没机会执行。已修，
+>   `hid-probe` 诊断确认 `admitted=true`；实机查询回 `status=04`（睡眠/无响应），请用户移动鼠标后复测。
+> - 最新状态与验证记录以 `vendor/halo-rust/MIGRATION.md` 和桌面 `HANDOFF.md` §7.0zzzzz-n 为准。
 
 ---
 

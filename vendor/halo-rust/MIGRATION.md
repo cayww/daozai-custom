@@ -106,13 +106,29 @@
 - **Asus Harpe II 路径**：G-Helper `HarpeIIAce.cs` 的路径 `mi_02&col03` 判据（`asus.py` 引 upstream #364）。
   已用 `Collection::path()` 做大小写无关子串匹配。
 
-## 验证状态（2026-11-28 09:08）
+## 2026-11-28 09:27 实机排查：雷蛇 V3 Pro 系列仍读不到电量（根因找到并修复）
 
-- `vendor/halo-rust`：`cargo test --offline` — **168 passed / 0 failed**。
+用户反馈 DeathAdder V3 Pro（`1532:00B6/00B7`）读不到电量。诊断步骤：
+1. 当前运行的是 `C:\Program Files (x86)\DaozaiCustom\`，exe `47cfea52`（05:49 包），**不是最新版**。
+2. 用新增的 `hid-probe` 诊断 bin 枚举该 USB 实例下全部 HID 集合，发现：
+   - 真正能收 90 字节 feature report 的是 `MI_00 / usage 0001:0002 / feature_len=91`（interface 0）；
+   - `MI_01 / usage 0001:0002` 的 `FeatureReportByteLength=0`，不承载电量；
+   - **`admitted=false`**：`hid::collections()` 的节点级 `supported_collection()` 只按 `supported_usage()`
+     过滤，`0001:0002` 在这里就被丢弃，之前在 `collection_for()` 里加的 Razer 鼠标特判根本没机会执行。
+3. 修复：`supported_collection()` 从硬件 ID 解析 VID/PID，节点级过滤也调用
+   `razer_mouse_feature_collection()`；两个层级的判据终于一致。诊断确认修复后 `admitted=true`。
+4. 实机 feature 查询：所有事务号均回 `status=04`（Python/OpenRazer 定义为「睡眠 / 无响应」）；
+   `RazerV3BatteryTray` 社区文档要求「移动鼠标确认不在睡眠」。已交付新包，请用户移动鼠标后复测。
+
+新增 `src/bin/hid-probe.rs`（`--wait` 模式可轮询等待唤醒）作为后续诊断工具，不进安装包。
+
+## 验证状态（2026-11-28 09:27）
+
+- `vendor/halo-rust`：`cargo test --offline` — **169 passed / 0 failed**（新增硬件 ID VID/PID 解析回归）。
 - 主程序：`cargo test --locked --release --lib -- --test-threads=1` — **1624 passed / 0 failed / 141 ignored**。
 - release 构建：主程序双 bin（独立 target 目录，避开运行中的 exe）+ `daozai-halo.exe` 均成功。
-- 安装包：`installer\daozai-setup-custom-isolated.exe`（12,679,635 B，包 sha256 前16 `b5d5768704d3763a`，
-  exe `66d71d4766fadf90`，bridge `5aea9d259320c482`，halo `a98078c345dc7885`），版本 1.4.1；未部署、未推 origin。
+- 安装包：`installer\daozai-setup-custom-isolated.exe`（12,680,333 B，包 sha256 前16 `46a69b20321eeb17`，
+  exe `94ed6f5fe60d8ca1`，bridge `dcd243eed0448f88`，halo `ea1db245840ea3b8`），版本 1.4.1；未部署、未推 origin。
 - 内置接线：`daozai.iss` 把 `vendor\halo-rust\target\{profile}\daozai-halo.exe` 复制到 `{app}\daozai-halo.exe`，
   卸载时清理；无需 Gitee 下载。
 
